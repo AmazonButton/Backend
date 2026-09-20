@@ -1,0 +1,503 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                        String           @id @default(uuid())
+  email                     String           @unique
+  username                  String?          @unique
+  passwordHash              String
+  fullName                  String
+  phone                     String?
+  role                      String           @default("CUSTOMER") // SUPER_ADMIN, STORE_OWNER, STORE_MANAGER, STORE_STAFF, CUSTOMER, TECHNICIAN
+  isActive                  Boolean          @default(true)
+  emailVerified             Boolean          @default(false)
+  emailVerificationToken    String?
+  emailVerificationExpires  DateTime?
+  passwordResetTokenHash    String?
+  passwordResetExpires      DateTime?
+  failedLoginAttempts       Int              @default(0)
+  lockedUntil               DateTime?
+  lastLoginAt               DateTime?
+  storeId                   String?
+  store                     Store?           @relation(fields: [storeId], references: [id])
+  customerProfile           CustomerProfile?
+  householdMembers          HouseholdMember[]
+  refreshSessions           RefreshSession[]
+  notifications             Notification[]
+  auditLogs                 AuditLog[]
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
+}
+
+model RefreshSession {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  ipAddress String?
+  userAgent String?
+
+  @@index([userId])
+}
+
+model Store {
+  id              String            @id @default(uuid())
+  name            String
+  code            String            @unique
+  ownerName       String
+  phone           String
+  email           String
+  address         String
+  status          String            @default("PENDING_APPROVAL") // PENDING_APPROVAL, ACTIVE, SUSPENDED, REJECTED
+  rejectionReason String?
+  approvedAt      DateTime?
+  users           User[]
+  products        Product[]
+  devices         Device[]
+  deviceTemplates DeviceTemplate[]
+  customers       CustomerProfile[]
+  orders          Order[]
+  serviceRequests ServiceRequest[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+model CustomerProfile {
+  id              String                 @id @default(uuid())
+  userId          String                 @unique
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId         String
+  store           Store                  @relation(fields: [storeId], references: [id])
+  apartment       String?
+  building        String?
+  floor           String?
+  room            String?
+  deliveryAddress String
+  phone           String
+  devices         Device[]
+  pairingSessions DevicePairingSession[]
+  orders          Order[]
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+}
+
+// ─── SMARTSUPPLY CORE: HOUSEHOLD & MEMBERSHIP ─────────────────────────────────
+
+model Household {
+  id              String             @id @default(uuid())
+  name            String             // e.g. "Căn hộ 1208 Sunwah Pearl"
+  address         String?
+  apartment       String?
+  building        String?
+  floor           String?
+  room            String?
+  phone           String?
+  notes           String?
+  members         HouseholdMember[]
+  devices         Device[]
+  orders          Order[]
+  consumptions    ConsumptionRecord[]
+  reminders       SmartReminder[]
+  shoppingList    ShoppingList?
+  serviceRequests ServiceRequest[]
+  urgentAlerts    UrgentAlert[]
+  automationRules AutomationRule[]
+  orderBatches    OrderBatch[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model HouseholdMember {
+  id          String    @id @default(uuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String    @default("MEMBER") // OWNER, ADMIN, MEMBER, VIEWER, TECHNICIAN
+  nickname    String?   // e.g. "Mẹ", "Bố", "Con gái"
+  joinedAt    DateTime  @default(now())
+
+  @@unique([householdId, userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Product {
+  id                String                @id @default(uuid())
+  storeId           String
+  store             Store                 @relation(fields: [storeId], references: [id])
+  name              String
+  brand             String
+  sku               String
+  description       String?
+  category          String // "Nước uống", "Gas", "Gạo", "Sữa", "Nhu yếu phẩm"
+  unit              String // "Bình 20L", "Bình 12kg", "Bao 25kg", "Thùng 24 lon"
+  price             Float
+  stock             Int                   @default(0)
+  reservedStock     Int                   @default(0)
+  minStockAlert     Int                   @default(5)
+  imageUrl          String?
+  status            String                @default("ACTIVE") // ACTIVE, INACTIVE, OUT_OF_STOCK
+  isActive          Boolean               @default(true)
+  devices           Device[]
+  deviceConfigs     DeviceConfiguration[]
+  deviceTemplates   DeviceTemplate[]
+  orderItems        OrderItem[]
+  consumptions      ConsumptionRecord[]
+  reminders         SmartReminder[]
+  shoppingListItems ShoppingListItem[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([storeId, sku])
+}
+
+model Device {
+  id                  String                 @id @default(uuid())
+  deviceId            String                 @unique // e.g. "SOB-000001", "BTN-8829-WTR"
+  deviceCode          String?                // Thân thiện: "WATER-KITCHEN"
+  serialNumber        String                 @unique
+  macAddress          String?                @unique
+  customName          String?                // e.g. "Nút Nước Lavie Bếp"
+  deviceSecret        String                 // HMAC secret key
+  claimCode           String                 // e.g. "CLAIM-749201"
+  pairingCode         String?                // 6-digit numeric pairing code e.g. "882910"
+  pairingToken        String?                // Secure random pairing token for QR payload
+  qrPayload           String                 @unique
+  firmwareVersion     String                 @default("1.0.0")
+  hardwareModel       String                 @default("ESP32-WROOM-32E")
+  deviceType          String                 @default("BUTTON") // BUTTON, SENSOR, DISPENSER, METER
+  status              String                 @default("READY_FOR_CUSTOMER") // UNCONFIGURED, PAIRING, ONLINE, OFFLINE, LOW_BATTERY, MAINTENANCE, DISABLED
+  claimStatus         String                 @default("UNCLAIMED") // UNCLAIMED, PENDING_CLAIM, CLAIMED, TRANSFERRED
+  provisioningStatus  String                 @default("UNPROVISIONED") // UNPROVISIONED, BLE_ADVERTISING, PROVISIONING, WIFI_CONFIGURED, CLOUD_CONNECTED, FAILED
+  healthScore         Int                    @default(100) // 0-100 Explainable Health Score
+  healthStatus        String                 @default("HEALTHY") // HEALTHY, WARNING, CRITICAL, OFFLINE
+  pressCount          Int                    @default(0)
+  errorCount          Int                    @default(0)
+  ipAddress           String?
+  uptime              Int?
+  storeId             String?
+  store               Store?                 @relation(fields: [storeId], references: [id])
+  productId           String?
+  product             Product?               @relation(fields: [productId], references: [id])
+  templateId          String?
+  template            DeviceTemplate?        @relation(fields: [templateId], references: [id])
+  location            String?
+  description         String?
+  customerId          String?
+  customer            CustomerProfile?       @relation(fields: [customerId], references: [id])
+  householdId         String?
+  household           Household?             @relation(fields: [householdId], references: [id])
+  batteryLevel        Int                    @default(100)
+  wifiRSSI            Int                    @default(-50)
+  lastSeenAt          DateTime?
+  expiresAt           DateTime?
+  configuration       DeviceConfiguration?
+  pairingSessions     DevicePairingSession[]
+  auditLogsExtended   DeviceAuditLog[]
+  events              DeviceEvent[]
+  telemetries         DeviceTelemetry[]
+  orders              Order[]
+  consumptions        ConsumptionRecord[]
+  serviceRequests     ServiceRequest[]
+  urgentAlerts        UrgentAlert[]
+  automationRules     AutomationRule[]
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+}
+
+model DevicePairingSession {
+  id         String           @id @default(uuid())
+  deviceId   String
+  device     Device           @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  tokenHash  String           @unique
+  customerId String?
+  customer   CustomerProfile? @relation(fields: [customerId], references: [id])
+  expiresAt  DateTime
+  usedAt     DateTime?
+  status     String           @default("ACTIVE")
+  createdAt  DateTime         @default(now())
+}
+
+model DeviceAuditLog {
+  id        String   @id @default(uuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  actorId   String?
+  action    String
+  metadata  String?
+  createdAt DateTime @default(now())
+}
+
+model DeviceTemplate {
+  id                  String   @id @default(uuid())
+  name                String
+  description         String?
+  category            String?
+  storeId             String?
+  store               Store?   @relation(fields: [storeId], references: [id])
+  defaultProductId    String?
+  defaultProduct      Product? @relation(fields: [defaultProductId], references: [id])
+  singlePressAction   String   @default("CREATE_ORDER")
+  doublePressAction   String   @default("CANCEL_ORDER")
+  longPressAction     String   @default("WIFI_CONFIGURATION")
+  defaultQuantity     Int      @default(1)
+  cancelWindowSeconds Int      @default(60)
+  devices             Device[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+// ─── SMARTSUPPLY: DEVICE BEHAVIOR DESIGNER ───────────────────────────────────
+
+model DeviceConfiguration {
+  id                    String   @id @default(uuid())
+  deviceId              String   @unique
+  device                Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  customName            String
+  productId             String
+  product               Product  @relation(fields: [productId], references: [id])
+  defaultQuantity       Int      @default(1)
+  allowCustomerQuantity Boolean  @default(false)
+  allowCustomerProduct  Boolean  @default(false)
+  quickOrderDirect      Boolean  @default(true)
+  cancelWindowSeconds   Int      @default(60)
+  soundEnabled          Boolean  @default(true)
+  ledEnabled            Boolean  @default(true)
+  
+  // Hành vi lập trình nút bấm (Programmable IoT Behavior):
+  singlePressAction     String   @default("ORDER_PRODUCT")        // ORDER_PRODUCT, ADD_TO_SHOPPING_LIST, SEND_NOTIFICATION, REQUEST_SERVICE, CANCEL_ACTIVE_REQUEST, TRIGGER_EMERGENCY
+  doublePressAction     String   @default("SEND_NOTIFICATION")    // SEND_NOTIFICATION, ORDER_PRODUCT, CANCEL_ACTIVE_REQUEST
+  hold3sAction          String   @default("CANCEL_ACTIVE_REQUEST")// CANCEL_ACTIVE_REQUEST, REQUEST_SERVICE, TRIGGER_EMERGENCY
+  hold5sAction          String   @default("START_CONFIGURATION")  // START_CONFIGURATION, TRIGGER_EMERGENCY
+  customActionPayload   String?  // JSON metadata (e.g. tin nhắn tùy chỉnh, loại dịch vụ)
+
+  version               Int      @default(1)
+  updatedByUserId       String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DeviceEvent {
+  id           String   @id @default(uuid())
+  deviceId     String
+  device       Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  eventType    String // "SINGLE_PRESS", "DOUBLE_PRESS", "HOLD_3S", "HOLD_5S", "LOW_BATTERY"
+  requestId    String   @unique
+  batteryLevel Int
+  wifiRSSI     Int
+  rawPayload   String?
+  processed    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+model DeviceTelemetry {
+  id              String   @id @default(uuid())
+  deviceId        String
+  device          Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  batteryLevel    Int
+  voltageMv       Int
+  wifiRSSI        Int
+  bootReason      String
+  wakeDurationMs  Int
+  firmwareVersion String
+  createdAt       DateTime @default(now())
+}
+
+// ─── SMARTSUPPLY: CONSUMPTION, PREDICTION & REMINDERS ─────────────────────────
+
+model ConsumptionRecord {
+  id          String     @id @default(uuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product    @relation(fields: [productId], references: [id])
+  deviceId    String?
+  device      Device?    @relation(fields: [deviceId], references: [id])
+  quantity    Int        @default(1)
+  orderId     String?
+  order       Order?     @relation(fields: [orderId], references: [id])
+  recordedAt  DateTime   @default(now())
+
+  @@index([householdId, productId])
+}
+
+model SmartReminder {
+  id          String     @id @default(uuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product    @relation(fields: [productId], references: [id])
+  expectedDate DateTime
+  confidence  Int        // 0-100% confidence score
+  reason      String     // e.g. "Dựa trên chu kỳ tiêu dùng trung bình 7 ngày qua 4 đơn gần nhất"
+  status      String     @default("PENDING") // PENDING, ACCEPTED, ADDED_TO_LIST, SNOOZED, DISMISSED
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([householdId, status])
+}
+
+model ShoppingList {
+  id          String             @id @default(uuid())
+  householdId String             @unique
+  household   Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  items       ShoppingListItem[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
+
+model ShoppingListItem {
+  id                 String       @id @default(uuid())
+  shoppingListId     String
+  shoppingList       ShoppingList @relation(fields: [shoppingListId], references: [id], onDelete: Cascade)
+  productId          String
+  product            Product      @relation(fields: [productId], references: [id])
+  quantity           Int          @default(1)
+  isChecked          Boolean      @default(false)
+  addedByUserId      String?
+  addedFromDeviceId  String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+}
+
+model AutomationRule {
+  id          String     @id @default(uuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  deviceId    String
+  device      Device     @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  trigger     String     // SINGLE_PRESS, DOUBLE_PRESS, HOLD_3S, HOLD_5S, LOW_BATTERY
+  action      String     // ORDER_PRODUCT, ADD_TO_SHOPPING_LIST, SEND_NOTIFICATION, REQUEST_SERVICE, CANCEL_ACTIVE_REQUEST, TRIGGER_EMERGENCY
+  payload     String?    // JSON metadata
+  isEnabled   Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model ServiceRequest {
+  id          String     @id @default(uuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  deviceId    String?
+  device      Device?    @relation(fields: [deviceId], references: [id])
+  storeId     String?
+  store       Store?     @relation(fields: [storeId], references: [id])
+  type        String     @default("MAINTENANCE") // DELIVERY, MAINTENANCE, DEVICE_SUPPORT, PRODUCT_SUPPORT, OTHER
+  category    String     // "Sửa vòi nước", "Kiểm tra van gas", "Thay pin", "Hỏng thiết bị"
+  description String?
+  status      String     @default("PENDING") // PENDING, ACCEPTED, IN_PROGRESS, RESOLVED, CANCELLED
+  priority    String     @default("NORMAL")  // LOW, NORMAL, HIGH, URGENT
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model UrgentAlert {
+  id                   String     @id @default(uuid())
+  householdId          String
+  household            Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  deviceId             String?
+  device               Device?    @relation(fields: [deviceId], references: [id])
+  alertType            String     // GAS_ISSUE, WATER_ISSUE, SECURITY_ISSUE, MAINTENANCE_ISSUE, OTHER
+  message              String
+  status               String     @default("ACTIVE") // ACTIVE, ACKNOWLEDGED, RESOLVED, CANCELLED
+  acknowledgedByUserId String?
+  acknowledgedAt       DateTime?
+  createdAt            DateTime   @default(now())
+}
+
+model OrderBatch {
+  id               String     @id @default(uuid())
+  householdId      String
+  household        Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  storeId          String
+  status           String     @default("PENDING") // PENDING, COMBINED, DELIVERED
+  discountDelivery Float      @default(0)
+  orders           Order[]
+  createdAt        DateTime   @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  type      String   // ORDER_CREATED, ORDER_CONFIRMED, ORDER_CANCELLED, DEVICE_OFFLINE, LOW_BATTERY, SMART_REMINDER, SERVICE_REQUEST_UPDATED, URGENT_ALERT
+  metadata  String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Order {
+  id                 String              @id @default(uuid())
+  orderNumber        String              @unique
+  storeId            String
+  store              Store               @relation(fields: [storeId], references: [id])
+  customerId         String
+  customer           CustomerProfile     @relation(fields: [customerId], references: [id])
+  deviceId           String?
+  device             Device?             @relation(fields: [deviceId], references: [id])
+  householdId        String?
+  household          Household?          @relation(fields: [householdId], references: [id])
+  batchId            String?
+  batch              OrderBatch?         @relation(fields: [batchId], references: [id])
+  status             String              @default("PENDING") // PENDING, CONFIRMED, PREPARING, OUT_FOR_DELIVERY, COMPLETED, CANCELLED, REJECTED
+  totalAmount        Float
+  deliveryAddress    String
+  customerPhone      String
+  customerName       String
+  cancelExpiresAt    DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  items              OrderItem[]
+  consumptions       ConsumptionRecord[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  productName String
+  quantity    Int
+  unitPrice   Float
+  totalPrice  Float
+}
+
+model IdempotencyRecord {
+  key       String   @id
+  deviceId  String
+  orderId   String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String
+  oldValues String?
+  newValues String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
