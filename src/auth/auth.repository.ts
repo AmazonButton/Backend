@@ -167,4 +167,71 @@ export class AuthRepository {
       },
     });
   }
+
+  // --- Email Verification Methods ---
+  async setEmailVerificationToken(userId: bigint, tokenHash: string, expiresAt: Date) {
+    return this.prisma.user.update({
+      where: { userId },
+      data: {
+        emailVerificationToken: tokenHash,
+        emailVerificationExpiresAt: expiresAt,
+      },
+    });
+  }
+
+  async findByEmailVerificationToken(tokenHash: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        emailVerificationToken: tokenHash,
+        emailVerificationExpiresAt: {
+          gt: new Date(),
+        },
+      },
+    });
+  }
+
+  async markEmailVerified(userId: bigint) {
+    return this.prisma.user.update({
+      where: { userId },
+      data: {
+        status: 'ACTIVE',
+        emailVerificationToken: null,
+        emailVerificationExpiresAt: null,
+      },
+    });
+  }
+
+  // --- Refresh Token Rotation Methods ---
+  async createRefreshToken(userId: bigint, tokenHash: string, expiresAt: Date) {
+    return this.prisma.refreshToken.create({
+      data: {
+        userId,
+        tokenHash,
+        expiresAt,
+        isRevoked: false,
+      },
+    });
+  }
+
+  async findRefreshToken(tokenHash: string) {
+    return this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+  }
+
+  async revokeRefreshToken(tokenHash: string) {
+    return this.prisma.refreshToken.updateMany({
+      where: { tokenHash },
+      data: { isRevoked: true },
+    });
+  }
+
+  async revokeAllUserRefreshTokens(userId: bigint) {
+    return this.prisma.refreshToken.updateMany({
+      where: { userId },
+      data: { isRevoked: true },
+    });
+  }
 }
+
