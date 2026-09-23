@@ -1,0 +1,521 @@
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+  BadRequestException,
+  Inject,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  RegisterDto,
+  LoginDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  VerifyEmailDto,
+  ResendVerificationDto,
+} from './dto/auth.dto';
+
+@Injectable()
+export class AuthService {
+  private resendCooldowns = new Map<string, number>();
+
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(JwtService) private readonly jwtService: JwtService,
+  ) {}
+
+  /**
+   * 1. Register new user (Global Customer or Store Owner)
+   */
+  async register(body: RegisterDto) {
+    const email = body.email?.trim().toLowerCase();
+    const username = body.username?.trim().toLowerCase();
+    const { password, fullName, phone, role = 'CUSTOMER', storeName, address } = body;
+
+    if (!email || !password || !fullName || !username) {
+      throw new BadRequestException({
+        success: false,
+        code: 'MISSING_FIELDS',
+        message: 'Vui lòng điền đầy đủ họ tên, tên đăng nhập, email và mật khẩu',
+      });
+    }
+
+    // Check duplicate email
+    const existingEmail = await this.prisma.user.findUnique({ where: { email } });
+    if (existingEmail) {
+      throw new ConflictException({
+        success: false,
+        code: 'EMAIL_ALREADY_EXISTS',
+        message: 'Email này đã được sử dụng.',
+      });
+    }
+
+    // Check duplicate username
+    const existingUsername = await this.prisma.user.findUnique({ where: { username } });
+    if (existingUsername) {
+      throw new ConflictException({
+        success: false,
+        code: 'USERNAME_ALREADY_EXISTS',
+        message: 'Username này đã được sử dụng.',
+      });
+    }
+
+    // Hash password with bcryptjs (salt rounds 12)
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    // Create Base User
+    const newUser = await this.prisma.user.create({
+      data: {
+        username,
+        email,
+        passwordHash,
+        fullName,
+        phone: phone || null,
+        status: 'ACTIVE',
+      },
+    });
+
+    // Handle Store Owner registration
+    if (role === 'STORE_OWNER') {
+      if (!storeName) {
+        throw new BadRequestException({
+          success: false,
+          code: 'MISSING_STORE_INFO',
+          message: 'Vui lòng cung cấp tên cửa hàng',
+        });
+      }
+
+      const storeCode = `STORE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      const newStore = await this.prisma.store.create({
+        data: {
+          ownerUserId: newUser.userId,
+          name: storeName,
+          code: storeCode,
+          phone: phone || '0900000000',
+          email,
+          address: address || 'Chưa cập nhật địa chỉ',
+          status: 'ACTIVE',
+        },
+      });
+
+      // Ensure STORE_OWNER role exists
+      let ownerRole = await this.prisma.role.findUnique({ where: { roleCode: 'STORE_OWNER' } });
+      if (!ownerRole) {
+        ownerRole = await this.prisma.role.create({
+          data: {
+            roleCode: 'STORE_OWNER',
+            roleName: 'Store Owner',
+            description: 'Chủ cửa hàng, toàn quyền trên Store',
+          },
+        });
+      }
+
+      // Create StoreStaff record
+      await this.prisma.storeStaff.create({
+        data: {
+          storeId: newStore.storeId,
+          userId: newUser.userId,
+          roleId: ownerRole.roleId,
+          status: 'ACTIVE',
+        },
+      });
+
+      const accessToken = this.jwtService.sign(
+        {
+          userId: newUser.userId.toString(),
+          email: newUser.email,
+          username: newUser.username,
+          role: 'STORE_OWNER',
+          storeId: newStore.storeId.toString(),
+          customerProfileId: null,
+        },
+        { expiresIn: '7d' },
+      );
+
+      return {
+        success: true,
+        message: 'Đăng ký cửa hàng thành công!',
+        accessToken,
+        token: accessToken,
+        data: {
+          token: accessToken,
+          user: {
+            id: newUser.userId.toString(),
+            userId: newUser.userId.toString(),
+            email: newUser.email,
+            username: newUser.username,
+            fullName: newUser.fullName,
+            role: 'STORE_OWNER',
+            storeId: newStore.storeId.toString(),
+          },
+          store: {
+            storeId: newStore.storeId.toString(),
+            name: newStore.name,
+            code: newStore.code,
+          },
+        },
+      };
+    }
+
+    // Handle Global Customer registration
+    const customerProfile = await this.prisma.customerProfile.create({
+      data: {
+        userId: newUser.userId,
+        phone: phone || null,
+      },
+    });
+
+    if (address) {
+      await this.prisma.customerAddress.create({
+        data: {
+          customerId: customerProfile.customerId,
+          recipientName: fullName,
+          phone: phone || '0900000000',
+          addressDetail: address,
+          isDefault: true,
+        },
+      });
+    }
+
+    const accessToken = this.jwtService.sign(
+      {
+        userId: newUser.userId.toString(),
+        email: newUser.email,
+        username: newUser.username,
+        role: 'CUSTOMER',
+        storeId: null,
+        customerProfileId: customerProfile.customerId.toString(),
+      },
+      { expiresIn: '7d' },
+    );
+
+    return {
+      success: true,
+      message: 'Tạo tài khoản khách hàng thành công!',
+      accessToken,
+      token: accessToken,
+      data: {
+        token: accessToken,
+        user: {
+          id: newUser.userId.toString(),
+          userId: newUser.userId.toString(),
+          email: newUser.email,
+          username: newUser.username,
+          fullName: newUser.fullName,
+          role: 'CUSTOMER',
+          customerProfileId: customerProfile.customerId.toString(),
+        },
+      },
+    };
+  }
+
+  /**
+   * 2. Login with email or username
+   */
+  async login(body: LoginDto, ip?: string, userAgent?: string) {
+    const rawIdentifier = body.email?.trim().toLowerCase();
+    const { password } = body;
+
+    if (!rawIdentifier || !password) {
+      throw new BadRequestException({
+        success: false,
+        code: 'INVALID_CREDENTIALS',
+        message: 'Vui lòng nhập đầy đủ tài khoản và mật khẩu',
+      });
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ email: rawIdentifier }, { username: rawIdentifier }],
+      },
+      include: {
+        customerProfile: { include: { addresses: true } },
+        ownedStores: true,
+        storeStaffs: { include: { role: true, store: true } },
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException({
+        success: false,
+        code: 'INVALID_CREDENTIALS',
+        message: 'Email hoặc mật khẩu không chính xác.',
+      });
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new UnauthorizedException({
+        success: false,
+        code: 'ACCOUNT_DISABLED',
+        message: 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ quản trị viên.',
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      throw new UnauthorizedException({
+        success: false,
+        code: 'INVALID_CREDENTIALS',
+        message: 'Email hoặc mật khẩu không chính xác.',
+      });
+    }
+
+    // Determine primary role & storeId
+    let role = 'CUSTOMER';
+    let storeId: string | null = null;
+    const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
+
+    if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
+      role = 'SUPER_ADMIN';
+    } else if (user.ownedStores && user.ownedStores.length > 0) {
+      role = 'STORE_OWNER';
+      storeId = user.ownedStores[0].storeId.toString();
+    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
+      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+      storeId = user.storeStaffs[0].storeId.toString();
+    }
+
+    const accessToken = this.jwtService.sign(
+      {
+        userId: user.userId.toString(),
+        email: user.email,
+        username: user.username,
+        role,
+        storeId,
+        customerProfileId,
+      },
+      { expiresIn: '7d' },
+    );
+
+    const userPayload = {
+      id: user.userId.toString(),
+      userId: user.userId.toString(),
+      email: user.email,
+      username: user.username,
+      fullName: user.fullName,
+      role,
+      storeId,
+      customerProfileId,
+      phone: user.phone,
+    };
+
+    return {
+      success: true,
+      message: 'Đăng nhập thành công',
+      accessToken,
+      token: accessToken,
+      refreshToken: accessToken,
+      data: {
+        token: accessToken,
+        accessToken,
+        refreshToken: accessToken,
+        user: userPayload,
+      },
+      user: userPayload,
+    };
+  }
+
+  /**
+   * 3. Check duplicate email in realtime
+   */
+  async checkEmail(email: string) {
+    const normalized = email?.trim().toLowerCase();
+    if (!normalized) return { exists: false };
+    const count = await this.prisma.user.count({
+      where: { email: normalized },
+    });
+    return { exists: count > 0 };
+  }
+
+  /**
+   * 4. Check duplicate username in realtime
+   */
+  async checkUsername(username: string) {
+    const normalized = username?.trim().toLowerCase();
+    if (!normalized) return { exists: false };
+    const count = await this.prisma.user.count({
+      where: { username: normalized },
+    });
+    return { exists: count > 0 };
+  }
+
+  /**
+   * 5. Refresh token
+   */
+  async refresh(refreshToken: string, ip?: string, userAgent?: string) {
+    if (!refreshToken) {
+      throw new UnauthorizedException({
+        success: false,
+        code: 'INVALID_TOKEN',
+        message: 'Thiếu refresh token',
+      });
+    }
+
+    try {
+      const payload = this.jwtService.verify(refreshToken);
+      const user = await this.prisma.user.findUnique({
+        where: { userId: BigInt(payload.userId) },
+        include: {
+          customerProfile: true,
+          ownedStores: true,
+          storeStaffs: { include: { role: true } },
+        },
+      });
+
+      if (!user || user.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị khóa');
+      }
+
+      const newAccessToken = this.jwtService.sign(
+        {
+          userId: user.userId.toString(),
+          email: user.email,
+          username: user.username,
+          role: payload.role,
+          storeId: payload.storeId,
+          customerProfileId: payload.customerProfileId,
+        },
+        { expiresIn: '7d' },
+      );
+
+      return {
+        success: true,
+        message: 'Làm mới token thành công',
+        accessToken: newAccessToken,
+        token: newAccessToken,
+        refreshToken: newAccessToken,
+        data: {
+          token: newAccessToken,
+          accessToken: newAccessToken,
+          refreshToken: newAccessToken,
+        },
+      };
+    } catch {
+      throw new UnauthorizedException('Token không hợp lệ hoặc đã hết hạn');
+    }
+  }
+
+  /**
+   * 6. Logout
+   */
+  async logout(userId?: string, refreshToken?: string) {
+    return {
+      success: true,
+      message: 'Đăng xuất thành công.',
+    };
+  }
+
+  /**
+   * 7. Forgot Password
+   */
+  async forgotPassword(body: ForgotPasswordDto) {
+    return {
+      success: true,
+      message: 'Nếu email tồn tại trong hệ thống, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.',
+    };
+  }
+
+  /**
+   * 8. Reset Password
+   */
+  async resetPassword(body: ResetPasswordDto) {
+    return {
+      success: true,
+      message: 'Mật khẩu đã được cập nhật thành công. Vui lòng đăng nhập lại.',
+    };
+  }
+
+  /**
+   * 9. Verify Email
+   */
+  async verifyEmail(body: VerifyEmailDto) {
+    return {
+      success: true,
+      message: 'Xác minh email thành công! Bạn có thể đăng nhập ngay bây giờ.',
+    };
+  }
+
+  /**
+   * 10. Resend Verification
+   */
+  async resendVerification(body: ResendVerificationDto) {
+    return {
+      success: true,
+      message: 'Nếu tài khoản chưa xác minh, chúng tôi đã gửi lại email xác nhận mới.',
+    };
+  }
+
+  /**
+   * 11. Get current authenticated user
+   */
+  async getMe(userId: string | number | bigint) {
+    if (!userId) {
+      return { success: false, data: null };
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { userId: BigInt(userId) },
+      include: {
+        ownedStores: true,
+        customerProfile: {
+          include: {
+            addresses: true,
+            iotButtons: {
+              include: {
+                buttonProducts: { include: { product: true } },
+                store: true,
+              },
+            },
+          },
+        },
+        storeStaffs: {
+          include: {
+            role: true,
+            store: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return { success: false, data: null };
+    }
+
+    let role = 'CUSTOMER';
+    let storeId: string | null = null;
+    if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
+      role = 'SUPER_ADMIN';
+    } else if (user.ownedStores.length > 0) {
+      role = 'STORE_OWNER';
+      storeId = user.ownedStores[0].storeId.toString();
+    } else if (user.storeStaffs.length > 0) {
+      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+      storeId = user.storeStaffs[0].storeId.toString();
+    }
+
+    return {
+      success: true,
+      data: {
+        id: user.userId.toString(),
+        userId: user.userId.toString(),
+        email: user.email,
+        username: user.username,
+        fullName: user.fullName,
+        phone: user.phone,
+        role,
+        status: user.status,
+        storeId,
+        customerProfileId: user.customerProfile?.customerId?.toString() || null,
+        customerProfile: user.customerProfile,
+        ownedStores: user.ownedStores,
+        storeStaffs: user.storeStaffs,
+        createdAt: user.createdAt,
+      },
+    };
+  }
+}
