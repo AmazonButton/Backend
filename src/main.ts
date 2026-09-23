@@ -6,6 +6,8 @@ import { AppModule } from './app.module';
 import helmet from 'helmet';
 import cors from 'cors';
 
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+
 async function bootstrap() {
   // Boot-time env validation: crash early if critical secrets are missing
   const requiredEnvVars = ['JWT_SECRET'];
@@ -43,12 +45,53 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
 
+  // Setup Swagger Documentation
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Smart Order Button Platform API')
+    .setDescription(
+      'Nền tảng Nút Bấm Đặt Hàng Thông Minh Đa Cửa Hàng (Multi-Store IoT Button Platform - BRD V2.1).\n\n' +
+      'Bao gồm đầy đủ các module: Auth & IAM, IoT Edge Gate (HMAC-SHA256), Devices & Zero-Touch Provisioning, Products & Inventory, Orders, Admin Management & Analytics.',
+    )
+    .setVersion('2.1.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'Nhập JWT Token nhận được từ /api/v1/auth/login',
+        in: 'header',
+      },
+      'JWT-auth',
+    )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: 'x-signature',
+        in: 'header',
+        description: 'Chữ ký HMAC-SHA256 của nút bấm IoT',
+      },
+      'HMAC-Signature',
+    )
+    .build();
+
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('docs', app, document, {
+    customSiteTitle: 'Smart Order Button API Documentation (Swagger)',
+    swaggerOptions: {
+      persistAuthorization: true,
+      filter: true,
+      displayRequestDuration: true,
+    },
+  });
+
   const port = process.env.PORT || 5000;
   await app.listen(port, '0.0.0.0');
 
   console.log(`=======================================================`);
   console.log(`🚀 SMART ORDER BUTTON — NESTJS CLOUD & REALTIME CORE`);
-  console.log(`📡 NestJS Server running on http://localhost:${port}/api`);
+  console.log(`📡 NestJS Server running on http://localhost:${port}/api/v1`);
+  console.log(`📚 Swagger API Docs:  http://localhost:${port}/docs`);
   console.log(`🔒 Security: HMAC-SHA256 Edge Gate & Multi-tenant RBAC`);
   console.log(`⚡ WebSocket: Socket.io Room Gateway Active`);
   console.log(`=======================================================`);
