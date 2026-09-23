@@ -5,8 +5,10 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
 import cors from 'cors';
-
+import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   // Boot-time env validation: crash early if critical secrets are missing
@@ -19,6 +21,31 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+
+  // Enable shutdown hooks for graceful termination
+  app.enableShutdownHooks();
+
+  // Express body size limit (prevent DoS via massive payloads)
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+  // Global exception filter for uniform error envelopes & security error masking
+  app.useGlobalFilters(new AllExceptionsFilter());
+
+  // Global rate limiter (1000 requests per 15 minutes per IP)
+  app.use(
+    rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 1000,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: {
+        success: false,
+        message: 'Quá nhiều yêu cầu từ địa chỉ IP của bạn. Vui lòng thử lại sau 15 phút.',
+        errorCode: 'RATE_LIMIT_EXCEEDED',
+      },
+    }),
+  );
 
   // Enable global validation pipeline — activates all class-validator DTOs
   app.useGlobalPipes(
