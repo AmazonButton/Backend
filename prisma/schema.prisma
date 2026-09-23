@@ -1,0 +1,334 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Role {
+  roleId      BigInt       @id @default(autoincrement()) @map("role_id")
+  roleCode    String       @unique @map("role_code")
+  roleName    String       @map("role_name")
+  description String?
+  storeStaffs StoreStaff[]
+
+  @@map("roles")
+}
+
+model User {
+  userId               BigInt                @id @default(autoincrement()) @map("user_id")
+  authId               String?               @unique @map("auth_id") @db.Uuid
+  username             String                @unique
+  email                String                @unique
+  passwordHash         String                @map("password_hash")
+  fullName             String                @map("full_name")
+  phone                String?
+  status               String                @default("ACTIVE")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at")
+
+  ownedStores          Store[]               @relation("StoreOwner")
+  storeStaffs          StoreStaff[]
+  customerProfile      CustomerProfile?
+  priceHistories       ProductPriceHistory[]
+  orderStatusHistories OrderStatusHistory[]
+
+  @@map("users")
+}
+
+model Store {
+  storeId        BigInt          @id @default(autoincrement()) @map("store_id")
+  ownerUserId    BigInt          @map("owner_user_id")
+  owner          User            @relation("StoreOwner", fields: [ownerUserId], references: [userId], onDelete: Restrict)
+  name           String
+  code           String          @unique
+  email          String?
+  phone          String
+  address        String
+  status         String          @default("ACTIVE")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @default(now()) @updatedAt @map("updated_at")
+
+  staffs         StoreStaff[]
+  storeCustomers StoreCustomer[]
+  categories     Category[]
+  products       Product[]
+  inventories    Inventory[]
+  iotButtons     IoTButton[]
+  orders         Order[]
+
+  @@map("store")
+}
+
+model StoreStaff {
+  storeStaffId BigInt    @id @default(autoincrement()) @map("store_staff_id")
+  storeId      BigInt    @map("store_id")
+  store        Store     @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  userId       BigInt    @map("user_id")
+  user         User      @relation(fields: [userId], references: [userId], onDelete: Restrict)
+  roleId       BigInt    @map("role_id")
+  role         Role      @relation(fields: [roleId], references: [roleId], onDelete: Restrict)
+  status       String    @default("ACTIVE")
+  joinedAt     DateTime  @default(now()) @map("joined_at")
+  leftAt       DateTime? @map("left_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([storeId, userId], name: "uq_store_staff_store_user")
+  @@map("store_staff")
+}
+
+model CustomerProfile {
+  customerId     BigInt            @id @default(autoincrement()) @map("customer_id")
+  userId         BigInt            @unique @map("user_id")
+  user           User              @relation(fields: [userId], references: [userId], onDelete: Restrict)
+  phone          String?
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @default(now()) @updatedAt @map("updated_at")
+
+  addresses      CustomerAddress[]
+  storeCustomers StoreCustomer[]
+  iotButtons     IoTButton[]
+  orders         Order[]
+
+  @@map("customer_profile")
+}
+
+model CustomerAddress {
+  addressId     BigInt          @id @default(autoincrement()) @map("address_id")
+  customerId    BigInt          @map("customer_id")
+  customer      CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  recipientName String          @map("recipient_name")
+  phone         String
+  addressDetail String          @map("address_detail")
+  ward          String?
+  district      String?
+  province      String?
+  isDefault     Boolean         @default(false) @map("is_default")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at")
+
+  iotButtons    IoTButton[]
+
+  @@unique([customerId, addressId], name: "uq_customer_address_pair")
+  @@map("customer_address")
+}
+
+model StoreCustomer {
+  storeCustomerId BigInt          @id @default(autoincrement()) @map("store_customer_id")
+  storeId         BigInt          @map("store_id")
+  store           Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  customerId      BigInt          @map("customer_id")
+  customer        CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  status          String          @default("ACTIVE")
+  joinedAt        DateTime        @default(now()) @map("joined_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([storeId, customerId], name: "uq_store_customer")
+  @@map("store_customer")
+}
+
+model Category {
+  categoryId       BigInt     @id @default(autoincrement()) @map("category_id")
+  storeId          BigInt     @map("store_id")
+  store            Store      @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  parentCategoryId BigInt?    @map("parent_category_id")
+  parentCategory   Category?  @relation("CategoryHierarchy", fields: [storeId, parentCategoryId], references: [storeId, categoryId], onDelete: SetNull)
+  subCategories    Category[] @relation("CategoryHierarchy")
+  categoryName     String     @map("category_name")
+  status           String     @default("ACTIVE")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at")
+
+  products         Product[]
+
+  @@unique([storeId, categoryId], name: "uq_category_store_pair")
+  @@map("category")
+}
+
+model Product {
+  productId      BigInt                @id @default(autoincrement()) @map("product_id")
+  storeId        BigInt                @map("store_id")
+  store          Store                 @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  categoryId     BigInt?               @map("category_id")
+  category       Category?             @relation(fields: [storeId, categoryId], references: [storeId, categoryId], onDelete: SetNull)
+  productCode    String                @map("product_code")
+  productName    String                @map("product_name")
+  brand          String?
+  description    String?
+  basePrice      Decimal               @map("base_price") @db.Decimal(15, 2)
+  status         String                @default("ACTIVE")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at")
+
+  priceHistories ProductPriceHistory[]
+  discounts      ProductDiscount[]
+  inventory      Inventory?
+  buttonProducts ButtonProduct[]
+  orderItems     OrderItem[]
+
+  @@unique([storeId, productCode], name: "uq_product_store_code")
+  @@unique([storeId, productId], name: "uq_product_store_pair")
+  @@map("product")
+}
+
+model ProductPriceHistory {
+  historyId       BigInt   @id @default(autoincrement()) @map("history_id")
+  productId       BigInt   @map("product_id")
+  product         Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  oldPrice        Decimal  @map("old_price") @db.Decimal(15, 2)
+  newPrice        Decimal  @map("new_price") @db.Decimal(15, 2)
+  changedByUserId BigInt?  @map("changed_by_user_id")
+  changedByUser   User?    @relation(fields: [changedByUserId], references: [userId], onDelete: SetNull)
+  changedAt       DateTime @default(now()) @map("changed_at")
+
+  @@map("product_price_history")
+}
+
+model ProductDiscount {
+  discountId      BigInt    @id @default(autoincrement()) @map("discount_id")
+  productId       BigInt    @map("product_id")
+  product         Product   @relation(fields: [productId], references: [productId], onDelete: Restrict)
+  discountPercent Decimal?  @map("discount_percent") @db.Decimal(5, 2)
+  discountAmount  Decimal?  @map("discount_amount") @db.Decimal(15, 2)
+  startAt         DateTime  @map("start_at")
+  endAt           DateTime  @map("end_at")
+  status          String    @default("ACTIVE")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("product_discount")
+}
+
+model Inventory {
+  inventoryId    BigInt   @id @default(autoincrement()) @map("inventory_id")
+  storeId        BigInt   @map("store_id")
+  store          Store    @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  productId      BigInt   @unique @map("product_id")
+  product        Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  quantityOnHand Int      @default(0) @map("quantity_on_hand")
+  reservedQuantity Int    @default(0) @map("reserved_quantity")
+  minStockAlert  Int      @default(5) @map("min_stock_alert")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("inventory")
+}
+
+model IoTButton {
+  buttonId        BigInt          @id @default(autoincrement()) @map("button_id")
+  storeId         BigInt          @map("store_id")
+  store           Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  customerId      BigInt          @map("customer_id")
+  customer        CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  addressId       BigInt          @map("address_id")
+  address         CustomerAddress @relation(fields: [customerId, addressId], references: [customerId, addressId], onDelete: Restrict)
+  deviceId        String          @unique @map("device_id")
+  buttonCode      String          @unique @map("button_code")
+  buttonName      String?         @map("button_name")
+  status          String          @default("ACTIVE")
+  installedAt     DateTime?       @map("installed_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at")
+
+  buttonProducts  ButtonProduct[]
+  orders          Order[]
+
+  @@unique([buttonId, customerId, storeId], name: "uq_iot_button_context")
+  @@map("iot_button")
+}
+
+model ButtonProduct {
+  buttonProductId BigInt    @id @default(autoincrement()) @map("button_product_id")
+  buttonId        BigInt    @map("button_id")
+  button          IoTButton @relation(fields: [buttonId], references: [buttonId], onDelete: Cascade)
+  productId       BigInt    @map("product_id")
+  product         Product   @relation(fields: [productId], references: [productId], onDelete: Restrict)
+  quantity        Int       @default(1)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([buttonId, productId], name: "uq_button_product")
+  @@map("button_product")
+}
+
+model Order {
+  orderId               BigInt               @id @default(autoincrement()) @map("order_id")
+  orderCode             String               @unique @map("order_code")
+  storeId               BigInt               @map("store_id")
+  store                 Store                @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  customerId            BigInt               @map("customer_id")
+  customer              CustomerProfile      @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  buttonId              BigInt               @map("button_id")
+  button                IoTButton            @relation(fields: [buttonId, customerId, storeId], references: [buttonId, customerId, storeId], onDelete: Restrict)
+  orderStatus           String               @default("PENDING") @map("order_status")
+  paymentStatus         String               @default("UNPAID") @map("payment_status")
+  paymentMethod         String               @map("payment_method")
+  subtotalAmount        Decimal              @default(0) @map("subtotal_amount") @db.Decimal(15, 2)
+  discountAmount        Decimal              @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  shippingFee           Decimal              @default(0) @map("shipping_fee") @db.Decimal(15, 2)
+  totalAmount           Decimal              @default(0) @map("total_amount") @db.Decimal(15, 2)
+  shippingRecipientName String               @map("shipping_recipient_name")
+  shippingPhone         String               @map("shipping_phone")
+  shippingAddress       String               @map("shipping_address")
+  orderNote             String?              @map("order_note")
+  orderDate             DateTime             @default(now()) @map("order_date")
+  completedAt           DateTime?            @map("completed_at")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @default(now()) @updatedAt @map("updated_at")
+
+  items                 OrderItem[]
+  statusHistories       OrderStatusHistory[]
+  paymentTransactions   PaymentTransaction[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  orderItemId             BigInt   @id @default(autoincrement()) @map("order_item_id")
+  orderId                 BigInt   @map("order_id")
+  order                   Order    @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  productId               BigInt   @map("product_id")
+  product                 Product  @relation(fields: [productId], references: [productId], onDelete: Restrict)
+  productNameSnapshot     String   @map("product_name_snapshot")
+  unitPriceSnapshot       Decimal  @map("unit_price_snapshot") @db.Decimal(15, 2)
+  discountPercentSnapshot Decimal? @default(0) @map("discount_percent_snapshot") @db.Decimal(5, 2)
+  discountAmountSnapshot  Decimal? @default(0) @map("discount_amount_snapshot") @db.Decimal(15, 2)
+  finalUnitPrice          Decimal  @map("final_unit_price") @db.Decimal(15, 2)
+  quantity                Int
+  itemSubtotal            Decimal  @map("item_subtotal") @db.Decimal(15, 2)
+
+  @@map("order_item")
+}
+
+model OrderStatusHistory {
+  historyId       BigInt   @id @default(autoincrement()) @map("history_id")
+  orderId         BigInt   @map("order_id")
+  order           Order    @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  changedByUserId BigInt?  @map("changed_by_user_id")
+  changedByUser   User?    @relation(fields: [changedByUserId], references: [userId], onDelete: SetNull)
+  oldStatus       String?  @map("old_status")
+  newStatus       String   @map("new_status")
+  reason          String?
+  changedAt       DateTime @default(now()) @map("changed_at")
+
+  @@map("order_status_history")
+}
+
+model PaymentTransaction {
+  paymentTransactionId BigInt    @id @default(autoincrement()) @map("payment_transaction_id")
+  orderId              BigInt    @map("order_id")
+  order                Order     @relation(fields: [orderId], references: [orderId], onDelete: Restrict)
+  provider             String
+  transactionCode      String?   @map("transaction_code")
+  amount               Decimal   @db.Decimal(15, 2)
+  paymentMethod        String    @map("payment_method")
+  status               String    @default("PENDING")
+  paidAt               DateTime? @map("paid_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("payment_transaction")
+}
