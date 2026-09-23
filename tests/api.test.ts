@@ -324,6 +324,59 @@ async function runTests() {
     failed++;
   }
 
+  // 11. Security: Anti-Enumeration Forgot Password
+  try {
+    const res = await fetch(`${API_URL}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'customer@smartorder.local' }),
+    });
+    const data = await res.json();
+    if (res.status === 200 && data.success === true) {
+      logTest('Advanced Auth: Anti-Timing Enumeration Forgot Password request', true);
+      passed++;
+    } else {
+      throw new Error(data.message || JSON.stringify(data));
+    }
+  } catch (e: any) {
+    logTest('Advanced Auth: Forgot Password', false, e.message);
+    failed++;
+  }
+
+  // 12. Media: Cloudinary Upload Signature
+  try {
+    const res = await fetch(`${API_URL}/media/signature?folder=smart-button/products`, {
+      headers: { Authorization: `Bearer ${storeToken}` },
+    });
+    const data = await res.json();
+    if (res.status === 200 && data.success && data.data?.signature && data.data?.apiKey) {
+      logTest(`Secure Media: Generated Cloudinary upload signature (Cloud: ${data.data.cloudName})`, true);
+      passed++;
+    } else {
+      throw new Error(data.message || JSON.stringify(data));
+    }
+  } catch (e: any) {
+    logTest('Secure Media: Cloudinary Signature', false, e.message);
+    failed++;
+  }
+
+  // 13. API Standard: Products List & Uniform Envelope Structure
+  try {
+    const res = await fetch(`${API_URL}/products?page=1&pageSize=5`, {
+      headers: { Authorization: `Bearer ${storeToken}` },
+    });
+    const data = await res.json();
+    if (res.status === 200 && data.success === true && Array.isArray(data.data)) {
+      logTest('API Standard: GET /products returns uniform envelope with data array', true);
+      passed++;
+    } else {
+      throw new Error(data.message || JSON.stringify(data));
+    }
+  } catch (e: any) {
+    logTest('API Standard: Products list & envelope', false, e.message);
+    failed++;
+  }
+
   console.log('\n------------------------------------------------------');
   console.log(`Test Results: \x1b[32m${passed} Passed\x1b[0m, \x1b[31m${failed} Failed\x1b[0m`);
   console.log('======================================================\n');

@@ -26,6 +26,8 @@ model User {
   fullName             String                @map("full_name")
   phone                String?
   status               String                @default("ACTIVE")
+  passwordResetToken     String?               @map("password_reset_token")
+  passwordResetExpiresAt DateTime?             @map("password_reset_expires_at")
   createdAt            DateTime              @default(now()) @map("created_at")
   updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at")
 
