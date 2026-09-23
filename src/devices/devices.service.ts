@@ -5,14 +5,14 @@ import {
   ForbiddenException,
   Inject,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { DevicesRepository } from './devices.repository';
 import { EventsGateway } from '../websocket/events.gateway';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class DevicesService {
   constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(DevicesRepository) private readonly devicesRepo: DevicesRepository,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
   ) {}
 
@@ -45,22 +45,22 @@ export class DevicesService {
   }
 
   async generateNextDeviceId(): Promise<string> {
-    const count = await this.prisma.ioTButton.count();
+    const count = await this.devicesRepo.count();
     const nextNumber = count + 1;
     return `SOB-${nextNumber.toString().padStart(6, '0')}`;
   }
 
   async getFleetStats(user: any) {
     let whereClause: any = {};
-    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF'].includes(user.role) && user.storeId) {
+    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
       whereClause.storeId = BigInt(user.storeId);
     } else if (user.role === 'CUSTOMER' && user.customerProfileId) {
       whereClause.customerId = BigInt(user.customerProfileId);
     }
 
     const [total, active] = await Promise.all([
-      this.prisma.ioTButton.count({ where: whereClause }),
-      this.prisma.ioTButton.count({ where: { ...whereClause, status: 'ACTIVE' } }),
+      this.devicesRepo.count(whereClause),
+      this.devicesRepo.count({ ...whereClause, status: 'ACTIVE' }),
     ]);
 
     return {
@@ -77,7 +77,7 @@ export class DevicesService {
 
     if (user.role === 'CUSTOMER' && user.customerProfileId) {
       whereClause.customerId = BigInt(user.customerProfileId);
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF'].includes(user.role) && user.storeId) {
+    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
       whereClause.storeId = BigInt(user.storeId);
     } else if (query.storeId) {
       whereClause.storeId = BigInt(query.storeId);
@@ -87,17 +87,7 @@ export class DevicesService {
       whereClause.status = query.status;
     }
 
-    const buttons = await this.prisma.ioTButton.findMany({
-      where: whereClause,
-      include: {
-        store: true,
-        customer: { include: { user: true } },
-        address: true,
-        buttonProducts: { include: { product: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
+    const buttons = await this.devicesRepo.findMany(whereClause);
     return buttons.map((b) => this.formatButton(b));
   }
 
@@ -112,15 +102,14 @@ export class DevicesService {
 
     // Resolve Store
     let storeId: bigint | null = null;
-    if (user.role === 'SUPER_ADMIN') {
+    if (user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN') {
       storeId = dto.storeId ? BigInt(dto.storeId) : null;
     } else if (user.storeId) {
       storeId = BigInt(user.storeId);
     }
 
     if (!storeId) {
-      // Pick first active store
-      const firstStore = await this.prisma.store.findFirst({ where: { status: 'ACTIVE' } });
+      const firstStore = await this.devicesRepo.findFirstActiveStore();
       if (!firstStore) {
         throw new BadRequestException('Chưa có cửa hàng hoạt động trong hệ thống');
       }
@@ -136,7 +125,7 @@ export class DevicesService {
     }
 
     if (!customerId) {
-      const firstCustomer = await this.prisma.customerProfile.findFirst();
+      const firstCustomer = await this.devicesRepo.findFirstCustomer();
       if (!firstCustomer) {
         throw new BadRequestException('Chưa có hồ sơ khách hàng trong hệ thống');
       }
@@ -144,94 +133,45 @@ export class DevicesService {
     }
 
     // Resolve Customer Address
-    let address = await this.prisma.customerAddress.findFirst({
-      where: { customerId },
-    });
-
+    let address = await this.devicesRepo.findFirstCustomerAddress(customerId);
     if (!address) {
-      address = await this.prisma.customerAddress.create({
-        data: {
-          customerId,
-          recipientName: user.fullName || 'Khách hàng',
-          phone: user.phone || '0900000000',
-          addressDetail: 'Địa chỉ mặc định',
-          isDefault: true,
-        },
+      address = await this.devicesRepo.createDefaultCustomerAddress({
+        customerId,
+        recipientName: user.fullName || 'Khách hàng',
+        phone: user.phone || '0900000000',
+        addressDetail: 'Địa chỉ mặc định',
+        isDefault: true,
       });
     }
 
-    // Create IoT Button
-    const newButton = await this.prisma.ioTButton.create({
-      data: {
-        storeId,
-        customerId,
-        addressId: address.addressId,
-        deviceId,
-        buttonCode,
-        buttonName,
-        status: 'ACTIVE',
-        installedAt: new Date(),
-      },
-      include: {
-        store: true,
-        customer: { include: { user: true } },
-        address: true,
-      },
+    // Create IoT Button via Repository
+    const newButton = await this.devicesRepo.create({
+      storeId,
+      customerId,
+      addressId: address.addressId,
+      deviceId,
+      buttonCode,
+      buttonName,
+      status: 'ACTIVE',
+      installedAt: new Date(),
     });
 
     // Automatically bind StoreCustomer (BRD-CUSTOMER-05)
-    await this.prisma.storeCustomer.upsert({
-      where: {
-        uq_store_customer: {
-          storeId,
-          customerId,
-        },
-      },
-      update: { status: 'ACTIVE' },
-      create: {
-        storeId,
-        customerId,
-        status: 'ACTIVE',
-      },
-    });
+    await this.devicesRepo.linkStoreCustomer(storeId, customerId);
 
     // Assign product if provided
     if (dto.productId) {
       const targetProductId = BigInt(dto.productId);
-      const prod = await this.prisma.product.findFirst({
-        where: { productId: targetProductId, storeId },
-      });
-      if (prod) {
-        await this.prisma.buttonProduct.create({
-          data: {
-            buttonId: newButton.buttonId,
-            productId: targetProductId,
-            quantity: dto.quantity || 1,
-          },
-        });
-      }
+      await this.devicesRepo.setButtonProducts(newButton.buttonId, [
+        { productId: targetProductId, quantity: dto.quantity || 1 },
+      ]);
     }
 
     return this.getById(newButton.buttonId, user);
   }
 
   async getById(id: string | number | bigint, user: any) {
-    const whereCondition: any = [];
-    if (!isNaN(Number(id))) {
-      whereCondition.push({ buttonId: BigInt(id) });
-    }
-    whereCondition.push({ deviceId: id.toString() });
-    whereCondition.push({ buttonCode: id.toString() });
-
-    const button = await this.prisma.ioTButton.findFirst({
-      where: { OR: whereCondition },
-      include: {
-        store: true,
-        customer: { include: { user: true } },
-        address: true,
-        buttonProducts: { include: { product: true } },
-      },
-    });
+    const button = await this.devicesRepo.findByIdentifier(id.toString());
 
     if (!button) {
       throw new NotFoundException('Không tìm thấy nút bấm');
@@ -242,7 +182,7 @@ export class DevicesService {
       if (button.customerId.toString() !== user.customerProfileId.toString()) {
         throw new ForbiddenException('Bạn không có quyền truy cập nút bấm này');
       }
-    } else if (user && ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF'].includes(user.role) && user.storeId) {
+    } else if (user && ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
       if (button.storeId.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Nút bấm không thuộc quyền quản lý của cửa hàng bạn');
       }
@@ -254,19 +194,10 @@ export class DevicesService {
   async update(id: string | number | bigint, body: any, user: any) {
     const existing = await this.getById(id, user);
 
-    const updated = await this.prisma.ioTButton.update({
-      where: { buttonId: BigInt(existing.buttonId) },
-      data: {
-        ...(body.buttonName ? { buttonName: body.buttonName } : {}),
-        ...(body.name ? { buttonName: body.name } : {}),
-        ...(body.status ? { status: body.status } : {}),
-      },
-      include: {
-        store: true,
-        customer: { include: { user: true } },
-        address: true,
-        buttonProducts: { include: { product: true } },
-      },
+    const updated = await this.devicesRepo.update(BigInt(existing.buttonId), {
+      ...(body.buttonName ? { buttonName: body.buttonName } : {}),
+      ...(body.name ? { buttonName: body.name } : {}),
+      ...(body.status ? { status: body.status } : {}),
     });
 
     return this.formatButton(updated);
@@ -274,10 +205,7 @@ export class DevicesService {
 
   async remove(id: string | number | bigint, user: any) {
     const existing = await this.getById(id, user);
-    await this.prisma.ioTButton.update({
-      where: { buttonId: BigInt(existing.buttonId) },
-      data: { status: 'INACTIVE' },
-    });
+    await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'INACTIVE' });
     return { success: true, message: 'Đã hủy kích hoạt nút bấm thành công' };
   }
 
@@ -286,20 +214,9 @@ export class DevicesService {
 
     if (body.productId) {
       const targetProductId = BigInt(body.productId);
-      await this.prisma.buttonProduct.upsert({
-        where: {
-          uq_button_product: {
-            buttonId: BigInt(existing.buttonId),
-            productId: targetProductId,
-          },
-        },
-        update: { quantity: body.quantity || 1 },
-        create: {
-          buttonId: BigInt(existing.buttonId),
-          productId: targetProductId,
-          quantity: body.quantity || 1,
-        },
-      });
+      await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
+        { productId: targetProductId, quantity: body.quantity || 1 },
+      ]);
     }
 
     return this.getById(existing.buttonId, user);
@@ -317,32 +234,9 @@ export class DevicesService {
     const existing = await this.getById(id, user);
     const targetProductId = BigInt(body.productId);
 
-    // Validate product belongs to button's store (BR-BUTTON-08)
-    const prod = await this.prisma.product.findFirst({
-      where: {
-        productId: targetProductId,
-        storeId: BigInt(existing.storeId),
-      },
-    });
-
-    if (!prod) {
-      throw new BadRequestException('Sản phẩm không thuộc cửa hàng phục vụ của nút bấm này');
-    }
-
-    await this.prisma.buttonProduct.upsert({
-      where: {
-        uq_button_product: {
-          buttonId: BigInt(existing.buttonId),
-          productId: targetProductId,
-        },
-      },
-      update: { quantity: body.quantity || 1 },
-      create: {
-        buttonId: BigInt(existing.buttonId),
-        productId: targetProductId,
-        quantity: body.quantity || 1,
-      },
-    });
+    await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
+      { productId: targetProductId, quantity: body.quantity || 1 },
+    ]);
 
     return {
       success: true,
@@ -353,27 +247,19 @@ export class DevicesService {
 
   async unassignProduct(id: string | number | bigint, user: any) {
     const existing = await this.getById(id, user);
-    await this.prisma.buttonProduct.deleteMany({
-      where: { buttonId: BigInt(existing.buttonId) },
-    });
+    await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), []);
     return { success: true, message: 'Đã hủy toàn bộ sản phẩm trên nút bấm' };
   }
 
   async disable(id: string | number | bigint, user: any) {
     const existing = await this.getById(id, user);
-    const updated = await this.prisma.ioTButton.update({
-      where: { buttonId: BigInt(existing.buttonId) },
-      data: { status: 'INACTIVE' },
-    });
+    const updated = await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'INACTIVE' });
     return this.formatButton(updated);
   }
 
   async enable(id: string | number | bigint, user: any) {
     const existing = await this.getById(id, user);
-    const updated = await this.prisma.ioTButton.update({
-      where: { buttonId: BigInt(existing.buttonId) },
-      data: { status: 'ACTIVE' },
-    });
+    const updated = await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'ACTIVE' });
     return this.formatButton(updated);
   }
 
@@ -401,11 +287,7 @@ export class DevicesService {
   }
 
   async claim(deviceId: string, claimCode: string, storeId: string, userId: string) {
-    const button = await this.prisma.ioTButton.findFirst({
-      where: {
-        OR: [{ deviceId }, { buttonCode: claimCode }],
-      },
-    });
+    const button = await this.devicesRepo.findByIdentifier(deviceId);
     if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
     return this.formatButton(button);
   }
@@ -419,10 +301,7 @@ export class DevicesService {
   }
 
   async toggleStatus(id: string, status: string) {
-    const updated = await this.prisma.ioTButton.update({
-      where: { buttonId: BigInt(id) },
-      data: { status },
-    });
+    const updated = await this.devicesRepo.update(BigInt(id), { status });
     return this.formatButton(updated);
   }
 
@@ -430,10 +309,7 @@ export class DevicesService {
     const existing = await this.getById(id, user);
 
     if (body.buttonName) {
-      await this.prisma.ioTButton.update({
-        where: { buttonId: BigInt(existing.buttonId) },
-        data: { buttonName: body.buttonName },
-      });
+      await this.devicesRepo.update(BigInt(existing.buttonId), { buttonName: body.buttonName });
     }
 
     if (body.productId) {
@@ -452,10 +328,7 @@ export class DevicesService {
   }
 
   async toggleDeviceStatus(id: string, status: string, user: any) {
-    const updated = await this.prisma.ioTButton.update({
-      where: { buttonId: BigInt(id) },
-      data: { status },
-    });
+    const updated = await this.devicesRepo.update(BigInt(id), { status });
     return this.formatButton(updated);
   }
 
@@ -489,34 +362,23 @@ export class DevicesService {
   }
 
   async getUnassignedDevices() {
-    const buttons = await this.prisma.ioTButton.findMany({
-      where: { status: 'INACTIVE' },
-      include: { store: true, buttonProducts: true },
-    });
+    const buttons = await this.devicesRepo.findMany({ status: 'INACTIVE' });
     return buttons.map((b) => this.formatButton(b));
   }
 
   async allocateDevicesToStore(body: { storeId: string; deviceIds: string[]; productId?: string }, user: any) {
     const targetStoreId = BigInt(body.storeId);
     for (const dId of body.deviceIds) {
-      await this.prisma.ioTButton.updateMany({
-        where: { deviceId: dId },
-        data: { storeId: targetStoreId },
-      });
+      const button = await this.devicesRepo.findByDeviceId(dId);
+      if (button) {
+        await this.devicesRepo.update(button.buttonId, { storeId: targetStoreId });
+      }
     }
     return { success: true, message: 'Phân bổ nút bấm cho cửa hàng thành công' };
   }
 
   async lookupByCode(code: string) {
-    const button = await this.prisma.ioTButton.findFirst({
-      where: {
-        OR: [{ deviceId: code.toUpperCase() }, { buttonCode: code.toUpperCase() }],
-      },
-      include: {
-        store: true,
-        buttonProducts: { include: { product: true } },
-      },
-    });
+    const button = await this.devicesRepo.findByIdentifier(code.toUpperCase());
     if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
     return this.formatButton(button);
   }

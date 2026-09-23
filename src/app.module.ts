@@ -9,6 +9,7 @@ import { DevicesModule } from './devices/devices.module';
 import { ProductsModule } from './products/products.module';
 import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { MediaModule } from './media/media.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -23,6 +24,7 @@ import { AppController } from './app.controller';
     ProductsModule,
     AdminModule,
     AnalyticsModule,
+    MediaModule,
   ],
   controllers: [AppController],
 })

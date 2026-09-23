@@ -5,6 +5,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
+import { AuthRepository } from './auth.repository';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, AuthRateLimitGuard],
-  exports: [AuthService, AuthRateLimitGuard],
+  providers: [AuthService, AuthRepository, JwtStrategy, AuthRateLimitGuard],
+  exports: [AuthService, AuthRepository, AuthRateLimitGuard],
 })
 export class AuthModule {}

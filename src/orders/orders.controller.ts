@@ -48,7 +48,7 @@ export class OrdersController {
     return this.ordersService.simulateButtonPress(body, req.user);
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/status')
   async updateStatus(@Param('id') id: string, @Body() body: UpdateOrderStatusDto) {
     const data = await this.ordersService.updateOrderStatus(id, body.status);

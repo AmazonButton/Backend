@@ -10,7 +10,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { PrismaService } from '../prisma/prisma.service';
+import { AuthRepository } from './auth.repository';
 import {
   RegisterDto,
   LoginDto,
@@ -25,7 +25,7 @@ export class AuthService {
   private resendCooldowns = new Map<string, number>();
 
   constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AuthRepository) private readonly authRepo: AuthRepository,
     @Inject(JwtService) private readonly jwtService: JwtService,
   ) {}
 
@@ -46,7 +46,7 @@ export class AuthService {
     }
 
     // Check duplicate email
-    const existingEmail = await this.prisma.user.findUnique({ where: { email } });
+    const existingEmail = await this.authRepo.findByEmail(email);
     if (existingEmail) {
       throw new ConflictException({
         success: false,
@@ -56,7 +56,7 @@ export class AuthService {
     }
 
     // Check duplicate username
-    const existingUsername = await this.prisma.user.findUnique({ where: { username } });
+    const existingUsername = await this.authRepo.findByUsername(username);
     if (existingUsername) {
       throw new ConflictException({
         success: false,
@@ -68,16 +68,14 @@ export class AuthService {
     // Hash password with bcryptjs (salt rounds 12)
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Create Base User
-    const newUser = await this.prisma.user.create({
-      data: {
-        username,
-        email,
-        passwordHash,
-        fullName,
-        phone: phone || null,
-        status: 'ACTIVE',
-      },
+    // Create Base User via AuthRepository
+    const newUser = await this.authRepo.createUser({
+      username,
+      email,
+      passwordHash,
+      fullName,
+      phone: phone || null,
+      status: 'ACTIVE',
     });
 
     // Handle Store Owner registration
@@ -91,38 +89,32 @@ export class AuthService {
       }
 
       const storeCode = `STORE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      const newStore = await this.prisma.store.create({
-        data: {
-          ownerUserId: newUser.userId,
-          name: storeName,
-          code: storeCode,
-          phone: phone || '0900000000',
-          email,
-          address: address || 'Chưa cập nhật địa chỉ',
-          status: 'ACTIVE',
-        },
+      const newStore = await this.authRepo.createStoreWithOwner({
+        ownerUserId: newUser.userId,
+        name: storeName,
+        code: storeCode,
+        phone: phone || '0900000000',
+        email,
+        address: address || 'Chưa cập nhật địa chỉ',
+        status: 'ACTIVE',
       });
 
       // Ensure STORE_OWNER role exists
-      let ownerRole = await this.prisma.role.findUnique({ where: { roleCode: 'STORE_OWNER' } });
+      let ownerRole = await this.authRepo.findRoleByCode('STORE_OWNER');
       if (!ownerRole) {
-        ownerRole = await this.prisma.role.create({
-          data: {
-            roleCode: 'STORE_OWNER',
-            roleName: 'Store Owner',
-            description: 'Chủ cửa hàng, toàn quyền trên Store',
-          },
+        ownerRole = await this.authRepo.createRole({
+          roleCode: 'STORE_OWNER',
+          roleName: 'Store Owner',
+          description: 'Chủ cửa hàng, toàn quyền trên Store',
         });
       }
 
       // Create StoreStaff record
-      await this.prisma.storeStaff.create({
-        data: {
-          storeId: newStore.storeId,
-          userId: newUser.userId,
-          roleId: ownerRole.roleId,
-          status: 'ACTIVE',
-        },
+      await this.authRepo.createStoreStaff({
+        storeId: newStore.storeId,
+        userId: newUser.userId,
+        roleId: ownerRole.roleId,
+        status: 'ACTIVE',
       });
 
       const accessToken = this.jwtService.sign(
@@ -163,22 +155,18 @@ export class AuthService {
     }
 
     // Handle Global Customer registration
-    const customerProfile = await this.prisma.customerProfile.create({
-      data: {
-        userId: newUser.userId,
-        phone: phone || null,
-      },
+    const customerProfile = await this.authRepo.createCustomerProfile({
+      userId: newUser.userId,
+      phone: phone || null,
     });
 
     if (address) {
-      await this.prisma.customerAddress.create({
-        data: {
-          customerId: customerProfile.customerId,
-          recipientName: fullName,
-          phone: phone || '0900000000',
-          addressDetail: address,
-          isDefault: true,
-        },
+      await this.authRepo.createCustomerAddress({
+        customerId: customerProfile.customerId,
+        recipientName: fullName,
+        phone: phone || '0900000000',
+        addressDetail: address,
+        isDefault: true,
       });
     }
 
@@ -229,16 +217,7 @@ export class AuthService {
       });
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: {
-        OR: [{ email: rawIdentifier }, { username: rawIdentifier }],
-      },
-      include: {
-        customerProfile: { include: { addresses: true } },
-        ownedStores: true,
-        storeStaffs: { include: { role: true, store: true } },
-      },
-    });
+    const user = await this.authRepo.findUserWithAuthRelations(rawIdentifier);
 
     if (!user) {
       throw new UnauthorizedException({
@@ -326,9 +305,7 @@ export class AuthService {
   async checkEmail(email: string) {
     const normalized = email?.trim().toLowerCase();
     if (!normalized) return { exists: false };
-    const count = await this.prisma.user.count({
-      where: { email: normalized },
-    });
+    const count = await this.authRepo.countByEmail(normalized);
     return { exists: count > 0 };
   }
 
@@ -338,9 +315,7 @@ export class AuthService {
   async checkUsername(username: string) {
     const normalized = username?.trim().toLowerCase();
     if (!normalized) return { exists: false };
-    const count = await this.prisma.user.count({
-      where: { username: normalized },
-    });
+    const count = await this.authRepo.countByUsername(normalized);
     return { exists: count > 0 };
   }
 
@@ -358,14 +333,7 @@ export class AuthService {
 
     try {
       const payload = this.jwtService.verify(refreshToken);
-      const user = await this.prisma.user.findUnique({
-        where: { userId: BigInt(payload.userId) },
-        include: {
-          customerProfile: true,
-          ownedStores: true,
-          storeStaffs: { include: { role: true } },
-        },
-      });
+      const user = await this.authRepo.findById(BigInt(payload.userId));
 
       if (!user || user.status !== 'ACTIVE') {
         throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị khóa');
@@ -458,29 +426,7 @@ export class AuthService {
       return { success: false, data: null };
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { userId: BigInt(userId) },
-      include: {
-        ownedStores: true,
-        customerProfile: {
-          include: {
-            addresses: true,
-            iotButtons: {
-              include: {
-                buttonProducts: { include: { product: true } },
-                store: true,
-              },
-            },
-          },
-        },
-        storeStaffs: {
-          include: {
-            role: true,
-            store: true,
-          },
-        },
-      },
-    });
+    const user = await this.authRepo.findById(BigInt(userId));
 
     if (!user) {
       return { success: false, data: null };

@@ -143,14 +143,14 @@ export class DevicesController {
   }
 
   @Post(':id/disable')
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   async disable(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.disable(id, req.user);
     return { success: true, message: 'Đã vô hiệu hóa thiết bị', data };
   }
 
   @Post(':id/enable')
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   async enable(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.enable(id, req.user);
     return { success: true, message: 'Đã kích hoạt thiết bị', data };
@@ -215,7 +215,7 @@ export class DevicesController {
   /**
    * Cập nhật / Sạc / Thay pin cho nút bấm
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/battery')
   async updateBattery(@Param('id') id: string, @Body('batteryLevel') batteryLevel: number, @Request() req: any) {
     const data = await this.devicesService.updateBattery(id, batteryLevel !== undefined ? batteryLevel : 100, req.user);
@@ -225,7 +225,7 @@ export class DevicesController {
   /**
    * Gia hạn thời hạn sử dụng / hạn bảo hành cho nút bấm
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/extend-warranty')
   async extendWarranty(@Param('id') id: string, @Body() body: any, @Request() req: any) {
     const data = await this.devicesService.extendWarranty(id, body, req.user);
@@ -235,7 +235,7 @@ export class DevicesController {
   /**
    * Bật / Tắt trạng thái còn xài hay không của nút bấm
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/toggle-active')
   async toggleActive(@Param('id') id: string, @Body('status') status: string, @Request() req: any) {
     const data = await this.devicesService.toggleDeviceStatus(id, status, req.user);

@@ -5,14 +5,14 @@ import {
   ForbiddenException,
   Inject,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { OrdersRepository } from './orders.repository';
 import { CryptoService } from '../security/crypto.service';
 import { EventsGateway } from '../websocket/events.gateway';
 
 @Injectable()
 export class OrdersService {
   constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(OrdersRepository) private readonly ordersRepo: OrdersRepository,
     @Inject(CryptoService) private readonly crypto: CryptoService,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
   ) {}
@@ -20,27 +20,24 @@ export class OrdersService {
   /**
    * Xử lý tín hiệu bấm nút IoT — Gọi Stored Procedure sp_create_order_from_button
    * trong PostgreSQL chống Race-Condition & 2-Phase Commit (BRD-INV-06),
-   * có cơ chế Fallback Transaction an toàn nếu Stored Procedure chưa được migrate.
+   * có cơ chế Fallback Transaction an toàn qua OrdersRepository.
    */
   async handleButtonEvent(
     device: any,
-    eventPayload: { eventType: string; requestId: string; paymentMethod?: string; shippingFee?: number; battery?: number; rssi?: number; [key: string]: any },
+    eventPayload: {
+      eventType: string;
+      requestId: string;
+      paymentMethod?: string;
+      shippingFee?: number;
+      battery?: number;
+      rssi?: number;
+      [key: string]: any;
+    },
   ) {
     const { eventType, requestId, paymentMethod = 'COD', shippingFee = 0 } = eventPayload;
+    const targetIdentifier = device.deviceId || device.buttonCode || device.id;
 
-    const button = await this.prisma.ioTButton.findFirst({
-      where: {
-        OR: [
-          { deviceId: device.deviceId || device.id },
-          { buttonCode: device.buttonCode || device.id },
-        ],
-      },
-      include: {
-        store: true,
-        customer: { include: { user: true } },
-        buttonProducts: { include: { product: true } },
-      },
-    });
+    const button = await this.ordersRepo.findButtonByIdentifier(targetIdentifier);
 
     if (!button) {
       throw new BadRequestException('Nút bấm chưa được đăng ký trong hệ thống');
@@ -58,88 +55,15 @@ export class OrdersService {
 
     // 1. Cố gắng thực thi qua Stored Procedure PostgreSQL
     try {
-      const result: any[] = await this.prisma.$queryRaw`
-        SELECT sp_create_order_from_button(
-          ${button.buttonId}::bigint,
-          ${paymentMethod}::varchar,
-          ${shippingFee}::decimal,
-          ${'Đơn hàng tự động từ nút bấm IoT'}::text
-        ) AS order_id
-      `;
-      newOrderId = result[0]?.order_id;
+      newOrderId = await this.ordersRepo.executeSpCreateOrder(
+        button.buttonId,
+        paymentMethod,
+        shippingFee,
+        'Đơn hàng tự động từ nút bấm IoT',
+      );
     } catch (procErr: any) {
-      // 2. Fallback: Nếu môi trường chưa nạp Stored Procedure, thực thi giao dịch Prisma tương đương
-      newOrderId = await this.prisma.$transaction(async (tx) => {
-        let subtotal = 0;
-        const orderCode = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-        const address = await tx.customerAddress.findFirst({
-          where: { addressId: button.addressId },
-        });
-        const shippingAddress = address
-          ? `${address.addressDetail}${address.ward ? ', ' + address.ward : ''}${address.district ? ', ' + address.district : ''}${address.province ? ', ' + address.province : ''}`
-          : 'Địa chỉ mặc định của khách hàng';
-        const recipientName = address?.recipientName || button.customer.user.fullName;
-        const phone = address?.phone || button.customer.user.phone || '';
-
-        const createdOrder = await tx.order.create({
-          data: {
-            orderCode,
-            storeId: button.storeId,
-            customerId: button.customerId,
-            buttonId: button.buttonId,
-            orderStatus: 'PENDING',
-            paymentStatus: 'UNPAID',
-            paymentMethod,
-            shippingFee,
-            subtotalAmount: 0,
-            discountAmount: 0,
-            totalAmount: shippingFee,
-            shippingRecipientName: recipientName,
-            shippingPhone: phone,
-            shippingAddress,
-            orderNote: 'Đơn hàng tự động từ nút bấm IoT',
-          },
-        });
-
-        for (const bp of button.buttonProducts) {
-          const lineSubtotal = Number(bp.product.basePrice) * bp.quantity;
-          subtotal += lineSubtotal;
-
-          await tx.orderItem.create({
-            data: {
-              orderId: createdOrder.orderId,
-              productId: bp.productId,
-              productNameSnapshot: bp.product.productName,
-              unitPriceSnapshot: bp.product.basePrice,
-              discountPercentSnapshot: 0,
-              discountAmountSnapshot: 0,
-              finalUnitPrice: bp.product.basePrice,
-              quantity: bp.quantity,
-              itemSubtotal: lineSubtotal,
-            },
-          });
-
-          // Giữ chỗ tồn kho (Two-Phase Commit)
-          await tx.inventory.updateMany({
-            where: { productId: bp.productId },
-            data: {
-              reservedQuantity: { increment: bp.quantity },
-            },
-          });
-        }
-
-        const total = subtotal + shippingFee;
-        await tx.order.update({
-          where: { orderId: createdOrder.orderId },
-          data: {
-            subtotalAmount: subtotal,
-            totalAmount: total,
-          },
-        });
-
-        return createdOrder.orderId;
-      });
+      // 2. Fallback: Nếu môi trường chưa nạp Stored Procedure, thực thi giao dịch tương đương qua Repository
+      newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee);
     }
 
     if (!newOrderId) {
@@ -147,14 +71,7 @@ export class OrdersService {
     }
 
     // Fetch the created order with full details
-    const newOrder = await this.prisma.order.findUnique({
-      where: { orderId: BigInt(newOrderId) },
-      include: {
-        items: { include: { product: true } },
-        customer: { include: { user: true } },
-        store: true,
-      },
-    });
+    const newOrder = await this.ordersRepo.findOrderById(BigInt(newOrderId));
 
     const formattedOrder = {
       ...newOrder,
@@ -193,20 +110,7 @@ export class OrdersService {
       throw new BadRequestException('Thiếu thông tin nhận diện nút (deviceId, buttonCode hoặc buttonId)');
     }
 
-    const button = await this.prisma.ioTButton.findFirst({
-      where: {
-        OR: [
-          { deviceId: targetIdentifier.toString() },
-          { buttonCode: targetIdentifier.toString() },
-          ...(!isNaN(Number(targetIdentifier)) ? [{ buttonId: BigInt(targetIdentifier) }] : []),
-        ],
-      },
-      include: {
-        store: true,
-        customer: { include: { user: true } },
-        buttonProducts: { include: { product: true } },
-      },
-    });
+    const button = await this.ordersRepo.findButtonByIdentifier(targetIdentifier.toString());
 
     if (!button) {
       throw new NotFoundException('Không tìm thấy nút bấm được chỉ định');
@@ -217,7 +121,7 @@ export class OrdersService {
       if (button.customerId.toString() !== user.customerProfileId.toString()) {
         throw new ForbiddenException('Bạn không sở hữu nút bấm này');
       }
-    } else if (user && ['STORE_OWNER', 'STORE_STAFF'].includes(user.role) && user.storeId) {
+    } else if (user && ['STORE_OWNER', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
       if (button.storeId.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Nút bấm không thuộc quyền quản lý của cửa hàng bạn');
       }
@@ -241,12 +145,7 @@ export class OrdersService {
    * Đặt hàng nhanh từ App dựa trên Nút bấm
    */
   async quickReorder(user: any, deviceId: string) {
-    const button = await this.prisma.ioTButton.findUnique({
-      where: { deviceId },
-      include: {
-        customer: true,
-      },
-    });
+    const button = await this.ordersRepo.findButtonByDeviceId(deviceId);
 
     if (!button || (user.customerProfileId && button.customerId.toString() !== user.customerProfileId.toString())) {
       throw new NotFoundException('Thiết bị không tồn tại hoặc không thuộc sở hữu của bạn');
@@ -264,7 +163,7 @@ export class OrdersService {
     const whereClause: any = {};
     if (user.role === 'CUSTOMER' && user.customerProfileId) {
       whereClause.customerId = BigInt(user.customerProfileId);
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF'].includes(user.role) && user.storeId) {
+    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
       whereClause.storeId = BigInt(user.storeId);
     }
 
@@ -272,16 +171,7 @@ export class OrdersService {
       whereClause.orderStatus = status;
     }
 
-    const orders = await this.prisma.order.findMany({
-      where: whereClause,
-      include: {
-        items: { include: { product: true } },
-        button: true,
-        customer: { include: { user: true } },
-        store: true,
-      },
-      orderBy: { orderDate: 'desc' },
-    });
+    const orders = await this.ordersRepo.findOrders(whereClause);
 
     return orders.map((o) => ({
       ...o,
@@ -294,22 +184,12 @@ export class OrdersService {
 
   async getById(id: string | number | bigint, user?: any) {
     const targetOrderId = BigInt(id);
-    const order = await this.prisma.order.findUnique({
-      where: { orderId: targetOrderId },
-      include: {
-        items: { include: { product: true } },
-        button: true,
-        customer: { include: { user: true } },
-        store: true,
-        statusHistories: true,
-        paymentTransactions: true,
-      },
-    });
+    const order = await this.ordersRepo.findOrderById(targetOrderId);
 
     if (!order) return null;
 
     // BOLA / IDOR Protection: verify ownership
-    if (user && user.role !== 'SUPER_ADMIN') {
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
       const isCustomerOwner = user.customerProfileId && order.customerId === BigInt(user.customerProfileId);
       const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
       if (!isCustomerOwner && !isStoreOwner) {
@@ -332,10 +212,7 @@ export class OrdersService {
 
   async cancelOrder(orderId: string | number | bigint, reason: string = 'Khách hàng hủy đơn', user?: any) {
     const targetOrderId = BigInt(orderId);
-    const order = await this.prisma.order.findUnique({
-      where: { orderId: targetOrderId },
-      include: { items: true },
-    });
+    const order = await this.ordersRepo.findOrderById(targetOrderId);
 
     if (!order) {
       throw new NotFoundException('Đơn hàng không tồn tại');
@@ -346,7 +223,7 @@ export class OrdersService {
     }
 
     // BOLA / IDOR Protection
-    if (user && user.role !== 'SUPER_ADMIN') {
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
       const isCustomerOwner = user.customerProfileId && order.customerId === BigInt(user.customerProfileId);
       const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
       if (!isCustomerOwner && !isStoreOwner) {
@@ -358,23 +235,10 @@ export class OrdersService {
       }
     }
 
-    // Release reserved inventory
-    for (const item of order.items) {
-      await this.prisma.inventory.updateMany({
-        where: { productId: item.productId },
-        data: {
-          reservedQuantity: { decrement: item.quantity },
-        },
-      });
-    }
+    // Release reserved inventory via repository
+    await this.ordersRepo.releaseReservedInventory(order.items);
 
-    const updated = await this.prisma.order.update({
-      where: { orderId: targetOrderId },
-      data: {
-        orderStatus: 'CANCELLED',
-      },
-      include: { items: true },
-    });
+    const updated = await this.ordersRepo.updateOrderStatus(targetOrderId, 'CANCELLED');
 
     const cancelPayload = { order: updated, reason, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_CANCELLED', cancelPayload);
@@ -392,10 +256,7 @@ export class OrdersService {
 
   async updateOrderStatus(orderId: string | number | bigint, newStatus: string) {
     const targetOrderId = BigInt(orderId);
-    const order = await this.prisma.order.findUnique({
-      where: { orderId: targetOrderId },
-      include: { items: true },
-    });
+    const order = await this.ordersRepo.findOrderById(targetOrderId);
 
     if (!order) {
       throw new NotFoundException('Đơn hàng không tồn tại');
@@ -403,32 +264,13 @@ export class OrdersService {
 
     if (newStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
       // Khấu trừ tồn thực tế
-      for (const item of order.items) {
-        await this.prisma.inventory.updateMany({
-          where: { productId: item.productId },
-          data: {
-            quantityOnHand: { decrement: item.quantity },
-            reservedQuantity: { decrement: item.quantity },
-          },
-        });
-      }
+      await this.ordersRepo.deductInventoryOnCompleted(order.items);
     } else if (['CANCELLED', 'REJECTED'].includes(newStatus) && !['CANCELLED', 'REJECTED', 'COMPLETED'].includes(order.orderStatus)) {
       // Hoàn trả tồn giữ chỗ
-      for (const item of order.items) {
-        await this.prisma.inventory.updateMany({
-          where: { productId: item.productId },
-          data: {
-            reservedQuantity: { decrement: item.quantity },
-          },
-        });
-      }
+      await this.ordersRepo.releaseReservedInventory(order.items);
     }
 
-    const updated = await this.prisma.order.update({
-      where: { orderId: targetOrderId },
-      data: { orderStatus: newStatus },
-      include: { items: true },
-    });
+    const updated = await this.ordersRepo.updateOrderStatus(targetOrderId, newStatus);
 
     const statusPayload = { order: updated, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
