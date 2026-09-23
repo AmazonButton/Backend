@@ -1,27 +1,28 @@
 import { Injectable, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { ProductsRepository } from './products.repository';
 
 @Injectable()
 export class ProductsService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(@Inject(ProductsRepository) private readonly productsRepo: ProductsRepository) {}
 
   async list(storeId?: string | number | bigint) {
-    const whereClause: any = {};
-    if (storeId) {
-      whereClause.storeId = BigInt(storeId);
-    }
-    return this.prisma.product.findMany({
-      where: whereClause,
-      include: {
-        inventory: true,
-        category: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.productsRepo.findMany(storeId ? BigInt(storeId) : undefined);
   }
 
   async create(user: any, body: any) {
-    const { productName, name, brand, productCode, sku, categoryId, basePrice, price, imageUrl, description } = body;
+    const {
+      productName,
+      name,
+      brand,
+      productCode,
+      sku,
+      categoryId,
+      basePrice,
+      price,
+      description,
+      initialStock,
+      stock,
+    } = body;
 
     const targetStoreId = user.storeId ? BigInt(user.storeId) : null;
     if (!targetStoreId) {
@@ -36,20 +37,16 @@ export class ProductsService {
       throw new BadRequestException('Tên sản phẩm và giá gốc không được để trống');
     }
 
-    return this.prisma.product.create({
-      data: {
-        storeId: targetStoreId,
-        productName: finalProductName,
-        productCode: finalCode,
-        brand: brand || 'Khác',
-        description: description || null,
-        basePrice: parseFloat(finalPrice.toString()),
-        status: 'ACTIVE',
-        ...(categoryId ? { categoryId: BigInt(categoryId) } : {}),
-      },
-      include: {
-        inventory: true,
-      },
+    return this.productsRepo.create({
+      storeId: targetStoreId,
+      productName: finalProductName,
+      productCode: finalCode,
+      brand: brand || 'Khác',
+      description: description || null,
+      basePrice: parseFloat(finalPrice.toString()),
+      status: 'ACTIVE',
+      ...(categoryId ? { categoryId: BigInt(categoryId) } : {}),
+      initialStock: initialStock !== undefined ? initialStock : stock || 50,
     });
   }
 
@@ -57,17 +54,13 @@ export class ProductsService {
     const targetProductId = BigInt(id);
 
     // BOLA / IDOR Protection: verify product belongs to user's store
-    if (user && user.role !== 'SUPER_ADMIN') {
-      const product = await this.prisma.product.findUnique({
-        where: { productId: targetProductId },
-        select: { storeId: true },
-      });
+    const existing = await this.productsRepo.findStoreIdOnly(targetProductId);
+    if (!existing) {
+      throw new BadRequestException('Sản phẩm không tồn tại');
+    }
 
-      if (!product) {
-        throw new BadRequestException('Sản phẩm không tồn tại');
-      }
-
-      if (user.storeId && product.storeId !== BigInt(user.storeId)) {
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (user.storeId && existing.storeId !== BigInt(user.storeId)) {
         throw new ForbiddenException({
           success: false,
           code: 'ACCESS_DENIED',
@@ -76,22 +69,62 @@ export class ProductsService {
       }
     }
 
-    const { productName, name, brand, basePrice, price, status, description } = body;
+    const { productName, name, brand, basePrice, price, status, description, reason } = body;
     const finalProductName = productName || name;
-    const finalPrice = basePrice !== undefined ? basePrice : price;
+    const finalPrice = basePrice !== undefined ? parseFloat(basePrice.toString()) : price !== undefined ? parseFloat(price.toString()) : undefined;
 
-    return this.prisma.product.update({
-      where: { productId: targetProductId },
-      data: {
-        ...(finalProductName ? { productName: finalProductName } : {}),
-        ...(brand ? { brand } : {}),
-        ...(finalPrice !== undefined ? { basePrice: parseFloat(finalPrice.toString()) } : {}),
-        ...(status ? { status } : {}),
-        ...(description !== undefined ? { description } : {}),
-      },
-      include: {
-        inventory: true,
-      },
+    // Track price change history if price is being updated
+    if (finalPrice !== undefined && Number(existing.basePrice) !== finalPrice) {
+      await this.productsRepo.recordPriceHistory({
+        storeId: existing.storeId,
+        productId: targetProductId,
+        oldPrice: Number(existing.basePrice),
+        newPrice: finalPrice,
+        changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
+        reason: reason || 'Cập nhật giá bán sản phẩm',
+      });
+    }
+
+    return this.productsRepo.update(targetProductId, {
+      ...(finalProductName ? { productName: finalProductName } : {}),
+      ...(brand ? { brand } : {}),
+      ...(finalPrice !== undefined ? { basePrice: finalPrice } : {}),
+      ...(status ? { status } : {}),
+      ...(description !== undefined ? { description } : {}),
     });
+  }
+
+  async updateStock(
+    id: string | number | bigint,
+    body: { availableStock: number; lowStockThreshold?: number },
+    user: any,
+  ) {
+    const targetProductId = BigInt(id);
+    const existing = await this.productsRepo.findStoreIdOnly(targetProductId);
+    if (!existing) {
+      throw new BadRequestException('Sản phẩm không tồn tại');
+    }
+
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (user.storeId && existing.storeId !== BigInt(user.storeId)) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền cập nhật tồn kho của cửa hàng khác.',
+        });
+      }
+    }
+
+    const stock = Number(body.availableStock);
+    if (isNaN(stock) || stock < 0) {
+      throw new BadRequestException('Số lượng tồn kho phải là số không âm');
+    }
+
+    return this.productsRepo.updateInventoryStock(
+      targetProductId,
+      existing.storeId,
+      stock,
+      body.lowStockThreshold,
+    );
   }
 }
