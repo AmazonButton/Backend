@@ -36,6 +36,7 @@ async function runTests() {
 
   // 2. Auth: Login Store Owner
   let storeToken = '';
+  let storeRefreshToken = '';
   try {
     const res = await fetch(`${API_URL}/auth/login`, {
       method: 'POST',
@@ -48,6 +49,7 @@ async function runTests() {
     const data = await res.json();
     if (res.status === 200 && (data.data?.token || data.token)) {
       storeToken = data.data?.token || data.token;
+      storeRefreshToken = data.data?.refreshToken || data.refreshToken;
       logTest('Auth: Store Owner Login', true);
       passed++;
     } else {
@@ -374,6 +376,77 @@ async function runTests() {
     }
   } catch (e: any) {
     logTest('API Standard: Products list & envelope', false, e.message);
+    failed++;
+  }
+
+  // 14. Ý A: Refresh Token Single-Use Rotation & Replay Revocation
+  try {
+    const res = await fetch(`${API_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: storeRefreshToken }),
+    });
+    const data = await res.json();
+    if (res.status === 200 && data.success && data.data?.accessToken && data.data?.refreshToken) {
+      // Attempt to reuse the OLD refresh token (Must fail with 401 Unauthorized)
+      const reuseRes = await fetch(`${API_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: storeRefreshToken }),
+      });
+      
+      if (reuseRes.status === 401) {
+        logTest('Skill 3 (Ý A): Refresh Token Single-Use Rotation & Replay Revocation (401)', true);
+        passed++;
+      } else {
+        throw new Error(`Expected 401 on reused token, got ${reuseRes.status}`);
+      }
+    } else {
+      throw new Error(data.message || JSON.stringify(data));
+    }
+  } catch (e: any) {
+    logTest('Skill 3 (Ý A): Refresh Token Rotation', false, e.message);
+    failed++;
+  }
+
+  // 15. Ý B: Email Verification Token Flow & Tampered Token Defense
+  try {
+    const res = await fetch(`${API_URL}/auth/verify-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'invalid_tampered_token_1234567890abcdef' }),
+    });
+    const data = await res.json();
+    if (res.status === 400 && data.success === false) {
+      logTest('Skill 8 (Ý B): Email Verification rejected invalid token (400 Bad Request)', true);
+      passed++;
+    } else {
+      throw new Error(`Expected 400 on invalid token, got ${res.status}`);
+    }
+  } catch (e: any) {
+    logTest('Skill 8 (Ý B): Email Verification', false, e.message);
+    failed++;
+  }
+
+  // 16. Ý C: Device Templates PostgreSQL Persistence & CRUD
+  try {
+    const res = await fetch(`${API_URL}/device-templates`, {
+      headers: { Authorization: `Bearer ${storeToken}` },
+    });
+    const data = await res.json();
+    if (res.status === 200 && data.success && Array.isArray(data.data) && data.data.length >= 2) {
+      const foundSeed = data.data.some((t: any) => t.code === 'TMPL-WATER-20L' || t.code === 'TMPL-GAS-12KG');
+      if (foundSeed) {
+        logTest(`BRD V2.1 (Ý C): Fetched persistent Device Templates from PostgreSQL (${data.data.length} templates)`, true);
+        passed++;
+      } else {
+        throw new Error('Seed templates not found in list response');
+      }
+    } else {
+      throw new Error(data.message || JSON.stringify(data));
+    }
+  } catch (e: any) {
+    logTest('BRD V2.1 (Ý C): Device Templates PostgreSQL', false, e.message);
     failed++;
   }
 

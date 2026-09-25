@@ -5,7 +5,7 @@ import {
   ForbiddenException,
   Inject,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { DevicesRepository } from './devices.repository';
 import { EventsGateway } from '../websocket/events.gateway';
 
 const inMemoryTemplates: any[] = [
@@ -38,7 +38,7 @@ const inMemoryTemplates: any[] = [
 @Injectable()
 export class DeviceTemplatesService {
   constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(DevicesRepository) private readonly devicesRepo: DevicesRepository,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
   ) {}
 
@@ -46,18 +46,16 @@ export class DeviceTemplatesService {
     const storeId = user.role === 'SUPER_ADMIN' ? (dto.storeId ? BigInt(dto.storeId) : null) : (user.storeId ? BigInt(user.storeId) : null);
     const code = `TMPL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
     
-    const created = await this.prisma.deviceTemplate.create({
-      data: {
-        code,
-        name: dto.name?.trim() || 'Template Mẫu Nút Bấm',
-        description: dto.description?.trim() || null,
-        category: dto.category?.trim() || 'Nhu yếu phẩm',
-        storeId,
-        singlePressAction: dto.singlePressAction || 'CREATE_ORDER',
-        doublePressAction: dto.doublePressAction || 'CANCEL_ORDER',
-        defaultQuantity: dto.defaultQuantity ? Number(dto.defaultQuantity) : 1,
-        cancelWindowSeconds: dto.cancelWindowSeconds ? Number(dto.cancelWindowSeconds) : 60,
-      },
+    const created = await this.devicesRepo.createTemplate({
+      code,
+      name: dto.name?.trim() || 'Template Mẫu Nút Bấm',
+      description: dto.description?.trim() || null,
+      category: dto.category?.trim() || 'Nhu yếu phẩm',
+      storeId,
+      singlePressAction: dto.singlePressAction || 'CREATE_ORDER',
+      doublePressAction: dto.doublePressAction || 'CANCEL_ORDER',
+      defaultQuantity: dto.defaultQuantity ? Number(dto.defaultQuantity) : 1,
+      cancelWindowSeconds: dto.cancelWindowSeconds ? Number(dto.cancelWindowSeconds) : 60,
     });
 
     return {
@@ -76,10 +74,7 @@ export class DeviceTemplatesService {
       };
     }
 
-    const list = await this.prisma.deviceTemplate.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-    });
+    const list = await this.devicesRepo.findTemplates(where);
 
     return list.map((t) => ({
       ...t,
@@ -90,14 +85,7 @@ export class DeviceTemplatesService {
   }
 
   async getById(id: string, user: any) {
-    const template = await this.prisma.deviceTemplate.findFirst({
-      where: {
-        OR: [
-          { code: id },
-          ...(isNaN(Number(id)) ? [] : [{ templateId: BigInt(id) }]),
-        ],
-      },
-    });
+    const template = await this.devicesRepo.findTemplateByIdOrCode(id);
 
     if (!template) {
       // Fallback check in memory seed templates
@@ -117,17 +105,14 @@ export class DeviceTemplatesService {
   async update(id: string, dto: any, user: any) {
     const template = await this.getById(id, user);
 
-    const updated = await this.prisma.deviceTemplate.update({
-      where: { templateId: BigInt(template.id || template.templateId) },
-      data: {
-        name: dto.name,
-        description: dto.description,
-        category: dto.category,
-        singlePressAction: dto.singlePressAction,
-        doublePressAction: dto.doublePressAction,
-        defaultQuantity: dto.defaultQuantity ? Number(dto.defaultQuantity) : undefined,
-        cancelWindowSeconds: dto.cancelWindowSeconds ? Number(dto.cancelWindowSeconds) : undefined,
-      },
+    const updated = await this.devicesRepo.updateTemplate(BigInt(template.id || template.templateId), {
+      name: dto.name,
+      description: dto.description,
+      category: dto.category,
+      singlePressAction: dto.singlePressAction,
+      doublePressAction: dto.doublePressAction,
+      defaultQuantity: dto.defaultQuantity ? Number(dto.defaultQuantity) : undefined,
+      cancelWindowSeconds: dto.cancelWindowSeconds ? Number(dto.cancelWindowSeconds) : undefined,
     });
 
     return {
@@ -140,9 +125,7 @@ export class DeviceTemplatesService {
 
   async delete(id: string, user: any) {
     const template = await this.getById(id, user);
-    await this.prisma.deviceTemplate.delete({
-      where: { templateId: BigInt(template.id || template.templateId) },
-    });
+    await this.devicesRepo.deleteTemplate(BigInt(template.id || template.templateId));
     return { success: true, message: 'Đã xóa template mẫu thành công' };
   }
 
