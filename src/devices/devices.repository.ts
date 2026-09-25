@@ -157,4 +157,53 @@ export class DevicesRepository {
       },
     });
   }
+
+  // --- Device Templates Repository Methods ---
+  async createTemplate(data: any) {
+    return this.prisma.deviceTemplate.create({ data });
+  }
+
+  async findTemplates(whereClause: any) {
+    return this.prisma.deviceTemplate.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findTemplateById(templateId: bigint) {
+    return this.prisma.deviceTemplate.findUnique({
+      where: { templateId },
+    });
+  }
+
+  async findTemplateByCode(code: string) {
+    return this.prisma.deviceTemplate.findUnique({
+      where: { code },
+    });
+  }
+
+  async findTemplateByIdOrCode(idOrCode: string) {
+    const isNum = !isNaN(Number(idOrCode));
+    return this.prisma.deviceTemplate.findFirst({
+      where: {
+        OR: [
+          { code: idOrCode },
+          ...(isNum ? [{ templateId: BigInt(idOrCode) }] : []),
+        ],
+      },
+    });
+  }
+
+  async updateTemplate(templateId: bigint, data: any) {
+    return this.prisma.deviceTemplate.update({
+      where: { templateId },
+      data,
+    });
+  }
+
+  async deleteTemplate(templateId: bigint) {
+    return this.prisma.deviceTemplate.delete({
+      where: { templateId },
+    });
+  }
 }
