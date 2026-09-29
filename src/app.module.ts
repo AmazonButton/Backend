@@ -10,6 +10,8 @@ import { ProductsModule } from './products/products.module';
 import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { MediaModule } from './media/media.module';
+import { MailModule } from './mail/mail.module';
+import { PaymentsModule } from './payments/payments.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -17,6 +19,7 @@ import { AppController } from './app.controller';
     PrismaModule,
     WebSocketModule,
     SecurityModule,
+    MailModule,
     AuthModule,
     OrdersModule,
     IotModule,
@@ -25,6 +28,7 @@ import { AppController } from './app.controller';
     AdminModule,
     AnalyticsModule,
     MediaModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
 })

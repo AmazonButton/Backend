@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { AuthRepository } from './auth.repository';
+import { MailService } from '../mail/mail.service';
 import {
   RegisterDto,
   LoginDto,
@@ -25,6 +26,7 @@ export class AuthService {
   private resendCooldowns = new Map<string, number>();
 
   constructor(
+    @Inject(MailService) private readonly mailService: MailService,
     @Inject(AuthRepository) private readonly authRepo: AuthRepository,
     @Inject(JwtService) private readonly jwtService: JwtService,
   ) {}
@@ -443,17 +445,17 @@ export class AuthService {
 
     const user = await this.authRepo.findByEmail(email);
     if (user && user.status === 'ACTIVE') {
-      // 1. Generate unguessable 32-byte raw token
-      const rawToken = crypto.randomBytes(32).toString('hex');
-      // 2. Hash token with SHA-256 before storing in database
-      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15-minute validity
+      // Generate 6-digit secure numeric OTP
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      // Hash OTP with SHA-256 for secure database storage
+      const tokenHash = crypto.createHash('sha256').update(otpCode).digest('hex');
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
       await this.authRepo.setPasswordResetToken(user.userId, tokenHash, expiresAt);
 
-      // In production: send email with reset link containing rawToken
-      // console.log for verification in dev
-      console.log(`[AUTH] Password reset requested for ${user.email}. Demo Raw Token: ${rawToken}`);
+      // Dispatch OTP via MailService (Gmail SMTP or Console Dev Fallback)
+      await this.mailService.sendPasswordResetOtp(user.email, otpCode);
+      console.log(`[AUTH] Password reset requested for ${user.email}. Demo OTP: ${otpCode}`);
     }
 
     // Anti-Enumeration: Always respond with identical message and 200 OK
@@ -530,11 +532,12 @@ export class AuthService {
     if (email) {
       const user = await this.authRepo.findByEmail(email);
       if (user) {
-        const rawToken = crypto.randomBytes(32).toString('hex');
-        const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const tokenHash = crypto.createHash('sha256').update(otpCode).digest('hex');
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
         await this.authRepo.setEmailVerificationToken(user.userId, tokenHash, expiresAt);
-        console.log(`[AUTH] Resent email verification for ${user.email}. Demo Raw Token: ${rawToken}`);
+        await this.mailService.sendRegistrationOtp(user.email, otpCode);
+        console.log(`[AUTH] Resent email verification for ${user.email}. Demo OTP: ${otpCode}`);
       }
     }
 
