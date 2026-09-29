@@ -20,6 +20,7 @@ import {
   VerifyEmailDto,
   ResendVerificationDto,
   RefreshTokenDto,
+  GoogleLoginDto,
 } from './dto/auth.dto';
 
 @Controller('auth')

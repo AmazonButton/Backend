@@ -204,6 +204,153 @@ export class AuthService {
     };
   }
 
+
+  /**
+   * Google Social Login via Supabase OAuth token
+   */
+  async googleLogin(token: string, ip?: string, userAgent?: string) {
+    if (!token) {
+      throw new BadRequestException('Vui lòng cung cấp access token từ Supabase Google OAuth');
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL || 'https://gultdgalicgqhvquxizs.supabase.co';
+    const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
+
+    // Verify token with Supabase Auth API
+    let supabaseUser: any = null;
+    try {
+      const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: {
+          Authorization: `Bearer ${token.trim()}`,
+          apikey: anonKey,
+        },
+      });
+
+      if (!response.ok) {
+        throw new UnauthorizedException('Token Supabase Google không hợp lệ hoặc đã hết hạn');
+      }
+
+      supabaseUser = await response.json();
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) throw err;
+      throw new UnauthorizedException('Không thể xác thực token với Supabase Auth: ' + err.message);
+    }
+
+    if (!supabaseUser || !supabaseUser.email) {
+      throw new BadRequestException('Tài khoản Google không trả về địa chỉ email');
+    }
+
+    const email = supabaseUser.email.trim().toLowerCase();
+    const authId = supabaseUser.id; // Supabase auth UUID
+    const metadata = supabaseUser.user_metadata || {};
+    const fullName = metadata.full_name || metadata.name || email.split('@')[0];
+
+    // Check if user already exists by authId or email
+    let user = await this.authRepo.findByAuthId(authId);
+    if (!user) {
+      user = await this.authRepo.findUserWithAuthRelations(email);
+      if (user) {
+        // Link authId to existing user
+        await this.authRepo.updateAuthId(user.userId, authId);
+      } else {
+        // Create new User and CustomerProfile
+        const randomPassword = crypto.randomBytes(24).toString('hex');
+        const passwordHash = await bcrypt.hash(randomPassword, 12);
+        const username = `google_${email.split('@')[0]}_${Math.random().toString(36).substring(2, 6)}`.slice(0, 30);
+
+        const newUser = await this.authRepo.createUser({
+          username,
+          email,
+          passwordHash,
+          fullName,
+          phone: metadata.phone || null,
+          status: 'ACTIVE',
+          authId,
+        });
+
+        const customerProfile = await this.authRepo.createCustomerProfile({
+          userId: newUser.userId,
+          phone: metadata.phone || null,
+        });
+
+        user = {
+          ...newUser,
+          customerProfile: {
+            ...customerProfile,
+            addresses: [],
+          },
+          ownedStores: [],
+          storeStaffs: [],
+        } as any;
+      }
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new UnauthorizedException('Tài khoản của bạn hiện đang bị khóa.');
+    }
+
+    // Determine role & storeId
+    let role = 'CUSTOMER';
+    let storeId: string | null = null;
+    const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
+
+    if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
+      role = 'SUPER_ADMIN';
+    } else if (user.ownedStores && user.ownedStores.length > 0) {
+      role = 'STORE_OWNER';
+      storeId = user.ownedStores[0].storeId.toString();
+    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
+      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+      storeId = user.storeStaffs[0].storeId.toString();
+    }
+
+    // Generate JWT access token
+    const accessToken = this.jwtService.sign(
+      {
+        userId: user.userId.toString(),
+        email: user.email,
+        username: user.username,
+        role,
+        storeId,
+        customerProfileId,
+      },
+      { expiresIn: '7d' },
+    );
+
+    // Generate rotated refresh token
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+    const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await this.authRepo.createRefreshToken(user.userId, refreshTokenHash, refreshExpiresAt);
+
+    const userPayload = {
+      id: user.userId.toString(),
+      userId: user.userId.toString(),
+      email: user.email,
+      username: user.username,
+      fullName: user.fullName,
+      role,
+      storeId,
+      customerProfileId,
+      phone: user.phone,
+    };
+
+    return {
+      success: true,
+      message: 'Đăng nhập Google thành công',
+      accessToken,
+      token: accessToken,
+      refreshToken: rawRefreshToken,
+      data: {
+        token: accessToken,
+        accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
+      },
+      user: userPayload,
+    };
+  }
+
   /**
    * 2. Login with email or username
    */

@@ -75,6 +75,7 @@ export class AuthRepository {
     fullName: string;
     phone?: string | null;
     status: string;
+    authId?: string | null;
   }) {
     return this.prisma.user.create({
       data,
@@ -202,6 +203,25 @@ export class AuthRepository {
   }
 
   // --- Refresh Token Rotation Methods ---
+
+  async updateAuthId(userId: bigint, authId: string) {
+    return this.prisma.user.update({
+      where: { userId },
+      data: { authId },
+    });
+  }
+
+  async findByAuthId(authId: string) {
+    return this.prisma.user.findUnique({
+      where: { authId },
+      include: {
+        customerProfile: { include: { addresses: true } },
+        ownedStores: true,
+        storeStaffs: { include: { role: true, store: true } },
+      },
+    });
+  }
+
   async createRefreshToken(userId: bigint, tokenHash: string, expiresAt: Date) {
     return this.prisma.refreshToken.create({
       data: {

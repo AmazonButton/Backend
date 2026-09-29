@@ -102,3 +102,9 @@ export class RefreshTokenDto {
   @IsString()
   refreshToken: string;
 }
+
+export class GoogleLoginDto {
+  @IsNotEmpty({ message: 'Thiếu Supabase access token hoặc Google ID token' })
+  @IsString()
+  token: string;
+}
