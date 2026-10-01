@@ -178,4 +178,112 @@ export class AdminService {
       message: `Đã cập nhật vai trò cho người dùng ${user.username} thành ${roleCode}`,
     };
   }
+
+  // ==========================================
+  // SUBSCRIPTION PLANS (MARKETPLACE SAAS)
+  // ==========================================
+  async createSubscriptionPlan(dto: {
+    planCode: string;
+    planName: string;
+    description?: string;
+    price: number | string;
+    durationDays: number;
+    maxProducts?: number;
+  }) {
+    const existing = await this.prisma.subscriptionPlan.findUnique({
+      where: { planCode: dto.planCode },
+    });
+    if (existing) {
+      throw new BadRequestException(`Gói cước có mã ${dto.planCode} đã tồn tại`);
+    }
+
+    return this.prisma.subscriptionPlan.create({
+      data: {
+        planCode: dto.planCode,
+        planName: dto.planName,
+        description: dto.description,
+        price: dto.price,
+        durationDays: dto.durationDays,
+        maxProducts: dto.maxProducts || 50,
+      },
+    });
+  }
+
+  async listSubscriptionPlans() {
+    return this.prisma.subscriptionPlan.findMany({
+      orderBy: { price: 'asc' },
+    });
+  }
+
+  async updateSubscriptionPlan(id: string | number | bigint, dto: any) {
+    const planId = BigInt(id);
+    const existing = await this.prisma.subscriptionPlan.findUnique({ where: { planId } });
+    if (!existing) throw new NotFoundException('Không tìm thấy gói cước');
+
+    return this.prisma.subscriptionPlan.update({
+      where: { planId },
+      data: {
+        ...(dto.planName && { planName: dto.planName }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.price !== undefined && { price: dto.price }),
+        ...(dto.durationDays !== undefined && { durationDays: dto.durationDays }),
+        ...(dto.maxProducts !== undefined && { maxProducts: dto.maxProducts }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
+    });
+  }
+
+  // ==========================================
+  // RENTAL PACKAGES (CUSTOMER IOT BUTTONS)
+  // ==========================================
+  async createRentalPackage(dto: {
+    packageCode: string;
+    packageName: string;
+    description?: string;
+    buttonQuantity: number;
+    monthlyPrice: number | string;
+    depositFee?: number | string;
+  }) {
+    const existing = await this.prisma.rentalPackage.findUnique({
+      where: { packageCode: dto.packageCode },
+    });
+    if (existing) {
+      throw new BadRequestException(`Gói thuê nút có mã ${dto.packageCode} đã tồn tại`);
+    }
+
+    return this.prisma.rentalPackage.create({
+      data: {
+        packageCode: dto.packageCode,
+        packageName: dto.packageName,
+        description: dto.description,
+        buttonQuantity: dto.buttonQuantity,
+        monthlyPrice: dto.monthlyPrice,
+        depositFee: dto.depositFee || 0,
+      },
+    });
+  }
+
+  async listRentalPackages() {
+    return this.prisma.rentalPackage.findMany({
+      orderBy: { monthlyPrice: 'asc' },
+    });
+  }
+
+  async updateRentalPackage(id: string | number | bigint, dto: any) {
+    const packageId = BigInt(id);
+    const existing = await this.prisma.rentalPackage.findUnique({ where: { packageId } });
+    if (!existing) throw new NotFoundException('Không tìm thấy gói thuê nút');
+
+    return this.prisma.rentalPackage.update({
+      where: { packageId },
+      data: {
+        ...(dto.packageName && { packageName: dto.packageName }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.buttonQuantity !== undefined && { buttonQuantity: dto.buttonQuantity }),
+        ...(dto.monthlyPrice !== undefined && { monthlyPrice: dto.monthlyPrice }),
+        ...(dto.depositFee !== undefined && { depositFee: dto.depositFee }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
+    });
+  }
 }
