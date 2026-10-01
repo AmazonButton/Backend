@@ -286,4 +286,104 @@ export class AdminService {
       },
     });
   }
+
+  // ==========================================
+  // STORE WITHDRAWAL AUDIT & APPROVAL
+  // ==========================================
+  async listAllWithdrawals(status?: string) {
+    return this.prisma.storeWithdrawal.findMany({
+      where: status ? { status } : undefined,
+      include: {
+        wallet: {
+          include: {
+            store: { select: { storeId: true, name: true, code: true, phone: true } },
+          },
+        },
+        approvedByUser: { select: { fullName: true, email: true } },
+      },
+      orderBy: { requestedAt: 'desc' },
+    });
+  }
+
+  async confirmWithdrawalTransfer(
+    withdrawalId: string | number | bigint,
+    transferEvidenceUrl?: string,
+    adminUser?: any
+  ) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    const withdrawal = await this.prisma.storeWithdrawal.findUnique({
+      where: { withdrawalId: rawWithdrawalId },
+    });
+    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    if (withdrawal.status !== 'PENDING') {
+      throw new BadRequestException(`Yêu cầu đang ở trạng thái ${withdrawal.status}, không thể duyệt`);
+    }
+
+    return this.prisma.storeWithdrawal.update({
+      where: { withdrawalId: rawWithdrawalId },
+      data: {
+        status: 'TRANSFERRED',
+        transferEvidenceUrl: transferEvidenceUrl || null,
+        approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
+        processedAt: new Date(),
+      },
+    });
+  }
+
+  async rejectWithdrawal(
+    withdrawalId: string | number | bigint,
+    reason: string,
+    adminUser?: any
+  ) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    if (!reason?.trim()) {
+      throw new BadRequestException('Vui lòng nhập lý do từ chối yêu cầu rút tiền');
+    }
+
+    const withdrawal = await this.prisma.storeWithdrawal.findUnique({
+      where: { withdrawalId: rawWithdrawalId },
+    });
+    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    if (withdrawal.status !== 'PENDING') {
+      throw new BadRequestException(`Yêu cầu đang ở trạng thái ${withdrawal.status}, không thể từ chối`);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.storeWallet.findUnique({
+        where: { walletId: withdrawal.walletId },
+      });
+      if (!wallet) throw new NotFoundException('Ví không tồn tại');
+
+      const refundAmount = Number(withdrawal.amount);
+      const balanceBefore = Number(wallet.balance);
+      const balanceAfter = balanceBefore + refundAmount;
+
+      await tx.storeWallet.update({
+        where: { walletId: wallet.walletId },
+        data: { balance: balanceAfter },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.walletId,
+          amount: refundAmount,
+          type: 'REFUND',
+          balanceBefore,
+          balanceAfter,
+          referenceId: withdrawal.withdrawalCode,
+          description: `Hoàn tiền yêu cầu rút #${withdrawal.withdrawalCode} bị từ chối: ${reason}`,
+        },
+      });
+
+      return tx.storeWithdrawal.update({
+        where: { withdrawalId: rawWithdrawalId },
+        data: {
+          status: 'REJECTED',
+          rejectionReason: reason,
+          approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
+          processedAt: new Date(),
+        },
+      });
+    });
+  }
 }

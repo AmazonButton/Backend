@@ -89,4 +89,77 @@ export class StoreWalletService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async requestWithdrawal(storeId: string | number | bigint, dto: {
+    amount: number;
+    bankName: string;
+    bankAccountNumber: string;
+    bankAccountHolder: string;
+  }) {
+    const rawStoreId = BigInt(storeId);
+    const amount = Number(dto.amount);
+    if (!amount || amount < 50000) {
+      throw new BadRequestException('Số tiền rút tối thiểu là 50,000 VND');
+    }
+
+    const wallet = await this.getOrCreateStoreWallet(rawStoreId);
+
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.storeWallet.findUnique({
+        where: { walletId: wallet.walletId },
+      });
+      if (!current) throw new NotFoundException('Ví không tồn tại');
+
+      const currentBalance = Number(current.balance);
+      if (currentBalance < amount) {
+        throw new BadRequestException(
+          `Số dư không đủ. Số dư khả dụng hiện tại: ${currentBalance.toLocaleString()} VND`
+        );
+      }
+
+      const balanceAfter = currentBalance - amount;
+      await tx.storeWallet.update({
+        where: { walletId: wallet.walletId },
+        data: { balance: balanceAfter },
+      });
+
+      const withdrawalCode = `WDR-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
+      const withdrawal = await tx.storeWithdrawal.create({
+        data: {
+          withdrawalCode,
+          walletId: wallet.walletId,
+          amount,
+          bankName: dto.bankName,
+          bankAccountNumber: dto.bankAccountNumber,
+          bankAccountHolder: dto.bankAccountHolder,
+          status: 'PENDING',
+        },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.walletId,
+          amount: -amount,
+          type: 'WITHDRAWAL',
+          balanceBefore: currentBalance,
+          balanceAfter,
+          referenceId: withdrawalCode,
+          description: `Yêu cầu rút tiền về ${dto.bankName} - ${dto.bankAccountNumber}`,
+        },
+      });
+
+      return withdrawal;
+    });
+  }
+
+  async listWithdrawals(storeId: string | number | bigint) {
+    const rawStoreId = BigInt(storeId);
+    const wallet = await this.getOrCreateStoreWallet(rawStoreId);
+
+    return this.prisma.storeWithdrawal.findMany({
+      where: { walletId: wallet.walletId },
+      orderBy: { requestedAt: 'desc' },
+    });
+  }
 }

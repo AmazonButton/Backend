@@ -104,4 +104,31 @@ export class AdminController {
     const data = await this.adminService.updateRentalPackage(id, body);
     return { success: true, message: 'Cập nhật gói thuê nút thành công!', data };
   }
+
+  // Withdrawals
+  @Get('withdrawals')
+  async listAllWithdrawals() {
+    const data = await this.adminService.listAllWithdrawals();
+    return { success: true, data };
+  }
+
+  @Post('withdrawals/:id/transfer')
+  async confirmTransfer(
+    @Param('id') id: string,
+    @Body('transferEvidenceUrl') transferEvidenceUrl: string,
+    @Request() req: any
+  ) {
+    const data = await this.adminService.confirmWithdrawalTransfer(id, transferEvidenceUrl, req.user);
+    return { success: true, message: 'Xác nhận chuyển tiền thành công!', data };
+  }
+
+  @Post('withdrawals/:id/reject')
+  async rejectWithdrawal(
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+    @Request() req: any
+  ) {
+    const data = await this.adminService.rejectWithdrawal(id, reason, req.user);
+    return { success: true, message: 'Đã từ chối và hoàn tiền vào ví cửa hàng!', data };
+  }
 }
