@@ -18,20 +18,20 @@ model Role {
 }
 
 model User {
-  userId               BigInt                @id @default(autoincrement()) @map("user_id")
-  authId               String?               @unique @map("auth_id") @db.Uuid
-  username             String                @unique
-  email                String                @unique
-  passwordHash         String                @map("password_hash")
-  fullName             String                @map("full_name")
-  phone                String?
-  status               String                @default("ACTIVE")
-  passwordResetToken     String?               @map("password_reset_token")
-  passwordResetExpiresAt DateTime?             @map("password_reset_expires_at")
-  emailVerificationToken String?               @map("email_verification_token")
-  emailVerificationExpiresAt DateTime?         @map("email_verification_expires_at")
-  createdAt            DateTime              @default(now()) @map("created_at")
-  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at")
+  userId                     BigInt    @id @default(autoincrement()) @map("user_id")
+  authId                     String?   @unique @map("auth_id") @db.Uuid
+  username                   String    @unique
+  email                      String    @unique
+  passwordHash               String    @map("password_hash")
+  fullName                   String    @map("full_name")
+  phone                      String?
+  status                     String    @default("ACTIVE")
+  passwordResetToken         String?   @map("password_reset_token")
+  passwordResetExpiresAt     DateTime? @map("password_reset_expires_at")
+  emailVerificationToken     String?   @map("email_verification_token")
+  emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @default(now()) @updatedAt @map("updated_at")
 
   ownedStores          Store[]               @relation("StoreOwner")
   storeStaffs          StoreStaff[]
@@ -39,31 +39,34 @@ model User {
   priceHistories       ProductPriceHistory[]
   orderStatusHistories OrderStatusHistory[]
   refreshTokens        RefreshToken[]
+  approvedWithdrawals  StoreWithdrawal[]     @relation("ApprovedWithdrawals")
 
   @@map("users")
 }
 
 model Store {
-  storeId        BigInt          @id @default(autoincrement()) @map("store_id")
-  ownerUserId    BigInt          @map("owner_user_id")
-  owner          User            @relation("StoreOwner", fields: [ownerUserId], references: [userId], onDelete: Restrict)
-  name           String
-  code           String          @unique
-  email          String?
-  phone          String
-  address        String
-  status         String          @default("ACTIVE")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @default(now()) @updatedAt @map("updated_at")
+  storeId     BigInt   @id @default(autoincrement()) @map("store_id")
+  ownerUserId BigInt   @map("owner_user_id")
+  owner       User     @relation("StoreOwner", fields: [ownerUserId], references: [userId], onDelete: Restrict)
+  name        String
+  code        String   @unique
+  email       String?
+  phone       String
+  address     String
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
-  staffs         StoreStaff[]
-  storeCustomers StoreCustomer[]
-  categories     Category[]
-  products       Product[]
-  inventories    Inventory[]
-  iotButtons     IoTButton[]
-  orders         Order[]
+  staffs          StoreStaff[]
+  storeCustomers  StoreCustomer[]
+  categories      Category[]
+  products        Product[]
+  inventories     Inventory[]
+  iotButtons      IoTButton[]
+  orders          Order[]
   deviceTemplates DeviceTemplate[]
+  wallet          StoreWallet?
+  subscriptions   StoreSubscription[]
 
   @@map("store")
 }
@@ -87,17 +90,18 @@ model StoreStaff {
 }
 
 model CustomerProfile {
-  customerId     BigInt            @id @default(autoincrement()) @map("customer_id")
-  userId         BigInt            @unique @map("user_id")
-  user           User              @relation(fields: [userId], references: [userId], onDelete: Restrict)
-  phone          String?
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @default(now()) @updatedAt @map("updated_at")
+  customerId BigInt   @id @default(autoincrement()) @map("customer_id")
+  userId     BigInt   @unique @map("user_id")
+  user       User     @relation(fields: [userId], references: [userId], onDelete: Restrict)
+  phone      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
 
   addresses      CustomerAddress[]
   storeCustomers StoreCustomer[]
   iotButtons     IoTButton[]
   orders         Order[]
+  rentals        ButtonRental[]
 
   @@map("customer_profile")
 }
@@ -116,7 +120,7 @@ model CustomerAddress {
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at")
 
-  iotButtons    IoTButton[]
+  iotButtons IoTButton[]
 
   @@unique([customerId, addressId], name: "uq_customer_address_pair")
   @@map("customer_address")
@@ -149,26 +153,26 @@ model Category {
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at")
 
-  products         Product[]
+  products Product[]
 
   @@unique([storeId, categoryId], name: "uq_category_store_pair")
   @@map("category")
 }
 
 model Product {
-  productId      BigInt                @id @default(autoincrement()) @map("product_id")
-  storeId        BigInt                @map("store_id")
-  store          Store                 @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
-  categoryId     BigInt?               @map("category_id")
-  category       Category?             @relation(fields: [storeId, categoryId], references: [storeId, categoryId], onDelete: SetNull)
-  productCode    String                @map("product_code")
-  productName    String                @map("product_name")
-  brand          String?
-  description    String?
-  basePrice      Decimal               @map("base_price") @db.Decimal(15, 2)
-  status         String                @default("ACTIVE")
-  createdAt      DateTime              @default(now()) @map("created_at")
-  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at")
+  productId   BigInt    @id @default(autoincrement()) @map("product_id")
+  storeId     BigInt    @map("store_id")
+  store       Store     @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  categoryId  BigInt?   @map("category_id")
+  category    Category? @relation(fields: [storeId, categoryId], references: [storeId, categoryId], onDelete: SetNull)
+  productCode String    @map("product_code")
+  productName String    @map("product_name")
+  brand       String?
+  description String?
+  basePrice   Decimal   @map("base_price") @db.Decimal(15, 2)
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
 
   priceHistories ProductPriceHistory[]
   discounts      ProductDiscount[]
@@ -195,52 +199,54 @@ model ProductPriceHistory {
 }
 
 model ProductDiscount {
-  discountId      BigInt    @id @default(autoincrement()) @map("discount_id")
-  productId       BigInt    @map("product_id")
-  product         Product   @relation(fields: [productId], references: [productId], onDelete: Restrict)
-  discountPercent Decimal?  @map("discount_percent") @db.Decimal(5, 2)
-  discountAmount  Decimal?  @map("discount_amount") @db.Decimal(15, 2)
-  startAt         DateTime  @map("start_at")
-  endAt           DateTime  @map("end_at")
-  status          String    @default("ACTIVE")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  discountId      BigInt   @id @default(autoincrement()) @map("discount_id")
+  productId       BigInt   @map("product_id")
+  product         Product  @relation(fields: [productId], references: [productId], onDelete: Restrict)
+  discountPercent Decimal? @map("discount_percent") @db.Decimal(5, 2)
+  discountAmount  Decimal? @map("discount_amount") @db.Decimal(15, 2)
+  startAt         DateTime @map("start_at")
+  endAt           DateTime @map("end_at")
+  status          String   @default("ACTIVE")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("product_discount")
 }
 
 model Inventory {
-  inventoryId    BigInt   @id @default(autoincrement()) @map("inventory_id")
-  storeId        BigInt   @map("store_id")
-  store          Store    @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
-  productId      BigInt   @unique @map("product_id")
-  product        Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
-  quantityOnHand Int      @default(0) @map("quantity_on_hand")
-  reservedQuantity Int    @default(0) @map("reserved_quantity")
-  minStockAlert  Int      @default(5) @map("min_stock_alert")
-  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+  inventoryId      BigInt   @id @default(autoincrement()) @map("inventory_id")
+  storeId          BigInt   @map("store_id")
+  store            Store    @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  productId        BigInt   @unique @map("product_id")
+  product          Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  quantityOnHand   Int      @default(0) @map("quantity_on_hand")
+  reservedQuantity Int      @default(0) @map("reserved_quantity")
+  minStockAlert    Int      @default(5) @map("min_stock_alert")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("inventory")
 }
 
 model IoTButton {
-  buttonId        BigInt          @id @default(autoincrement()) @map("button_id")
-  storeId         BigInt          @map("store_id")
-  store           Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
-  customerId      BigInt          @map("customer_id")
-  customer        CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
-  addressId       BigInt          @map("address_id")
-  address         CustomerAddress @relation(fields: [customerId, addressId], references: [customerId, addressId], onDelete: Restrict)
-  deviceId        String          @unique @map("device_id")
-  buttonCode      String          @unique @map("button_code")
-  buttonName      String?         @map("button_name")
-  status          String          @default("ACTIVE")
-  installedAt     DateTime?       @map("installed_at")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at")
+  buttonId    BigInt          @id @default(autoincrement()) @map("button_id")
+  storeId     BigInt          @map("store_id")
+  store       Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  customerId  BigInt          @map("customer_id")
+  customer    CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  addressId   BigInt          @map("address_id")
+  address     CustomerAddress @relation(fields: [customerId, addressId], references: [customerId, addressId], onDelete: Restrict)
+  deviceId    String          @unique @map("device_id")
+  buttonCode  String          @unique @map("button_code")
+  buttonName  String?         @map("button_name")
+  status      String          @default("ACTIVE")
+  installedAt DateTime?       @map("installed_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @default(now()) @updatedAt @map("updated_at")
+  rentalId    BigInt?         @map("rental_id")
+  rental      ButtonRental?   @relation(fields: [rentalId], references: [rentalId], onDelete: SetNull)
 
-  buttonProducts  ButtonProduct[]
-  orders          Order[]
+  buttonProducts ButtonProduct[]
+  orders         Order[]
 
   @@unique([buttonId, customerId, storeId], name: "uq_iot_button_context")
   @@map("iot_button")
@@ -261,33 +267,33 @@ model ButtonProduct {
 }
 
 model Order {
-  orderId               BigInt               @id @default(autoincrement()) @map("order_id")
-  orderCode             String               @unique @map("order_code")
-  storeId               BigInt               @map("store_id")
-  store                 Store                @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
-  customerId            BigInt               @map("customer_id")
-  customer              CustomerProfile      @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
-  buttonId              BigInt               @map("button_id")
-  button                IoTButton            @relation(fields: [buttonId, customerId, storeId], references: [buttonId, customerId, storeId], onDelete: Restrict)
-  orderStatus           String               @default("PENDING") @map("order_status")
-  paymentStatus         String               @default("UNPAID") @map("payment_status")
-  paymentMethod         String               @map("payment_method")
-  subtotalAmount        Decimal              @default(0) @map("subtotal_amount") @db.Decimal(15, 2)
-  discountAmount        Decimal              @default(0) @map("discount_amount") @db.Decimal(15, 2)
-  shippingFee           Decimal              @default(0) @map("shipping_fee") @db.Decimal(15, 2)
-  totalAmount           Decimal              @default(0) @map("total_amount") @db.Decimal(15, 2)
-  shippingRecipientName String               @map("shipping_recipient_name")
-  shippingPhone         String               @map("shipping_phone")
-  shippingAddress       String               @map("shipping_address")
-  orderNote             String?              @map("order_note")
-  orderDate             DateTime             @default(now()) @map("order_date")
-  completedAt           DateTime?            @map("completed_at")
-  createdAt             DateTime             @default(now()) @map("created_at")
-  updatedAt             DateTime             @default(now()) @updatedAt @map("updated_at")
+  orderId               BigInt          @id @default(autoincrement()) @map("order_id")
+  orderCode             String          @unique @map("order_code")
+  storeId               BigInt          @map("store_id")
+  store                 Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  customerId            BigInt          @map("customer_id")
+  customer              CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  buttonId              BigInt          @map("button_id")
+  button                IoTButton       @relation(fields: [buttonId, customerId, storeId], references: [buttonId, customerId, storeId], onDelete: Restrict)
+  orderStatus           String          @default("PENDING") @map("order_status")
+  paymentStatus         String          @default("UNPAID") @map("payment_status")
+  paymentMethod         String          @map("payment_method")
+  subtotalAmount        Decimal         @default(0) @map("subtotal_amount") @db.Decimal(15, 2)
+  discountAmount        Decimal         @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  shippingFee           Decimal         @default(0) @map("shipping_fee") @db.Decimal(15, 2)
+  totalAmount           Decimal         @default(0) @map("total_amount") @db.Decimal(15, 2)
+  shippingRecipientName String          @map("shipping_recipient_name")
+  shippingPhone         String          @map("shipping_phone")
+  shippingAddress       String          @map("shipping_address")
+  orderNote             String?         @map("order_note")
+  orderDate             DateTime        @default(now()) @map("order_date")
+  completedAt           DateTime?       @map("completed_at")
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @default(now()) @updatedAt @map("updated_at")
 
-  items                 OrderItem[]
-  statusHistories       OrderStatusHistory[]
-  paymentTransactions   PaymentTransaction[]
+  items               OrderItem[]
+  statusHistories     OrderStatusHistory[]
+  paymentTransactions PaymentTransaction[]
 
   @@map("orders")
 }
@@ -367,4 +373,134 @@ model DeviceTemplate {
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("device_templates")
+}
+
+// =========================================================================
+// MARKETPLACE SUBSCRIPTION, BUTTON RENTAL & ESCROW WALLET DOMAIN (BRD V2.2)
+// =========================================================================
+
+model SubscriptionPlan {
+  planId       BigInt   @id @default(autoincrement()) @map("plan_id")
+  planCode     String   @unique @map("plan_code")
+  planName     String   @map("plan_name")
+  description  String?
+  price        Decimal  @db.Decimal(15, 2)
+  durationDays Int      @map("duration_days")
+  maxProducts  Int      @default(50) @map("max_products")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  subscriptions StoreSubscription[]
+
+  @@map("subscription_plans")
+}
+
+model StoreSubscription {
+  subscriptionId BigInt           @id @default(autoincrement()) @map("subscription_id")
+  storeId        BigInt           @map("store_id")
+  store          Store            @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  planId         BigInt           @map("plan_id")
+  plan           SubscriptionPlan @relation(fields: [planId], references: [planId], onDelete: Restrict)
+  startDate      DateTime         @map("start_date")
+  endDate        DateTime         @map("end_date")
+  status         String           @default("ACTIVE") @map("status")
+  paymentMethod  String           @default("PAYOS") @map("payment_method")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @default(now()) @updatedAt @map("updated_at")
+
+  @@map("store_subscriptions")
+}
+
+model RentalPackage {
+  packageId      BigInt   @id @default(autoincrement()) @map("package_id")
+  packageCode    String   @unique @map("package_code")
+  packageName    String   @map("package_name")
+  description    String?
+  buttonQuantity Int      @default(1) @map("button_quantity")
+  monthlyPrice   Decimal  @map("monthly_price") @db.Decimal(15, 2)
+  depositFee     Decimal  @default(0) @map("deposit_fee") @db.Decimal(15, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  rentals ButtonRental[]
+
+  @@map("rental_packages")
+}
+
+model ButtonRental {
+  rentalId        BigInt          @id @default(autoincrement()) @map("rental_id")
+  rentalCode      String          @unique @map("rental_code")
+  customerId      BigInt          @map("customer_id")
+  customer        CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  packageId       BigInt          @map("package_id")
+  package         RentalPackage   @relation(fields: [packageId], references: [packageId], onDelete: Restrict)
+  monthsRented    Int             @default(1) @map("months_rented")
+  totalRentAmount Decimal         @map("total_rent_amount") @db.Decimal(15, 2)
+  depositAmount   Decimal         @default(0) @map("deposit_amount") @db.Decimal(15, 2)
+  startDate       DateTime        @map("start_date")
+  endDate         DateTime        @map("end_date")
+  status          String          @default("PENDING_PAYMENT") @map("status")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at")
+
+  buttons IoTButton[]
+
+  @@map("button_rentals")
+}
+
+model StoreWallet {
+  walletId          BigInt   @id @default(autoincrement()) @map("wallet_id")
+  storeId           BigInt   @unique @map("store_id")
+  store             Store    @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
+  balance           Decimal  @default(0) @map("balance") @db.Decimal(15, 2)
+  frozenBalance     Decimal  @default(0) @map("frozen_balance") @db.Decimal(15, 2)
+  bankName          String?  @map("bank_name")
+  bankAccountNumber String?  @map("bank_account_number")
+  bankAccountHolder String?  @map("bank_account_holder")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  transactions WalletTransaction[]
+  withdrawals  StoreWithdrawal[]
+
+  @@map("store_wallets")
+}
+
+model WalletTransaction {
+  transactionId BigInt      @id @default(autoincrement()) @map("transaction_id")
+  walletId      BigInt      @map("wallet_id")
+  wallet        StoreWallet @relation(fields: [walletId], references: [walletId], onDelete: Cascade)
+  amount        Decimal     @map("amount") @db.Decimal(15, 2)
+  type          String      @map("type")
+  balanceBefore Decimal     @map("balance_before") @db.Decimal(15, 2)
+  balanceAfter  Decimal     @map("balance_after") @db.Decimal(15, 2)
+  referenceId   String?     @map("reference_id")
+  description   String?     @map("description")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@map("wallet_transactions")
+}
+
+model StoreWithdrawal {
+  withdrawalId        BigInt      @id @default(autoincrement()) @map("withdrawal_id")
+  withdrawalCode      String      @unique @map("withdrawal_code")
+  walletId            BigInt      @map("wallet_id")
+  wallet              StoreWallet @relation(fields: [walletId], references: [walletId], onDelete: Cascade)
+  amount              Decimal     @map("amount") @db.Decimal(15, 2)
+  bankName            String      @map("bank_name")
+  bankAccountNumber   String      @map("bank_account_number")
+  bankAccountHolder   String      @map("bank_account_holder")
+  status              String      @default("PENDING") @map("status")
+  approvedByUserId    BigInt?     @map("approved_by_user_id")
+  approvedByUser      User?       @relation("ApprovedWithdrawals", fields: [approvedByUserId], references: [userId], onDelete: SetNull)
+  rejectionReason     String?     @map("rejection_reason")
+  transferEvidenceUrl String?     @map("transfer_evidence_url")
+  requestedAt         DateTime    @default(now()) @map("requested_at")
+  processedAt         DateTime?   @map("processed_at")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at")
+
+  @@map("store_withdrawals")
 }

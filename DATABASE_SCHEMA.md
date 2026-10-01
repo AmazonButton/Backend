@@ -86,13 +86,24 @@ erDiagram
     PRODUCT ||--o{ BUTTON_PRODUCT : "gán vào nút"
 
     %% ORDERS & FULFILLMENT
-    STORE ||--o{ ORDERS : "nhận đơn"
-    CUSTOMER_PROFILE ||--o{ ORDERS : "người mua"
-    IOT_BUTTON ||--o{ ORDERS : "nguồn kích hoạt"
-    ORDERS ||--o{ ORDER_ITEM : "chi tiết dòng hàng"
-    PRODUCT ||--o{ ORDER_ITEM : "sản phẩm mua"
-    ORDERS ||--o{ ORDER_STATUS_HISTORY : "dòng thời gian"
-    ORDERS ||--o{ PAYMENT_TRANSACTION : "thanh toán"
+    STORE ||--o{ ORDERS : "nhan don"
+    CUSTOMER_PROFILE ||--o{ ORDERS : "nguoi mua"
+    IOT_BUTTON ||--o{ ORDERS : "nguon kich hoat"
+    ORDERS ||--o{ ORDER_ITEM : "chi tiet dong hang"
+    PRODUCT ||--o{ ORDER_ITEM : "san pham mua"
+    ORDERS ||--o{ ORDER_STATUS_HISTORY : "dong thoi gian"
+    ORDERS ||--o{ PAYMENT_TRANSACTION : "thanh toan"
+
+    %% MARKETPLACE ESCROW, RENTALS & STORE WALLETS
+    SUBSCRIPTION_PLANS ||--o{ STORE_SUBSCRIPTIONS : "ap dung goi cuoc"
+    STORE ||--o{ STORE_SUBSCRIPTIONS : "thue gian hang san"
+    RENTAL_PACKAGES ||--o{ BUTTON_RENTALS : "ap dung goi thue"
+    CUSTOMER_PROFILE ||--o{ BUTTON_RENTALS : "khach thue nut"
+    BUTTON_RENTALS ||--o{ IOT_BUTTON : "cap phat thiet bi"
+    STORE ||--o| STORE_WALLETS : "vi so du 1-1"
+    STORE_WALLETS ||--o{ WALLET_TRANSACTIONS : "bien dong so du"
+    STORE_WALLETS ||--o{ STORE_WITHDRAWALS : "yeu cau rut tien"
+    USERS ||--o{ STORE_WITHDRAWALS : "admin duyet chuyen khoan"
 ```
 
 ---
@@ -310,3 +321,116 @@ Khi một AI Assistant nhận nhiệm vụ kiểm tra hoặc phát triển tính
 4. **Mã Băm Bảo Mật**: Nếu sinh mã xác thực ngẫu nhiên, bạn đã băm bằng `crypto.createHash('sha256')` trước khi lưu vào bảng chưa?
 5. **Giao Dịch Đa Bảng**: Các thao tác ghi từ 2 bảng trở lên (ví dụ: tạo đơn + trừ kho) đã được bọc trong `db.$transaction` hoặc Stored Procedure chưa?
 6. **Đồng Bộ Schema**: Sau khi sửa database, đã cập nhật tương ứng vào [prisma/schema.prisma](file:///f:/Learning/SEM9-FPTu/backend/prisma/schema.prisma) và chạy `npx prisma generate` chưa?
+
+---
+
+### 3.5 Miền Ví Điện Tử Sàn, Thuê Nút IoT & Thuê Gian Hàng (Marketplace Escrow, Rental & Wallet Domain)
+
+#### Bảng `subscription_plans`
+*Định nghĩa các gói cước thuê gian hàng định kỳ dành cho Chủ cửa hàng (do Super Admin cấu hình).*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `plan_id` | `BIGSERIAL` | `PK` | Khóa chính tự tăng |
+| `plan_code` | `VARCHAR(50)` | `NOT NULL, UNIQUE` | Mã gói cước (e.g. `BASIC_MONTHLY`, `PRO_QUARTERLY`, `ENTERPRISE_YEARLY`) |
+| `plan_name` | `VARCHAR(150)` | `NOT NULL` | Tên hiển thị của gói (e.g. "Gói Cơ Bản (1 Tháng)") |
+| `description` | `TEXT` | `NULL` | Mô tả chi tiết quyền lợi gói |
+| `price` | `DECIMAL(15, 2)` | `NOT NULL` | Giá tiền thuê gian hàng (VND) |
+| `duration_days` | `INT` | `NOT NULL` | Thời gian sử dụng (30, 90, 365 ngày) |
+| `max_products` | `INT` | `DEFAULT 50` | Số lượng sản phẩm tối đa được đăng bán |
+| `is_active` | `BOOLEAN` | `DEFAULT TRUE` | Trạng thái hiển thị gói cước |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm tạo |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cập nhật |
+
+#### Bảng `store_subscriptions`
+*Hợp đồng gói thuê gian hàng của từng Cửa hàng với Sàn.*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `subscription_id` | `BIGSERIAL` | `PK` | Khóa chính |
+| `store_id` | `BIGINT` | `FK -> store(store_id) RESTRICT` | Cửa hàng đăng ký thuê |
+| `plan_id` | `BIGINT` | `FK -> subscription_plans(plan_id) RESTRICT` | Gói cước đã chọn |
+| `start_date` | `TIMESTAMPTZ` | `NOT NULL` | Ngày bắt đầu có hiệu lực |
+| `end_date` | `TIMESTAMPTZ` | `NOT NULL` | Ngày hết hạn |
+| `status` | `VARCHAR(20)` | `DEFAULT 'ACTIVE'` | Trạng thái: `ACTIVE`, `EXPIRED`, `CANCELLED` |
+| `payment_method` | `VARCHAR(20)` | `DEFAULT 'PAYOS'` | Phương thức: `PAYOS` hoặc `WALLET` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm tạo |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cập nhật |
+
+#### Bảng `rental_packages`
+*Các gói thuê nút bấm IoT dành cho Người tiêu dùng cuối (Admin cấu hình).*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `package_id` | `BIGSERIAL` | `PK` | Khóa chính |
+| `package_code` | `VARCHAR(50)` | `NOT NULL, UNIQUE` | Mã gói (e.g. `SINGLE_1M`, `KIT3_1M`) |
+| `package_name` | `VARCHAR(150)` | `NOT NULL` | Tên gói (e.g. "Thuê Nút Đơn Lẻ (1 Tháng)", "Bộ Kit 3 Nút (1 Tháng)") |
+| `description` | `TEXT` | `NULL` | Mô tả gói cước thuê phần cứng |
+| `button_quantity` | `INT` | `DEFAULT 1` | Số lượng nút cấp trong gói (1 nút hoặc bộ 3 nút) |
+| `monthly_price` | `DECIMAL(15, 2)` | `NOT NULL` | Giá thuê hàng tháng (VND, ví dụ 50,000 VND) |
+| `deposit_fee` | `DECIMAL(15, 2)` | `DEFAULT 0` | Tiền đặt cọc phần cứng (hoàn lại khi trả nút) |
+| `is_active` | `BOOLEAN` | `DEFAULT TRUE` | Bật/tắt gói cho thuê |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm tạo |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cập nhật |
+
+#### Bảng `button_rentals`
+*Hợp đồng thuê thiết bị nút bấm IoT của Khách hàng.*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `rental_id` | `BIGSERIAL` | `PK` | Khóa chính |
+| `rental_code` | `VARCHAR(50)` | `NOT NULL, UNIQUE` | Mã hợp đồng thuê duy nhất (e.g. `RNT-2026-001`) |
+| `customer_id` | `BIGINT` | `FK -> customer_profile(customer_id) RESTRICT` | Khách hàng thuê nút |
+| `package_id` | `BIGINT` | `FK -> rental_packages(package_id) RESTRICT` | Gói thuê đăng ký |
+| `months_rented` | `INT` | `DEFAULT 1` | Số tháng thuê (1, 3, 6, 12) |
+| `total_rent_amount` | `DECIMAL(15, 2)` | `NOT NULL` | Tổng tiền thuê (`monthly_price * months`) |
+| `deposit_amount` | `DECIMAL(15, 2)` | `DEFAULT 0` | Tổng tiền cọc phần cứng |
+| `start_date` | `TIMESTAMPTZ` | `NOT NULL` | Thời điểm bắt đầu |
+| `end_date` | `TIMESTAMPTZ` | `NOT NULL` | Thời điểm hết hạn |
+| `status` | `VARCHAR(20)` | `DEFAULT 'PENDING_PAYMENT'` | Trạng thái: `PENDING_PAYMENT`, `ACTIVE`, `EXPIRED`, `TERMINATED` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm tạo |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cập nhật |
+
+#### Bảng `store_wallets`
+*Ví số dư nội bộ của Cửa hàng, nhận tiền đối soát đơn hàng và thực hiện rút tiền.*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `wallet_id` | `BIGSERIAL` | `PK` | Khóa chính |
+| `store_id` | `BIGINT` | `UNIQUE, FK -> store(store_id) CASCADE` | Quan hệ 1-1 với Cửa hàng |
+| `balance` | `DECIMAL(15, 2)` | `DEFAULT 0` | Số dư khả dụng có thể rút hoặc mua gói cước |
+| `frozen_balance` | `DECIMAL(15, 2)` | `DEFAULT 0` | Số dư tạm giữ (chờ giao hàng hoàn tất) |
+| `bank_name` | `VARCHAR(100)` | `NULL` | Tên ngân hàng nhận rút tiền (Vietcombank, MB, Tech...) |
+| `bank_account_number` | `VARCHAR(50)` | `NULL` | Số tài khoản ngân hàng của chủ shop |
+| `bank_account_holder` | `VARCHAR(150)` | `NULL` | Tên chủ tài khoản ngân hàng |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm tạo |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cập nhật |
+
+#### Bảng `wallet_transactions`
+*Sổ cái biến động số dư (Ledger) bất biến của Ví cửa hàng.*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `transaction_id` | `BIGSERIAL` | `PK` | Khóa chính |
+| `wallet_id` | `BIGINT` | `FK -> store_wallets(wallet_id) CASCADE` | Ví phát sinh biến động |
+| `amount` | `DECIMAL(15, 2)` | `NOT NULL` | Số tiền biến động (+ cộng tiền, - trừ tiền) |
+| `type` | `VARCHAR(30)` | `NOT NULL` | Loại: `ORDER_REVENUE`, `WITHDRAWAL`, `SUBSCRIPTION_PAYMENT`, `REFUND` |
+| `balance_before` | `DECIMAL(15, 2)` | `NOT NULL` | Số dư trước biến động |
+| `balance_after` | `DECIMAL(15, 2)` | `NOT NULL` | Số dư sau biến động |
+| `reference_id` | `VARCHAR(100)` | `NULL` | Mã tham chiếu (e.g. `order_code` hoặc `withdrawal_code`) |
+| `description` | `TEXT` | `NULL` | Diễn giải chi tiết giao dịch |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm ghi nhận giao dịch |
+
+#### Bảng `store_withdrawals`
+*Yêu cầu rút tiền từ Ví cửa hàng về tài khoản ngân hàng thực tế.*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `withdrawal_id` | `BIGSERIAL` | `PK` | Khóa chính |
+| `withdrawal_code` | `VARCHAR(50)` | `NOT NULL, UNIQUE` | Mã rút tiền (e.g. `WDR-2026-001`) |
+| `wallet_id` | `BIGINT` | `FK -> store_wallets(wallet_id) CASCADE` | Ví yêu cầu rút |
+| `amount` | `DECIMAL(15, 2)` | `NOT NULL` | Số tiền yêu cầu rút |
+| `bank_name` | `VARCHAR(100)` | `NOT NULL` | Tên ngân hàng thụ hưởng |
+| `bank_account_number` | `VARCHAR(50)` | `NOT NULL` | Số tài khoản nhận tiền |
+| `bank_account_holder` | `VARCHAR(150)` | `NOT NULL` | Họ và tên chủ tài khoản |
+| `status` | `VARCHAR(20)` | `DEFAULT 'PENDING'` | Trạng thái: `PENDING`, `TRANSFERRED`, `REJECTED` |
+| `approved_by_user_id` | `BIGINT` | `NULL, FK -> users(user_id) SET NULL` | Super Admin phê duyệt chuyển khoản |
+| `rejection_reason` | `TEXT` | `NULL` | Lý do từ chối (nếu bị reject) |
+| `transfer_evidence_url` | `TEXT` | `NULL` | Link ảnh uỷ nhiệm chi / chứng từ chuyển khoản |
+| `requested_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm gửi yêu cầu |
+| `processed_at` | `TIMESTAMPTZ` | `NULL` | Thời điểm xử lý hoàn tất |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm tạo |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cập nhật |
