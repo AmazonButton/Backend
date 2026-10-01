@@ -989,3 +989,112 @@ CREATE POLICY "Store staff manage store payments" ON payment_transaction
 FOR ALL USING (
     order_id IN (SELECT order_id FROM orders WHERE fn_user_has_store_access(store_id))
 );
+
+-- =====================================================================
+-- 9. MARKETPLACE ESCROW, BUTTON RENTALS & STORE WALLETS (BRD V2.2)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS subscription_plans (
+    plan_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    plan_code VARCHAR(50) UNIQUE NOT NULL,
+    plan_name VARCHAR(150) NOT NULL,
+    description TEXT,
+    price DECIMAL(15, 2) NOT NULL,
+    duration_days INT NOT NULL,
+    max_products INT NOT NULL DEFAULT 50,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS store_subscriptions (
+    subscription_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
+    plan_id BIGINT NOT NULL REFERENCES subscription_plans(plan_id) ON DELETE RESTRICT,
+    start_date TIMESTAMPTZ NOT NULL,
+    end_date TIMESTAMPTZ NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    payment_method VARCHAR(20) NOT NULL DEFAULT 'PAYOS',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS rental_packages (
+    package_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    package_code VARCHAR(50) UNIQUE NOT NULL,
+    package_name VARCHAR(150) NOT NULL,
+    description TEXT,
+    button_quantity INT NOT NULL DEFAULT 1,
+    monthly_price DECIMAL(15, 2) NOT NULL,
+    deposit_fee DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS button_rentals (
+    rental_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    rental_code VARCHAR(50) UNIQUE NOT NULL,
+    customer_id BIGINT NOT NULL REFERENCES customer_profile(customer_id) ON DELETE RESTRICT,
+    package_id BIGINT NOT NULL REFERENCES rental_packages(package_id) ON DELETE RESTRICT,
+    months_rented INT NOT NULL DEFAULT 1,
+    total_rent_amount DECIMAL(15, 2) NOT NULL,
+    deposit_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    start_date TIMESTAMPTZ NOT NULL,
+    end_date TIMESTAMPTZ NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING_PAYMENT',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Liên kết thiết bị nút vật lý vào hợp đồng thuê
+ALTER TABLE iot_button ADD COLUMN IF NOT EXISTS rental_id BIGINT REFERENCES button_rentals(rental_id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_iot_button_rental_id ON iot_button(rental_id);
+
+CREATE TABLE IF NOT EXISTS store_wallets (
+    wallet_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    store_id BIGINT UNIQUE NOT NULL REFERENCES store(store_id) ON DELETE CASCADE,
+    balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    frozen_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    bank_name VARCHAR(100),
+    bank_account_number VARCHAR(50),
+    bank_account_holder VARCHAR(150),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+    transaction_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    wallet_id BIGINT NOT NULL REFERENCES store_wallets(wallet_id) ON DELETE CASCADE,
+    amount DECIMAL(15, 2) NOT NULL,
+    type VARCHAR(30) NOT NULL,
+    balance_before DECIMAL(15, 2) NOT NULL,
+    balance_after DECIMAL(15, 2) NOT NULL,
+    reference_id VARCHAR(100),
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS store_withdrawals (
+    withdrawal_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    withdrawal_code VARCHAR(50) UNIQUE NOT NULL,
+    wallet_id BIGINT NOT NULL REFERENCES store_wallets(wallet_id) ON DELETE CASCADE,
+    amount DECIMAL(15, 2) NOT NULL,
+    bank_name VARCHAR(100) NOT NULL,
+    bank_account_number VARCHAR(50) NOT NULL,
+    bank_account_holder VARCHAR(150) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    approved_by_user_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    rejection_reason TEXT,
+    transfer_evidence_url TEXT,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_store_subscriptions_store_id ON store_subscriptions(store_id);
+CREATE INDEX IF NOT EXISTS idx_button_rentals_customer_id ON button_rentals(customer_id);
+CREATE INDEX IF NOT EXISTS idx_store_wallets_store_id ON store_wallets(store_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_wallet_id ON wallet_transactions(wallet_id);
+CREATE INDEX IF NOT EXISTS idx_store_withdrawals_wallet_id ON store_withdrawals(wallet_id);

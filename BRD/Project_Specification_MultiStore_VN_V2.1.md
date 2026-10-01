@@ -221,3 +221,26 @@ PENDING (Chờ tiếp nhận - Đã giữ kho)
               │
           CANCELLED (Hủy đơn & Hoàn hàng về kho -> Hoàn trả tồn giữ chỗ)
 ```
+
+---
+
+## 3. Mở rộng Nghiệp vụ V2.2: Sàn Thương Mại Điện Tử, Thuê Nút & Ví Shop (Marketplace Escrow & Rentals)
+
+### 3.1 Gói cước gian hàng cho Chủ Shop (Store Subscriptions)
+- **Đặc tả**: Cửa hàng phải duy trì gói cước thuê gian hàng định kỳ (tháng/quý/năm) do Super Admin quy định.
+- **Thanh toán**: Chủ shop có thể gia hạn bằng cổng thanh toán PayOS hoặc trừ trực tiếp từ số dư khả dụng trong Ví cửa hàng (`STORE_WALLETS`).
+- **Quyền hạn**: Khi hết hạn gói cước, cửa hàng bị chặn tạo mới sản phẩm và hiển thị cảnh báo gia hạn trên giao diện quản trị.
+
+### 3.2 Gói cước thuê nút bấm IoT định kỳ cho Khách hàng (Customer Button Rentals)
+- **Đối tượng thanh toán**: Người tiêu dùng cuối (`CUSTOMER_PROFILE`) là người trực tiếp trả tiền thuê nút bấm từ hệ thống.
+- **Hình thức thuê**: Thuê theo chu kỳ thời gian (ví dụ 50,000 VND/tháng).
+- **Cấu hình động (Admin Configuration)**: Super Admin cấu hình linh hoạt số lượng nút trong gói (gói đơn lẻ 1 nút hoặc bộ Kit 3 nút bấm), giá thuê hàng tháng và tiền cọc thiết bị nếu có.
+- **Liên kết thiết bị**: Bảng `IOT_BUTTON` được mở rộng khóa ngoại `rental_id` để 1 hợp đồng thuê bộ Kit có thể gắn kết với 3 nút vật lý giao cho khách.
+
+### 3.3 Giải pháp dòng tiền thanh toán Online & Quản lý số dư Shop (Marketplace Escrow & Store Wallet)
+- **Luồng tiền PayOS Sàn**: Tiền thanh toán đơn hàng online của khách hàng chảy về tài khoản ngân hàng PayOS của Sàn.
+- **Tự động đối soát (Escrow Settlement)**: Khi đơn hàng chuyển sang trạng thái `COMPLETED`, hệ thống tự động cộng doanh thu đơn hàng vào Ví số dư (`STORE_WALLETS`) của Shop sở hữu sản phẩm và ghi nhận sổ cái bất biến `WALLET_TRANSACTIONS`.
+- **Rút tiền về ngân hàng thực tế (`STORE_WITHDRAWALS`)**:
+  - Chủ shop cập nhật thông tin tài khoản ngân hàng thụ hưởng.
+  - Khi gửi yêu cầu rút tiền, hệ thống lập tức trừ số dư khả dụng để chống gian lận rút trùng.
+  - Super Admin phê duyệt, thực hiện lệnh chuyển khoản và đính kèm ủy nhiệm chi/mã giao dịch, đổi trạng thái sang `TRANSFERRED`. Nếu từ chối (`REJECTED`), hệ thống tự động hoàn tiền lại vào ví.

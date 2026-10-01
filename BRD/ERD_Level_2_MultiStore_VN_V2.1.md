@@ -326,3 +326,21 @@ erDiagram
 7. **Bảo vệ tồn kho không bị âm**:
    $$\text{reserved\_quantity} \le \text{quantity\_on\_hand}$$
    $$\text{quantity\_on\_hand} \ge 0, \quad \text{reserved\_quantity} \ge 0$$
+
+---
+
+## 4. Các thực thể mở rộng cho Mô hình Marketplace V2.2
+
+### 4.1 Bảng SUBSCRIPTION_PLANS & STORE_SUBSCRIPTIONS
+- `SUBSCRIPTION_PLANS`: `plan_id` (PK), `plan_code` (UK), `plan_name`, `price`, `duration_days`, `max_products`, `is_active`.
+- `STORE_SUBSCRIPTIONS`: `subscription_id` (PK), `store_id` (FK), `plan_id` (FK), `start_date`, `end_date`, `status`, `payment_method`.
+
+### 4.2 Bảng RENTAL_PACKAGES & BUTTON_RENTALS
+- `RENTAL_PACKAGES`: `package_id` (PK), `package_code` (UK), `package_name`, `button_quantity`, `monthly_price`, `deposit_fee`, `is_active`.
+- `BUTTON_RENTALS`: `rental_id` (PK), `rental_code` (UK), `customer_id` (FK), `package_id` (FK), `months_rented`, `total_rent_amount`, `deposit_amount`, `start_date`, `end_date`, `status`.
+- Mở rộng `IOT_BUTTON`: Bổ sung `rental_id` (FK nullable -> `BUTTON_RENTALS.rental_id`).
+
+### 4.3 Bảng STORE_WALLETS, WALLET_TRANSACTIONS & STORE_WITHDRAWALS
+- `STORE_WALLETS`: `wallet_id` (PK), `store_id` (UK FK), `balance`, `frozen_balance`, `bank_name`, `bank_account_number`, `bank_account_holder`.
+- `WALLET_TRANSACTIONS`: `transaction_id` (PK), `wallet_id` (FK), `amount`, `type`, `balance_before`, `balance_after`, `reference_id`, `description`.
+- `STORE_WITHDRAWALS`: `withdrawal_id` (PK), `withdrawal_code` (UK), `wallet_id` (FK), `amount`, `bank_name`, `bank_account_number`, `bank_account_holder`, `status`, `approved_by_user_id` (FK), `rejection_reason`, `transfer_evidence_url`.

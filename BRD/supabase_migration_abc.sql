@@ -126,3 +126,9 @@ COMMIT;
 --    SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'users' AND column_name LIKE '%token%';
 -- 3. Kiểm tra bảng device_templates:
 --    SELECT template_id, code, name, category, store_id FROM public.device_templates;
+
+
+-- ============================================================================
+-- PHẦN D: MARKETPLACE ESCROW, RENTALS & STORE WALLETS (BRD V2.2)
+-- Lưu ý: Đã tách thành file riêng đầy đủ: supabase_migration_v2_2_marketplace.sql
+-- ============================================================================
