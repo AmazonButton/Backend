@@ -1,3 +1,4 @@
+import { StoreWalletService } from '../store-wallet/store-wallet.service';
 import {
   Injectable,
   BadRequestException,
@@ -15,6 +16,7 @@ export class OrdersService {
     @Inject(OrdersRepository) private readonly ordersRepo: OrdersRepository,
     @Inject(CryptoService) private readonly crypto: CryptoService,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
+    @Inject(StoreWalletService) private readonly storeWalletService: StoreWalletService,
   ) {}
 
   /**
@@ -265,6 +267,17 @@ export class OrdersService {
     if (newStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
       // Khấu trừ tồn thực tế
       await this.ordersRepo.deductInventoryOnCompleted(order.items);
+      try {
+        if (['PAID', 'SUCCESS'].includes(order.paymentStatus) || order.paymentMethod === 'ONLINE') {
+          await this.storeWalletService.creditOrderRevenue(
+            order.storeId,
+            Number(order.totalAmount),
+            order.orderCode || order.orderId.toString()
+          );
+        }
+      } catch (err) {
+        console.error('Failed to credit store wallet on completed order:', err);
+      }
     } else if (['CANCELLED', 'REJECTED'].includes(newStatus) && !['CANCELLED', 'REJECTED', 'COMPLETED'].includes(order.orderStatus)) {
       // Hoàn trả tồn giữ chỗ
       await this.ordersRepo.releaseReservedInventory(order.items);

@@ -1,3 +1,4 @@
+import { StoreWalletModule } from '../store-wallet/store-wallet.module';
 import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';

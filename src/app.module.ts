@@ -1,3 +1,4 @@
+import { StoreWalletModule } from './store-wallet/store-wallet.module';
 import { RentalsModule } from './rentals/rentals.module';
 import { Module } from '@nestjs/common';
 import { PrismaModule } from './prisma/prisma.module';
@@ -17,6 +18,7 @@ import { AppController } from './app.controller';
 
 @Module({
   imports: [
+    StoreWalletModule,
     RentalsModule,
     PrismaModule,
     WebSocketModule,
