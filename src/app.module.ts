@@ -1,3 +1,4 @@
+import { StoreSubscriptionsModule } from './store-subscriptions/store-subscriptions.module';
 import { StoreWalletModule } from './store-wallet/store-wallet.module';
 import { RentalsModule } from './rentals/rentals.module';
 import { Module } from '@nestjs/common';
@@ -18,6 +19,7 @@ import { AppController } from './app.controller';
 
 @Module({
   imports: [
+    StoreSubscriptionsModule,
     StoreWalletModule,
     RentalsModule,
     PrismaModule,

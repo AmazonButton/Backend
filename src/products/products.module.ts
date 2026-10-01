@@ -1,3 +1,4 @@
+import { StoreSubscriptionsModule } from '../store-subscriptions/store-subscriptions.module';
 import { Module } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';

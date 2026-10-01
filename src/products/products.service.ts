@@ -1,9 +1,13 @@
+import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
 import { Injectable, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
 import { ProductsRepository } from './products.repository';
 
 @Injectable()
 export class ProductsService {
-  constructor(@Inject(ProductsRepository) private readonly productsRepo: ProductsRepository) {}
+  constructor(
+    @Inject(ProductsRepository) private readonly productsRepo: ProductsRepository,
+    @Inject(StoreSubscriptionsService) private readonly subscriptionsService: StoreSubscriptionsService
+  ) {}
 
   async list(storeId?: string | number | bigint) {
     return this.productsRepo.findMany(storeId ? BigInt(storeId) : undefined);
