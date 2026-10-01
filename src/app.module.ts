@@ -1,3 +1,4 @@
+import { RentalsModule } from './rentals/rentals.module';
 import { Module } from '@nestjs/common';
 import { PrismaModule } from './prisma/prisma.module';
 import { WebSocketModule } from './websocket/websocket.module';
@@ -16,6 +17,7 @@ import { AppController } from './app.controller';
 
 @Module({
   imports: [
+    RentalsModule,
     PrismaModule,
     WebSocketModule,
     SecurityModule,
