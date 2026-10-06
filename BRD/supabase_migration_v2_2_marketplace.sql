@@ -198,10 +198,17 @@ CREATE TABLE IF NOT EXISTS public.store_withdrawals (
     withdrawal_code VARCHAR(50) NOT NULL UNIQUE,
     wallet_id BIGINT NOT NULL,
     amount DECIMAL(15, 2) NOT NULL,
+    fee DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    net_amount DECIMAL(15, 2),
+    bank_code VARCHAR(20),
     bank_name VARCHAR(100) NOT NULL,
     bank_account_number VARCHAR(50) NOT NULL,
     bank_account_holder VARCHAR(150) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    provider VARCHAR(50) NOT NULL DEFAULT 'PAYOS',
+    provider_payout_id VARCHAR(100),
+    provider_reference_id VARCHAR(100),
+    failure_reason TEXT,
     approved_by_user_id BIGINT,
     rejection_reason TEXT,
     transfer_evidence_url TEXT,
@@ -223,6 +230,8 @@ CREATE TABLE IF NOT EXISTS public.store_withdrawals (
 
 CREATE INDEX IF NOT EXISTS idx_store_withdrawals_wallet_id ON public.store_withdrawals(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_store_withdrawals_status ON public.store_withdrawals(status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_store_withdrawals_provider_ref ON public.store_withdrawals(provider_reference_id) WHERE provider_reference_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_store_withdrawals_provider_payout_id ON public.store_withdrawals(provider_payout_id) WHERE provider_payout_id IS NOT NULL;
 
 COMMENT ON TABLE public.store_withdrawals IS 'Danh sách yêu cầu rút tiền từ ví của cửa hàng về tài khoản ngân hàng thực tế';
 

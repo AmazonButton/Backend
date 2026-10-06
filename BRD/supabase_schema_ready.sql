@@ -322,8 +322,8 @@ CREATE TABLE IF NOT EXISTS payment_transaction (
     provider VARCHAR(50) NOT NULL CHECK (provider IN ('COD', 'PAYOS')),
     transaction_code VARCHAR(100),
     amount DECIMAL(15,2) NOT NULL CHECK (amount >= 0),
-    payment_method VARCHAR(30) NOT NULL CHECK (payment_method IN ('COD', 'PAYOS')),
-    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SUCCESS', 'FAILED')),
+    payment_method VARCHAR(30) NOT NULL CHECK (payment_method IN ('COD', 'PAYOS', 'QR', 'BANK_TRANSFER')),
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SUCCESS', 'PAID', 'FAILED', 'CANCELLED', 'EXPIRED')),
     paid_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -1080,10 +1080,17 @@ CREATE TABLE IF NOT EXISTS store_withdrawals (
     withdrawal_code VARCHAR(50) UNIQUE NOT NULL,
     wallet_id BIGINT NOT NULL REFERENCES store_wallets(wallet_id) ON DELETE CASCADE,
     amount DECIMAL(15, 2) NOT NULL,
+    fee DECIMAL(15, 2) NOT NULL DEFAULT 0,
+    net_amount DECIMAL(15, 2),
+    bank_code VARCHAR(20),
     bank_name VARCHAR(100) NOT NULL,
     bank_account_number VARCHAR(50) NOT NULL,
     bank_account_holder VARCHAR(150) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    provider VARCHAR(50) NOT NULL DEFAULT 'PAYOS',
+    provider_payout_id VARCHAR(100),
+    provider_reference_id VARCHAR(100),
+    failure_reason TEXT,
     approved_by_user_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
     rejection_reason TEXT,
     transfer_evidence_url TEXT,
@@ -1092,6 +1099,9 @@ CREATE TABLE IF NOT EXISTS store_withdrawals (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_store_withdrawals_provider_ref ON store_withdrawals(provider_reference_id) WHERE provider_reference_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_store_withdrawals_provider_payout_id ON store_withdrawals(provider_payout_id) WHERE provider_payout_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_store_subscriptions_store_id ON store_subscriptions(store_id);
 CREATE INDEX IF NOT EXISTS idx_button_rentals_customer_id ON button_rentals(customer_id);

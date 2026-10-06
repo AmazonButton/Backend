@@ -340,7 +340,37 @@ erDiagram
 - `BUTTON_RENTALS`: `rental_id` (PK), `rental_code` (UK), `customer_id` (FK), `package_id` (FK), `months_rented`, `total_rent_amount`, `deposit_amount`, `start_date`, `end_date`, `status`.
 - Mở rộng `IOT_BUTTON`: Bổ sung `rental_id` (FK nullable -> `BUTTON_RENTALS.rental_id`).
 
-### 4.3 Bảng STORE_WALLETS, WALLET_TRANSACTIONS & STORE_WITHDRAWALS
-- `STORE_WALLETS`: `wallet_id` (PK), `store_id` (UK FK), `balance`, `frozen_balance`, `bank_name`, `bank_account_number`, `bank_account_holder`.
-- `WALLET_TRANSACTIONS`: `transaction_id` (PK), `wallet_id` (FK), `amount`, `type`, `balance_before`, `balance_after`, `reference_id`, `description`.
-- `STORE_WITHDRAWALS`: `withdrawal_id` (PK), `withdrawal_code` (UK), `wallet_id` (FK), `amount`, `bank_name`, `bank_account_number`, `bank_account_holder`, `status`, `approved_by_user_id` (FK), `rejection_reason`, `transfer_evidence_url`.
+### 4.3 B?ng STORE_WALLETS, WALLET_TRANSACTIONS & STORE_WITHDRAWALS (PayOS Payout Chi Ti?n)
+- `STORE_WALLETS`: `wallet_id` (PK), `store_id` (UK FK), `balance`, `frozen_balance`, `bank_name`, `bank_account_number`, `bank_account_holder`, `created_at`, `updated_at`.
+- `WALLET_TRANSACTIONS`: `transaction_id` (PK), `wallet_id` (FK), `amount`, `type` (`ORDER_REVENUE` / `PAYMENT_CREDIT`, `WITHDRAWAL_DEBIT`, `WITHDRAWAL_REFUND`, `REFUND`), `balance_before`, `balance_after`, `reference_id`, `description`, `created_at`.
+- `STORE_WITHDRAWALS` (K�nh Chi PayOS Payout & �?i so�t):
+  - `withdrawal_id` (PK BIGSERIAL)
+  - `withdrawal_code` (VARCHAR UNIQUE): M� y�u c?u r�t ti?n n?i b?.
+  - `wallet_id` (FK -> `STORE_WALLETS.wallet_id`)
+  - `amount` (DECIMAL(15, 2)): S? ti?n y�u c?u r�t t? v�.
+  - `fee` (DECIMAL(15, 2) DEFAULT 0): Ph� r�t ti?n.
+  - `net_amount` (DECIMAL(15, 2)): Ti?n th?c nh?n (`amount - fee`).
+  - `bank_code` (VARCHAR(20)): M� BIN ng�n h�ng (v� d?: `970422` cho MBBank).
+  - `bank_name` (VARCHAR(100)): T�n ng�n h�ng th? hu?ng (Snapshot).
+  - `bank_account_number` (VARCHAR(50)): S? t�i kho?n ng�n h�ng th? hu?ng (Snapshot).
+  - `bank_account_holder` (VARCHAR(150)): T�n ch? t�i kho?n th? hu?ng (Snapshot).
+  - `status` (VARCHAR(20)): Tr?ng th�i (`PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `TRANSFERRED`, `REJECTED`).
+  - `provider` (VARCHAR(50) DEFAULT 'PAYOS'): C?ng chi tr?.
+  - `provider_payout_id` (VARCHAR(100)): ID payout do PayOS API tr? v?.
+  - `provider_reference_id` (VARCHAR(100) UNIQUE): Kh�a Idempotency d?i so�t duy nh?t g?i sang PayOS.
+  - `failure_reason` (TEXT): Nguy�n nh�n th?t b?i n?u PayOS t? ch?i l?nh.
+  - `approved_by_user_id` (FK -> `USERS.user_id`): Admin duy?t (n?u x? l� th? c�ng).
+  - `rejection_reason` (TEXT): L� do t? ch?i r�t ti?n c?a Admin.
+  - `transfer_evidence_url` (TEXT): URL ?nh ?y nhi?m chi/bill chuy?n kho?n.
+  - `requested_at`, `processed_at`, `created_at`, `updated_at`.
+
+### 4.4 B?ng PAYMENT_TRANSACTION (K�nh Thu PayOS Payment Link & Webhook)
+- `PAYMENT_TRANSACTION`:
+  - `payment_transaction_id` (PK BIGSERIAL)
+  - `order_id` (FK -> `ORDERS.order_id`)
+  - `provider` (VARCHAR(50)): `'PAYOS'`, `'COD'`.
+  - `transaction_code` (VARCHAR(100)): M� orderCode sinh cho PayOS.
+  - `amount` (DECIMAL(15, 2)): S? ti?n thanh to�n don h�ng.
+  - `payment_method` (VARCHAR(30)): `'PAYOS'`, `'COD'`, `'QR'`, `'BANK_TRANSFER'`.
+  - `status` (VARCHAR(30)): `'PENDING'`, `'SUCCESS'`, `'PAID'`, `'FAILED'`, `'CANCELLED'`, `'EXPIRED'`.
+  - `paid_at`, `created_at`, `updated_at`.
