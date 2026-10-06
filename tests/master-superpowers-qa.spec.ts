@@ -278,8 +278,9 @@ async function runMasterSuperpowersQASuite() {
     await ordersService.updateOrderStatus(zeroTouchOrder.orderId, 'DELIVERED');
     await ordersService.updateOrderStatus(zeroTouchOrder.orderId, 'COMPLETED');
     const walletAfterComplete = (await walletService.getOrCreateStoreWallet(store.storeId)).balance;
-    const settledAmount = Number(zeroTouchOrder.totalAmount);
-    assert('3.A-ESCROW', 'Hoàn tất đơn hàng chuyển tiền từ Escrow vào Ví Cửa Hàng chính xác (+400,000 VND)', Number(walletAfterComplete) - Number(walletBeforeComplete) === settledAmount);
+    const completedOrder = await prisma.order.findUnique({ where: { orderId: zeroTouchOrder.orderId } });
+    const settledAmount = Number(completedOrder?.netAmount || zeroTouchOrder.totalAmount);
+    assert('3.A-ESCROW', `Hoàn tất đơn hàng chuyển doanh thu thực nhận (Net Amount sau trừ 8% hoa hồng) vào Ví Cửa Hàng (+${settledAmount.toLocaleString()} VND)`, Math.abs((Number(walletAfterComplete) - Number(walletBeforeComplete)) - settledAmount) < 0.01);
 
     // Double Settlement Protection: Calling complete again must not double credit
     const walletBeforeSecond = (await walletService.getOrCreateStoreWallet(store.storeId)).balance;

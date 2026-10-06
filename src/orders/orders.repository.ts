@@ -113,11 +113,22 @@ export class OrdersRepository {
       }
 
       const total = subtotal + shippingFee;
+      const store = await tx.store.findUnique({
+        where: { storeId: button.storeId },
+        select: { commissionRate: true },
+      });
+      const commissionRate = store?.commissionRate ? Number(store.commissionRate) : 8.0;
+      const commissionAmount = Math.round((total * commissionRate / 100) * 100) / 100;
+      const netAmount = Math.max(0, total - commissionAmount);
+
       await tx.order.update({
         where: { orderId: createdOrder.orderId },
         data: {
           subtotalAmount: subtotal,
           totalAmount: total,
+          commissionRate,
+          commissionAmount,
+          netAmount,
         },
       });
 

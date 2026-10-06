@@ -1,3 +1,4 @@
+import { StoresModule } from './stores/stores.module';
 import { StoreSubscriptionsModule } from './store-subscriptions/store-subscriptions.module';
 import { StoreWalletModule } from './store-wallet/store-wallet.module';
 import { RentalsModule } from './rentals/rentals.module';
@@ -35,6 +36,7 @@ import { AppController } from './app.controller';
     AnalyticsModule,
     MediaModule,
     PaymentsModule,
+    StoresModule,
   ],
   controllers: [AppController],
 })

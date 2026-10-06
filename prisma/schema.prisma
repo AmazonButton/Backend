@@ -53,6 +53,7 @@ model Store {
   email       String?
   phone       String
   address     String
+  commissionRate Decimal? @default(8.0) @map("commission_rate") @db.Decimal(5, 2)
   status      String   @default("ACTIVE")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
@@ -282,6 +283,9 @@ model Order {
   discountAmount        Decimal         @default(0) @map("discount_amount") @db.Decimal(15, 2)
   shippingFee           Decimal         @default(0) @map("shipping_fee") @db.Decimal(15, 2)
   totalAmount           Decimal         @default(0) @map("total_amount") @db.Decimal(15, 2)
+  commissionRate        Decimal         @default(8.0) @map("commission_rate") @db.Decimal(5, 2)
+  commissionAmount      Decimal         @default(0) @map("commission_amount") @db.Decimal(15, 2)
+  netAmount             Decimal         @default(0) @map("net_amount") @db.Decimal(15, 2)
   shippingRecipientName String          @map("shipping_recipient_name")
   shippingPhone         String          @map("shipping_phone")
   shippingAddress       String          @map("shipping_address")

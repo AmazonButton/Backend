@@ -269,9 +269,10 @@ export class OrdersService {
       await this.ordersRepo.deductInventoryOnCompleted(order.items);
       try {
         if (['PAID', 'SUCCESS'].includes(order.paymentStatus) || ['ONLINE', 'PAYOS'].includes(order.paymentMethod)) {
+          const payoutAmount = (order as any).netAmount ? Number((order as any).netAmount) : Number(order.totalAmount);
           await this.storeWalletService.creditOrderRevenue(
             order.storeId,
-            Number(order.totalAmount),
+            payoutAmount,
             order.orderCode || order.orderId.toString()
           );
         }

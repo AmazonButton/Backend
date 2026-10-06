@@ -206,4 +206,49 @@ export class DevicesRepository {
       where: { templateId },
     });
   }
+
+  async remapStore(buttonId: bigint, newStoreId: bigint, customerId?: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Clear old button products
+      await tx.buttonProduct.deleteMany({ where: { buttonId } });
+
+      // 2. Update button store
+      const updated = await tx.ioTButton.update({
+        where: { buttonId },
+        data: { storeId: newStoreId },
+        include: {
+          store: true,
+          customer: { include: { user: true } },
+          address: true,
+          buttonProducts: { include: { product: true } },
+        },
+      });
+
+      // 3. Link customer to new store if not already linked
+      if (customerId) {
+        const link = await tx.storeCustomer.findFirst({
+          where: { storeId: newStoreId, customerId },
+        });
+        if (!link) {
+          await tx.storeCustomer.create({
+            data: { storeId: newStoreId, customerId },
+          });
+        }
+      }
+
+      return updated;
+    });
+  }
+
+  async findActiveStoreById(storeId: bigint) {
+    return this.prisma.store.findFirst({
+      where: { storeId, status: 'ACTIVE' },
+    });
+  }
+
+  async findActiveProductInStore(productId: bigint, storeId: bigint) {
+    return this.prisma.product.findFirst({
+      where: { productId, storeId, status: 'ACTIVE' },
+    });
+  }
 }

@@ -1,12 +1,21 @@
-# Đặc Tả Dự Án --- Hệ Thống Đặt Hàng Qua Nút Bấm IoT (Đa Cửa Hàng / Multi-Store) [Phiên Bản 2.1 - Cố Định Cửa Hàng Cho Nút]
+# Tài Liệu Đặc Tả Dự Án (Project Specification)
+## Nền Tảng Đặt Hàng Qua Nút Bấm IoT Đa Cửa Hàng & Sàn Thương Mại Điện Tử
+**Phiên bản: V2.2 (Universal Smart Button & Multi-Store Marketplace Ecosystem)**
 
-## 1. Tổng quan dự án
+---
 
-Hệ thống là một nền tảng đặt hàng qua Nút bấm IoT hỗ trợ mô hình đa cửa hàng (Multi-Store).
+## 1. Tổng quan dự án (Project Overview)
 
-Khách hàng sở hữu các Nút bấm IoT (IoT Button) vật lý. Mỗi Nút bấm được liên kết **cố định với một Cửa hàng (Store) cụ thể** và được cấu hình với một hoặc nhiều Sản phẩm từ Cửa hàng đó. Khi Khách hàng bấm nút, hệ thống sẽ tự động xác định Nút bấm, Khách hàng, Cửa hàng của nút, các Sản phẩm đã cấu hình kèm số lượng tương ứng và địa chỉ giao hàng, từ đó tạo ra một Đơn hàng (Order).
+Dự án xây dựng nền tảng Thương mại Điện tử và IoT cho phép khách hàng đặt hàng siêu tốc tức thì (Zero-Touch Ordering) chỉ bằng một thao tác bấm nút vật lý (Single Press) gắn tại nhà/văn phòng.
 
-Hệ thống hỗ trợ nhiều Cửa hàng độc lập trong khi tài khoản của Khách hàng là duy nhất và mang tính toàn cục (Global Customer Account). Mỗi nút bấm gắn liền cố định với một Cửa hàng duy nhất từ lúc đăng ký.
+Hệ thống hoạt động theo mô hình **Sàn Thương Mại Điện Tử Đa Cửa Hàng (Multi-Store Marketplace)**:
+- Tài khoản của Khách hàng mang tính toàn cầu (Global Customer Account).
+- **Mô hình Nút Thông Minh Đa Năng (Universal Smart Button)**: Nút bấm IoT thuộc quyền sở hữu của Khách hàng (hoặc do Sàn cấp phát). Khách hàng có quyền linh hoạt **ghép nối và chuyển đổi Cửa hàng cung cấp (Dynamic Store Re-mapping)** trên Web/App bất cứ lúc nào.
+- **Mô hình Thu phí Sàn Phân Tầng (Dual-Fee Marketplace Monetization)**:
+  1. **Phí Thuê Bao Gian Hàng (STORE_SUBSCRIPTIONS)**: Store trả phí cố định định kỳ hàng tháng để duy trì gian hàng và quyền đăng bán sản phẩm.
+  2. **Phí Hoa Hồng Sàn Trên Đơn Hàng (COMMISSION_RATE & COMMISSION_AMOUNT)**: Sàn thu chiết khấu % trên mỗi đơn hàng thành công (mặc định 8% - 10%), tự động khấu trừ trước khi ghi có doanh thu thực nhận (
+et_amount) vào Ví Cửa Hàng (STORE_WALLETS).
+  3. **Phí Thuê & Cọc Thiết Bị IoT (BUTTON_RENTALS)**: Do Khách hàng chi trả trực tiếp cho Sàn (Admin). Store không phải lo chi phí phần cứng và không phát sinh tranh chấp thiết bị khi khách chuyển đổi cửa hàng.
 
 ---
 
@@ -14,86 +23,68 @@ Hệ thống hỗ trợ nhiều Cửa hàng độc lập trong khi tài khoản 
 
 ### 2.1 Trong phạm vi (In scope)
 
-- Quản lý đa Cửa hàng (Multi-Store management).
-- Quản lý tài khoản và hồ sơ Khách hàng (Customer accounts & profiles).
-- Quản lý danh sách địa chỉ giao hàng của Khách hàng (bảo vệ địa chỉ mặc định duy nhất).
-- Quản lý mối quan hệ Cửa hàng - Khách hàng (`STORE_CUSTOMER`).
-- Quản lý nhân viên Cửa hàng và phân quyền theo vai trò (Store staff & roles).
-- Quản lý Sản phẩm và Danh mục sản phẩm cách ly theo từng Cửa hàng.
-- Lưu vết lịch sử thay đổi giá bán sản phẩm (`PRODUCT_PRICE_HISTORY`).
-- Quản lý chương trình giảm giá sản phẩm (theo % hoặc số tiền cố định, chống chồng lấn thời gian).
-- Quản lý kho hàng và tồn kho 2 bước (Inventory reservation & Two-phase commit).
-- Đăng ký và cấu hình Nút bấm IoT.
-- Quy tắc: Một Nút bấm thuộc về duy nhất một Khách hàng.
-- **Quy tắc cốt lõi: Một Nút bấm gắn liền cố định với duy nhất một Cửa hàng trong suốt vòng đời của nút (Không chuyển đổi Cửa hàng)**.
-- Quy tắc: Một Nút bấm có thể cấu hình nhiều Sản phẩm (thuộc Cửa hàng của nút đó).
-- Tạo Đơn hàng độc quyền từ thao tác bấm nút vật lý.
-- Stored Procedure tạo đơn hàng an toàn chống Race-condition (`sp_create_order_from_button` - All-or-Nothing).
-- Tự động hoàn trả hoặc trừ tồn kho thực tế theo vòng đời đơn hàng qua Trigger.
-- Thanh toán khi nhận hàng (COD hoặc PayOS QR).
-- Lưu trữ bản sao dữ liệu lịch sử tại thời điểm đặt hàng (Snapshots giá bán, giảm giá, địa chỉ giao hàng).
+- **Quản lý đa Cửa hàng (Multi-Store Management)**: Cách ly dữ liệu sản phẩm, tồn kho, đơn hàng, ví tiền giữa các Store.
+- **Quản lý tài khoản & phân quyền (RBAC)**: Phân quyền chặt chẽ giữa SYSTEM_ADMIN, STORE_OWNER, STORE_STAFF và CUSTOMER.
+- **Quản lý hồ sơ & danh bạ địa chỉ Khách hàng**: Hỗ trợ nhiều địa chỉ, bảo vệ duy nhất một địa chỉ mặc định để nhận hàng khi bấm nút.
+- **Mô hình Nút Thông Minh Đa Năng (Universal IoT Button)**:
+  - Một Nút bấm gắn liền với Khách hàng sở hữu (customer_id).
+  - Cho phép Khách hàng **chuyển đổi Cửa hàng (Store Re-mapping)** linh hoạt trên ứng dụng.
+  - Khi đổi Cửa hàng, hệ thống tự động làm mới danh sách sản phẩm cấu hình trên nút (BUTTON_PRODUCT) theo menu của Store mới.
+- **Tạo đơn hàng Zero-Touch từ Nút bấm IoT**: Xử lý tín hiệu an toàn chống giả mạo chữ ký (HMAC-SHA256) và chống phát lại gói tin (Anti-Replay Nonce).
+- **Quy trình hoàn tất đơn hàng chuẩn State Machine**: PENDING → CONFIRMED → PREPARING → READY_FOR_DELIVERY → SHIPPING → DELIVERED → COMPLETED.
+- **Cơ chế Khóa & Trừ tồn kho 2 bước (Two-Phase Inventory Commit)**: Giữ chỗ (
+eserved_quantity) khi bấm nút và trừ kho thực tế (quantity_on_hand) khi xác nhận đơn.
+- **Kênh Thu Thanh toán Online PayOS & Ghi nhận Sổ cái nội bộ (Ledger)**:
+  - Tích hợp PayOS Webhook xác thực chữ ký HMAC chống giả mạo.
+  - Đảm bảo tính Idempotency: không cộng tiền 2 lần khi webhook gọi lại.
+  - Tự động khấu trừ phí hoa hồng Sàn (commission_amount), ghi có số tiền thực nhận (
+et_amount) vào Ví Cửa Hàng (STORE_WALLETS).
+- **Kênh Chi PayOS Payout Tự Động & Khóa số dư 2 pha (Two-Phase Balance Lock)**:
+  - Cho phép Store rút tiền doanh thu về tài khoản ngân hàng.
+  - Phase 1 trừ số dư ví ngay lập tức để chống Race-condition/Double-spending.
+  - Phase 2 phát lệnh PayOS Payout tự động và cơ chế Fail-Safe Auto-Refund hoàn tiền nếu cổng thanh toán lỗi.
+- **Gói Thuê Nút Phần Cứng Cho Khách Hàng (BUTTON_RENTALS)**: Khách hàng thuê nút định kỳ từ Sàn, Sàn giữ tiền cọc (deposit_fee) và bảo hành thiết bị.
+- **Gói Dịch Vụ Mở Gian Hàng Cho Store (STORE_SUBSCRIPTIONS)**: Cửa hàng mua gói định kỳ để mở khóa quyền đăng sản phẩm và tiếp cận khách hàng.
+- **Sự kiện Real-time qua WebSocket / Socket.io**: Bắn thông báo đơn hàng tức thì vào đúng Room của Store (store_{storeId}), cách ly phòng tuyệt đối chống rò rỉ dữ liệu.
+- **Bảo mật OWASP Top 10**: Chống BOLA/IDOR trên Đơn hàng, Ví tiền, Nút bấm và Rate Limit / Debounce chống kẹt nút vật lý.
 
 ### 2.2 Ngoài phạm vi (Out of scope)
 
-- **Chuyển đổi Nút bấm giữa các Cửa hàng khác nhau (Mỗi nút bấm gắn cố định với một Cửa hàng)**.
-- Khách hàng tự tạo đơn hàng thủ công qua Web/App.
-- Biến thể sản phẩm / SKU phức tạp (Product variants/SKU).
-- Quản lý Nhà cung cấp và Đơn đặt hàng nhập kho (Supplier/Purchase Order).
-- Quy trình chi tiết xuất/nhập/kiểm kê kho chuyên sâu.
-- Hệ thống tích điểm / Khách hàng thân thiết (Loyalty/Membership).
-- Quy trình hoàn tiền (Refund workflow).
-- Mô-đun khuyến mãi nâng cao / Mã giảm giá (Voucher/Promotion module).
+- Khách hàng tự tạo đơn hàng giỏ hàng phức tạp (Hệ thống tập trung tối ưu trải nghiệm 1-Touch từ Nút bấm IoT và Quick Reorder).
+- Biến thể sản phẩm / SKU đa tầng phức tạp (Tập trung danh mục tiêu dùng nhanh: Nước khoáng, Gas, Gạo, Cà phê, Giặt ủi...).
+- Quản lý Nhà cung cấp và quy trình nhập kho chuyên sâu (Supplier / Purchase Order).
+- Hệ thống tích điểm / Đổi quà thành viên nâng cao (Loyalty Points).
 
 ---
 
-## 3. Các tác nhân trong hệ thống (Actors)
+## 3. Các tác nhân và mô hình tài chính (Actors & Financial Flows)
 
-### 3.1 Quản trị viên hệ thống (System Admin)
-Quản trị toàn bộ hệ thống ở mức nền tảng (`SYSTEM_ADMIN`). Chi tiết phân quyền System Admin nằm ngoài phạm vi nghiệp vụ hiện tại.
+### 3.1 Quản trị viên hệ thống (System Admin / Platform)
+- Quản trị toàn bộ nền tảng, thiết bị phần cứng IoT và cấu hình hệ thống.
+- Ban hành các Gói thuê nút (RENTAL_PACKAGES) và Gói mở gian hàng (SUBSCRIPTION_PLANS).
+- Tiếp nhận tiền thuê phần cứng & tiền cọc thiết bị từ Khách hàng; giữ quỹ ký quỹ hoàn cọc khi khách trả nút.
+- Thu phí hoa hồng sàn (Take-rate 8% - 10%) trên mỗi đơn hàng hoàn tất.
+- Giám sát số dư tài khoản chi PayOS Payout và phê duyệt các lệnh rút tiền lớn của Store.
 
-### 3.2 Chủ cửa hàng (Store Owner)
-Quản lý Cửa hàng (`STORE_OWNER`), nhân viên, Sản phẩm, Tồn kho, Đơn hàng, Khách hàng và các Nút bấm đang trỏ tới Cửa hàng của mình.
+### 3.2 Chủ Cửa Hàng (Store Owner)
+- Đăng ký mở gian hàng và thanh toán Gói dịch vụ định kỳ (STORE_SUBSCRIPTIONS).
+- Quản lý danh mục sản phẩm, giá bán, chương trình giảm giá và kho hàng của Store.
+- Tiếp nhận tín hiệu đơn hàng tức thì từ nút bấm của khách hàng, đóng gói và vận chuyển hàng hóa.
+- Nhận doanh thu đơn hàng thực nhận (`net_amount = total_amount - commission_amount`) vào Ví Cửa Hàng (STORE_WALLETS).
+- Khởi tạo lệnh rút tiền doanh thu về tài khoản ngân hàng cá nhân/doanh nghiệp qua kênh PayOS Payout.
 
-### 3.3 Gi?i ph�p K�nh Thu PayOS & Ghi nh?n S? c�i n?i b? (PayOS Payment Collection & Ledger)
-- **Lu?ng ti?n PayOS S�n**: Ti?n thanh to�n don h�ng online c?a kh�ch h�ng ch?y v? t�i kho?n ng�n h�ng PayOS c?a S�n th�ng qua QR Payment Link.
-- **X�c th?c Webhook an to�n**:
-  - Backend x�c th?c ch? k� HMAC-SHA256 b?ng `checksumKey` s? d?ng thu?t to�n `crypto.timingSafeEqual` ch?ng t?n c�ng timing attack.
-  - **Ch?ng duplicate webhook (Idempotency)**: N?u giao d?ch d� ? tr?ng th�i `PAID`, tr? v? HTTP 200 ngay l?p t?c, tuy?t d?i kh�ng c?ng ti?n hai l?n.
-- **Ghi nh?n S? c�i Atomic (Database $transaction)**:
-  - C?p nh?t `payment_transaction.status = 'PAID'`.
-  - C?p nh?t `orders.order_status = 'CONFIRMED'` v� `payment_status = 'PAID'`.
-  - Kh�a v� c?ng s? du v� Store: `balance_after = balance_before + amount`.
-  - Ghi nh?n l?ch s? giao d?ch b?t bi?n v�o `wallet_transactions` v?i type `PAYMENT_CREDIT`.
+### 3.3 Khách Hàng (Customer)
+- Thuê thiết bị nút bấm IoT từ Sàn (đặt cọc + trả phí thuê hàng tháng).
+- Ghép nối nút bấm với Cửa hàng quen thuộc gần nhà và chọn sản phẩm mặc định.
+- Tự do chuyển đổi sang Cửa hàng khác (Store Re-mapping) trên ứng dụng mà không cần thay đổi phần cứng.
+- Bấm nút vật lý để kích hoạt đặt hàng siêu tốc, nhận hàng tại nhà và thanh toán qua COD hoặc PayOS QR.
 
-### 3.4 Gi?i ph�p K�nh Chi PayOS Payout T? �?ng & Ch?ng Race-Condition (Automated Payout & Two-Phase Balance Lock)
-- **Ph�n bi?t hai lo?i s? du**:
-  - `Store Wallet`: S? c�i n?i b? trong DB c?a h? th?ng ghi nh?n kho?n ph?i tr? cho Store.
-  - `PayOS Payout Account Balance`: Ngu?n ti?n th?c t? trong t�i kho?n chi c?a PayOS/B?o Kim. �i?u ki?n gi?i ng�n th�nh c�ng: `Store Wallet >= R�t` V� `PayOS Payout Balance >= R�t + Ph�`.
-- **Co ch? Kh�a s? du 2-Phase (Two-Phase Balance Lock)**:
-  - **Phase 1 (Reserve Balance)**: M? DB transaction, ki?m tra `balance >= amount`, l?p t?c tr? s? du v�, snapshot th�ng tin ng�n h�ng (`bank_code`, `bank_name`, `bank_account_number`, `bank_account_holder`), t?o b?n ghi `store_withdrawals` ? tr?ng th�i `PENDING`, ghi s? c�i `WITHDRAWAL_DEBIT` v� **commit ngay l?p t?c**. Tuy?t d?i kh�ng gi? DB lock trong l�c g?i API b�n th? ba.
-  - **Phase 2 (G?i PayOS Payout API)**: G?i request `POST https://api-merchant.payos.vn/v1/payouts` v?i headers `x-client-id`, `x-api-key`, `x-idempotency-key` (m� `withdrawal_code`), v� ch? k� `x-signature` (thu?t to�n HMAC-SHA256 Payout ri�ng). Khi PayOS ti?p nh?n th�nh c�ng, chuy?n tr?ng th�i r�t ti?n sang `PROCESSING`.
-- **Co ch? T? �?ng Ho�n Ti?n (Fail-Safe Auto-Refund)**:
-  - N?u PayOS t? ch?i l?nh ngay l?p t?c ho?c g?p l?i m?ng tru?c khi t?o du?c payout: Chuy?n `store_withdrawals.status = 'FAILED'`, luu `failure_reason`.
-  - M? DB transaction th? hai ho�n tr? ch�nh x�c s? ti?n v�o v� Store: `balance += amount` v� ghi nh?n s? c�i `WITHDRAWAL_REFUND`.
-- **�?i so�t & C?p nh?t tr?ng th�i Payout (Reconciliation)**:
-  - Tra c?u tr?ng th�i qua PayOS API: `GET /v1/payouts/{id}`.
-  - Khi PayOS x�c nh?n `SUCCEEDED` -> c?p nh?t `store_withdrawals.status = 'SUCCEEDED'`.
-  - Khi PayOS x�c nh?n `FAILED` -> k�ch ho?t ho�n ti?n t? d?ng v�o v�.
-  - Khi PayOS dang `PROCESSING` -> **gi? nguy�n tr?ng th�i, tuy?t d?i kh�ng ho�n ti?n khi dang x? l�**.
+---
 
-### 3.5 Gi�m s�t T�i Kho?n Chi PayOS & Danh m?c API Endpoints
-- **Gi�m s�t s? du Payout**: Admin theo d�i s? du v� chi th?c t? th�ng qua endpoint PayOS: `GET https://api-merchant.payos.vn/v1/payouts-account/balance`.
-- **Danh m?c API Store Owner**:
-  - `GET /api/v1/store/wallet`: Xem s? du v� v� t�i kho?n ng�n h�ng li�n k?t.
-  - `PUT /api/v1/store/wallet/bank-account`: C?p nh?t th�ng tin ng�n h�ng m?c d?nh.
-  - `GET /api/v1/store/wallet/transactions`: Xem sao k� l?ch s? bi?n d?ng s? du s? c�i.
-  - `POST /api/v1/store/wallet/withdrawals`: T?o y�u c?u r�t ti?n (t? d?ng ph�t l?nh PayOS ho?c ch? duy?t).
-  - `GET /api/v1/store/wallet/withdrawals`: L?ch s? c�c y�u c?u r�t ti?n.
-  - `POST /api/v1/store/wallet/withdrawals/:id/sync-status`: Store ch? d?ng d?ng b? tr?ng th�i chi ti?n t? PayOS.
-- **Danh m?c API Super Admin**:
-  - `GET /api/v1/admin/payos/payout-balance`: Ki?m tra s? du t�i kho?n chi PayOS th?c t?.
-  - `GET /api/v1/admin/withdrawals`: Danh s�ch to�n b? y�u c?u r�t ti?n c?a c�c Store.
-  - `POST /api/v1/admin/withdrawals/:id/payout`: Admin duy?t v� k�ch ho?t chi ti?n t? d?ng qua PayOS.
-  - `POST /api/v1/admin/withdrawals/:id/sync-payout`: Admin d?ng b? tr?ng th�i Payout d?i so�t.
-  - `POST /api/v1/admin/withdrawals/:id/transfer`: X�c nh?n chuy?n kho?n th? c�ng (k�m h�a don ?y nhi?m chi).
-  - `POST /api/v1/admin/withdrawals/:id/reject`: T? ch?i y�u c?u v� t? d?ng ho�n ti?n l?i v� Shop.
+## 4. Cơ chế Doanh thu & Phí Sàn (Platform Monetization Model)
+
+| Loại Phí | Đối Tượng Trả | Đối Tượng Nhận | Cách Tính & Thời Điểm Thu |
+| :--- | :--- | :--- | :--- |
+| **Phí Thuê Bao Gian Hàng (STORE_SUBSCRIPTIONS)** | Store | Admin (Sàn) | Cố định theo chu kỳ (ví dụ 199.000đ/tháng hoặc 499.000đ/quý). Trừ trực tiếp từ Ví Cửa Hàng hoặc thanh toán qua PayOS khi gia hạn. |
+| **Phí Hoa Hồng Đơn Hàng (COMMISSION_AMOUNT)** | Store | Admin (Sàn) | Biến đổi theo đơn hàng (	otal_amount × commission_rate, vd 8%). Tự động khấu trừ ngay khi đơn hàng chuyển trạng thái COMPLETED. |
+| **Phí Thuê Phần Cứng Nút Bấm (BUTTON_RENTALS)** | Khách hàng | Admin (Sàn) | Thu định kỳ hàng tháng (vd 30.000đ/tháng) kèm tiền cọc thiết bị (vd 200.000đ/nút). Tiền cọc được hoàn lại 100% khi trả nút nguyên vẹn. |

@@ -1,18 +1,30 @@
-# Sơ Đồ ERD Level 2 --- Hệ Thống Đặt Hàng Qua Nút Bấm IoT (Đa Cửa Hàng) [Phiên Bản 2.1 - Cố Định Cửa Hàng Cho Nút]
+﻿# Sơ Đồ ERD Level 2 — Hệ Thống Đặt Hàng Qua Nút Bấm IoT (Đa Cửa Hàng & Sàn Thương Mại Điện Tử)
+**Phiên Bản: V2.2 (Universal Smart Button & Multi-Store Marketplace Ecosystem)**
+
+---
 
 ## 1. Phạm vi mô hình (Scope)
 
-Mô hình ERD này mô tả chi tiết các thực thể dữ liệu, thuộc tính và mối quan hệ cho nền tảng đặt hàng qua Nút bấm IoT đa cửa hàng.
+Mô hình ERD này mô tả chi tiết các thực thể dữ liệu, thuộc tính, ràng buộc và mối quan hệ cho nền tảng Đặt hàng qua Nút bấm IoT đa cửa hàng hoạt động theo cơ chế **Sàn Thương Mại Điện Tử (Marketplace)**.
 
 ### Các nguyên tắc kiến trúc cốt lõi:
-- Hỗ trợ nhiều Cửa hàng (`STORE`) độc lập trên cùng một hệ thống.
-- Khách hàng có 1 tài khoản toàn cầu (`CUSTOMER_PROFILE`), có thể sở hữu nhiều Nút bấm thuộc các Cửa hàng khác nhau.
-- **Một Nút bấm (`IOT_BUTTON`) gắn liền cố định với DUY NHẤT 1 Cửa hàng từ lúc tạo và không chuyển đổi Cửa hàng**.
-- Mã thiết bị (`device_id`) và mã hiển thị (`button_code`) là duy nhất toàn cầu.
-- Một Nút bấm có thể cấu hình nhiều Sản phẩm, nhưng tất cả Sản phẩm trên Nút bắt buộc phải thuộc Cửa hàng của Nút đó.
-- Đơn hàng chỉ được tạo ra khi có thao tác bấm Nút vật lý.
-- Đơn hàng luôn gắn liền với Cửa hàng của Nút bấm và lưu trữ đầy đủ bản sao (Snapshot) giá bán, khuyến mãi, địa chỉ nhận hàng.
-- Mọi biến động giá gốc sản phẩm đều được lưu vết tự động vào `PRODUCT_PRICE_HISTORY`.
+- **Sàn TMĐT Đa Cửa hàng (`STORE`)**: Hỗ trợ nhiều Cửa hàng độc lập kinh doanh trên cùng một hệ sinh thái.
+- **Tài khoản Khách hàng Toàn cầu (`USERS` & `CUSTOMER_PROFILE`)**: Khách hàng sở hữu 1 tài khoản duy nhất, có thể tương tác và mua sắm tại bất kỳ Cửa hàng nào trên hệ thống.
+- **Mô hình Nút Bấm Thông Minh Đa Năng (`IOT_BUTTON`)**:
+  - Nút bấm thuộc quyền sở hữu/sử dụng của Khách hàng (`customer_id`).
+  - Thiết bị có thể do Khách mua đứt hoặc thuê định kỳ từ Sàn qua gói thuê phần cứng (`BUTTON_RENTALS`).
+  - **Linh hoạt chuyển đổi Cửa hàng (Dynamic Store Re-mapping)**: Khách hàng có quyền chuyển đổi Cửa hàng liên kết (`store_id`) của Nút bấm trên Web/App bất kỳ lúc nào để chuyển sang mua hàng từ Cửa hàng khác mà không cần thay đổi phần cứng. Khi chuyển Store, danh mục sản phẩm gắn trên nút (`BUTTON_PRODUCT`) sẽ được làm mới/cấu hình lại tương ứng với Store mới.
+- **Mô hình Thu Phí Sàn Phân Tầng (Dual-Fee Marketplace Monetization)**:
+  - **Phí thuê bao gian hàng định kỳ (`STORE_SUBSCRIPTIONS`)**: Cửa hàng thanh toán định kỳ theo các gói thuê bao (`SUBSCRIPTION_PLANS`) để duy trì hoạt động và quyền đăng bán trên Sàn.
+  - **Phí hoa hồng theo từng đơn hàng (`ORDERS.commission_rate`, `commission_amount`)**: Tự động khấu trừ tỷ lệ % hoa hồng sàn khi đơn hàng giao thành công, phần doanh thu thực nhận (`net_amount`) được tự động kết chuyển vào Ví cửa hàng (`STORE_WALLETS`).
+- **Quản lý Dòng tiền & Tự động chi trả PayOS Payout**:
+  - Tiền khách thanh toán được thu tập trung vào tài khoản Sàn qua cổng PayOS (`PAYMENT_TRANSACTION`).
+  - Khi đơn hàng hoàn thành (`COMPLETED`), hệ thống ghi nhận giao dịch ví (`WALLET_TRANSACTIONS`) và cộng vào số dư khả dụng (`STORE_WALLETS.balance`).
+  - Cửa hàng chủ động tạo lệnh rút tiền (`STORE_WITHDRAWALS`), hệ thống thực hiện giải ngân tự động qua PayOS Payout API hoặc qua kiểm duyệt của Quản trị viên Sàn.
+- **Snapshot Bất Biến & Audit Trail**:
+  - Đơn hàng chụp đầy đủ bản sao giá, chiết khấu, hoa hồng và địa chỉ giao hàng tại thời điểm đặt.
+  - Mọi biến động giá gốc được tự động ghi nhận vào `PRODUCT_PRICE_HISTORY`.
+  - Mọi thay đổi cấu hình nút bấm được lưu vết tại `BUTTON_CONFIG_HISTORY`.
 
 ---
 
@@ -20,357 +32,447 @@ Mô hình ERD này mô tả chi tiết các thực thể dữ liệu, thuộc t�
 
 ```mermaid
 erDiagram
+    USERS ||--o| CUSTOMER_PROFILE : "so_huu_ho_so"
+    USERS ||--o{ USER_ROLES : "duoc_gan_vai_tro"
+    ROLES ||--o{ USER_ROLES : "chua_nguoi_dung"
+    USERS ||--o{ STORE : "so_huu_gian_hang"
+    
+    STORE ||--o{ CATEGORY : "phan_loai_danh_muc"
+    STORE ||--o{ PRODUCT : "kinh_doanh_san_pham"
+    STORE ||--o{ STORE_CUSTOMER : "quan_ly_khach_hang"
+    STORE ||--o{ IOT_BUTTON : "cung_cap_dich_vu_cho"
+    STORE ||--o{ ORDERS : "nhan_don_hang"
+    STORE ||--o| STORE_WALLETS : "so_huu_vi"
+    STORE ||--o{ STORE_SUBSCRIPTIONS : "dang_ky_thue_bao"
+
+    SUBSCRIPTION_PLANS ||--o{ STORE_SUBSCRIPTIONS : "ap_dung_goi"
+    
+    STORE_WALLETS ||--o{ WALLET_TRANSACTIONS : "ghi_nhan_bien_dong"
+    STORE_WALLETS ||--o{ STORE_WITHDRAWALS : "yeu_cau_rut_tien"
+
+    CUSTOMER_PROFILE ||--o{ CUSTOMER_ADDRESS : "so_huu_dia_chi"
+    CUSTOMER_PROFILE ||--o{ STORE_CUSTOMER : "lien_ket_store"
+    CUSTOMER_PROFILE ||--o{ IOT_BUTTON : "so_huu_thiet_bi"
+    CUSTOMER_PROFILE ||--o{ BUTTON_RENTALS : "thue_thiet_bi"
+    CUSTOMER_PROFILE ||--o{ ORDERS : "dat_hang"
+
+    RENTAL_PACKAGES ||--o{ BUTTON_RENTALS : "dinh_nghia_goi_thue"
+    BUTTON_RENTALS ||--o{ IOT_BUTTON : "cap_phat_thiet_bi"
+
+    IOT_BUTTON ||--o{ BUTTON_PRODUCT : "cau_hinh_san_pham"
+    IOT_BUTTON ||--o{ BUTTON_CONFIG_HISTORY : "lich_su_thay_doi"
+    IOT_BUTTON ||--o{ ORDERS : "kich_hoat_don_hang"
+    
+    CUSTOMER_ADDRESS ||--o{ IOT_BUTTON : "dia_chi_mac_dinh"
+    CUSTOMER_ADDRESS ||--o{ ORDERS : "dia_chi_giao_hang"
+
+    CATEGORY ||--o{ CATEGORY : "danh_muc_cha_con"
+    CATEGORY ||--o{ PRODUCT : "chua_san_pham"
+    
+    PRODUCT ||--o{ PRODUCT_PRICE_HISTORY : "lich_su_gia"
+    PRODUCT ||--o{ PRODUCT_IMAGE : "hinh_anh"
+    PRODUCT ||--o{ BUTTON_PRODUCT : "gan_vao_nut"
+    PRODUCT ||--o{ ORDER_ITEM : "chi_tiet_don_hang"
+
+    ORDERS ||--o{ ORDER_ITEM : "chua_mat_hang"
+    ORDERS ||--o{ ORDER_STATUS_HISTORY : "lich_su_trang_thai"
+    ORDERS ||--o{ PAYMENT_TRANSACTION : "giao_dich_thanh_toan"
+
     USERS {
         bigint user_id PK "Mã định danh người dùng"
         uuid auth_id "Ánh xạ tới auth.users.id của Supabase (UK)"
         string username "Tên đăng nhập duy nhất (UK)"
-        string email "Email duy nhất (Regex RFC) (UK)"
-        string password_hash "Mật khẩu mã hóa (>=60 ký tự)"
+        string email "Email duy nhất (UK)"
+        string password_hash "Mật khẩu mã hóa"
         string full_name "Họ và tên"
         string phone "Số điện thoại"
-        string status "Trạng thái: ACTIVE, INACTIVE, BLOCKED"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        string status "ACTIVE, INACTIVE, BLOCKED"
+        datetime created_at
+        datetime updated_at
     }
 
     ROLES {
-        bigint role_id PK "Mã định danh vai trò"
-        string role_code "Mã vai trò (UK) (SYSTEM_ADMIN, STORE_OWNER, STAFF_*...)"
-        string role_name "Tên vai trò hiển thị"
+        bigint role_id PK "Mã vai trò"
+        string role_code "SYSTEM_ADMIN, STORE_OWNER, STORE_STAFF, CUSTOMER"
+        string role_name "Tên vai trò"
         string description "Mô tả quyền hạn"
     }
 
-    STORE {
-        bigint store_id PK "Mã định danh cửa hàng"
-        bigint owner_user_id FK "Chủ cửa hàng (trỏ về USERS)"
-        string name "Tên cửa hàng"
-        string code "Mã định danh duy nhất của cửa hàng (UK)"
-        string email "Email liên hệ"
-        string phone "Số điện thoại cửa hàng"
-        string address "Địa chỉ cửa hàng"
-        string status "Trạng thái: ACTIVE, INACTIVE, SUSPENDED"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+    USER_ROLES {
+        bigint user_id PK,FK "Người dùng"
+        bigint role_id PK,FK "Vai trò"
+        datetime assigned_at
     }
 
-    STORE_STAFF {
-        bigint store_staff_id PK "Mã bản ghi nhân viên"
-        bigint store_id FK "Cửa hàng làm việc"
-        bigint user_id FK "Người dùng (trỏ về USERS)"
-        bigint role_id FK "Vai trò nhân viên (trỏ về ROLES)"
-        string status "Trạng thái: ACTIVE, ON_LEAVE, TERMINATED"
-        datetime joined_at "Ngày vào làm"
-        datetime left_at "Ngày nghỉ việc"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+    STORE {
+        bigint store_id PK "Mã cửa hàng"
+        bigint owner_user_id FK "Chủ cửa hàng (USERS)"
+        string name "Tên gian hàng"
+        string code "Mã định danh duy nhất (UK)"
+        string email "Email liên hệ"
+        string phone "Số điện thoại"
+        string address "Địa chỉ gian hàng"
+        decimal commission_rate "Tỷ lệ hoa hồng sàn cấu hình riêng (Null = Mặc định 8%)"
+        string status "ACTIVE, INACTIVE, SUSPENDED"
+        datetime created_at
+        datetime updated_at
+    }
+
+    SUBSCRIPTION_PLANS {
+        bigint plan_id PK "Mã gói thuê bao gian hàng"
+        string plan_code "Mã gói định danh duy nhất (UK)"
+        string plan_name "Tên gói (Cơ bản, Tiêu chuẩn, Chuyên nghiệp)"
+        decimal price "Giá thuê bao định kỳ (VNĐ)"
+        int duration_days "Thời hạn gói (30, 90, 365 ngày)"
+        int max_products "Số lượng sản phẩm tối đa được phép đăng bán"
+        boolean is_active "Trạng thái kích hoạt gói"
+        datetime created_at
+    }
+
+    STORE_SUBSCRIPTIONS {
+        bigint subscription_id PK "Mã đăng ký thuê bao"
+        bigint store_id FK "Cửa hàng đăng ký"
+        bigint plan_id FK "Gói thuê bao lựa chọn"
+        datetime start_date "Ngày bắt đầu hiệu lực"
+        datetime end_date "Ngày hết hạn thuê bao"
+        string status "PENDING, ACTIVE, EXPIRED, CANCELLED"
+        string payment_method "PAYOS, WALLET, BANK_TRANSFER"
+        datetime created_at
+    }
+
+    STORE_WALLETS {
+        bigint wallet_id PK "Mã ví cửa hàng"
+        bigint store_id FK "Cửa hàng sở hữu ví (UK)"
+        decimal balance "Số dư khả dụng có thể rút (VNĐ)"
+        decimal frozen_balance "Số dư đóng băng đang xử lý rút tiền (VNĐ)"
+        string bank_code "Mã định danh ngân hàng (BIN)"
+        string bank_name "Tên ngân hàng"
+        string bank_account_number "Số tài khoản ngân hàng"
+        string bank_account_holder "Tên chủ tài khoản ngân hàng"
+        datetime created_at
+        datetime updated_at
+    }
+
+    WALLET_TRANSACTIONS {
+        bigint transaction_id PK "Mã giao dịch ví"
+        bigint wallet_id FK "Ví nhận biến động"
+        decimal amount "Số tiền biến động"
+        string type "ORDER_REVENUE, WITHDRAWAL_DEBIT, WITHDRAWAL_REFUND, ADJUSTMENT"
+        decimal balance_before "Số dư trước giao dịch"
+        decimal balance_after "Số dư sau giao dịch"
+        bigint reference_id "ID tham chiếu (order_id hoặc withdrawal_id)"
+        string description "Mô tả chi tiết giao dịch"
+        datetime created_at
+    }
+
+    STORE_WITHDRAWALS {
+        bigint withdrawal_id PK "Mã yêu cầu rút tiền"
+        string withdrawal_code "Mã lệnh rút tiền duy nhất (UK)"
+        bigint wallet_id FK "Ví thực hiện rút tiền"
+        decimal amount "Số tiền yêu cầu rút"
+        decimal fee "Phí giao dịch rút tiền"
+        decimal net_amount "Số tiền thực nhận chuyển khoản"
+        string bank_code "Mã BIN ngân hàng"
+        string bank_name "Tên ngân hàng thụ hưởng"
+        string bank_account_number "Số tài khoản thụ hưởng"
+        string bank_account_holder "Chủ tài khoản thụ hưởng"
+        string status "PENDING, PROCESSING, SUCCEEDED, FAILED, CANCELLED, REJECTED"
+        string provider "PAYOS, MANUAL"
+        string provider_payout_id "Mã lệnh trả tiền PayOS API"
+        string provider_reference_id "Khóa idempotency đối soát (UK)"
+        string failure_reason "Nguyên nhân thất bại"
+        bigint approved_by_user_id FK "Admin xét duyệt lệnh"
+        datetime requested_at
+        datetime processed_at
     }
 
     CUSTOMER_PROFILE {
         bigint customer_id PK "Mã hồ sơ khách hàng"
-        bigint user_id FK "Tài khoản người dùng (1-1 với USERS) (UK)"
-        string phone "Số điện thoại khách hàng"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        bigint user_id FK "Tài khoản liên kết (UK)"
+        string customer_code "Mã khách hàng duy nhất (UK)"
+        datetime date_of_birth
+        string gender "MALE, FEMALE, OTHER"
+        string default_payment_method "COD, PAYOS"
+        datetime created_at
+        datetime updated_at
     }
 
     CUSTOMER_ADDRESS {
-        bigint address_id PK "Mã địa chỉ"
+        bigint address_id PK "Mã địa chỉ giao hàng"
         bigint customer_id FK "Khách hàng sở hữu"
-        string recipient_name "Tên người nhận hàng"
-        string phone "Số điện thoại người nhận"
-        string address_detail "Địa chỉ chi tiết (Số nhà, tên đường)"
+        string receiver_name "Tên người nhận"
+        string receiver_phone "Số điện thoại nhận hàng"
+        string address_line "Địa chỉ chi tiết"
         string ward "Phường / Xã"
         string district "Quận / Huyện"
-        string province "Tỉnh / Thành phố"
-        boolean is_default "Địa chỉ mặc định (Duy nhất 1 địa chỉ true)"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        string city "Tỉnh / Thành phố"
+        boolean is_default "Địa chỉ mặc định"
     }
 
-    STORE_CUSTOMER {
-        bigint store_customer_id PK "Mã liên kết cửa hàng - khách hàng"
-        bigint store_id FK "Cửa hàng"
-        bigint customer_id FK "Khách hàng"
-        string status "Trạng thái liên kết: ACTIVE, INACTIVE, BLOCKED"
-        datetime joined_at "Ngày bắt đầu liên kết"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+    RENTAL_PACKAGES {
+        bigint package_id PK "Mã gói thuê phần cứng"
+        string package_code "Mã gói duy nhất (UK)"
+        string package_name "Tên gói thuê (Cá nhân 1 Nút, Gia đình 3 Nút)"
+        int button_quantity "Số lượng nút bấm cấp phát trong gói"
+        decimal monthly_price "Giá thuê mỗi tháng (VNĐ)"
+        decimal deposit_fee "Tiền đặt cọc phần cứng (VNĐ)"
+        boolean is_active "Trạng thái mở bán gói"
+        datetime created_at
+    }
+
+    BUTTON_RENTALS {
+        bigint rental_id PK "Mã hợp đồng thuê nút"
+        string rental_code "Mã hợp đồng duy nhất (UK)"
+        bigint customer_id FK "Khách hàng thuê"
+        bigint package_id FK "Gói thuê lựa chọn"
+        int months_rented "Thời hạn thuê (số tháng)"
+        decimal total_rent_amount "Tổng tiền thuê đã thu (VNĐ)"
+        decimal deposit_amount "Tổng tiền cọc phần cứng đang giữ (VNĐ)"
+        datetime start_date "Ngày bắt đầu thuê"
+        datetime end_date "Ngày hết hạn thuê"
+        string status "ACTIVE, COMPLETED, CANCELLED, OVERDUE"
+        datetime created_at
+    }
+
+    IOT_BUTTON {
+        bigint button_id PK "Mã định danh nút bấm"
+        string device_id "Mã phần cứng MAC / Serial duy nhất (UK)"
+        string button_code "Mã kích hoạt thân thiện duy nhất (UK)"
+        bigint customer_id FK "Khách hàng sở hữu / sử dụng"
+        bigint store_id FK "Cửa hàng đang được liên kết (Có thể thay đổi)"
+        bigint address_id FK "Địa chỉ giao hàng mặc định"
+        bigint rental_id FK "Hợp đồng thuê phần cứng (Nếu thuê từ Sàn)"
+        string label_name "Nhãn hiển thị (Nước Suối, Cơm Trưa, Cafe)"
+        string status "ACTIVE, INACTIVE, SUSPENDED, UNASSIGNED"
+        datetime last_pressed_at "Thời điểm bấm gần nhất"
+        datetime created_at
+        datetime updated_at
+    }
+
+    BUTTON_CONFIG_HISTORY {
+        bigint history_id PK "Mã lịch sử cấu hình"
+        bigint button_id FK "Nút bấm"
+        bigint old_store_id "Cửa hàng trước khi đổi"
+        bigint new_store_id "Cửa hàng sau khi đổi"
+        string change_type "REMAP_STORE, UPDATE_PRODUCTS, CHANGE_ADDRESS"
+        string changed_by "ADMIN, CUSTOMER"
+        jsonb old_config "Cấu hình cũ (sản phẩm, số lượng)"
+        jsonb new_config "Cấu hình mới"
+        datetime changed_at
     }
 
     CATEGORY {
         bigint category_id PK "Mã danh mục"
-        bigint store_id FK "Cửa hàng sở hữu danh mục"
-        bigint parent_category_id FK "Danh mục cha (Cùng store_id)"
-        string category_name "Tên danh mục"
-        string status "Trạng thái: ACTIVE, INACTIVE"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        bigint store_id FK "Cửa hàng sở hữu"
+        bigint parent_id FK "Danh mục cha (cùng store)"
+        string name "Tên danh mục"
+        string slug "Đường dẫn SEO duy nhất"
+        boolean is_active "Hiển thị"
     }
 
     PRODUCT {
         bigint product_id PK "Mã sản phẩm"
         bigint store_id FK "Cửa hàng sở hữu"
-        bigint category_id FK "Danh mục (Cùng store_id)"
-        string product_code "Mã sản phẩm (Duy nhất trong store) (UK)"
-        string product_name "Tên sản phẩm"
-        string brand "Thương hiệu"
-        string description "Mô tả sản phẩm"
-        decimal base_price "Giá gốc"
-        string status "Trạng thái: DRAFT, ACTIVE, INACTIVE, ARCHIVED"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        bigint category_id FK "Danh mục sản phẩm"
+        string name "Tên sản phẩm"
+        string sku "Mã quản lý kho (UK trong cùng store)"
+        decimal base_price "Giá niêm yết (VNĐ)"
+        int quantity_on_hand "Tồn kho thực tế"
+        int reserved_quantity "Tồn kho giữ chỗ đơn hàng"
+        string status "ACTIVE, INACTIVE, OUT_OF_STOCK"
+        datetime created_at
+        datetime updated_at
     }
 
     PRODUCT_PRICE_HISTORY {
-        bigint history_id PK "Mã bản ghi lịch sử giá"
-        bigint product_id FK "Sản phẩm thay đổi giá"
-        decimal old_price "Giá cũ trước khi sửa"
-        decimal new_price "Giá mới sau khi sửa"
-        bigint changed_by_user_id FK "Người thực hiện sửa giá"
-        datetime changed_at "Thời điểm thay đổi"
+        bigint history_id PK "Mã lịch sử giá"
+        bigint product_id FK "Sản phẩm"
+        decimal old_price "Giá cũ"
+        decimal new_price "Giá mới"
+        bigint changed_by_user_id FK "Người thực hiện đổi giá"
+        datetime changed_at
     }
 
-    PRODUCT_DISCOUNT {
-        bigint discount_id PK "Mã đợt giảm giá"
-        bigint product_id FK "Sản phẩm được giảm giá"
-        decimal discount_percent "Phần trăm giảm (1-100%)"
-        decimal discount_amount "Số tiền giảm cố định"
-        datetime start_at "Thời điểm bắt đầu"
-        datetime end_at "Thời điểm kết thúc"
-        string status "Trạng thái: ACTIVE, EXPIRED, DISABLED"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
-    }
-
-    INVENTORY {
-        bigint inventory_id PK "Mã bản ghi tồn kho"
-        bigint store_id FK "Cửa hàng quản lý kho"
-        bigint product_id FK "Sản phẩm (1-1 với PRODUCT) (UK)"
-        int quantity_on_hand "Tồn kho thực tế trên kệ"
-        int reserved_quantity "Số lượng đang giữ chỗ cho đơn hàng"
-        int min_stock_alert "Ngưỡng cảnh báo sắp hết hàng"
-        datetime updated_at "Thời gian cập nhật"
-    }
-
-    IOT_BUTTON {
-        bigint button_id PK "Mã nút bấm trong hệ thống"
-        bigint store_id FK "Cửa hàng cố định của nút"
-        bigint customer_id FK "Khách hàng sở hữu nút"
-        bigint address_id FK "Địa chỉ giao hàng (Thuộc customer sở hữu)"
-        string device_id "Mã phần cứng duy nhất toàn cầu (UK)"
-        string button_code "Mã hiển thị duy nhất của nút (UK)"
-        string button_name "Tên gợi nhớ của nút"
-        string status "Trạng thái: ACTIVE, INACTIVE, LOCKED"
-        datetime installed_at "Thời điểm kích hoạt nút"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+    PRODUCT_IMAGE {
+        bigint image_id PK "Mã ảnh"
+        bigint product_id FK "Sản phẩm"
+        string image_url "Đường dẫn ảnh"
+        boolean is_thumbnail "Ảnh đại diện"
+        int display_order "Thứ tự hiển thị"
     }
 
     BUTTON_PRODUCT {
-        bigint button_product_id PK "Mã cấu hình sản phẩm trên nút"
+        bigint button_product_id PK "Mã bản ghi cấu hình"
         bigint button_id FK "Nút bấm"
-        bigint product_id FK "Sản phẩm (Bắt buộc cùng store_id với nút)"
-        int quantity "Số lượng mua cố định (>0)"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        bigint product_id FK "Sản phẩm chọn mua"
+        int quantity "Số lượng mua khi bấm nút (> 0)"
     }
 
     ORDERS {
-        bigint order_id PK "Mã đơn hàng nội bộ"
-        string order_code "Mã đơn hàng hiển thị (Duy nhất) (UK)"
-        bigint store_id FK "Cửa hàng nhận đơn"
-        bigint customer_id FK "Khách hàng đặt đơn"
-        bigint button_id FK "Nút bấm kích hoạt đơn"
-        string order_status "Trạng thái đơn: PENDING, CONFIRMED, SHIPPING..."
-        string payment_status "Trạng thái thanh toán: UNPAID, PAID, REFUNDED"
-        string payment_method "Phương thức thanh toán: COD, PAYOS"
-        decimal subtotal_amount "Tổng tiền hàng chưa giảm"
-        decimal discount_amount "Tổng tiền giảm giá"
+        bigint order_id PK "Mã đơn hàng"
+        string order_code "Mã đơn hiển thị duy nhất (UK)"
+        bigint store_id FK "Cửa hàng tiếp nhận và xử lý đơn"
+        bigint customer_id FK "Khách hàng đặt mua"
+        bigint button_id FK "Nút bấm đã kích hoạt đơn"
+        bigint address_id FK "Địa chỉ giao hàng (Snapshot)"
+        decimal subtotal_amount "Tổng tiền hàng trước chiết khấu"
+        decimal discount_amount "Số tiền giảm giá"
         decimal shipping_fee "Phí vận chuyển"
-        decimal total_amount "Tổng tiền thanh toán (Toán học chính xác)"
-        string shipping_recipient_name "Bản sao tên người nhận"
-        string shipping_phone "Bản sao SĐT người nhận"
-        string shipping_address "Bản sao địa chỉ giao hàng chi tiết"
-        string order_note "Ghi chú đơn hàng"
-        datetime order_date "Thời điểm bấm nút tạo đơn"
-        datetime completed_at "Thời điểm hoàn tất đơn hàng"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        decimal total_amount "Tổng tiền khách phải trả"
+        decimal commission_rate "Tỷ lệ hoa hồng Sàn áp dụng (%)"
+        decimal commission_amount "Tiền hoa hồng Sàn thu (VNĐ)"
+        decimal net_amount "Tiền thực nhận của Cửa hàng (VNĐ)"
+        string status "PENDING, CONFIRMED, PROCESSING, SHIPPING, COMPLETED, CANCELLED"
+        string payment_status "PENDING, PAID, FAILED, REFUNDED"
+        string payment_method "COD, PAYOS"
+        datetime created_at
+        datetime updated_at
     }
 
     ORDER_ITEM {
-        bigint order_item_id PK "Mã dòng chi tiết đơn"
+        bigint item_id PK "Mã dòng chi tiết"
         bigint order_id FK "Đơn hàng"
-        bigint product_id FK "Sản phẩm đã mua"
-        string product_name_snapshot "Bản sao tên sản phẩm lúc mua"
-        decimal unit_price_snapshot "Bản sao đơn giá gốc lúc mua"
-        decimal discount_percent_snapshot "Bản sao % giảm giá lúc mua"
-        decimal discount_amount_snapshot "Bản sao số tiền giảm lúc mua"
-        decimal final_unit_price "Đơn giá sau khi trừ giảm giá"
+        bigint product_id FK "Sản phẩm"
+        string product_name_snapshot "Tên sản phẩm lúc bấm nút"
+        decimal unit_price_snapshot "Đơn giá gốc lúc bấm nút"
+        decimal discount_amount_snapshot "Giảm giá dòng hàng"
+        decimal final_unit_price "Đơn giá thực tế áp dụng"
         int quantity "Số lượng mua"
-        decimal item_subtotal "Thành tiền dòng chi tiết"
+        decimal item_subtotal "Thành tiền dòng hàng"
     }
 
     ORDER_STATUS_HISTORY {
-        bigint history_id PK "Mã lịch sử trạng thái đơn"
+        bigint history_id PK "Mã lịch sử trạng thái"
         bigint order_id FK "Đơn hàng"
+        string from_status "Trạng thái trước"
+        string to_status "Trạng thái mới"
         bigint changed_by_user_id FK "Người thực hiện đổi trạng thái"
-        string old_status "Trạng thái cũ"
-        string new_status "Trạng thái mới"
         string reason "Lý do thay đổi"
-        datetime changed_at "Thời điểm thay đổi"
+        datetime changed_at
     }
 
     PAYMENT_TRANSACTION {
-        bigint payment_transaction_id PK "Mã giao dịch thanh toán"
+        bigint payment_transaction_id PK "Mã giao dịch cổng thanh toán"
         bigint order_id FK "Đơn hàng thanh toán"
-        string provider "Nhà cung cấp: COD, PAYOS"
-        string transaction_code "Mã giao dịch cổng thanh toán"
+        string provider "PAYOS, COD"
+        string transaction_code "Mã orderCode gửi sang PayOS (UK)"
         decimal amount "Số tiền thanh toán"
-        string payment_method "Phương thức thanh toán: COD, PAYOS"
-        string status "Trạng thái: PENDING, SUCCESS, FAILED"
+        string payment_method "PAYOS, COD, QR, BANK_TRANSFER"
+        string status "PENDING, SUCCESS, PAID, FAILED, CANCELLED, EXPIRED"
         datetime paid_at "Thời điểm thanh toán thành công"
-        datetime created_at "Thời gian tạo"
-        datetime updated_at "Thời gian cập nhật"
+        datetime created_at
+        datetime updated_at
     }
-
-    USERS ||--o| CUSTOMER_PROFILE : "có hồ sơ"
-    USERS ||--o{ STORE : "làm chủ"
-    USERS ||--o{ STORE_STAFF : "làm nhân viên tại"
-    USERS ||--o{ ORDER_STATUS_HISTORY : "chuyển trạng thái đơn"
-    USERS ||--o{ PRODUCT_PRICE_HISTORY : "cập nhật giá sản phẩm"
-    ROLES ||--o{ STORE_STAFF : "định nghĩa vai trò"
-    STORE ||--o{ STORE_STAFF : "tuyển dụng nhân viên"
-    STORE ||--o{ STORE_CUSTOMER : "quản lý khách hàng"
-    CUSTOMER_PROFILE ||--o{ STORE_CUSTOMER : "thuộc danh bạ của"
-    CUSTOMER_PROFILE ||--o{ CUSTOMER_ADDRESS : "sở hữu địa chỉ"
-    CUSTOMER_PROFILE ||--o{ IOT_BUTTON : "sở hữu nút bấm"
-    CUSTOMER_ADDRESS ||--o{ IOT_BUTTON : "được dùng làm nơi nhận cho"
-    CUSTOMER_PROFILE ||--o{ ORDERS : "đặt hàng"
-    STORE ||--o{ CATEGORY : "quản lý danh mục"
-    CATEGORY |o--o{ CATEGORY : "danh mục cha của"
-    CATEGORY ||--o{ PRODUCT : "chứa sản phẩm"
-    STORE ||--o{ PRODUCT : "bán sản phẩm"
-    PRODUCT ||--|| INVENTORY : "có bản ghi tồn kho"
-    PRODUCT ||--o{ PRODUCT_PRICE_HISTORY : "ghi lịch sử thay đổi giá"
-    STORE ||--o{ INVENTORY : "quản lý kho"
-    PRODUCT ||--o{ PRODUCT_DISCOUNT : "có chương trình giảm giá"
-    STORE ||--o{ IOT_BUTTON : "quản lý nút thuộc cửa hàng"
-    IOT_BUTTON ||--|{ BUTTON_PRODUCT : "cấu hình sản phẩm"
-    PRODUCT ||--o{ BUTTON_PRODUCT : "được chọn vào nút"
-    STORE ||--o{ ORDERS : "tiếp nhận đơn hàng"
-    IOT_BUTTON ||--o{ ORDERS : "kích hoạt tạo đơn"
-    ORDERS ||--|{ ORDER_ITEM : "chứa các món hàng"
-    PRODUCT ||--o{ ORDER_ITEM : "được đặt mua dưới dạng"
-    ORDERS ||--|{ ORDER_STATUS_HISTORY : "lưu vết lịch sử trạng thái"
-    ORDERS ||--o{ PAYMENT_TRANSACTION : "có giao dịch thanh toán"
 ```
 
 ---
 
 ## 3. Chú Thích Chi Tiết Từng Thực Thể (Entity Notes)
 
-### USERS (Tài khoản người dùng toàn cầu)
-- Chứa `auth_id UUID UNIQUE` ánh xạ trực tiếp tới `auth.users.id` của Supabase Auth (NULL nếu tài khoản nội bộ/seed data).
-- Là tài khoản danh tính toàn cầu duy nhất cho cả Chủ cửa hàng (`STORE_OWNER`), Nhân viên (`STORE_STAFF`) và Khách hàng (`CUSTOMER_PROFILE`).
+### 3.1 Nhóm Danh Tính, Phân Quyền & Gian Hàng (Core Identity & Merchant)
+- **USERS**: Danh tính duy nhất toàn cầu cho tất cả các nhóm đối tượng (Admin, Chủ gian hàng, Nhân viên, Khách hàng). Ánh xạ 1-1 với Supabase Auth thông qua `auth_id`.
+- **ROLES & USER_ROLES**: Cơ chế kiểm soát truy cập dựa trên vai trò (RBAC), hỗ trợ gán nhiều vai trò cho một người dùng.
+- **STORE**: Gian hàng kinh doanh độc lập. Chứa thuộc tính `commission_rate` (cho phép cấu hình tỷ lệ hoa hồng linh hoạt riêng cho từng Store, nếu NULL sẽ dùng mức mặc định của Sàn là 8%).
+- **CUSTOMER_PROFILE**: Hồ sơ khách hàng toàn cầu không gắn cố định vào bất kỳ Store nào.
+- **STORE_CUSTOMER**: Bảng ghi nhận mối quan hệ mua sắm/thành viên giữa Store và Khách hàng (`UNIQUE(store_id, customer_id)`).
 
-### CUSTOMER_PROFILE (Hồ sơ khách hàng toàn cầu)
-- Không chứa `store_id` vì một khách hàng có thể mua sắm ở nhiều Cửa hàng khác nhau.
-- `user_id` là Khóa ngoại duy nhất (`FK, UK`), đảm bảo quan hệ $1 - 1$ tuyệt đối với bảng `USERS`.
+### 3.2 Nhóm Thu Phí Sàn & Tài Chính Ví Gian Hàng (Marketplace Monetization & Wallet)
+- **SUBSCRIPTION_PLANS**: Danh mục gói thuê bao mở gian hàng (Basic, Standard, Pro). Quản lý thời hạn (`duration_days`), giá gói (`price`) và hạn mức đăng bán (`max_products`).
+- **STORE_SUBSCRIPTIONS**: Hợp đồng thuê bao gian hàng của Store với Sàn. Trạng thái `ACTIVE` cho phép Store kích hoạt quyền kinh doanh và tiếp nhận đơn hàng.
+- **STORE_WALLETS**: Ví điện tử nội bộ của Store. Quản lý `balance` (số dư khả dụng có thể rút) và `frozen_balance` (số dư tạm khóa khi đang chờ ngân hàng xử lý lệnh PayOS Payout).
+- **WALLET_TRANSACTIONS**: Sổ cái ghi nhận mọi biến động tài chính của Ví:
+  - `ORDER_REVENUE`: Tiền thực nhận từ đơn hàng hoàn tất (`+net_amount`).
+  - `WITHDRAWAL_DEBIT`: Trừ số dư khi lệnh rút tiền chuyển khoản thành công (`-amount`).
+  - `WITHDRAWAL_REFUND`: Hoàn lại số dư nếu lệnh chi tiền PayOS thất bại (`+amount`).
+- **STORE_WITHDRAWALS**: Quản lý quy trình rút tiền và chi trả tự động thông qua PayOS Payout. Sử dụng `provider_reference_id` làm khóa Idempotency chống chi trùng lặp.
+- **PAYMENT_TRANSACTION**: Quản lý cổng thu tiền khách hàng (PayOS Payment Link / Webhook và COD).
 
-### STORE_CUSTOMER (Khách hàng liên kết của Store)
-- Thực thể liên kết $N - N$ giữa Cửa hàng và Khách hàng.
-- Thể hiện rằng Cửa hàng quản lý / nhận diện khách hàng đó (thông qua việc khách sở hữu nút bấm của cửa hàng).
-- Ràng buộc khuyến nghị: `UNIQUE(store_id, customer_id)`.
+### 3.3 Nhóm Thiết Bị Thông Minh & Thuê Phần Cứng (IoT Hardware & Rental)
+- **RENTAL_PACKAGES**: Bảng định nghĩa các gói thuê nút bấm dành cho Khách hàng (Giá thuê theo tháng, tiền đặt cọc phần cứng).
+- **BUTTON_RENTALS**: Quản lý hợp đồng thuê phần cứng của khách hàng, theo dõi tiền cọc (`deposit_amount`), hạn thuê và trạng thái hợp đồng.
+- **IOT_BUTTON (Universal Smart Button)**:
+  - Thuộc quyền sở hữu của Khách hàng (`customer_id`).
+  - **Dynamic Store Re-mapping**: Nút liên kết với một `store_id` để biết sẽ gửi tín hiệu đặt hàng tới cửa hàng nào. Khách hàng có thể thay đổi `store_id` bất kỳ lúc nào trên ứng dụng.
+  - Trường `rental_id`: Liên kết tới hợp đồng thuê nếu nút là thiết bị do Sàn cấp phát theo dạng thuê.
+- **BUTTON_CONFIG_HISTORY**: Bảng kiểm toán ghi lại toàn bộ lịch sử mỗi khi khách hàng đổi Cửa hàng liên kết hoặc thay đổi danh sách sản phẩm cấu hình trên nút.
+- **BUTTON_PRODUCT**: Cấu hình các món hàng sẽ được tạo thành đơn khi khách bấm nút (`quantity > 0`).
 
-### PRODUCT_PRICE_HISTORY (Lịch sử biến động giá sản phẩm)
-- Bảng kiểm toán (Audit trail) cho các lần điều chỉnh giá gốc `product.base_price`.
-- Bất cứ khi nào Chủ cửa hàng thay đổi giá, Database Trigger sẽ tự động chèn bản ghi ghi lại `old_price`, `new_price`, `changed_by_user_id` và `changed_at`.
-
-### IOT_BUTTON (Nút bấm IoT vật lý - Cố định Cửa hàng)
-- Thuộc về duy nhất 1 Khách hàng.
-- **Gắn liền cố định với duy nhất 1 Cửa hàng (`store_id` bất biến, không được phép chuyển sang Cửa hàng khác)**.
-- Sử dụng 1 địa chỉ giao hàng (`address_id`), bắt buộc địa chỉ này phải thuộc về chính khách hàng sở hữu nút (`FOREIGN KEY (customer_id, address_id)`).
-- `device_id` và `button_code` là duy nhất toàn cầu.
-
-### BUTTON_PRODUCT (Cấu hình sản phẩm trên nút)
-- Một Nút bấm có thể chứa nhiều Sản phẩm.
-- Số lượng mua cố định và phải lớn hơn 0 (`quantity > 0`).
-- `UNIQUE(button_id, product_id)`.
-- Mọi Sản phẩm cấu hình trên nút bắt buộc phải thuộc cùng `store_id` với Nút (được kiểm tra tự động bằng Trigger).
-
-### ORDERS & ORDER_ITEM (Đơn hàng & Snapshot lịch sử)
-- Đơn hàng chỉ được sinh ra từ thao tác bấm Nút vật lý.
-- `ORDERS.store_id` luôn bằng `IOT_BUTTON.store_id`.
-- `ORDER_ITEM` chụp bản sao (Snapshot) bất biến:
-  - `product_name_snapshot`: Tên sản phẩm lúc đặt.
-  - `unit_price_snapshot`: Giá gốc lúc đặt.
-  - `discount_percent_snapshot`: % giảm giá áp dụng lúc đặt.
-  - `discount_amount_snapshot`: Số tiền giảm giá cố định áp dụng lúc đặt.
-  - `final_unit_price`: Đơn giá thực tế sau giảm giá.
-  - `quantity`: Số lượng mua.
-  - `item_subtotal`: Thành tiền dòng chi tiết.
+### 3.4 Nhóm Sản Phẩm, Kho Bãi & Đơn Hàng (Catalog, Inventory & Orders)
+- **CATEGORY & PRODUCT**: Danh mục và sản phẩm thuộc quyền quản lý riêng biệt của từng `store_id`.
+- **PRODUCT_PRICE_HISTORY**: Ghi log tự động biến động giá niêm yết thông qua Database Trigger.
+- **ORDERS**:
+  - Đơn hàng được kích hoạt từ nút bấm IoT vật lý.
+  - Lưu trữ Snapshot toán học tài chính:
+    - `total_amount = subtotal_amount - discount_amount + shipping_fee`
+    - `commission_amount = ROUND(total_amount * commission_rate / 100, 2)`
+    - `net_amount = total_amount - commission_amount`
+- **ORDER_ITEM**: Bản sao bất biến đầy đủ về giá gốc, giảm giá, số lượng và thành tiền tại thời điểm tạo đơn.
 
 ---
 
-## 4. Các Ràng Buộc Trọng Yếu (Critical Constraints)
+## 4. Các Ràng Buộc & Quy Tắc Trọng Yếu (Critical Business Rules & Triggers)
 
-1. **Nút bấm gắn cố định Cửa hàng**: `IOT_BUTTON.store_id` là bất biến sau khi tạo, không được phép chuyển đổi Cửa hàng.
-2. **Đồng nhất Store giữa Nút và Sản phẩm**: `BUTTON_PRODUCT.product_id` phải có cùng `store_id` với `IOT_BUTTON.store_id`.
-3. **Cách ly Danh mục theo Store**: Danh mục cha và con bắt buộc phải cùng thuộc một Cửa hàng.
-4. **Địa chỉ giao hàng chính chủ**: Nút bấm chỉ được chọn địa chỉ giao hàng thuộc danh bạ của khách hàng sở hữu nút đó.
-5. **Toàn vẹn toán học của Đơn hàng**:
+### 4.1 Quy tắc Chuyển Đổi Store Trên Nút Bấm (Dynamic Store Re-mapping)
+- Nút bấm KHÔNG bị khóa cứng vào một Store duy nhất. Khách hàng được quyền cập nhật `IOT_BUTTON.store_id`.
+- **Trigger `trg_iot_button_store_remap`**: Khi `store_id` của nút bấm bị thay đổi:
+  1. Tự động xóa hoặc vô hiệu hóa toàn bộ cấu hình sản phẩm cũ trong `BUTTON_PRODUCT` tương ứng với `button_id` đó.
+  2. Ghi bản ghi kiểm toán vào `BUTTON_CONFIG_HISTORY` với `change_type = 'REMAP_STORE'`, lưu lại `old_store_id` và `new_store_id`.
+  3. Yêu cầu Khách hàng thực hiện cấu hình lại danh sách sản phẩm thuộc Store mới trước khi nút có thể tạo đơn hàng hợp lệ.
+
+### 4.2 Đồng Nhất Cửa Hàng Giữa Nút Và Sản Phẩm
+- Mọi sản phẩm cấu hình trong `BUTTON_PRODUCT` bắt buộc phải có `product.store_id = iot_button.store_id`.
+- Khi bấm nút tạo đơn, hệ thống kiểm tra toàn bộ sản phẩm trên nút có đang ở trạng thái `ACTIVE` và còn tồn kho khả dụng (`quantity_on_hand - reserved_quantity >= quantity`) tại Store đó hay không.
+
+### 4.3 Quy Tắc Tính Phí Sàn & Phân Bổ Doanh Thu (Dual-Fee Processing)
+1. **Toàn vẹn toán học Đơn hàng & Hoa hồng**:
    $$\text{total\_amount} = \text{subtotal\_amount} - \text{discount\_amount} + \text{shipping\_fee}$$
-   $$\text{discount\_amount} \le \text{subtotal\_amount}$$
-6. **Không chồng lấn thời gian giảm giá**: Hai chương trình giảm giá đang ở trạng thái `ACTIVE` của cùng một sản phẩm không được phép có khoảng thời gian `(start_at, end_at)` chồng lấn lên nhau.
-7. **Bảo vệ tồn kho không bị âm**:
-   $$\text{reserved\_quantity} \le \text{quantity\_on\_hand}$$
-   $$\text{quantity\_on\_hand} \ge 0, \quad \text{reserved\_quantity} \ge 0$$
+   $$\text{commission\_amount} = \text{ROUND}\left(\text{total\_amount} \times \frac{\text{commission\_rate}}{100}, 2\right)$$
+   $$\text{net\_amount} = \text{total\_amount} - \text{commission\_amount}$$
+   $$\text{net\_amount} \ge 0$$
+2. **Kích hoạt kết chuyển ví**:
+   - Khi đơn hàng chuyển trạng thái sang `COMPLETED`:
+     - Tự động cộng số tiền `net_amount` vào `STORE_WALLETS.balance`.
+     - Tự động tạo bản ghi trong `WALLET_TRANSACTIONS` với `type = 'ORDER_REVENUE'`, ghi nhận `balance_before` và `balance_after`.
+3. **Quy tắc Rút tiền (PayOS Payout)**:
+   - Khi Store tạo yêu cầu rút tiền:
+     - Kiểm tra `amount <= STORE_WALLETS.balance`.
+     - Trừ `amount` từ `balance` và cộng vào `frozen_balance`.
+   - Nếu lệnh rút tiền `SUCCEEDED`:
+     - Trừ `amount` từ `frozen_balance`.
+     - Ghi nhận `WALLET_TRANSACTIONS` với `type = 'WITHDRAWAL_DEBIT'`.
+   - Nếu lệnh rút tiền bị `FAILED` hoặc `REJECTED`:
+     - Trừ `amount` từ `frozen_balance` và hoàn trả lại `balance`.
+     - Ghi nhận `WALLET_TRANSACTIONS` với `type = 'WITHDRAWAL_REFUND'`.
+
+### 4.4 Quy tắc Giữ Chỗ & Trừ Kho Bãi (Inventory Safety)
+$$\text{reserved\_quantity} \le \text{quantity\_on\_hand}$$
+$$\text{quantity\_on\_hand} \ge 0, \quad \text{reserved\_quantity} \ge 0$$
+- Khi đơn hàng tạo mới (`PENDING`): Tăng `reserved_quantity` bằng số lượng mua.
+- Khi đơn hàng hoàn thành (`COMPLETED`): Trừ cả `quantity_on_hand` và `reserved_quantity`.
+- Khi đơn hàng bị hủy (`CANCELLED`): Giảm `reserved_quantity`, giữ nguyên `quantity_on_hand`.
 
 ---
 
-## 4. Các thực thể mở rộng cho Mô hình Marketplace V2.2
+## 5. Danh Mục Chỉ Mục Tối Ưu Hóa Hiệu Năng (Recommended Indexes)
 
-### 4.1 Bảng SUBSCRIPTION_PLANS & STORE_SUBSCRIPTIONS
-- `SUBSCRIPTION_PLANS`: `plan_id` (PK), `plan_code` (UK), `plan_name`, `price`, `duration_days`, `max_products`, `is_active`.
-- `STORE_SUBSCRIPTIONS`: `subscription_id` (PK), `store_id` (FK), `plan_id` (FK), `start_date`, `end_date`, `status`, `payment_method`.
+```sql
+-- Tìm kiếm nhanh thiết bị IoT theo mã phần cứng và mã kích hoạt
+CREATE UNIQUE INDEX idx_iot_button_device_id ON iot_button (device_id);
+CREATE UNIQUE INDEX idx_iot_button_code ON iot_button (button_code);
+CREATE INDEX idx_iot_button_customer ON iot_button (customer_id);
+CREATE INDEX idx_iot_button_store ON iot_button (store_id);
 
-### 4.2 Bảng RENTAL_PACKAGES & BUTTON_RENTALS
-- `RENTAL_PACKAGES`: `package_id` (PK), `package_code` (UK), `package_name`, `button_quantity`, `monthly_price`, `deposit_fee`, `is_active`.
-- `BUTTON_RENTALS`: `rental_id` (PK), `rental_code` (UK), `customer_id` (FK), `package_id` (FK), `months_rented`, `total_rent_amount`, `deposit_amount`, `start_date`, `end_date`, `status`.
-- Mở rộng `IOT_BUTTON`: Bổ sung `rental_id` (FK nullable -> `BUTTON_RENTALS.rental_id`).
+-- Tối ưu hóa truy vấn đơn hàng theo Store và Khách hàng
+CREATE INDEX idx_orders_store_status ON orders (store_id, status);
+CREATE INDEX idx_orders_customer ON orders (customer_id, created_at DESC);
+CREATE INDEX idx_orders_created_at ON orders (created_at DESC);
 
-### 4.3 B?ng STORE_WALLETS, WALLET_TRANSACTIONS & STORE_WITHDRAWALS (PayOS Payout Chi Ti?n)
-- `STORE_WALLETS`: `wallet_id` (PK), `store_id` (UK FK), `balance`, `frozen_balance`, `bank_name`, `bank_account_number`, `bank_account_holder`, `created_at`, `updated_at`.
-- `WALLET_TRANSACTIONS`: `transaction_id` (PK), `wallet_id` (FK), `amount`, `type` (`ORDER_REVENUE` / `PAYMENT_CREDIT`, `WITHDRAWAL_DEBIT`, `WITHDRAWAL_REFUND`, `REFUND`), `balance_before`, `balance_after`, `reference_id`, `description`, `created_at`.
-- `STORE_WITHDRAWALS` (K�nh Chi PayOS Payout & �?i so�t):
-  - `withdrawal_id` (PK BIGSERIAL)
-  - `withdrawal_code` (VARCHAR UNIQUE): M� y�u c?u r�t ti?n n?i b?.
-  - `wallet_id` (FK -> `STORE_WALLETS.wallet_id`)
-  - `amount` (DECIMAL(15, 2)): S? ti?n y�u c?u r�t t? v�.
-  - `fee` (DECIMAL(15, 2) DEFAULT 0): Ph� r�t ti?n.
-  - `net_amount` (DECIMAL(15, 2)): Ti?n th?c nh?n (`amount - fee`).
-  - `bank_code` (VARCHAR(20)): M� BIN ng�n h�ng (v� d?: `970422` cho MBBank).
-  - `bank_name` (VARCHAR(100)): T�n ng�n h�ng th? hu?ng (Snapshot).
-  - `bank_account_number` (VARCHAR(50)): S? t�i kho?n ng�n h�ng th? hu?ng (Snapshot).
-  - `bank_account_holder` (VARCHAR(150)): T�n ch? t�i kho?n th? hu?ng (Snapshot).
-  - `status` (VARCHAR(20)): Tr?ng th�i (`PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `TRANSFERRED`, `REJECTED`).
-  - `provider` (VARCHAR(50) DEFAULT 'PAYOS'): C?ng chi tr?.
-  - `provider_payout_id` (VARCHAR(100)): ID payout do PayOS API tr? v?.
-  - `provider_reference_id` (VARCHAR(100) UNIQUE): Kh�a Idempotency d?i so�t duy nh?t g?i sang PayOS.
-  - `failure_reason` (TEXT): Nguy�n nh�n th?t b?i n?u PayOS t? ch?i l?nh.
-  - `approved_by_user_id` (FK -> `USERS.user_id`): Admin duy?t (n?u x? l� th? c�ng).
-  - `rejection_reason` (TEXT): L� do t? ch?i r�t ti?n c?a Admin.
-  - `transfer_evidence_url` (TEXT): URL ?nh ?y nhi?m chi/bill chuy?n kho?n.
-  - `requested_at`, `processed_at`, `created_at`, `updated_at`.
+-- Đối soát giao dịch ví và lệnh rút tiền
+CREATE INDEX idx_wallet_tx_wallet_created ON wallet_transactions (wallet_id, created_at DESC);
+CREATE INDEX idx_withdrawals_wallet_status ON store_withdrawals (wallet_id, status);
+CREATE UNIQUE INDEX idx_withdrawals_ref_id ON store_withdrawals (provider_reference_id);
 
-### 4.4 B?ng PAYMENT_TRANSACTION (K�nh Thu PayOS Payment Link & Webhook)
-- `PAYMENT_TRANSACTION`:
-  - `payment_transaction_id` (PK BIGSERIAL)
-  - `order_id` (FK -> `ORDERS.order_id`)
-  - `provider` (VARCHAR(50)): `'PAYOS'`, `'COD'`.
-  - `transaction_code` (VARCHAR(100)): M� orderCode sinh cho PayOS.
-  - `amount` (DECIMAL(15, 2)): S? ti?n thanh to�n don h�ng.
-  - `payment_method` (VARCHAR(30)): `'PAYOS'`, `'COD'`, `'QR'`, `'BANK_TRANSFER'`.
-  - `status` (VARCHAR(30)): `'PENDING'`, `'SUCCESS'`, `'PAID'`, `'FAILED'`, `'CANCELLED'`, `'EXPIRED'`.
-  - `paid_at`, `created_at`, `updated_at`.
+-- Cổng thanh toán và đối soát PayOS
+CREATE UNIQUE INDEX idx_payment_tx_code ON payment_transaction (transaction_code);
+CREATE INDEX idx_payment_tx_order ON payment_transaction (order_id);
+```

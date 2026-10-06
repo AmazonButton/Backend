@@ -69,7 +69,19 @@ export class StoreWalletService {
       const currentWallet = await tx.storeWallet.findUnique({
         where: { walletId: wallet.walletId },
       });
-      if (!currentWallet) throw new NotFoundException('V� c?a h�ng kh�ng t?n t?i');
+      if (!currentWallet) throw new NotFoundException('Ví cửa hàng không tồn tại');
+
+      // Idempotency guard: không cộng tiền trùng lặp cho cùng một đơn hàng
+      const existingTx = await tx.walletTransaction.findFirst({
+        where: {
+          walletId: wallet.walletId,
+          referenceId: orderCode,
+          type: { in: ['ORDER_REVENUE', 'PAYMENT_CREDIT'] },
+        },
+      });
+      if (existingTx) {
+        return currentWallet;
+      }
 
       const balanceBefore = Number(currentWallet.balance);
       const balanceAfter = balanceBefore + creditAmount;

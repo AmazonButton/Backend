@@ -307,13 +307,39 @@ export class DevicesService {
 
   async customerUpdateConfig(id: string, body: any, user: any) {
     const existing = await this.getById(id, user);
+    const buttonId = BigInt(existing.buttonId);
 
-    if (body.buttonName) {
-      await this.devicesRepo.update(BigInt(existing.buttonId), { buttonName: body.buttonName });
+    // 1. Re-map Store if storeId is provided and different from current
+    if (body.storeId && body.storeId.toString() !== existing.storeId?.toString()) {
+      const newStoreId = BigInt(body.storeId);
+      const store = await this.devicesRepo.findActiveStoreById(newStoreId);
+      if (!store) {
+        throw new BadRequestException('Cửa hàng được chọn không tồn tại hoặc đã ngừng hoạt động');
+      }
+
+      const customerId = existing.customerId ? BigInt(existing.customerId) : undefined;
+      await this.devicesRepo.remapStore(buttonId, newStoreId, customerId);
     }
 
+    // 2. Update button name if provided
+    if (body.buttonName) {
+      await this.devicesRepo.update(buttonId, { buttonName: body.buttonName });
+    }
+
+    // 3. Assign product if productId is provided
     if (body.productId) {
-      await this.assignProduct(existing.buttonId, body, user);
+      const current = await this.getById(existing.buttonId, user);
+      const targetStoreId = BigInt(current.storeId);
+      const targetProductId = BigInt(body.productId);
+
+      const product = await this.devicesRepo.findActiveProductInStore(targetProductId, targetStoreId);
+      if (!product) {
+        throw new BadRequestException('Sản phẩm không tồn tại hoặc không thuộc cửa hàng này');
+      }
+
+      await this.devicesRepo.setButtonProducts(buttonId, [
+        { productId: targetProductId, quantity: body.quantity || 1 },
+      ]);
     }
 
     return this.getById(existing.buttonId, user);
