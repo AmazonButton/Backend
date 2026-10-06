@@ -2,24 +2,24 @@ import { IsNotEmpty, IsNumber, IsString, Min, IsOptional } from 'class-validator
 
 export class RequestWithdrawalDto {
   @IsNumber()
-  @Min(50000, { message: 'S? ti?n rút t?i thi?u là 50,000 VND' })
+  @Min(50000, { message: 'S? ti?n rï¿½t t?i thi?u lï¿½ 50,000 VND' })
   amount: number;
 
   @IsString()
   @IsOptional()
-  bankCode?: string; // Mã BIN ngân hàng (ví d?: 970422 cho MBBank)
+  bankCode?: string; // Mï¿½ BIN ngï¿½n hï¿½ng (vï¿½ d?: 970422 cho MBBank)
 
   @IsString()
-  @IsNotEmpty()
-  bankName: string;
+  @IsOptional()
+  bankName?: string;
 
   @IsString()
-  @IsNotEmpty()
-  bankAccountNumber: string;
+  @IsOptional()
+  bankAccountNumber?: string;
 
   @IsString()
-  @IsNotEmpty()
-  bankAccountHolder: string;
+  @IsOptional()
+  bankAccountHolder?: string;
 
   @IsNumber()
   @IsOptional()

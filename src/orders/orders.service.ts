@@ -268,7 +268,7 @@ export class OrdersService {
       // Khấu trừ tồn thực tế
       await this.ordersRepo.deductInventoryOnCompleted(order.items);
       try {
-        if (['PAID', 'SUCCESS'].includes(order.paymentStatus) || order.paymentMethod === 'ONLINE') {
+        if (['PAID', 'SUCCESS'].includes(order.paymentStatus) || ['ONLINE', 'PAYOS'].includes(order.paymentMethod)) {
           await this.storeWalletService.creditOrderRevenue(
             order.storeId,
             Number(order.totalAmount),

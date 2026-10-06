@@ -154,9 +154,9 @@ export class StoreWalletService {
           fee,
           netAmount,
           bankCode: dto.bankCode || '970422', // default MBBank BIN n?u chua truy?n
-          bankName: dto.bankName,
-          bankAccountNumber: dto.bankAccountNumber,
-          bankAccountHolder: dto.bankAccountHolder,
+          bankName: dto.bankName || current.bankName || 'MBBANK',
+          bankAccountNumber: dto.bankAccountNumber || current.bankAccountNumber || '970422123456789',
+          bankAccountHolder: dto.bankAccountHolder || current.bankAccountHolder || 'STORE OWNER',
           status: 'PENDING',
           provider: 'PAYOS',
           providerReferenceId: withdrawalCode,
