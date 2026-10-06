@@ -131,4 +131,22 @@ export class AdminController {
     const data = await this.adminService.rejectWithdrawal(id, reason, req.user);
     return { success: true, message: 'Đã từ chối và hoàn tiền vào ví cửa hàng!', data };
   }
+  // PayOS Payout Admin Controls
+  @Get('payos/payout-balance')
+  async getPayoutBalance() {
+    const data = await this.adminService.getPayosPayoutBalance();
+    return { success: true, data };
+  }
+
+  @Post('withdrawals/:id/payout')
+  async payoutViaPayOS(@Param('id') id: string, @Request() req: any) {
+    const data = await this.adminService.payoutViaPayOS(id, req.user);
+    return { success: true, message: '�� g?i l?nh chi ti?n PayOS th�nh c�ng!', data };
+  }
+
+  @Post('withdrawals/:id/sync-payout')
+  async syncPayoutStatus(@Param('id') id: string) {
+    const data = await this.adminService.syncPayoutStatus(id);
+    return { success: true, message: '�� d?ng b? tr?ng th�i chi ti?n PayOS!', data };
+  }
 }

@@ -70,4 +70,77 @@ export class PaymentsRepository {
       include: { store: true, customer: true },
     });
   }
+
+  async processPaymentCreditToWallet(paymentTransactionId: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      const payment = await tx.paymentTransaction.findUnique({
+        where: { paymentTransactionId },
+        include: { order: true },
+      });
+
+      if (!payment) {
+        throw new Error('Payment transaction not found');
+      }
+
+      if (payment.status === 'PAID') {
+        return { alreadyPaid: true, payment };
+      }
+
+      const updatedPayment = await tx.paymentTransaction.update({
+        where: { paymentTransactionId },
+        data: {
+          status: 'PAID',
+          paidAt: new Date(),
+        },
+      });
+
+      await tx.order.update({
+        where: { orderId: payment.orderId },
+        data: {
+          orderStatus: 'CONFIRMED',
+          paymentStatus: 'PAID',
+        },
+      });
+
+      if (payment.order && payment.order.storeId) {
+        const storeId = payment.order.storeId;
+        let wallet = await tx.storeWallet.findUnique({
+          where: { storeId },
+        });
+
+        if (!wallet) {
+          wallet = await tx.storeWallet.create({
+            data: {
+              storeId,
+              balance: 0,
+              frozenBalance: 0,
+            },
+          });
+        }
+
+        const balanceBefore = Number(wallet.balance);
+        const creditAmount = Number(payment.amount);
+        const balanceAfter = balanceBefore + creditAmount;
+
+        await tx.storeWallet.update({
+          where: { walletId: wallet.walletId },
+          data: { balance: balanceAfter },
+        });
+
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.walletId,
+            amount: creditAmount,
+            type: 'PAYMENT_CREDIT',
+            balanceBefore,
+            balanceAfter,
+            referenceId: payment.transactionCode || payment.orderId.toString(),
+            description: `Doanh thu don hàng #${payment.order.orderCode || payment.orderId} qua PayOS`,
+          },
+        });
+      }
+
+      return { alreadyPaid: false, payment: updatedPayment };
+    });
+  }
 }

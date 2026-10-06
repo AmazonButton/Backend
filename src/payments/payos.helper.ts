@@ -60,3 +60,21 @@ export function verifyWebhookSignature(data: any, signature: string, checksumKey
     return false;
   }
 }
+
+export interface PayosPayoutRequestParams {
+  amount: number;
+  category?: string[];
+  description: string;
+  referenceId: string;
+  toAccountNumber: string;
+  toBin: string;
+}
+
+export function signPayoutRequest(params: PayosPayoutRequestParams, checksumKey: string): string {
+  const sorted = sortObjDataByKey(params);
+  const queryString = convertObjToQueryStr(sorted);
+  return crypto
+    .createHmac('sha256', checksumKey)
+    .update(queryString)
+    .digest('hex');
+}

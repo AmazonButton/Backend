@@ -1,7 +1,7 @@
-import { RequestWithdrawalDto } from './dto/withdrawal.dto';
-import { Controller, Get, Put, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Put, Body, UseGuards, Request, Param, Post } from '@nestjs/common';
 import { StoreWalletService } from './store-wallet.service';
 import { UpdateBankAccountDto } from './dto/wallet.dto';
+import { RequestWithdrawalDto } from './dto/withdrawal.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -20,7 +20,7 @@ export class StoreWalletController {
   async updateBankAccount(@Request() req: any, @Body() body: UpdateBankAccountDto) {
     const storeId = req.user.storeId || req.user.ownedStores?.[0]?.storeId;
     const data = await this.walletService.updateBankAccount(storeId, body);
-    return { success: true, message: 'C·∫≠p nh·∫≠t t√†i kho·∫£n ng√¢n h√†ng th√†nh c√¥ng!', data };
+    return { success: true, message: 'C?p nh?t t‡i kho?n ng‚n h‡ng th‡nh cÙng!', data };
   }
 
   @Get('transactions')
@@ -34,7 +34,7 @@ export class StoreWalletController {
   async requestWithdrawal(@Request() req: any, @Body() body: RequestWithdrawalDto) {
     const storeId = req.user.storeId || req.user.ownedStores?.[0]?.storeId;
     const data = await this.walletService.requestWithdrawal(storeId, body);
-    return { success: true, message: 'G·ª≠i y√™u c·∫ßu r√∫t ti·ªÅn th√†nh c√¥ng!', data };
+    return { success: true, message: 'G?i yÍu c?u r˙t ti?n th‡nh cÙng!', data };
   }
 
   @Get('withdrawals')
@@ -42,5 +42,11 @@ export class StoreWalletController {
     const storeId = req.user.storeId || req.user.ownedStores?.[0]?.storeId;
     const data = await this.walletService.listWithdrawals(storeId);
     return { success: true, data };
+  }
+
+  @Post('withdrawals/:id/sync-status')
+  async syncWithdrawalStatus(@Param('id') id: string) {
+    const data = await this.walletService.syncWithdrawalPayoutStatus(id);
+    return { success: true, message: '–?ng b? tr?ng th·i chi ti?n th‡nh cÙng', data };
   }
 }

@@ -2,8 +2,12 @@ import { IsNotEmpty, IsNumber, IsString, Min, IsOptional } from 'class-validator
 
 export class RequestWithdrawalDto {
   @IsNumber()
-  @Min(50000, { message: 'S·ªë ti·ªÅn r√∫t t·ªëi thi·ªÉu l√† 50,000 VND' })
+  @Min(50000, { message: 'S? ti?n r˙t t?i thi?u l‡ 50,000 VND' })
   amount: number;
+
+  @IsString()
+  @IsOptional()
+  bankCode?: string; // M„ BIN ng‚n h‡ng (vÌ d?: 970422 cho MBBank)
 
   @IsString()
   @IsNotEmpty()
@@ -16,6 +20,10 @@ export class RequestWithdrawalDto {
   @IsString()
   @IsNotEmpty()
   bankAccountHolder: string;
+
+  @IsNumber()
+  @IsOptional()
+  fee?: number;
 }
 
 export class ConfirmTransferDto {

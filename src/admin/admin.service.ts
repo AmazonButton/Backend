@@ -1,9 +1,13 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Optional } from '@nestjs/common';
+import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AdminService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
+  ) {}
 
   async listPendingStores() {
     return this.prisma.store.findMany({
@@ -385,5 +389,84 @@ export class AdminService {
         },
       });
     });
+  }
+  // ==========================================
+  // PAYOS PAYOUT AUTOMATION & RECONCILIATION
+  // ==========================================
+  async getPayosPayoutBalance() {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOS Payout service chua du?c k�ch ho?t');
+    }
+    return this.payosPayoutService.getPayoutBalance();
+  }
+
+  async payoutViaPayOS(withdrawalId: string | number | bigint, adminUser?: any) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    const withdrawal = await this.prisma.storeWithdrawal.findUnique({
+      where: { withdrawalId: rawWithdrawalId },
+    });
+    if (!withdrawal) throw new NotFoundException('Y�u c?u r�t ti?n kh�ng t?n t?i');
+    if (withdrawal.status !== 'PENDING') {
+      throw new BadRequestException(`Y�u c?u dang ? tr?ng th�i ${withdrawal.status}, kh�ng th? th?c hi?n Payout`);
+    }
+
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOS Payout service chua du?c k�ch ho?t');
+    }
+
+    const payout = await this.payosPayoutService.createPayout({
+      referenceId: withdrawal.withdrawalCode,
+      amount: Number(withdrawal.netAmount || withdrawal.amount),
+      description: `Rut tien ${withdrawal.withdrawalCode}`.slice(0, 25),
+      toBin: withdrawal.bankCode || '970422',
+      toAccountNumber: withdrawal.bankAccountNumber,
+      category: ['withdrawal'],
+    });
+
+    return this.prisma.storeWithdrawal.update({
+      where: { withdrawalId: rawWithdrawalId },
+      data: {
+        status: 'PROCESSING',
+        providerPayoutId: payout.data?.id,
+        approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
+      },
+    });
+  }
+
+  async syncPayoutStatus(withdrawalId: string | number | bigint) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    const withdrawal = await this.prisma.storeWithdrawal.findUnique({
+      where: { withdrawalId: rawWithdrawalId },
+    });
+    if (!withdrawal) throw new NotFoundException('Y�u c?u r�t ti?n kh�ng t?n t?i');
+    if (withdrawal.status !== 'PROCESSING') {
+      return withdrawal;
+    }
+
+    if (!this.payosPayoutService) {
+      return withdrawal;
+    }
+
+    const payoutInfo = await this.payosPayoutService.getPayout(
+      withdrawal.providerPayoutId || withdrawal.withdrawalCode,
+    );
+    const approvalState = payoutInfo?.data?.approvalState;
+    const txState = payoutInfo?.data?.transactions?.[0]?.state;
+
+    if (approvalState === 'SUCCEEDED' || txState === 'SUCCEEDED' || approvalState === 'COMPLETED') {
+      return this.prisma.storeWithdrawal.update({
+        where: { withdrawalId: rawWithdrawalId },
+        data: {
+          status: 'SUCCEEDED',
+          processedAt: new Date(),
+        },
+      });
+    }
+
+    if (approvalState === 'FAILED' || txState === 'FAILED' || approvalState === 'REJECTED') {
+      return this.rejectWithdrawal(rawWithdrawalId, 'PayOS Payout x�c nh?n th?t b?i');
+    }
+
+    return withdrawal;
   }
 }
