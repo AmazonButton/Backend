@@ -1,12 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, Optional } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AdminService {
   constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
+    private readonly prisma: PrismaService,
+    @Optional() private readonly payosPayoutService?: PayOSPayoutService,
   ) {}
 
   async listPendingStores() {
@@ -27,7 +27,7 @@ export class AdminService {
     });
   }
 
-  async approveStore(storeId: string | number | bigint, adminUser: any) {
+  async approveStore(storeId: string | number | bigint, _adminUser?: any) {
     const targetStoreId = BigInt(storeId);
     const store = await this.prisma.store.findUnique({ where: { storeId: targetStoreId } });
     if (!store) throw new NotFoundException('Không tìm thấy cửa hàng');
@@ -49,7 +49,7 @@ export class AdminService {
     });
   }
 
-  async rejectStore(storeId: string | number | bigint, reason: string, adminUser: any) {
+  async rejectStore(storeId: string | number | bigint, reason: string, _adminUser?: any) {
     if (!reason) throw new BadRequestException('Bắt buộc phải nhập lý do từ chối');
     const targetStoreId = BigInt(storeId);
 
