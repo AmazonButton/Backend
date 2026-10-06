@@ -5,14 +5,20 @@ import { OrdersService } from '../orders/orders.service';
 const processedRequests = new Map<string, any>();
 
 // Clean up processedRequests older than 5 minutes
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   if (processedRequests.size > 1000) {
     processedRequests.clear();
   }
 }, 300000);
+if (cleanupTimer && typeof cleanupTimer.unref === 'function') {
+  cleanupTimer.unref();
+}
 
 @Injectable()
 export class IotService {
+  public readonly deviceCooldowns = new Map<string, number>();
+  public readonly debounceCooldownMs = 2500;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(OrdersService) private readonly ordersService: OrdersService,
@@ -56,6 +62,25 @@ export class IotService {
         data: { deviceId: device.deviceId },
       };
     }
+
+    // Hardware switch debounce / anti-jamming check (per deviceId)
+    const now = Date.now();
+    const lastPressTime = this.deviceCooldowns.get(device.deviceId) || 0;
+    if (now - lastPressTime < this.debounceCooldownMs) {
+      return {
+        success: false,
+        code: 'BUTTON_DEBOUNCE_ACTIVE',
+        message: 'Nút bấm đang trong thời gian giãn cách chống kẹt phím (Debounce cooldown). Vui lòng thử lại sau giây lát.',
+        data: {
+          deviceId: device.deviceId,
+          retryAfterMs: this.debounceCooldownMs - (now - lastPressTime),
+        },
+      };
+    }
+    this.deviceCooldowns.set(device.deviceId, now);
+
+    // Reserve requestId in idempotency map immediately to block concurrent duplicate bursts
+    processedRequests.set(requestId, { status: 'PROCESSING' });
 
     // Emit real-time tactile pressing animation to web UI
     const pressingPayload = {

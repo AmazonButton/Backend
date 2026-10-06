@@ -94,12 +94,13 @@ export class PaymentsRepository {
         },
       });
 
+      const orderUpdateData: any = { paymentStatus: 'PAID' };
+      if (payment.order && payment.order.orderStatus === 'PENDING') {
+        orderUpdateData.orderStatus = 'CONFIRMED';
+      }
       await tx.order.update({
         where: { orderId: payment.orderId },
-        data: {
-          orderStatus: 'CONFIRMED',
-          paymentStatus: 'PAID',
-        },
+        data: orderUpdateData,
       });
 
       if (payment.order && payment.order.storeId) {
@@ -135,7 +136,7 @@ export class PaymentsRepository {
             balanceBefore,
             balanceAfter,
             referenceId: payment.transactionCode || payment.orderId.toString(),
-            description: `Doanh thu don hàng #${payment.order.orderCode || payment.orderId} qua PayOS`,
+            description: `Doanh thu don hï¿½ng #${payment.order.orderCode || payment.orderId} qua PayOS`,
           },
         });
       }

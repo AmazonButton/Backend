@@ -1,3 +1,8 @@
+import { PaymentsService } from '../src/payments/payments.service';
+import { PaymentsRepository } from '../src/payments/payments.repository';
+import { EventsGateway } from '../src/websocket/events.gateway';
+import { IotService } from '../src/iot/iot.service';
+import { sortObjDataByKey, convertObjToQueryStr } from '../src/payments/payos.helper';
 ﻿import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -369,6 +374,319 @@ async function runMasterSuperpowersQASuite() {
     const foreignWallet = await walletService.getOrCreateStoreWallet(foreignStore.storeId);
     assert('4.B-IDOR', 'Bảo vệ Ví chống IDOR: Mỗi cửa hàng được phân lập ví độc lập theo Store ID định danh nghiêm ngặt', foreignWallet.storeId.toString() !== store.storeId.toString());
 
+    
+    // ============================================================================
+    // [SECTION 5] KỊCH BẢN KIỂM THỬ CỔNG THANH TOÁN (PAYOS WEBHOOK INTEGRATION & SECURITY)
+    // ============================================================================
+    console.log('\n[SECTION 5] KỊCH BẢN KIỂM THỬ CỔNG THANH TOÁN (PAYOS WEBHOOK INTEGRATION & SECURITY)');
+
+    const paymentsRepo = new PaymentsRepository(prisma);
+    const paymentsService = new PaymentsService(paymentsRepo);
+    process.env.PAYOS_CHECKSUM_KEY = 'test_qa_payos_checksum_key_secret_2026';
+
+    const payosTestOrder = await prisma.order.create({
+      data: {
+        orderCode: 'ORD_PAYOS_' + timestamp,
+        customerId: customerProfile.customerId,
+        storeId: store.storeId,
+        buttonId: iotButton.buttonId,
+        orderStatus: 'PENDING',
+        paymentStatus: 'UNPAID',
+        paymentMethod: 'PAYOS',
+        subtotalAmount: 150000,
+        discountAmount: 0,
+        shippingFee: 0,
+        totalAmount: 150000,
+        shippingRecipientName: 'Superpowers Test Customer',
+        shippingPhone: '0987654321',
+        shippingAddress: '123 Test Street, District 1',
+      },
+    });
+
+    const payosOrderCode = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+    const payosTx = await paymentsRepo.createTransaction({
+      orderId: payosTestOrder.orderId,
+      provider: 'PAYOS',
+      transactionCode: payosOrderCode.toString(),
+      amount: 150000,
+      paymentMethod: 'QR',
+      status: 'PENDING',
+    });
+
+    // 5.A Kẻ gian giả mạo Webhook PayOS (Forged Signature)
+    const forgedWebhookBody = {
+      code: '00',
+      desc: 'Success',
+      data: {
+        orderCode: payosOrderCode,
+        amount: 150000,
+        description: 'Forged payment injection',
+        accountNumber: '999999999',
+        reference: 'HACKER_REF',
+        transactionDateTime: '2026-10-06 16:30:00',
+        currency: 'VND',
+        paymentLinkId: 'fake_link_999',
+        code: '00',
+        desc: 'Success',
+      },
+      signature: 'deadbeef_invalid_forged_hmac_signature_attempt_99999999',
+    };
+
+    const forgedRes = await paymentsService.handlePayosWebhook(forgedWebhookBody as any);
+    assert(
+      '5.A-PAYOS-SEC',
+      'Kẻ gian giả mạo Webhook: Chữ ký HMAC sai lệch bị hệ thống từ chối lập tức (Invalid signature)',
+      forgedRes.success === false && forgedRes.message === 'Invalid signature',
+    );
+
+    const txAfterForged = await prisma.paymentTransaction.findUnique({
+      where: { paymentTransactionId: payosTx.paymentTransactionId },
+    });
+    assert(
+      '5.A-PAYOS-SEC',
+      'Bảo vệ trạng thái đơn: Giao dịch vẫn giữ nguyên PENDING, không bị chuyển thành PAID trái phép',
+      txAfterForged?.status === 'PENDING',
+    );
+
+    // 5.B Webhook PayOS hợp lệ với chữ ký HMAC-SHA256 chuẩn
+    const validPayosData = {
+      orderCode: payosOrderCode,
+      amount: 150000,
+      description: 'Hop le thanh toan',
+      accountNumber: '1234567890',
+      reference: 'PAYOS_' + payosOrderCode,
+      transactionDateTime: '2026-10-06 16:31:00',
+      currency: 'VND',
+      paymentLinkId: 'plink_' + payosOrderCode,
+      code: '00',
+      desc: 'Success',
+    };
+
+    const sortedData = sortObjDataByKey(validPayosData);
+    const queryString = convertObjToQueryStr(sortedData);
+    const validPayosSignature = crypto
+      .createHmac('sha256', process.env.PAYOS_CHECKSUM_KEY!)
+      .update(queryString)
+      .digest('hex');
+
+    const validWebhookBody = {
+      code: '00',
+      desc: 'Success',
+      data: validPayosData,
+      signature: validPayosSignature,
+    };
+
+    const walletBeforeCredit = await prisma.storeWallet.findUnique({
+      where: { storeId: store.storeId },
+    });
+    const balanceBeforeCredit = Number(walletBeforeCredit?.balance || 0);
+
+    const validRes = await paymentsService.handlePayosWebhook(validWebhookBody as any);
+    assert(
+      '5.B-PAYOS-OK',
+      'Webhook PayOS hợp lệ: Xác thực chữ ký HMAC thành công & cập nhật trạng thái PAID',
+      validRes.success === true && validRes.message === 'Payment confirmed and credited successfully',
+    );
+
+    const txAfterValid = await prisma.paymentTransaction.findUnique({
+      where: { paymentTransactionId: payosTx.paymentTransactionId },
+    });
+    const walletAfterCredit = await prisma.storeWallet.findUnique({
+      where: { storeId: store.storeId },
+    });
+    assert(
+      '5.B-PAYOS-OK',
+      'Cộng tiền doanh thu: Tiền thanh toán tự động ghi có vào Ví Cửa Hàng (+150,000 VND)',
+      Number(walletAfterCredit?.balance) === balanceBeforeCredit + 150000 && txAfterValid?.status === 'PAID',
+    );
+
+    // 5.C Tấn công lặp lại Webhook (Webhook Replay Attack / Retransmission)
+    const replayRes = await paymentsService.handlePayosWebhook(validWebhookBody as any);
+    assert(
+      '5.C-PAYOS-IDEMP',
+      'Chống lặp Webhook: PayOS gọi lại lần 2 trả về Already processed mà không cộng tiền đúp',
+      replayRes.success === true && replayRes.message === 'Already processed',
+    );
+
+    const walletAfterReplay = await prisma.storeWallet.findUnique({
+      where: { storeId: store.storeId },
+    });
+    assert(
+      '5.C-PAYOS-IDEMP',
+      'Bảo toàn số dư ví: Không phát sinh giao dịch nhân đôi (No double-crediting)',
+      Number(walletAfterReplay?.balance) === Number(walletAfterCredit?.balance),
+    );
+
+    // ============================================================================
+    // [SECTION 6] KỊCH BẢN KIỂM THỬ SỰ KIỆN REAL-TIME (SOCKET.IO ROOM ISOLATION)
+    // ============================================================================
+    console.log('\n[SECTION 6] KỊCH BẢN KIỂM THỬ SỰ KIỆN REAL-TIME (SOCKET.IO ROOM ISOLATION & LEAK DEFENSE)');
+
+    const eventsGateway = new EventsGateway();
+    const socketRooms = new Map<string, Set<string>>();
+    const socketMessages = new Map<string, Array<{ event: string; payload: any }>>();
+
+    const registerSocket = (socketId: string) => {
+      socketMessages.set(socketId, []);
+    };
+    const joinRoom = (socketId: string, room: string) => {
+      if (!socketRooms.has(room)) socketRooms.set(room, new Set());
+      socketRooms.get(room)!.add(socketId);
+    };
+
+    registerSocket('socket_owner_storeA');
+    registerSocket('socket_owner_storeB');
+    registerSocket('socket_customer_A');
+
+    joinRoom('socket_owner_storeA', 'store_' + store.storeId);
+    joinRoom('socket_owner_storeB', 'store_' + foreignStore.storeId);
+    joinRoom('socket_customer_A', 'customer_' + customerProfile.customerId);
+
+    eventsGateway.server = {
+      to: (room: string) => ({
+        emit: (event: string, payload: any) => {
+          const members = socketRooms.get(room) || new Set();
+          for (const sid of members) {
+            socketMessages.get(sid)?.push({ event, payload });
+          }
+        },
+      }),
+      emit: (event: string, payload: any) => {
+        for (const [sid, msgs] of socketMessages.entries()) {
+          msgs.push({ event, payload });
+        }
+      },
+    } as any;
+
+    eventsGateway.emitToStore(store.storeId.toString(), 'ORDER_CREATED', {
+      orderId: zeroTouchOrder.orderId.toString(),
+      storeId: store.storeId.toString(),
+      amount: 150000,
+      status: 'PENDING',
+    });
+
+    const msgsStoreA = socketMessages.get('socket_owner_storeA') || [];
+    const msgsStoreB = socketMessages.get('socket_owner_storeB') || [];
+
+    assert(
+      '6.A-WS-ROOM',
+      'Bắn tin nhắn Real-time: Chủ cửa hàng Store A nhận được thông báo đơn hàng mới qua WebSocket',
+      msgsStoreA.some(
+        (m) => m.event === 'ORDER_CREATED' && m.payload.orderId === zeroTouchOrder.orderId.toString(),
+      ),
+    );
+
+    assert(
+      '6.A-WS-ISOLATE',
+      'Cách ly Room tuyệt đối: Chủ cửa hàng Store B không hề nhận được tín hiệu của Store A (Zero Leak)',
+      msgsStoreB.length === 0,
+    );
+
+    // ============================================================================
+    // [SECTION 7] KỊCH BẢN KIỂM THỬ TẢI TRỌNG & CHỐNG KẸT NÚT BẤM (100 CONCURRENT REQUESTS)
+    // ============================================================================
+    console.log('\n[SECTION 7] KỊCH BẢN KIỂM THỬ TẢI TRỌNG & CHỐNG KẸT NÚT BẤM (100 REQUESTS LOAD & DEBOUNCE)');
+
+    const iotService = new IotService(prisma, ordersService);
+    (ordersService as any).eventsGateway = eventsGateway;
+
+    // Tạo nút bấm riêng cho kịch bản tải trọng
+    const jammedButton = await prisma.ioTButton.create({
+      data: {
+        deviceId: 'ESP32_JAMMED_' + timestamp,
+        buttonCode: 'BTN_JAM_' + timestamp,
+        customerId: customerProfile.customerId,
+        storeId: store.storeId,
+        addressId: customerAddress.addressId,
+        buttonName: 'Jammed Switch Test Button',
+        status: 'ACTIVE',
+        buttonProducts: {
+          create: {
+            productId: product.productId,
+            quantity: 1,
+          },
+        },
+      },
+      include: { buttonProducts: true },
+    });
+
+    const reqPromises = [];
+
+    // 1. Request khởi tạo ban đầu (chính thống)
+    reqPromises.push(
+      iotService.handleEvent(jammedButton, {
+        eventType: 'SINGLE_PRESS',
+        requestId: 'req_initial_' + timestamp,
+      }),
+    );
+
+    // 2. 49 request trùng lặp requestId (mô phỏng retry storm / mạng lặp gói tin)
+    for (let i = 1; i <= 49; i++) {
+      reqPromises.push(
+        iotService.handleEvent(jammedButton, {
+          eventType: 'SINGLE_PRESS',
+          requestId: 'req_initial_' + timestamp,
+        }),
+      );
+    }
+
+    // 3. 50 request dồn dập có requestId mới từ switch bị kẹt / mạch rung liên tục trong 1 giây
+    for (let i = 1; i <= 50; i++) {
+      reqPromises.push(
+        iotService.handleEvent(jammedButton, {
+          eventType: 'SINGLE_PRESS',
+          requestId: 'req_jammed_' + i + '_' + timestamp,
+        }),
+      );
+    }
+
+    const loadResults = await Promise.allSettled(reqPromises);
+
+    let successfulOrdersCount = 0;
+    let duplicateBlockedCount = 0;
+    let debounceBlockedCount = 0;
+
+    for (const r of loadResults) {
+      if (r.status === 'fulfilled') {
+        const val = r.value as any;
+        if (val?.success === true && !val?.isDuplicate) {
+          successfulOrdersCount++;
+        } else if (val?.success === true && val?.isDuplicate === true) {
+          duplicateBlockedCount++;
+        } else if (val?.code === 'BUTTON_DEBOUNCE_ACTIVE') {
+          debounceBlockedCount++;
+        }
+      }
+    }
+
+    const ordersInDbForJammed = await prisma.order.count({
+      where: { buttonId: jammedButton.buttonId },
+    });
+
+    assert(
+      '7.A-SPAM-100',
+      'Bắn tải 100 request đồng thời: Đúng duy nhất 1 đơn hàng được tạo thành công',
+      successfulOrdersCount === 1 && ordersInDbForJammed === 1,
+    );
+
+    assert(
+      '7.A-IDEMP-KEY',
+      'Chống lặp gói tin mạng: 49 request trùng requestId bị chặn qua Idempotency Key',
+      duplicateBlockedCount === 49,
+    );
+
+    assert(
+      '7.B-DEBOUNCE',
+      'Chống kẹt nút / chập mạch ESP32: 50 request dồn dập bị chặn bởi Hardware Debounce Cooldown (BUTTON_DEBOUNCE_ACTIVE)',
+      debounceBlockedCount === 50,
+    );
+
+    assert(
+      '7.B-DB-SAFETY',
+      'Bảo vệ toàn vẹn Database: 100 request dồn dập trong 1 giây không gây rác DB hay lỗi số dư',
+      ordersInDbForJammed === 1,
+    );
+
     console.log('\n--------------------------------------------------------------------------------');
     console.log(`⚡ SUPERPOWERS QA SUITE COMPLETE: ${passedTests}/${totalTests} TESTS PASSED (${failedTests} FAILED)`);
     console.log('--------------------------------------------------------------------------------\n');
@@ -376,6 +694,7 @@ async function runMasterSuperpowersQASuite() {
     if (failedTests > 0) {
       process.exit(1);
     }
+    process.exit(0);
   } catch (err: any) {
     console.error('Fatal error during Superpowers QA Suite:', err);
     process.exit(1);
