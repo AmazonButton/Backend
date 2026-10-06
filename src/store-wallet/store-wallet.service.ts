@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Inject,
   Optional,
   Logger,
@@ -68,7 +69,7 @@ export class StoreWalletService {
       const currentWallet = await tx.storeWallet.findUnique({
         where: { walletId: wallet.walletId },
       });
-      if (!currentWallet) throw new NotFoundException('Ví c?a hàng không t?n t?i');
+      if (!currentWallet) throw new NotFoundException('Vï¿½ c?a hï¿½ng khï¿½ng t?n t?i');
 
       const balanceBefore = Number(currentWallet.balance);
       const balanceAfter = balanceBefore + creditAmount;
@@ -86,7 +87,7 @@ export class StoreWalletService {
           balanceBefore,
           balanceAfter,
           referenceId: orderCode,
-          description: `Doanh thu don hàng #${orderCode}`,
+          description: `Doanh thu don hï¿½ng #${orderCode}`,
         },
       });
 
@@ -105,9 +106,9 @@ export class StoreWalletService {
   }
 
   /**
-   * Yêu c?u rút ti?n Store (Section 15, 16, 17)
-   * Phase 1: DB Transaction tr? s? du t?c thì, t?o Withdrawal PENDING, commit nhanh.
-   * Phase 2: N?u c?u hình autoPayout ho?c dto.autoPayout = true, g?i PayOS Payout API sang PROCESSING.
+   * Yï¿½u c?u rï¿½t ti?n Store (Section 15, 16, 17)
+   * Phase 1: DB Transaction tr? s? du t?c thï¿½, t?o Withdrawal PENDING, commit nhanh.
+   * Phase 2: N?u c?u hï¿½nh autoPayout ho?c dto.autoPayout = true, g?i PayOS Payout API sang PROCESSING.
    */
   async requestWithdrawal(
     storeId: string | number | bigint,
@@ -117,7 +118,7 @@ export class StoreWalletService {
     const rawStoreId = BigInt(storeId);
     const amount = Number(dto.amount);
     if (!amount || amount < 50000) {
-      throw new BadRequestException('S? ti?n rút t?i thi?u là 50,000 VND');
+      throw new BadRequestException('S? ti?n rï¿½t t?i thi?u lï¿½ 50,000 VND');
     }
 
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
@@ -130,12 +131,12 @@ export class StoreWalletService {
       const current = await tx.storeWallet.findUnique({
         where: { walletId: wallet.walletId },
       });
-      if (!current) throw new NotFoundException('Ví không t?n t?i');
+      if (!current) throw new NotFoundException('Vï¿½ khï¿½ng t?n t?i');
 
       const currentBalance = Number(current.balance);
       if (currentBalance < amount) {
         throw new BadRequestException(
-          `S? du không d?. S? du kh? d?ng hi?n t?i: ${currentBalance.toLocaleString()} VND`,
+          `S? du khï¿½ng d?. S? du kh? d?ng hi?n t?i: ${currentBalance.toLocaleString()} VND`,
         );
       }
 
@@ -170,7 +171,7 @@ export class StoreWalletService {
           balanceBefore: currentBalance,
           balanceAfter,
           referenceId: withdrawalCode,
-          description: `Yêu c?u rút ti?n v? ${dto.bankName} - ${dto.bankAccountNumber}`,
+          description: `Yï¿½u c?u rï¿½t ti?n v? ${dto.bankName} - ${dto.bankAccountNumber}`,
         },
       });
 
@@ -195,15 +196,15 @@ export class StoreWalletService {
     });
 
     if (!withdrawal) {
-      throw new NotFoundException('Không tìm th?y yêu c?u rút ti?n');
+      throw new NotFoundException('Khï¿½ng tï¿½m th?y yï¿½u c?u rï¿½t ti?n');
     }
 
     if (withdrawal.status !== 'PENDING') {
-      throw new BadRequestException(`Yêu c?u dang ? tr?ng thái ${withdrawal.status}, không th? g?i Payout`);
+      throw new BadRequestException(`Yï¿½u c?u dang ? tr?ng thï¿½i ${withdrawal.status}, khï¿½ng th? g?i Payout`);
     }
 
     if (!this.payosPayoutService) {
-      throw new BadRequestException('D?ch v? PayOS Payout chua du?c kích ho?t trong h? th?ng');
+      throw new BadRequestException('D?ch v? PayOS Payout chua du?c kï¿½ch ho?t trong h? th?ng');
     }
 
     try {
@@ -238,7 +239,7 @@ export class StoreWalletService {
         },
       });
 
-      // DB Transaction 2: Auto-Refund s? du v? ví (Section 25)
+      // DB Transaction 2: Auto-Refund s? du v? vï¿½ (Section 25)
       await this.refundFailedWithdrawal(rawId, err.message || 'PayOS Payout API Error');
 
       throw new BadRequestException(`T?o chi ti?n PayOS th?t b?i: ${err.message || 'L?i c?ng PayOS'}`);
@@ -246,7 +247,7 @@ export class StoreWalletService {
   }
 
   /**
-   * Hoàn ti?n ví khi Payout th?t b?i (Section 25)
+   * Hoï¿½n ti?n vï¿½ khi Payout th?t b?i (Section 25)
    */
   async refundFailedWithdrawal(withdrawalId: string | number | bigint, reason: string) {
     const rawId = BigInt(withdrawalId);
@@ -254,12 +255,12 @@ export class StoreWalletService {
       const withdrawal = await tx.storeWithdrawal.findUnique({
         where: { withdrawalId: rawId },
       });
-      if (!withdrawal) throw new NotFoundException('Yêu c?u rút ti?n không t?n t?i');
+      if (!withdrawal) throw new NotFoundException('Yï¿½u c?u rï¿½t ti?n khï¿½ng t?n t?i');
 
       const wallet = await tx.storeWallet.findUnique({
         where: { walletId: withdrawal.walletId },
       });
-      if (!wallet) throw new NotFoundException('Ví không t?n t?i');
+      if (!wallet) throw new NotFoundException('Vï¿½ khï¿½ng t?n t?i');
 
       const refundAmount = Number(withdrawal.amount);
       const balanceBefore = Number(wallet.balance);
@@ -278,7 +279,7 @@ export class StoreWalletService {
           balanceBefore,
           balanceAfter,
           referenceId: withdrawal.withdrawalCode,
-          description: `Hoàn ti?n yêu c?u rút #${withdrawal.withdrawalCode}: ${reason}`,
+          description: `Hoï¿½n ti?n yï¿½u c?u rï¿½t #${withdrawal.withdrawalCode}: ${reason}`,
         },
       });
 
@@ -294,16 +295,28 @@ export class StoreWalletService {
   }
 
   /**
-   * Ki?m tra & d?ng b? tr?ng thái Payout t? PayOS (Section 22, 23, 24)
+   * Ki?m tra & d?ng b? tr?ng thï¿½i Payout t? PayOS (Section 22, 23, 24)
    */
-  async syncWithdrawalPayoutStatus(withdrawalId: string | number | bigint) {
+  async syncWithdrawalPayoutStatus(
+    withdrawalId: string | number | bigint,
+    requestStoreId?: string | number | bigint,
+  ) {
     const rawId = BigInt(withdrawalId);
     const withdrawal = await this.prisma.storeWithdrawal.findUnique({
       where: { withdrawalId: rawId },
+      include: { wallet: true },
     });
 
     if (!withdrawal) {
-      throw new NotFoundException('Không tìm th?y yêu c?u rút ti?n');
+      throw new NotFoundException('Khï¿½ng tï¿½m th?y yï¿½u c?u rï¿½t ti?n');
+    }
+
+    if (requestStoreId && withdrawal.wallet.storeId !== BigInt(requestStoreId)) {
+      throw new ForbiddenException({
+        success: false,
+        code: 'ACCESS_DENIED',
+        message: 'B?n khï¿½ng cï¿½ quy?n thao tï¿½c trï¿½n yï¿½u c?u rï¿½t ti?n c?a c?a hï¿½ng khï¿½c.',
+      });
     }
 
     if (withdrawal.status !== 'PROCESSING') {
@@ -332,10 +345,10 @@ export class StoreWalletService {
     }
 
     if (approvalState === 'FAILED' || txState === 'FAILED' || approvalState === 'REJECTED') {
-      return this.refundFailedWithdrawal(rawId, 'PayOS Payout xác nh?n th?t b?i');
+      return this.refundFailedWithdrawal(rawId, 'PayOS Payout xï¿½c nh?n th?t b?i');
     }
 
-    // N?u v?n dang PROCESSING -> Gi? nguyên tr?ng thái, tuy?t d?i không refund (Section 24)
+    // N?u v?n dang PROCESSING -> Gi? nguyï¿½n tr?ng thï¿½i, tuy?t d?i khï¿½ng refund (Section 24)
     return withdrawal;
   }
 
@@ -357,7 +370,7 @@ export class StoreWalletService {
     });
 
     if (!withdrawal) {
-      throw new NotFoundException('Không tìm th?y thông tin rút ti?n');
+      throw new NotFoundException('Khï¿½ng tï¿½m th?y thï¿½ng tin rï¿½t ti?n');
     }
 
     return withdrawal;

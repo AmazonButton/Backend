@@ -20,7 +20,7 @@ export class StoreWalletController {
   async updateBankAccount(@Request() req: any, @Body() body: UpdateBankAccountDto) {
     const storeId = req.user.storeId || req.user.ownedStores?.[0]?.storeId;
     const data = await this.walletService.updateBankAccount(storeId, body);
-    return { success: true, message: 'C?p nh?t tài kho?n ngân hàng thành công!', data };
+    return { success: true, message: 'C?p nh?t tï¿½i kho?n ngï¿½n hï¿½ng thï¿½nh cï¿½ng!', data };
   }
 
   @Get('transactions')
@@ -34,7 +34,7 @@ export class StoreWalletController {
   async requestWithdrawal(@Request() req: any, @Body() body: RequestWithdrawalDto) {
     const storeId = req.user.storeId || req.user.ownedStores?.[0]?.storeId;
     const data = await this.walletService.requestWithdrawal(storeId, body);
-    return { success: true, message: 'G?i yêu c?u rút ti?n thành công!', data };
+    return { success: true, message: 'G?i yï¿½u c?u rï¿½t ti?n thï¿½nh cï¿½ng!', data };
   }
 
   @Get('withdrawals')
@@ -45,8 +45,9 @@ export class StoreWalletController {
   }
 
   @Post('withdrawals/:id/sync-status')
-  async syncWithdrawalStatus(@Param('id') id: string) {
-    const data = await this.walletService.syncWithdrawalPayoutStatus(id);
-    return { success: true, message: 'Ð?ng b? tr?ng thái chi ti?n thành công', data };
+  async syncWithdrawalStatus(@Param('id') id: string, @Request() req: any) {
+    const storeId = req.user.storeId || req.user.ownedStores?.[0]?.storeId;
+    const data = await this.walletService.syncWithdrawalPayoutStatus(id, storeId);
+    return { success: true, message: 'ï¿½?ng b? tr?ng thï¿½i chi ti?n thï¿½nh cï¿½ng', data };
   }
 }
