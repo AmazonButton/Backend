@@ -29,7 +29,8 @@ async function runMarketplaceV22Tests() {
   const payosPayoutService = new PayOSPayoutService();
   const storeWalletService = new StoreWalletService(prisma, payosPayoutService);
   const ordersRepo = new OrdersRepository(prisma);
-  const ordersService = new OrdersService(ordersRepo, mockEventsGateway, storeWalletService);
+  const mockCrypto = { generateHmacSignature: () => '', verifyHmacSignature: () => true } as any;
+  const ordersService = new OrdersService(ordersRepo, mockCrypto, mockEventsGateway, storeWalletService);
 
   let passed = 0;
   let failed = 0;

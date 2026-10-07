@@ -278,7 +278,7 @@ async function runMasterSuperpowersQASuite() {
     await ordersService.updateOrderStatus(zeroTouchOrder.orderId, 'DELIVERED');
     await ordersService.updateOrderStatus(zeroTouchOrder.orderId, 'COMPLETED');
     const walletAfterComplete = (await walletService.getOrCreateStoreWallet(store.storeId)).balance;
-    const completedOrder = await prisma.order.findUnique({ where: { orderId: zeroTouchOrder.orderId } });
+    const completedOrder = await prisma.order.findUnique({ where: { orderId: BigInt(zeroTouchOrder.orderId) } });
     const settledAmount = Number(completedOrder?.netAmount || zeroTouchOrder.totalAmount);
     assert('3.A-ESCROW', `Hoàn tất đơn hàng chuyển doanh thu thực nhận (Net Amount sau trừ 8% hoa hồng) vào Ví Cửa Hàng (+${settledAmount.toLocaleString()} VND)`, Math.abs((Number(walletAfterComplete) - Number(walletBeforeComplete)) - settledAmount) < 0.01);
 
