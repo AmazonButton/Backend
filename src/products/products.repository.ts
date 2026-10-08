@@ -1,5 +1,11 @@
-import { Injectable, Inject } from '@nestjs/common';
+﻿import { Injectable, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+
+export interface ProductImageInput {
+  imageUrl: string;
+  isThumbnail?: boolean;
+  displayOrder?: number;
+}
 
 @Injectable()
 export class ProductsRepository {
@@ -15,6 +21,9 @@ export class ProductsRepository {
       include: {
         inventory: true,
         category: true,
+        images: {
+          orderBy: { displayOrder: 'asc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -26,6 +35,9 @@ export class ProductsRepository {
       include: {
         inventory: true,
         category: true,
+        images: {
+          orderBy: { displayOrder: 'asc' },
+        },
       },
     });
   }
@@ -47,8 +59,9 @@ export class ProductsRepository {
     status: string;
     categoryId?: bigint;
     initialStock?: number;
+    images?: ProductImageInput[];
   }) {
-    const { initialStock = 0, ...productData } = data;
+    const { initialStock = 0, images = [], ...productData } = data;
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: productData,
@@ -65,21 +78,65 @@ export class ProductsRepository {
         },
       });
 
+      // Automatically create ProductImage records if provided
+      let createdImages: any[] = [];
+      if (images && images.length > 0) {
+        await tx.productImage.createMany({
+          data: images.map((img, idx) => ({
+            productId: product.productId,
+            imageUrl: img.imageUrl,
+            isThumbnail: img.isThumbnail !== undefined ? img.isThumbnail : idx === 0,
+            displayOrder: img.displayOrder !== undefined ? img.displayOrder : idx,
+          })),
+        });
+
+        createdImages = await tx.productImage.findMany({
+          where: { productId: product.productId },
+          orderBy: { displayOrder: 'asc' },
+        });
+      }
+
       return {
         ...product,
         inventory,
+        images: createdImages,
       };
     });
   }
 
-  async update(productId: bigint, data: any) {
-    return this.prisma.product.update({
-      where: { productId },
-      data,
-      include: {
-        inventory: true,
-        category: true,
-      },
+  async update(productId: bigint, data: any, images?: ProductImageInput[]) {
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({
+        where: { productId },
+        data,
+        include: {
+          inventory: true,
+          category: true,
+        },
+      });
+
+      if (images && images.length > 0) {
+        // Clear previous images and insert updated list
+        await tx.productImage.deleteMany({ where: { productId } });
+        await tx.productImage.createMany({
+          data: images.map((img, idx) => ({
+            productId,
+            imageUrl: img.imageUrl,
+            isThumbnail: img.isThumbnail !== undefined ? img.isThumbnail : idx === 0,
+            displayOrder: img.displayOrder !== undefined ? img.displayOrder : idx,
+          })),
+        });
+      }
+
+      const currentImages = await tx.productImage.findMany({
+        where: { productId },
+        orderBy: { displayOrder: 'asc' },
+      });
+
+      return {
+        ...product,
+        images: currentImages,
+      };
     });
   }
 

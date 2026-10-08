@@ -1,6 +1,6 @@
-import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
+﻿import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
 import { Injectable, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
-import { ProductsRepository } from './products.repository';
+import { ProductsRepository, ProductImageInput } from './products.repository';
 
 @Injectable()
 export class ProductsService {
@@ -8,6 +8,37 @@ export class ProductsService {
     @Inject(ProductsRepository) private readonly productsRepo: ProductsRepository,
     @Inject(StoreSubscriptionsService) private readonly subscriptionsService: StoreSubscriptionsService
   ) {}
+
+  private parseImageInputs(body: any): ProductImageInput[] | undefined {
+    const { imageUrl, images, imageDetails } = body;
+    if (imageDetails && Array.isArray(imageDetails) && imageDetails.length > 0) {
+      return imageDetails.map((img: any, idx: number) => ({
+        imageUrl: img.imageUrl || img.url,
+        isThumbnail: img.isThumbnail !== undefined ? Boolean(img.isThumbnail) : idx === 0,
+        displayOrder: img.displayOrder !== undefined ? Number(img.displayOrder) : idx,
+      }));
+    }
+
+    if (images && Array.isArray(images) && images.length > 0) {
+      return images.map((url: string, idx: number) => ({
+        imageUrl: typeof url === 'string' ? url : (url as any).url || (url as any).imageUrl,
+        isThumbnail: idx === 0,
+        displayOrder: idx,
+      }));
+    }
+
+    if (imageUrl && typeof imageUrl === 'string' && imageUrl.trim().length > 0) {
+      return [
+        {
+          imageUrl: imageUrl.trim(),
+          isThumbnail: true,
+          displayOrder: 0,
+        },
+      ];
+    }
+
+    return undefined;
+  }
 
   async list(storeId?: string | number | bigint) {
     return this.productsRepo.findMany(storeId ? BigInt(storeId) : undefined);
@@ -41,6 +72,8 @@ export class ProductsService {
       throw new BadRequestException('Tên sản phẩm và giá gốc không được để trống');
     }
 
+    const imageInputs = this.parseImageInputs(body);
+
     return this.productsRepo.create({
       storeId: targetStoreId,
       productName: finalProductName,
@@ -51,6 +84,7 @@ export class ProductsService {
       status: 'ACTIVE',
       ...(categoryId ? { categoryId: BigInt(categoryId) } : {}),
       initialStock: initialStock !== undefined ? initialStock : stock || 50,
+      images: imageInputs,
     });
   }
 
@@ -89,13 +123,19 @@ export class ProductsService {
       });
     }
 
-    return this.productsRepo.update(targetProductId, {
-      ...(finalProductName ? { productName: finalProductName } : {}),
-      ...(brand ? { brand } : {}),
-      ...(finalPrice !== undefined ? { basePrice: finalPrice } : {}),
-      ...(status ? { status } : {}),
-      ...(description !== undefined ? { description } : {}),
-    });
+    const imageInputs = this.parseImageInputs(body);
+
+    return this.productsRepo.update(
+      targetProductId,
+      {
+        ...(finalProductName ? { productName: finalProductName } : {}),
+        ...(brand ? { brand } : {}),
+        ...(finalPrice !== undefined ? { basePrice: finalPrice } : {}),
+        ...(status ? { status } : {}),
+        ...(description !== undefined ? { description } : {}),
+      },
+      imageInputs,
+    );
   }
 
   async updateStock(

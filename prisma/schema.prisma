@@ -180,6 +180,7 @@ model Product {
   inventory      Inventory?
   buttonProducts ButtonProduct[]
   orderItems     OrderItem[]
+  images         ProductImage[]
 
   @@unique([storeId, productCode], name: "uq_product_store_code")
   @@unique([storeId, productId], name: "uq_product_store_pair")
@@ -514,4 +515,17 @@ model StoreWithdrawal {
   updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at")
 
   @@map("store_withdrawals")
+}
+
+model ProductImage {
+  imageId      BigInt   @id @default(autoincrement()) @map("image_id")
+  productId    BigInt   @map("product_id")
+  product      Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  imageUrl     String   @map("image_url")
+  isThumbnail  Boolean  @default(false) @map("is_thumbnail")
+  displayOrder Int      @default(0) @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("product_image")
 }

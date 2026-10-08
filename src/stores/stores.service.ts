@@ -77,6 +77,9 @@ export class StoresService {
           where: { status: 'ACTIVE' },
           include: {
             inventory: true,
+            images: {
+              orderBy: { displayOrder: 'asc' },
+            },
           },
         },
       },
@@ -116,6 +119,13 @@ export class StoresService {
           reservedQuantity: reserved,
           availableQuantity: Math.max(0, onHand - reserved),
           status: p.status,
+          thumbnailUrl: (p.images?.find((img) => img.isThumbnail) || p.images?.[0])?.imageUrl || null,
+          images: p.images?.map((img) => ({
+            imageId: img.imageId.toString(),
+            imageUrl: img.imageUrl,
+            isThumbnail: img.isThumbnail,
+            displayOrder: img.displayOrder,
+          })) || [],
         };
       }),
     };
