@@ -39,19 +39,21 @@ export class OrdersRepository {
     paymentMethod: string,
     shippingFee: number,
     orderNote: string = 'Đơn hàng tự động từ nút bấm IoT',
+    iotRequestId?: string,
   ): Promise<any> {
     const result: any[] = await this.prisma.$queryRaw`
       SELECT sp_create_order_from_button(
         ${buttonId}::bigint,
         ${paymentMethod}::varchar,
         ${shippingFee}::decimal,
-        ${orderNote}::text
+        ${orderNote}::text,
+        ${iotRequestId || null}::varchar
       ) AS order_id
     `;
     return result[0]?.order_id;
   }
 
-  async createOrderFallbackTx(button: any, paymentMethod: string, shippingFee: number): Promise<bigint> {
+  async createOrderFallbackTx(button: any, paymentMethod: string, shippingFee: number, iotRequestId?: string): Promise<bigint> {
     return this.prisma.$transaction(async (tx) => {
       let subtotal = 0;
       const orderCode = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -82,6 +84,7 @@ export class OrdersRepository {
           shippingPhone: phone,
           shippingAddress,
           orderNote: 'Đơn hàng tự động từ nút bấm IoT',
+          iotRequestId: iotRequestId || null,
         },
       });
 
@@ -416,6 +419,24 @@ export class OrdersRepository {
         store: true,
         statusHistories: true,
         paymentTransactions: true,
+      },
+    });
+  }
+
+
+  async findOrderByButtonAndRequestId(buttonId: bigint, iotRequestId: string): Promise<any> {
+    return this.prisma.order.findFirst({
+      where: {
+        buttonId,
+        iotRequestId,
+      },
+      include: {
+        items: true,
+        button: {
+          include: {
+            customer: { include: { user: true } },
+          },
+        },
       },
     });
   }

@@ -219,10 +219,14 @@ export class ProductsService {
           const remainingCount = await this.productsRepo.countImageReferences(oldPubId);
           if (remainingCount === 0) {
             try {
-              await this.mediaService.deleteAsset(oldPubId);
-              this.logger.log(`[Cloudinary Lifecycle] Safely destroyed orphaned asset: ${oldPubId}`);
+              const destroyed = await this.mediaService.deleteAsset(oldPubId);
+              if (destroyed) {
+                this.logger.log(`[Cloudinary Lifecycle] Safely destroyed orphaned asset: ${oldPubId}`);
+              } else {
+                this.logger.warn(`[Cloudinary Lifecycle Retry Outbox] Failed to destroy asset ${oldPubId} via Cloudinary API, registered for background retry`);
+              }
             } catch (cloudErr: any) {
-              this.logger.error(`[Cloudinary Lifecycle] Failed to destroy asset ${oldPubId}: ${cloudErr.message}`);
+              this.logger.error(`[Cloudinary Lifecycle Retry Outbox] Failed to destroy asset ${oldPubId}: ${cloudErr.message}`);
             }
           }
         }

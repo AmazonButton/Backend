@@ -1,4 +1,4 @@
-﻿import { IsNotEmpty, IsString, MaxLength, Matches, IsOptional, IsEnum, IsNumber, Min, Max } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength, Matches, IsOptional, IsEnum, IsNumber, Min, Max } from 'class-validator';
 
 export enum IotEventType {
   SINGLE_PRESS = 'SINGLE_PRESS',
@@ -11,8 +11,6 @@ export enum IotEventType {
 export enum IotPaymentMethod {
   COD = 'COD',
   PAYOS = 'PAYOS',
-  MOMO = 'MOMO',
-  WALLET = 'WALLET',
 }
 
 export class IotEventDto {
@@ -43,7 +41,7 @@ export class IotEventDto {
   rssi?: number;
 
   @IsOptional()
-  @IsEnum(IotPaymentMethod, { message: 'paymentMethod không hợp lệ' })
+  @IsEnum(IotPaymentMethod, { message: 'paymentMethod chỉ chấp nhận COD hoặc PAYOS' })
   paymentMethod?: IotPaymentMethod;
 
   @IsOptional()

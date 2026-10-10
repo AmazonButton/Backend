@@ -27,11 +27,13 @@ async function runTests() {
   let baselinePairingTokens = 0;
   let baselineRefreshTokens = 0;
   let baselineOrders = 0;
+  let baselineIdempotencyKeys = 0;
 
   try {
     baselinePairingTokens = await prisma.pairingToken.count();
     baselineRefreshTokens = await prisma.refreshToken.count();
     baselineOrders = await prisma.order.count();
+    baselineIdempotencyKeys = await prisma.iotIdempotencyKey.count();
   } catch (e: any) {
     console.warn('Could not record baseline counts from PostgreSQL:', e.message);
   }
@@ -523,7 +525,10 @@ async function runTests() {
         }
       }
 
-      // 2. Cascade delete created test orders by exact IDs
+      // 2. Delete idempotency keys & cascade delete created test orders
+      if (createdRequestIds.length > 0) {
+        await prisma.iotIdempotencyKey.deleteMany({ where: { requestId: { in: createdRequestIds } } });
+      }
       if (createdOrderIds.length > 0) {
         await prisma.paymentTransaction.deleteMany({ where: { orderId: { in: createdOrderIds } } });
         await prisma.orderItem.deleteMany({ where: { orderId: { in: createdOrderIds } } });
@@ -549,17 +554,20 @@ async function runTests() {
         const finalPairingTokens = await prisma.pairingToken.count();
         const finalRefreshTokens = await prisma.refreshToken.count();
         const finalOrders = await prisma.order.count();
+        const finalIdempotencyKeys = await prisma.iotIdempotencyKey.count();
 
         const deltaPairing = finalPairingTokens - baselinePairingTokens;
         const deltaRefresh = finalRefreshTokens - baselineRefreshTokens;
         const deltaOrders = finalOrders - baselineOrders;
+        const deltaIdempotency = finalIdempotencyKeys - baselineIdempotencyKeys;
 
         console.log('\n======================================================');
         console.log('ℹ BÁO CÁO TOÀN VẸN DỮ LIỆU & ZERO RESIDUE (tests/api.test.ts):');
         console.log(`   - Pairing tokens: Trước=${baselinePairingTokens}, Sau=${finalPairingTokens} (Delta: ${deltaPairing})`);
         console.log(`   - Refresh tokens: Trước=${baselineRefreshTokens}, Sau=${finalRefreshTokens} (Delta: ${deltaRefresh})`);
         console.log(`   - Orders: Trước=${baselineOrders}, Sau=${finalOrders} (Delta: ${deltaOrders})`);
-        if (deltaPairing === 0 && deltaRefresh === 0 && deltaOrders === 0) {
+        console.log(`   - Idempotency keys: Trước=${baselineIdempotencyKeys}, Sau=${finalIdempotencyKeys} (Delta: ${deltaIdempotency})`);
+        if (deltaPairing === 0 && deltaRefresh === 0 && deltaOrders === 0 && deltaIdempotency === 0) {
           console.log('  ✔ [XÁC NHẬN ZERO RESIDUE] 100% dữ liệu test api.test.ts đã được dọn sạch hoàn toàn.');
         } else {
           cleanupFailed = true;

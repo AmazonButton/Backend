@@ -99,102 +99,155 @@ async function runComprehensiveVerification() {
   }
 
   // ------------------------------------------------------------------------
-  // PROBE 2: IoT Atomic State Machine (PROCESSING -> COMPLETED / FAILED & Recovery)
+  // PROBE 2: IoT Atomic State Machine & Fencing Token (Lease, Check Constraints & Zero Residue)
   // ------------------------------------------------------------------------
   total++;
-  console.log('\n▶ [2/5] Kiểm tra IoT Atomic State Machine: Lease, Concurrency Race & Retry Recovery...');
+  console.log('\n▶ [2/5] Kiểm tra IoT Atomic State Machine: Lease Fencing Token, Check Constraints & Retry Recovery...');
   const testDeviceId = 1n; // Existing button in seed DB
   const testRequestId = `probe_req_sm_${Date.now()}`;
+  const leaseToken1 = `lease_tok_1_${Date.now()}`;
+  const leaseToken2 = `lease_tok_2_${Date.now()}`;
+  const leaseTokenRetry = `lease_tok_retry_${Date.now()}`;
   try {
-    // 1. Initial atomic acquire
+    // 1. Initial atomic acquire with leaseToken1
     const acquire1 = await prisma.$queryRawUnsafe<any[]>(
-      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, locked_until)
-       VALUES ($1, $2, 'PROCESSING', NOW() + INTERVAL '30 seconds')
+      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, lease_token, locked_until)
+       VALUES ($1, $2, 'PROCESSING', $3, NOW() + INTERVAL '30 seconds')
        ON CONFLICT (device_id, request_id) DO UPDATE
          SET status = 'PROCESSING',
+             lease_token = $3,
              locked_until = NOW() + INTERVAL '30 seconds',
              updated_at = NOW()
          WHERE iot_idempotency_keys.status = 'FAILED'
             OR (iot_idempotency_keys.status = 'PROCESSING' AND iot_idempotency_keys.locked_until < NOW())
-       RETURNING id, status, order_id`,
+       RETURNING id, status, lease_token, order_id`,
       testDeviceId,
       testRequestId,
+      leaseToken1,
     );
-    if (!acquire1 || acquire1.length !== 1 || acquire1[0].status !== 'PROCESSING') {
-      throw new Error('Failed initial acquire');
+    if (!acquire1 || acquire1.length !== 1 || acquire1[0].status !== 'PROCESSING' || acquire1[0].lease_token !== leaseToken1) {
+      throw new Error('Failed initial acquire with leaseToken1');
     }
 
-    // 2. Concurrent second acquire must fail (0 rows returned)
+    // 2. Concurrent second acquire with leaseToken2 must fail (0 rows returned)
     const acquire2 = await prisma.$queryRawUnsafe<any[]>(
-      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, locked_until)
-       VALUES ($1, $2, 'PROCESSING', NOW() + INTERVAL '30 seconds')
+      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, lease_token, locked_until)
+       VALUES ($1, $2, 'PROCESSING', $3, NOW() + INTERVAL '30 seconds')
        ON CONFLICT (device_id, request_id) DO UPDATE
          SET status = 'PROCESSING',
+             lease_token = $3,
              locked_until = NOW() + INTERVAL '30 seconds',
              updated_at = NOW()
          WHERE iot_idempotency_keys.status = 'FAILED'
             OR (iot_idempotency_keys.status = 'PROCESSING' AND iot_idempotency_keys.locked_until < NOW())
-       RETURNING id, status, order_id`,
+       RETURNING id, status, lease_token, order_id`,
       testDeviceId,
       testRequestId,
+      leaseToken2,
     );
     if (acquire2 && acquire2.length > 0) {
       throw new Error('Concurrent acquire should have returned 0 rows!');
     }
 
-    // 3. Simulate failure in order creation: transition to FAILED
-    await prisma.$executeRawUnsafe(
+    // 3. Fencing Token Check: Worker with wrong leaseToken2 attempts to mark FAILED -> must affect 0 rows
+    const wrongTokenUpdate = await prisma.$executeRawUnsafe(
       `UPDATE iot_idempotency_keys SET status = 'FAILED', updated_at = NOW()
-       WHERE device_id = $1 AND request_id = $2`,
+       WHERE device_id = $1 AND request_id = $2 AND lease_token = $3 AND status = 'PROCESSING'`,
       testDeviceId,
       testRequestId,
+      leaseToken2,
     );
+    if (wrongTokenUpdate !== 0) {
+      throw new Error('Fencing Token failure: Worker with wrong leaseToken modified status!');
+    }
 
-    // 4. Client retry: must successfully re-acquire key because status is FAILED
+    // 4. Owner with leaseToken1 marks FAILED -> successfully updates 1 row
+    const ownerFailedUpdate = await prisma.$executeRawUnsafe(
+      `UPDATE iot_idempotency_keys SET status = 'FAILED', updated_at = NOW()
+       WHERE device_id = $1 AND request_id = $2 AND lease_token = $3 AND status = 'PROCESSING'`,
+      testDeviceId,
+      testRequestId,
+      leaseToken1,
+    );
+    if (ownerFailedUpdate !== 1) {
+      throw new Error('Owner failed to transition key to FAILED!');
+    }
+
+    // 5. Client retry: successfully re-acquires key with leaseTokenRetry
     const acquire3 = await prisma.$queryRawUnsafe<any[]>(
-      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, locked_until)
-       VALUES ($1, $2, 'PROCESSING', NOW() + INTERVAL '30 seconds')
+      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, lease_token, locked_until)
+       VALUES ($1, $2, 'PROCESSING', $3, NOW() + INTERVAL '30 seconds')
        ON CONFLICT (device_id, request_id) DO UPDATE
          SET status = 'PROCESSING',
+             lease_token = $3,
              locked_until = NOW() + INTERVAL '30 seconds',
              updated_at = NOW()
          WHERE iot_idempotency_keys.status = 'FAILED'
             OR (iot_idempotency_keys.status = 'PROCESSING' AND iot_idempotency_keys.locked_until < NOW())
-       RETURNING id, status, order_id`,
+       RETURNING id, status, lease_token, order_id`,
       testDeviceId,
       testRequestId,
+      leaseTokenRetry,
     );
-    if (!acquire3 || acquire3.length !== 1 || acquire3[0].status !== 'PROCESSING') {
+    if (!acquire3 || acquire3.length !== 1 || acquire3[0].status !== 'PROCESSING' || acquire3[0].lease_token !== leaseTokenRetry) {
       throw new Error('Retry acquire failed to recover FAILED key!');
     }
 
-    // 5. Complete order: transition to COMPLETED
-    await prisma.$executeRawUnsafe(
-      `UPDATE iot_idempotency_keys SET status = 'COMPLETED', updated_at = NOW()
-       WHERE device_id = $1 AND request_id = $2`,
+    // 6. Database Check Constraint Verification:
+    // Attempting to transition to COMPLETED without order_id MUST be rejected by PostgreSQL chk_iot_idempotency_completed_order
+    let checkConstraintFired = false;
+    try {
+      await prisma.$executeRawUnsafe(
+        `UPDATE iot_idempotency_keys SET status = 'COMPLETED', order_id = NULL, updated_at = NOW()
+         WHERE device_id = $1 AND request_id = $2 AND lease_token = $3`,
+        testDeviceId,
+        testRequestId,
+        leaseTokenRetry,
+      );
+    } catch (chkErr: any) {
+      checkConstraintFired = chkErr.message.includes('chk_iot_idempotency_completed_order') || chkErr.code === '23514';
+    }
+    if (!checkConstraintFired) {
+      throw new Error('Database check constraint failed: Allowed COMPLETED with order_id = NULL!');
+    }
+
+    // 7. Transition to COMPLETED with valid order_id and leaseTokenRetry
+    const existingOrder = await prisma.order.findFirst();
+    const validOrderId = existingOrder ? existingOrder.orderId : 1n;
+
+    const completedUpdate = await prisma.$executeRawUnsafe(
+      `UPDATE iot_idempotency_keys SET status = 'COMPLETED', order_id = $1, updated_at = NOW()
+       WHERE device_id = $2 AND request_id = $3 AND lease_token = $4 AND status = 'PROCESSING'`,
+      validOrderId,
       testDeviceId,
       testRequestId,
+      leaseTokenRetry,
     );
+    if (completedUpdate !== 1) {
+      throw new Error('Failed to transition key to COMPLETED with valid order_id!');
+    }
 
-    // 6. After COMPLETED, no subsequent acquire can take over
+    // 8. After COMPLETED, no subsequent acquire can take over
     const acquire4 = await prisma.$queryRawUnsafe<any[]>(
-      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, locked_until)
-       VALUES ($1, $2, 'PROCESSING', NOW() + INTERVAL '30 seconds')
+      `INSERT INTO iot_idempotency_keys (device_id, request_id, status, lease_token, locked_until)
+       VALUES ($1, $2, 'PROCESSING', $3, NOW() + INTERVAL '30 seconds')
        ON CONFLICT (device_id, request_id) DO UPDATE
          SET status = 'PROCESSING',
+             lease_token = $3,
              locked_until = NOW() + INTERVAL '30 seconds',
              updated_at = NOW()
          WHERE iot_idempotency_keys.status = 'FAILED'
             OR (iot_idempotency_keys.status = 'PROCESSING' AND iot_idempotency_keys.locked_until < NOW())
-       RETURNING id, status, order_id`,
+       RETURNING id, status, lease_token, order_id`,
       testDeviceId,
       testRequestId,
+      leaseToken1,
     );
     if (acquire4 && acquire4.length > 0) {
       throw new Error('COMPLETED key was hijacked!');
     }
 
-    console.log('  ✔ [PASS] IoT State Machine: Lease 30s, atomic takeover, failure recovery & COMPLETED locking chuẩn xác');
+    console.log('  ✔ [PASS] IoT State Machine: Lease Fencing Token, Check Constraints & COMPLETED locking chuẩn xác');
     passed++;
   } catch (e: any) {
     console.error('  ✖ [FAIL] Probe 2 Error:', e.message);

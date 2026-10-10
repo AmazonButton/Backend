@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import { Injectable, BadRequestException, InternalServerErrorException, Inject, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService } from '../orders/orders.service';
@@ -107,20 +108,23 @@ export class IotService {
       };
     }
 
-    // 4. Multi-instance atomic idempotency lease acquisition in PostgreSQL (Fail-Closed)
+    // 4. Multi-instance atomic idempotency lease acquisition with Fencing Token in PostgreSQL (Fail-Closed)
+    const leaseToken = crypto.randomUUID();
     try {
       const insertRes = await this.prisma.$queryRawUnsafe<any[]>(
-        `INSERT INTO iot_idempotency_keys (device_id, request_id, status, locked_until)
-         VALUES ($1, $2, 'PROCESSING', NOW() + INTERVAL '30 seconds')
+        `INSERT INTO iot_idempotency_keys (device_id, request_id, status, lease_token, locked_until)
+         VALUES ($1, $2, 'PROCESSING', $3, NOW() + INTERVAL '30 seconds')
          ON CONFLICT (device_id, request_id) DO UPDATE
            SET status = 'PROCESSING',
+               lease_token = $3,
                locked_until = NOW() + INTERVAL '30 seconds',
                updated_at = NOW()
            WHERE iot_idempotency_keys.status = 'FAILED'
               OR (iot_idempotency_keys.status = 'PROCESSING' AND iot_idempotency_keys.locked_until < NOW())
-         RETURNING id, status, order_id`,
+         RETURNING id, status, lease_token, order_id`,
         deviceId,
         requestId,
+        leaseToken,
       );
 
       if (!insertRes || insertRes.length === 0) {
@@ -174,15 +178,20 @@ export class IotService {
 
       const targetCreatedOrderId = (orderResult as any)?.order?.orderId || (orderResult as any)?.orderId;
 
-      // Mark idempotency key as COMPLETED with associated order_id
-      await this.prisma.$executeRawUnsafe(
+      // Mark idempotency key as COMPLETED with associated order_id and lease fencing validation
+      const updatedCount = await this.prisma.$executeRawUnsafe(
         `UPDATE iot_idempotency_keys
          SET status = 'COMPLETED', order_id = $1, updated_at = NOW()
-         WHERE device_id = $2 AND request_id = $3`,
+         WHERE device_id = $2 AND request_id = $3 AND lease_token = $4 AND status = 'PROCESSING'`,
         targetCreatedOrderId ? BigInt(targetCreatedOrderId) : null,
         deviceId,
         requestId,
+        leaseToken,
       );
+
+      if (updatedCount === 0) {
+        this.logger.warn(`[IoT Idempotency] Worker lease expired or fenced out before COMPLETED (requestId: ${requestId}, leaseToken: ${leaseToken})`);
+      }
 
       processedRequests.set(requestId, orderResult);
 
@@ -192,15 +201,16 @@ export class IotService {
         data: orderResult,
       };
     } catch (orderErr: any) {
-      // Order creation failed: mark key as FAILED to unlock retry!
+      // Order creation failed: mark key as FAILED to unlock retry (checked against lease_token)
       this.logger.warn(`Order creation failed for requestId ${requestId}: ${orderErr.message}. Marking key as FAILED for retry.`);
       try {
         await this.prisma.$executeRawUnsafe(
           `UPDATE iot_idempotency_keys
            SET status = 'FAILED', updated_at = NOW()
-           WHERE device_id = $1 AND request_id = $2`,
+           WHERE device_id = $1 AND request_id = $2 AND lease_token = $3 AND status = 'PROCESSING'`,
           deviceId,
           requestId,
+          leaseToken,
         );
       } catch (updateErr: any) {
         this.logger.error(`Failed to update key status to FAILED: ${updateErr.message}`);

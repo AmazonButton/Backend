@@ -70,21 +70,52 @@ export class OrdersService {
 
     let newOrderId: any = null;
 
-    // 1. Cố gắng thực thi qua Stored Procedure PostgreSQL
+    // 1. Cố gắng thực thi qua Stored Procedure PostgreSQL (Atomic với iot_request_id)
     try {
       newOrderId = await this.ordersRepo.executeSpCreateOrder(
         button.buttonId,
         paymentMethod,
         shippingFee,
         requestId ? `Đơn hàng tự động từ nút bấm IoT [REQ:${requestId}]` : 'Đơn hàng tự động từ nút bấm IoT',
+        requestId,
       );
     } catch (procErr: any) {
+      // Bắt vi phạm Unique Constraint (button_id, iot_request_id) -> Idempotency Safe Hit
+      const isUniqueConflict =
+        procErr?.code === '23505' ||
+        procErr?.meta?.code === '23505' ||
+        procErr?.message?.includes('uq_orders_button_request');
+      if (isUniqueConflict && requestId) {
+        const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
+        if (existingOrder) {
+          return {
+            order: toOrderResponseDto(existingOrder),
+            isDuplicate: true,
+            message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
+          };
+        }
+      }
+
       // Chỉ fallback khi stored procedure chưa được nạp (mã lỗi 42883 hoặc không tìm thấy function)
       const isMissingProcedure =
         procErr?.meta?.code === '42883' ||
         procErr?.code === '42883';
       if (isMissingProcedure) {
-        newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee);
+        try {
+          newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee, requestId);
+        } catch (fallbackErr: any) {
+          if ((fallbackErr?.code === 'P2002' || fallbackErr?.message?.includes('uq_orders_button_request')) && requestId) {
+            const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
+            if (existingOrder) {
+              return {
+                order: toOrderResponseDto(existingOrder),
+                isDuplicate: true,
+                message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
+              };
+            }
+          }
+          throw fallbackErr;
+        }
       } else {
         // Bảo lưu các lỗi nghiệp vụ từ stored procedure (hết hàng, store không hoạt động, v.v.)
         throw new BadRequestException(procErr.message || 'Lỗi khi tạo đơn hàng');
