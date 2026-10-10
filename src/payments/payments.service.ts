@@ -86,11 +86,11 @@ export class PaymentsService {
       checksumKey,
     );
 
-    // Support local test mock
+        // Support local test mock
     if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id') {
       return {
         success: true,
-        message: 'T?o link thanh to�n PayOS th�nh c�ng (mock)',
+        message: 'Tạo link thanh toán PayOS thành công (mock)',
         data: {
           paymentTransactionId: transaction.paymentTransactionId.toString(),
           orderCode,
@@ -129,13 +129,17 @@ export class PaymentsService {
         throw new BadRequestException({
           success: false,
           code: 'PAYOS_CREATION_FAILED',
-          message: result.desc || 'Kh�ng th? t?o link thanh to�n PayOS',
+          message: result.desc || 'Không thể tạo link thanh toán PayOS',
         });
+      }
+
+      if (result.data?.paymentLinkId) {
+        await this.paymentsRepo.updatePaymentLinkId(transaction.paymentTransactionId, result.data.paymentLinkId);
       }
 
       return {
         success: true,
-        message: 'T?o link thanh to�n PayOS th�nh c�ng',
+        message: 'Tạo link thanh toán PayOS thành công',
         data: {
           paymentTransactionId: transaction.paymentTransactionId.toString(),
           orderCode,
@@ -177,20 +181,41 @@ export class PaymentsService {
     }
 
     if (code === '00' && data?.code === '00') {
+      // MANDATORY PAYOS PAYLOAD FIELD ENFORCEMENT
+      if (!data?.orderCode) {
+        this.logger.warn('[PayOS Webhook] Missing mandatory field orderCode');
+        return { success: false, message: 'Missing orderCode' };
+      }
+
+      if (data.amount === undefined || data.amount === null || isNaN(Number(data.amount))) {
+        this.logger.warn('[PayOS Webhook] Missing or invalid mandatory field amount');
+        return { success: false, message: 'Missing amount' };
+      }
+
+      if (!data.currency) {
+        this.logger.warn('[PayOS Webhook] Missing mandatory field currency');
+        return { success: false, message: 'Missing currency' };
+      }
+
+      if (!data.paymentLinkId) {
+        this.logger.warn('[PayOS Webhook] Missing mandatory field paymentLinkId');
+        return { success: false, message: 'Missing paymentLinkId' };
+      }
+
       // Validate currency: Must be VND
-      if (data?.currency && data.currency.toUpperCase() !== 'VND') {
+      if (data.currency.toUpperCase() !== 'VND') {
         this.logger.warn(`[PayOS Webhook] Invalid currency: ${data.currency} for orderCode: ${orderCodeStr}`);
         return { success: false, message: 'Invalid currency' };
       }
 
       // Validate amount: Webhook amount must strictly equal transaction amount
-      if (data?.amount !== undefined && Number(data.amount) !== Number(transaction.amount)) {
-        this.logger.warn(`[PayOS Webhook] Amount mismatch: webhook amount=${data?.amount}, tx amount=${transaction.amount} for orderCode: ${orderCodeStr}`);
+      if (Number(data.amount) !== Number(transaction.amount)) {
+        this.logger.warn(`[PayOS Webhook] Amount mismatch: webhook amount=${data.amount}, tx amount=${transaction.amount} for orderCode: ${orderCodeStr}`);
         return { success: false, message: 'Amount mismatch' };
       }
 
       // Validate paymentLinkId if transaction has linkId recorded
-      if ((transaction as any).paymentLinkId && data?.paymentLinkId && (transaction as any).paymentLinkId !== data.paymentLinkId) {
+      if ((transaction as any).paymentLinkId && (transaction as any).paymentLinkId !== data.paymentLinkId) {
         this.logger.warn(`[PayOS Webhook] Payment link ID mismatch for orderCode: ${orderCodeStr}`);
         return { success: false, message: 'Payment link ID mismatch' };
       }

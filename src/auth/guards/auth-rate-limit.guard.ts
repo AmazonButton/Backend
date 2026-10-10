@@ -17,8 +17,12 @@ export class AuthRateLimitGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
-    const rawIp = request.headers['x-forwarded-for'] || request.ip || request.socket?.remoteAddress || '127.0.0.1';
-    const ip = Array.isArray(rawIp) ? rawIp[0] : rawIp.split(',')[0].trim();
+    let ip = request.ip || request.socket?.remoteAddress || '127.0.0.1';
+    if (process.env.TRUST_PROXY === 'true' && request.headers['x-forwarded-for']) {
+      const raw = request.headers['x-forwarded-for'];
+      const first = Array.isArray(raw) ? raw[0] : raw.split(',')[0];
+      if (first) ip = first.trim();
+    }
 
     const path = request.route?.path || request.url;
     const now = Date.now();

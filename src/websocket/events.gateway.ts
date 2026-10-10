@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -55,10 +56,23 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      // 1. Check if token is in blacklist
-      const isRevoked = TokenBlacklist.isRevoked(token, payload.userId, payload.iat);
+      // 1. Check if token is in blacklist (multi-instance PostgreSQL + in-memory fallback)
+      if (this.prisma) {
+        const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+        const dbRevoked = await this.prisma.revokedToken.findUnique({
+          where: { tokenHash },
+        });
+        if (dbRevoked) {
+          this.logger.warn(`⚠️ [WS] Token found in PostgreSQL revoked_tokens for socket: ${client.id}`);
+          client.disconnect(true);
+          return;
+        }
+      }
+
+      // Check in-memory blacklist with correct parameter order: (userId, iat, rawToken)
+      const isRevoked = TokenBlacklist.isRevoked(payload.userId, payload.iat, token);
       if (isRevoked) {
-        this.logger.warn(`⚠️ [WS] Token revoked for socket: ${client.id}`);
+        this.logger.warn(`⚠️ [WS] Token revoked in memory for socket: ${client.id}`);
         client.disconnect(true);
         return;
       }

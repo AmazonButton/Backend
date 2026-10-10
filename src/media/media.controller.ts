@@ -115,7 +115,14 @@ export class MediaController {
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('destroy')
   @ApiOperation({ summary: 'Xóa tệp ảnh trên Cloudinary khi thay thế hoặc hủy ảnh' })
-  async destroyAsset(@Body('publicId') publicId: string) {
+  async destroyAsset(@Body('publicId') publicId: string, @Request() req?: any) {
+    const user = req?.user;
+    if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      const allowedPrefix = `stores/${user.storeId}/`;
+      if (!publicId || !publicId.startsWith(allowedPrefix)) {
+        throw new ForbiddenException('Bạn chỉ có quyền xóa tài nguyên trong thư mục của cửa hàng mình');
+      }
+    }
     const success = await this.mediaService.deleteAsset(publicId);
     return {
       success,

@@ -29,7 +29,14 @@ export class AuthService {
   private resendCooldowns = new Map<string, number>();
 
   private getOtpPepper(): string {
-    return process.env.OTP_PEPPER || process.env.JWT_SECRET || 'sob_secure_otp_pepper_2026';
+    const pepper = process.env.OTP_PEPPER?.trim();
+    if (!pepper) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('CẤU HÌNH BẢO MẬT BẮT BUỘC: OTP_PEPPER chưa được thiết lập trong biến môi trường');
+      }
+      return process.env.JWT_SECRET || 'sob_secure_otp_pepper_2026';
+    }
+    return pepper;
   }
 
   private hashOtp(otpCode: string, purpose: 'EMAIL_VERIFICATION' | 'PASSWORD_RESET'): string {
@@ -689,28 +696,23 @@ export class AuthService {
     const tokenHash = this.hashOtp(token.trim(), 'PASSWORD_RESET');
 
     // Atomic OTP consumption in PostgreSQL
-    const consumeResult = await this.authRepo.consumeOtpAtomically({
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
+
+    const resetResult = await this.authRepo.atomicResetPasswordWithOtpTx({
       tokenHash,
       purpose: 'PASSWORD_RESET',
       email,
+      newPasswordHash,
     });
 
-    if (!consumeResult.success || !consumeResult.otp) {
+    if (!resetResult.success) {
       throw new BadRequestException({
         success: false,
-        message: consumeResult.reason || 'Mã đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
+        message: resetResult.reason || 'Mã đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
       });
     }
 
-    const targetUserId = BigInt(consumeResult.otp.user_id);
-    const newPasswordHash = await bcrypt.hash(newPassword, 12);
-
-    // Update password, set passwordChangedAt, clear reset token, and revoke ALL refresh tokens in single transaction
-    await this.authRepo.resetPasswordTx({
-      userId: targetUserId,
-      newPasswordHash,
-      otpId: consumeResult.otp.id,
-    });
+    const targetUserId = BigInt(resetResult.userId);
 
     // Invalidate local session cache
     TokenBlacklist.revokeUser(targetUserId);

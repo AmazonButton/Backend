@@ -76,14 +76,13 @@ export class OrdersService {
         button.buttonId,
         paymentMethod,
         shippingFee,
-        'Đơn hàng tự động từ nút bấm IoT',
+        requestId ? `Đơn hàng tự động từ nút bấm IoT [REQ:${requestId}]` : 'Đơn hàng tự động từ nút bấm IoT',
       );
     } catch (procErr: any) {
       // Chỉ fallback khi stored procedure chưa được nạp (mã lỗi 42883 hoặc không tìm thấy function)
       const isMissingProcedure =
-        procErr.code === '42883' ||
-        procErr.message?.includes('does not exist') ||
-        procErr.message?.includes('function sp_create_order_from_button');
+        procErr?.meta?.code === '42883' ||
+        procErr?.code === '42883';
       if (isMissingProcedure) {
         newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee);
       } else {

@@ -421,14 +421,7 @@ export class AuthRepository {
           passwordHash: params.newPasswordHash,
           passwordResetToken: null,
           passwordResetExpiresAt: null,
-          passwordChangedAt: new Date(),
         },
-      });
-
-      // Revoke all existing refresh tokens for this user
-      await tx.refreshToken.updateMany({
-        where: { userId: params.userId, isRevoked: false },
-        data: { isRevoked: true },
       });
 
       if (params.otpId) {
@@ -439,6 +432,81 @@ export class AuthRepository {
       }
 
       return user;
+    });
+  }
+
+  async atomicResetPasswordWithOtpTx(params: {
+    tokenHash: string;
+    purpose: string;
+    email?: string;
+    newPasswordHash: string;
+  }): Promise<{ success: boolean; userId?: any; reason?: string }> {
+    const normalizedEmail = params.email ? params.email.toLowerCase().trim() : null;
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Pessimistic lock and verify OTP
+      const otps = await tx.$queryRawUnsafe<any[]>(
+        `SELECT id, user_id, email, attempts, max_attempts, expires_at, consumed_at
+         FROM auth_otps
+         WHERE token_hash = $1
+           AND purpose = $2
+           AND ($3::text IS NULL OR LOWER(email) = LOWER($3))
+           AND consumed_at IS NULL
+         ORDER BY id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        params.tokenHash,
+        params.purpose,
+        normalizedEmail,
+      );
+
+      if (!otps || otps.length === 0) {
+        if (normalizedEmail) {
+          await tx.$executeRawUnsafe(
+            `UPDATE auth_otps
+             SET attempts = attempts + 1
+             WHERE LOWER(email) = LOWER($1)
+               AND purpose = $2
+               AND consumed_at IS NULL`,
+            normalizedEmail,
+            params.purpose,
+          );
+        }
+        return { success: false, reason: 'Mã xác thực không hợp lệ hoặc đã được sử dụng.' };
+      }
+
+      const otp = otps[0];
+      if (otp.attempts >= otp.max_attempts) {
+        return { success: false, reason: 'Mã OTP đã bị vô hiệu hóa do thử sai quá nhiều lần.' };
+      }
+      if (new Date(otp.expires_at) <= new Date()) {
+        return { success: false, reason: 'Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.' };
+      }
+
+      // 2. Consume OTP inside same transaction
+      await tx.$executeRawUnsafe(
+        `UPDATE auth_otps SET consumed_at = NOW() WHERE id = $1`,
+        otp.id,
+      );
+
+      // 3. Update User password
+      await tx.user.update({
+        where: { userId: BigInt(otp.user_id) },
+        data: {
+          passwordHash: params.newPasswordHash,
+          passwordResetToken: null,
+          passwordResetExpiresAt: null,
+          passwordChangedAt: new Date(),
+        },
+      });
+
+      // 4. Revoke all refresh tokens
+      await tx.refreshToken.updateMany({
+        where: { userId: BigInt(otp.user_id), isRevoked: false },
+        data: { isRevoked: true },
+      });
+
+      return { success: true, userId: otp.user_id };
     });
   }
 

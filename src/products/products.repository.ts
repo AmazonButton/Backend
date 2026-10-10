@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface ProductImageInput {
   imageUrl: string;
+  cloudinaryPublicId?: string;
   isThumbnail?: boolean;
   displayOrder?: number;
 }
@@ -103,6 +104,7 @@ export class ProductsRepository {
           data: images.map((img, idx) => ({
             productId: product.productId,
             imageUrl: img.imageUrl,
+            cloudinaryPublicId: img.cloudinaryPublicId || null,
             isThumbnail: img.isThumbnail !== undefined ? img.isThumbnail : idx === 0,
             displayOrder: img.displayOrder !== undefined ? img.displayOrder : idx,
           })),
@@ -140,6 +142,7 @@ export class ProductsRepository {
           data: images.map((img, idx) => ({
             productId,
             imageUrl: img.imageUrl,
+            cloudinaryPublicId: img.cloudinaryPublicId || null,
             isThumbnail: img.isThumbnail !== undefined ? img.isThumbnail : idx === 0,
             displayOrder: img.displayOrder !== undefined ? img.displayOrder : idx,
           })),

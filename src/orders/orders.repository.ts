@@ -221,10 +221,24 @@ export class OrdersRepository {
           `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
           item.productId,
         );
+        const invRows = await tx.$queryRawUnsafe<any[]>(
+          `SELECT quantity_on_hand, reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+          item.productId,
+        );
+        const inv = invRows[0];
+        if (!inv) {
+          throw new BadRequestException(`Không tìm thấy tồn kho cho sản phẩm ${item.productId}`);
+        }
+        if (Number(inv.quantity_on_hand) < Number(item.quantity)) {
+          throw new BadRequestException(`Số lượng tồn kho thực tế không đủ cho sản phẩm ${item.productId}`);
+        }
+        if (Number(inv.reserved_quantity) < Number(item.quantity)) {
+          throw new BadRequestException(`Số lượng giữ chỗ (reserved) không hợp lệ cho sản phẩm ${item.productId}`);
+        }
         await tx.$executeRawUnsafe(
           `UPDATE inventory
-           SET quantity_on_hand = GREATEST(0, quantity_on_hand - $1),
-               reserved_quantity = GREATEST(0, reserved_quantity - $1),
+           SET quantity_on_hand = quantity_on_hand - $1,
+               reserved_quantity = reserved_quantity - $1,
                updated_at = NOW()
            WHERE product_id = $2`,
           item.quantity,
@@ -355,9 +369,17 @@ export class OrdersRepository {
           `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
           item.productId,
         );
+        const invRows = await tx.$queryRawUnsafe<any[]>(
+          `SELECT reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+          item.productId,
+        );
+        const inv = invRows[0];
+        if (inv && Number(inv.reserved_quantity) < Number(item.quantity)) {
+          throw new BadRequestException(`Số lượng giữ chỗ (reserved) không đủ để hoàn lại cho sản phẩm ${item.productId}`);
+        }
         await tx.$executeRawUnsafe(
           `UPDATE inventory
-           SET reserved_quantity = GREATEST(0, reserved_quantity - $1),
+           SET reserved_quantity = reserved_quantity - $1,
                updated_at = NOW()
            WHERE product_id = $2`,
           item.quantity,
@@ -367,7 +389,7 @@ export class OrdersRepository {
 
       await tx.order.update({
         where: { orderId },
-        data: { orderStatus: 'CANCELLED' },
+        data: { orderStatus: targetStatus },
       });
 
       await tx.orderStatusHistory.create({

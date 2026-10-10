@@ -33,15 +33,24 @@ export class IotService {
       throw new BadRequestException('Thiếu trường requestId');
     }
 
-    // Anti-spam / Idempotency check
-    if (processedRequests.has(requestId)) {
-      const cachedResult = processedRequests.get(requestId);
+    // Multi-instance persistent idempotency check in PostgreSQL
+    const existingOrder = await this.prisma.order.findFirst({
+      where: {
+        orderNote: { contains: `REQ:${requestId}` },
+      },
+    });
+
+    if (existingOrder || processedRequests.has(requestId)) {
+      const cached = processedRequests.get(requestId) || {
+        orderId: existingOrder?.orderId.toString(),
+        orderCode: existingOrder?.orderCode,
+      };
       return {
         success: true,
         isDuplicate: true,
         message: 'Yêu cầu trùng lặp đã được ngăn chặn (Idempotency Key)',
         data: {
-          ...cachedResult,
+          ...cached,
           isDuplicate: true,
         },
       };
