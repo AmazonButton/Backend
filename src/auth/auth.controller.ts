@@ -68,12 +68,14 @@ export class AuthController {
     return this.authService.refresh(body.refreshToken, ip, userAgent);
   }
 
+  @UseGuards(JwtAuthGuard)
   @HttpCode(200)
   @Post('logout')
-  logout(@Request() req: any, @Body() body: { refreshToken?: string }) {
+  async logout(@Request() req: any, @Body() body: { refreshToken?: string }) {
     const authHeader = req.headers['authorization']?.toString();
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : undefined;
     const userId = req.user?.id || req.user?.userId;
-    return this.authService.logout(userId, body?.refreshToken);
+    return this.authService.logout(userId, body?.refreshToken, accessToken);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -108,6 +110,7 @@ export class AuthController {
     return this.authService.resetPassword(body);
   }
 
+  @UseGuards(AuthRateLimitGuard)
   @HttpCode(200)
   @Post('verify-email')
   verifyEmail(@Body() body: VerifyEmailDto) {

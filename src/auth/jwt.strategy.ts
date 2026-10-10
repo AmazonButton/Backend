@@ -53,6 +53,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị vô hiệu hóa');
       }
 
+      if (user.passwordChangedAt && payload.iat) {
+        const passwordChangedSec = Math.floor(new Date(user.passwordChangedAt).getTime() / 1000);
+        if (payload.iat < passwordChangedSec) {
+          throw new UnauthorizedException('Mật khẩu đã được thay đổi. Vui lòng đăng nhập lại.');
+        }
+      }
+
       let role = 'CUSTOMER';
       let storeId = payload.storeId || null;
       let customerProfileId = user.customerProfile?.customerId?.toString() || payload.customerProfileId || null;

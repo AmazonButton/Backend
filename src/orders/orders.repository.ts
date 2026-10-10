@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -193,4 +193,187 @@ export class OrdersRepository {
       });
     }
   }
+
+  async completeOrderAtomicTx(orderId: bigint): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Lock order row
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+
+      if (order.order_status === 'COMPLETED') {
+        return this.findOrderByIdTx(tx, orderId);
+      }
+
+      if (!['DELIVERED', 'SHIPPING', 'OUT_FOR_DELIVERY', 'READY_FOR_DELIVERY', 'PROCESSING', 'PREPARING', 'CONFIRMED'].includes(order.order_status)) {
+        throw new BadRequestException(`Không thể hoàn tất đơn hàng từ trạng thái ${order.order_status}`);
+      }
+
+      // 2. Lock & Deduct inventory with reserved_quantity check
+      const items = await tx.orderItem.findMany({ where: { orderId } });
+      for (const item of items) {
+        await tx.$executeRawUnsafe(
+          `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
+          item.productId,
+        );
+        await tx.$executeRawUnsafe(
+          `UPDATE inventory
+           SET quantity_on_hand = GREATEST(0, quantity_on_hand - $1),
+               reserved_quantity = GREATEST(0, reserved_quantity - $1),
+               updated_at = NOW()
+           WHERE product_id = $2`,
+          item.quantity,
+          item.productId,
+        );
+      }
+
+      // 3. Credit store wallet if paid
+      if (['PAID', 'SUCCESS'].includes(order.payment_status)) {
+        const storeId = order.store_id;
+        if (storeId) {
+          const wallets = await tx.$queryRawUnsafe<any[]>(
+            `SELECT * FROM store_wallets WHERE store_id = $1 FOR UPDATE`,
+            storeId,
+          );
+          let wallet = wallets[0];
+          if (!wallet) {
+            wallet = await tx.storeWallet.create({
+              data: {
+                storeId,
+                balance: 0,
+                frozenBalance: 0,
+              },
+            });
+          }
+
+          const orderRef = `ORDER:${orderId}`;
+          const existingTx = await tx.walletTransaction.findFirst({
+            where: {
+              walletId: wallet.walletId || wallet.wallet_id,
+              referenceId: orderRef,
+              type: 'ORDER_REVENUE',
+            },
+          });
+
+          if (!existingTx) {
+            const currentBal = Number(wallet.balance);
+            const payoutAmount = order.net_amount ? Number(order.net_amount) : Math.round(Number(order.total_amount) * 0.92);
+            const newBal = currentBal + payoutAmount;
+
+            await tx.storeWallet.update({
+              where: { walletId: wallet.walletId || wallet.wallet_id },
+              data: { balance: newBal },
+            });
+
+            await tx.walletTransaction.create({
+              data: {
+                walletId: wallet.walletId || wallet.wallet_id,
+                amount: payoutAmount,
+                type: 'ORDER_REVENUE',
+                balanceBefore: currentBal,
+                balanceAfter: newBal,
+                referenceId: orderRef,
+                description: `Doanh thu thực nhận đơn hàng #${order.order_code || orderId} (sau hoa hồng)`,
+              },
+            });
+          }
+        }
+      }
+
+      // 4. Update order status
+      await tx.order.update({
+        where: { orderId },
+        data: {
+          orderStatus: 'COMPLETED',
+          completedAt: new Date(),
+        },
+      });
+
+      // 5. Record status history
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          oldStatus: order.order_status,
+          newStatus: 'COMPLETED',
+          reason: 'Đơn hàng hoàn tất và kết chuyển doanh thu vào ví cửa hàng',
+        },
+      });
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
+  async cancelOrderAtomicTx(orderId: bigint, reason: string = 'Khách hàng hủy đơn', userId?: bigint): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+
+      if (order.order_status === 'CANCELLED') {
+        return this.findOrderByIdTx(tx, orderId);
+      }
+
+      if (['COMPLETED', 'DELIVERED', 'SHIPPING'].includes(order.order_status)) {
+        throw new BadRequestException('Đơn hàng đã được xử lý giao hàng hoặc hoàn tất, không thể hủy');
+      }
+
+      const items = await tx.orderItem.findMany({ where: { orderId } });
+      for (const item of items) {
+        await tx.$executeRawUnsafe(
+          `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
+          item.productId,
+        );
+        await tx.$executeRawUnsafe(
+          `UPDATE inventory
+           SET reserved_quantity = GREATEST(0, reserved_quantity - $1),
+               updated_at = NOW()
+           WHERE product_id = $2`,
+          item.quantity,
+          item.productId,
+        );
+      }
+
+      await tx.order.update({
+        where: { orderId },
+        data: { orderStatus: 'CANCELLED' },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          oldStatus: order.order_status,
+          newStatus: 'CANCELLED',
+          reason,
+          changedByUserId: userId ? BigInt(userId) : null,
+        },
+      });
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
+  async findOrderByIdTx(tx: any, orderId: bigint) {
+    return tx.order.findUnique({
+      where: { orderId },
+      include: {
+        items: { include: { product: true } },
+        button: true,
+        customer: { include: { user: true } },
+        store: true,
+        statusHistories: true,
+        paymentTransactions: true,
+      },
+    });
+  }
+
 }

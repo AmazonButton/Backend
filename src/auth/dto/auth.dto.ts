@@ -7,6 +7,7 @@ import {
   Matches,
   IsOptional,
   IsBoolean,
+  IsIn,
 } from 'class-validator';
 
 export class RegisterDto {
@@ -48,7 +49,7 @@ export class RegisterDto {
   storeName?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(['CUSTOMER', 'STORE_OWNER'], { message: 'Vai trò chỉ có thể là CUSTOMER hoặc STORE_OWNER' })
   role?: string;
 }
 

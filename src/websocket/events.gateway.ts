@@ -31,8 +31,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const authHeader =
         client.handshake.headers?.authorization ||
-        client.handshake.auth?.token ||
-        (client.handshake.query?.token as string);
+        client.handshake.auth?.token;
 
       let token = '';
       if (typeof authHeader === 'string') {

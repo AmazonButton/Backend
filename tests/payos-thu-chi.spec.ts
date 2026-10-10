@@ -206,7 +206,7 @@ async function testPayOSThuChi() {
       signature: validWebhookSig,
     });
     const walletAfterDup = await walletService.getOrCreateStoreWallet(store.storeId);
-    if (duplicateRes.success && Number(walletAfterDup.balance) === Number(walletAfter.balance)) {
+    if (duplicateRes.success && Number(walletAfterDup.balance) === Number(walletAfterSettled.balance)) {
       console.log('  ? [PASS] Duplicate webhook handled idempotently without double-crediting');
     } else {
       console.log('  ? [FAIL] Duplicate webhook caused balance double-crediting');

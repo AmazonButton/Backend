@@ -49,12 +49,18 @@ export class IotService {
 
     // Handle Heartbeat
     if (eventType === 'HEARTBEAT') {
-      this.ordersService['eventsGateway'].emitGlobal('DEVICE_HEARTBEAT', {
+      const hbPayload = {
         deviceId: device.deviceId,
         batteryLevel: battery,
         wifiRSSI: rssi,
         lastSeenAt: new Date(),
-      });
+      };
+      if (device.storeId) {
+        this.ordersService['eventsGateway'].emitToStore(device.storeId.toString(), 'DEVICE_HEARTBEAT', hbPayload);
+      }
+      if (device.customerId) {
+        this.ordersService['eventsGateway'].emitToCustomer(device.customerId.toString(), 'DEVICE_HEARTBEAT', hbPayload);
+      }
       return {
         success: true,
         code: 'DEVICE_HEARTBEAT_ACK',
@@ -94,7 +100,6 @@ export class IotService {
     if (device.storeId) {
       this.ordersService['eventsGateway'].emitToStore(device.storeId.toString(), 'BUTTON_PRESSING', pressingPayload);
     }
-    this.ordersService['eventsGateway'].emitGlobal('BUTTON_PRESSING', pressingPayload);
 
     // If CANCEL action requested via double press
     if (eventType === 'CANCEL') {

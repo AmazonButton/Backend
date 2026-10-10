@@ -810,12 +810,28 @@ BEGIN
         WHERE product_id = v_item.product_id;
     END LOOP;
 
-    -- 7. Cập nhật lại tổng tiền chính xác cho đơn hàng (bao gồm shipping_fee)
-    UPDATE orders
-    SET subtotal_amount = v_subtotal,
-        discount_amount = v_total_discount,
-        total_amount = (v_subtotal - v_total_discount + p_shipping_fee)
-    WHERE order_id = v_order_id;
+    -- 7. Cập nhật lại tổng tiền chính xác và snapshot tài chính (commissionRate, commissionAmount, netAmount)
+    DECLARE
+        v_comm_rate DECIMAL(5,2) := 8.00;
+        v_tot_amt DECIMAL(15,2);
+        v_comm_amt DECIMAL(15,2);
+        v_net_amt DECIMAL(15,2);
+    BEGIN
+        SELECT COALESCE(commission_rate, 8.00) INTO v_comm_rate FROM store WHERE store_id = v_btn.store_id;
+        IF v_comm_rate IS NULL THEN v_comm_rate := 8.00; END IF;
+        v_tot_amt := (v_subtotal - v_total_discount + p_shipping_fee);
+        v_comm_amt := ROUND(v_tot_amt * v_comm_rate / 100.0, 2);
+        v_net_amt := v_tot_amt - v_comm_amt;
+
+        UPDATE orders
+        SET subtotal_amount = v_subtotal,
+            discount_amount = v_total_discount,
+            total_amount = v_tot_amt,
+            commission_rate = v_comm_rate,
+            commission_amount = v_comm_amt,
+            net_amount = v_net_amt
+        WHERE order_id = v_order_id;
+    END;
 
     -- 8. Ghi nhận lịch sử trạng thái ban đầu
     INSERT INTO order_status_history (order_id, old_status, new_status, reason, changed_at)
@@ -1122,3 +1138,7 @@ CREATE INDEX IF NOT EXISTS idx_button_rentals_customer_id ON button_rentals(cust
 CREATE INDEX IF NOT EXISTS idx_store_wallets_store_id ON store_wallets(store_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_transactions_wallet_id ON wallet_transactions(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_store_withdrawals_wallet_id ON store_withdrawals(wallet_id);
+
+
+-- Unique constraint on payment_transaction transaction_code
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_tx_code ON payment_transaction(transaction_code) WHERE transaction_code IS NOT NULL;

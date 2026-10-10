@@ -138,11 +138,11 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
       return {
         orderItemId,
         productId,
-        productName: item.productName || item.product?.name || '',
-        sku: item.sku || item.product?.sku,
+        productName: item.productNameSnapshot || item.productName || item.product?.productName || item.product?.name || '',
+        sku: item.sku || item.product?.productCode || item.product?.sku,
         quantity: item.quantity != null ? Number(item.quantity) : 1,
-        unitPrice: item.unitPrice != null ? Number(item.unitPrice) : 0,
-        totalPrice: item.totalPrice != null ? Number(item.totalPrice) : (Number(item.quantity || 1) * Number(item.unitPrice || 0)),
+        unitPrice: item.finalUnitPrice != null ? Number(item.finalUnitPrice) : (item.unitPriceSnapshot != null ? Number(item.unitPriceSnapshot) : Number(item.unitPrice || 0)),
+        totalPrice: item.itemSubtotal != null ? Number(item.itemSubtotal) : (item.totalPrice != null ? Number(item.totalPrice) : (Number(item.quantity || 1) * Number(item.finalUnitPrice || item.unitPriceSnapshot || item.unitPrice || 0))),
         imageUrl: item.imageUrl || item.product?.images?.[0]?.imageUrl,
         product: item.product ? {
           productId: item.product.productId ? item.product.productId.toString() : productId,

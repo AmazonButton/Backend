@@ -66,6 +66,40 @@ class TokenBlacklistStore {
     }
   }
 
+
+  async revokeTokenAsync(token: string, expiresInSeconds = 7 * 86400, userId?: string | number | bigint): Promise<void> {
+    if (token && typeof token === 'string') {
+      const hash = this.hashToken(token);
+      let expSec = Math.floor(Date.now() / 1000) + expiresInSeconds;
+
+      try {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+          if (payload.exp && typeof payload.exp === 'number') {
+            expSec = payload.exp;
+          }
+        }
+      } catch {}
+
+      this.revokedTokenHashes.set(hash, expSec);
+
+      if (this.prisma) {
+        const expiresAt = new Date(expSec * 1000);
+        const parsedUserId = userId ? BigInt(userId) : null;
+        await this.prisma.revokedToken.upsert({
+          where: { tokenHash: hash },
+          update: { expiresAt },
+          create: {
+            tokenHash: hash,
+            userId: parsedUserId,
+            expiresAt,
+          },
+        });
+      }
+    }
+  }
+
   revokeToken(token: string, expiresInSeconds = 7 * 86400, userId?: string | number | bigint) {
     if (token && typeof token === 'string') {
       const hash = this.hashToken(token);

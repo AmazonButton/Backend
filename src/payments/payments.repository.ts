@@ -103,55 +103,20 @@ export class PaymentsRepository {
         data: orderUpdateData,
       });
 
-      if (payment.order && payment.order.storeId) {
-        const storeId = payment.order.storeId;
-        let wallet = await tx.storeWallet.findUnique({
-          where: { storeId },
-        });
-
-        if (!wallet) {
-          wallet = await tx.storeWallet.create({
-            data: {
-              storeId,
-              balance: 0,
-              frozenBalance: 0,
-            },
-          });
-        }
-
-        const orderRef = `ORDER:${payment.orderId}`;
-        const existingTx = await tx.walletTransaction.findFirst({
-          where: {
-            walletId: wallet.walletId,
-            referenceId: { in: [orderRef, payment.orderId.toString(), payment.transactionCode || ''] },
-            type: { in: ['PAYMENT_CREDIT', 'ORDER_REVENUE'] },
+      // Ghi nhận lịch sử thanh toán
+      if (payment.orderId) {
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId: payment.orderId,
+            oldStatus: payment.order?.orderStatus || 'PENDING',
+            newStatus: orderUpdateData.orderStatus || payment.order?.orderStatus || 'CONFIRMED',
+            reason: `Thanh toán PayOS thành công (Mã GD: ${payment.transactionCode || paymentTransactionId})`,
           },
         });
-
-        if (!existingTx) {
-          const balanceBefore = Number(wallet.balance);
-          const creditAmount = Number(payment.amount);
-          const balanceAfter = balanceBefore + creditAmount;
-
-          await tx.storeWallet.update({
-            where: { walletId: wallet.walletId },
-            data: { balance: balanceAfter },
-          });
-
-          await tx.walletTransaction.create({
-            data: {
-              walletId: wallet.walletId,
-              amount: creditAmount,
-              type: 'PAYMENT_CREDIT',
-              balanceBefore,
-              balanceAfter,
-              referenceId: orderRef,
-              description: `Doanh thu đơn hàng #${payment.order.orderCode || payment.orderId} qua PayOS`,
-            },
-          });
-        }
       }
 
+      // Theo BRD V2.1: Webhook chỉ xác nhận giao dịch PAID và chuyển đơn CONFIRMED.
+      // Tuyệt đối KHÔNG cộng ví Store tại đây. Doanh thu net_amount chỉ kết chuyển khi đơn hàng hoàn tất (COMPLETED).
       return { alreadyPaid: false, payment: updatedPayment };
     });
   }

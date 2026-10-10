@@ -605,7 +605,7 @@ export class AuthService {
    */
   async logout(userId?: string, refreshToken?: string, accessToken?: string) {
     if (accessToken) {
-      TokenBlacklist.revokeToken(accessToken);
+      await TokenBlacklist.revokeTokenAsync(accessToken, 7 * 86400, userId ? BigInt(userId) : undefined);
       try {
         const decoded: any = this.jwtService.decode(accessToken);
         if (decoded?.userId) {

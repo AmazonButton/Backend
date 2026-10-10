@@ -101,6 +101,10 @@ export class ProductsService {
       throw new BadRequestException('Bạn không thuộc cửa hàng nào để tạo sản phẩm');
     }
 
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      await this.subscriptionsService.validateStoreCanListProducts(targetStoreId);
+    }
+
     const finalProductName = productName || name;
     const finalCode = productCode || sku || `PROD-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     const finalPrice = basePrice !== undefined ? basePrice : price;

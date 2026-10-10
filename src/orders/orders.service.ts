@@ -79,8 +79,17 @@ export class OrdersService {
         'Đơn hàng tự động từ nút bấm IoT',
       );
     } catch (procErr: any) {
-      // 2. Fallback: Nếu môi trường chưa nạp Stored Procedure, thực thi giao dịch tương đương qua Repository
-      newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee);
+      // Chỉ fallback khi stored procedure chưa được nạp (mã lỗi 42883 hoặc không tìm thấy function)
+      const isMissingProcedure =
+        procErr.code === '42883' ||
+        procErr.message?.includes('does not exist') ||
+        procErr.message?.includes('function sp_create_order_from_button');
+      if (isMissingProcedure) {
+        newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee);
+      } else {
+        // Bảo lưu các lỗi nghiệp vụ từ stored procedure (hết hàng, store không hoạt động, v.v.)
+        throw new BadRequestException(procErr.message || 'Lỗi khi tạo đơn hàng');
+      }
     }
 
     if (!newOrderId) {
@@ -240,11 +249,7 @@ export class OrdersService {
       }
     }
 
-    // Release reserved inventory via repository
-    await this.ordersRepo.releaseReservedInventory(order.items);
-
-    const updated = await this.ordersRepo.updateOrderStatus(targetOrderId, 'CANCELLED');
-
+    const updated = await this.ordersRepo.cancelOrderAtomicTx(targetOrderId, reason, user?.userId || user?.id);
     const formattedOrder = toOrderResponseDto(updated);
     const cancelPayload = { order: formattedOrder, reason, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_CANCELLED', cancelPayload);
@@ -282,28 +287,14 @@ export class OrdersService {
       );
     }
 
-    if (newStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
-      // Khấu trừ tồn thực tế
-      await this.ordersRepo.deductInventoryOnCompleted(order.items);
-      try {
-        // Enforce: ONLY credit store wallet if paymentStatus is PAID (fix OR payos bug)
-        if (['PAID', 'SUCCESS'].includes(order.paymentStatus)) {
-          const payoutAmount = (order as any).netAmount ? Number((order as any).netAmount) : Math.round(Number(order.totalAmount) * 0.92);
-          await this.storeWalletService.creditOrderRevenue(
-            order.storeId,
-            payoutAmount,
-            `ORDER:${order.orderId}`
-          );
-        }
-      } catch (err) {
-        console.error('Failed to credit store wallet on completed order:', err);
-      }
-    } else if (['CANCELLED', 'REJECTED'].includes(newStatus) && !['CANCELLED', 'REJECTED', 'COMPLETED'].includes(order.orderStatus)) {
-      // Hoàn trả tồn giữ chỗ
-      await this.ordersRepo.releaseReservedInventory(order.items);
+    let updated: any;
+    if (newStatus === 'COMPLETED') {
+      updated = await this.ordersRepo.completeOrderAtomicTx(targetOrderId);
+    } else if (['CANCELLED', 'REJECTED'].includes(newStatus)) {
+      updated = await this.ordersRepo.cancelOrderAtomicTx(targetOrderId, 'Cập nhật hủy đơn', user?.userId || user?.id);
+    } else {
+      updated = await this.ordersRepo.updateOrderStatus(targetOrderId, newStatus);
     }
-
-    const updated = await this.ordersRepo.updateOrderStatus(targetOrderId, newStatus);
 
     const formattedOrder = toOrderResponseDto(updated);
     const statusPayload = { order: formattedOrder, storeId: order.storeId.toString(), customerId: order.customerId.toString() };

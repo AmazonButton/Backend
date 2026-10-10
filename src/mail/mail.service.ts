@@ -25,7 +25,7 @@ export class MailService {
         auth: { user, pass },
       });
       this.isConfigured = true;
-      this.logger.log(`MailService initialized with SMTP host ${host}:${port} (User: ${user})`);
+      this.logger.log(`MailService initialized with SMTP host ${host}:${port} (User: ${user.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')})`);
     } else {
       this.logger.warn('SMTP_USER or SMTP_PASSWORD not set. MailService operating in DEV FALLBACK MODE.');
     }
@@ -68,7 +68,7 @@ export class MailService {
     }
 
     if (!this.isConfigured || !this.transporter || isDummyDomain || isTestEnv) {
-      this.logger.log(`[SIMULATED EMAIL DISPATCH] TO: ${options.to} | SUBJECT: ${options.subject}`);
+      this.logger.log(`[SIMULATED EMAIL DISPATCH] TO: ${options.to.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')} | SUBJECT: ${options.subject}`);
       this.logger.log(`[SIMULATED EMAIL CONTENT] ${maskedText}`);
       return true;
     }
@@ -82,7 +82,7 @@ export class MailService {
         text: options.text,
         html: options.html,
       });
-      this.logger.log(`Email dispatched successfully to ${options.to}`);
+      this.logger.log(`Email dispatched successfully to ${options.to.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')}`);
       return true;
     } catch (err: any) {
       this.logger.error(`Failed to send email to ${options.to}: ${err.message}`);

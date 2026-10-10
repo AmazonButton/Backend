@@ -16,10 +16,16 @@ export class CreatePaymentLinkDto {
 
   @IsOptional()
   @IsUrl({ require_tld: false }, { message: 'returnUrl phải là URL hợp lệ' })
+  @Matches(/^(http:\/\/localhost(:\d+)?|http:\/\/127\.0\.0\.1(:\d+)?|https:\/\/.*smartorder\.vn)(\/.*)?$/, {
+    message: 'returnUrl phải thuộc domain được phép (localhost hoặc smartorder.vn)',
+  })
   returnUrl?: string;
 
   @IsOptional()
   @IsUrl({ require_tld: false }, { message: 'cancelUrl phải là URL hợp lệ' })
+  @Matches(/^(http:\/\/localhost(:\d+)?|http:\/\/127\.0\.0\.1(:\d+)?|https:\/\/.*smartorder\.vn)(\/.*)?$/, {
+    message: 'cancelUrl phải thuộc domain được phép (localhost hoặc smartorder.vn)',
+  })
   cancelUrl?: string;
 }
 
