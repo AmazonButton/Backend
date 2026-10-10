@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -54,6 +54,13 @@ export class PaymentsRepository {
     });
   }
 
+  async updatePaymentLinkId(paymentTransactionId: bigint, paymentLinkId: string) {
+    return this.prisma.paymentTransaction.update({
+      where: { paymentTransactionId },
+      data: { paymentLinkId },
+    });
+  }
+
   async updateOrderStatus(orderId: bigint, orderStatus: string, paymentStatus?: string) {
     return this.prisma.order.update({
       where: { orderId },
@@ -71,19 +78,19 @@ export class PaymentsRepository {
     });
   }
 
-  async processPaymentCreditToWallet(paymentTransactionId: bigint) {
-    return this.prisma.$transaction(async (tx) => {
+  async confirmPaymentAtomicTx(paymentTransactionId: bigint) {
+    return await this.prisma.$transaction(async (tx) => {
       const payment = await tx.paymentTransaction.findUnique({
         where: { paymentTransactionId },
         include: { order: true },
       });
 
       if (!payment) {
-        throw new Error('Payment transaction not found');
+        throw new NotFoundException('Không tìm thấy giao dịch thanh toán');
       }
 
       if (payment.status === 'PAID') {
-        return { alreadyPaid: true, payment };
+        return payment;
       }
 
       const updatedPayment = await tx.paymentTransaction.update({
@@ -94,30 +101,24 @@ export class PaymentsRepository {
         },
       });
 
-      const orderUpdateData: any = { paymentStatus: 'PAID' };
-      if (payment.order && payment.order.orderStatus === 'PENDING') {
-        orderUpdateData.orderStatus = 'CONFIRMED';
-      }
       await tx.order.update({
         where: { orderId: payment.orderId },
-        data: orderUpdateData,
+        data: {
+          paymentStatus: 'PAID',
+          orderStatus: 'CONFIRMED',
+        },
       });
 
-      // Ghi nhận lịch sử thanh toán
-      if (payment.orderId) {
-        await tx.orderStatusHistory.create({
-          data: {
-            orderId: payment.orderId,
-            oldStatus: payment.order?.orderStatus || 'PENDING',
-            newStatus: orderUpdateData.orderStatus || payment.order?.orderStatus || 'CONFIRMED',
-            reason: `Thanh toán PayOS thành công (Mã GD: ${payment.transactionCode || paymentTransactionId})`,
-          },
-        });
-      }
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: payment.orderId,
+          oldStatus: payment.order.orderStatus,
+          newStatus: 'CONFIRMED',
+          reason: 'PayOS webhook xác nhận thanh toán thành công (Ký quỹ escrow)',
+        },
+      });
 
-      // Theo BRD V2.1: Webhook chỉ xác nhận giao dịch PAID và chuyển đơn CONFIRMED.
-      // Tuyệt đối KHÔNG cộng ví Store tại đây. Doanh thu net_amount chỉ kết chuyển khi đơn hàng hoàn tất (COMPLETED).
-      return { alreadyPaid: false, payment: updatedPayment };
+      return updatedPayment;
     });
   }
 }

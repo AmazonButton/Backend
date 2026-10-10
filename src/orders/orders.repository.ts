@@ -232,8 +232,25 @@ export class OrdersRepository {
         );
       }
 
-      // 3. Credit store wallet if paid
-      if (['PAID', 'SUCCESS'].includes(order.payment_status)) {
+      // 3. Credit store wallet strictly if paid via PayOS online gateway
+      const isPayosMethod = order.payment_method === 'PAYOS';
+      const isPaidStatus = ['PAID', 'SUCCESS'].includes(order.payment_status);
+      
+      let shouldCreditWallet = false;
+      if (isPayosMethod && isPaidStatus) {
+        const payosTx = await tx.paymentTransaction.findFirst({
+          where: {
+            orderId: BigInt(orderId),
+            provider: 'PAYOS',
+            status: 'PAID',
+          },
+        });
+        if (payosTx) {
+          shouldCreditWallet = true;
+        }
+      }
+
+      if (shouldCreditWallet) {
         const storeId = order.store_id;
         if (storeId) {
           const wallets = await tx.$queryRawUnsafe<any[]>(
@@ -308,7 +325,12 @@ export class OrdersRepository {
     });
   }
 
-  async cancelOrderAtomicTx(orderId: bigint, reason: string = 'Khách hàng hủy đơn', userId?: bigint): Promise<any> {
+  async cancelOrderAtomicTx(
+    orderId: bigint,
+    reason: string = 'Khách hàng hủy đơn',
+    userId?: any,
+    targetStatus: 'CANCELLED' | 'REJECTED' = 'CANCELLED',
+  ): Promise<any> {
     return this.prisma.$transaction(async (tx) => {
       const lockedOrders = await tx.$queryRawUnsafe<any[]>(
         `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
@@ -352,7 +374,7 @@ export class OrdersRepository {
         data: {
           orderId,
           oldStatus: order.order_status,
-          newStatus: 'CANCELLED',
+          newStatus: targetStatus,
           reason,
           changedByUserId: userId ? BigInt(userId) : null,
         },

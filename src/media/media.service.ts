@@ -188,4 +188,17 @@ export class MediaService {
       uploadStream.end(file.buffer);
     });
   }
+
+  /**
+   * Delete asset from Cloudinary by public ID
+   */
+  async deleteAsset(publicId: string): Promise<boolean> {
+    if (!publicId) return false;
+    try {
+      const res = await cloudinary.uploader.destroy(publicId);
+      return res.result === 'ok';
+    } catch {
+      return false;
+    }
+  }
 }

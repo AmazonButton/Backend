@@ -291,7 +291,12 @@ export class OrdersService {
     if (newStatus === 'COMPLETED') {
       updated = await this.ordersRepo.completeOrderAtomicTx(targetOrderId);
     } else if (['CANCELLED', 'REJECTED'].includes(newStatus)) {
-      updated = await this.ordersRepo.cancelOrderAtomicTx(targetOrderId, 'Cập nhật hủy đơn', user?.userId || user?.id);
+      updated = await this.ordersRepo.cancelOrderAtomicTx(
+        targetOrderId,
+        newStatus === 'REJECTED' ? 'Cửa hàng từ chối tiếp nhận đơn' : 'Cập nhật hủy đơn',
+        user?.userId || user?.id,
+        newStatus as 'CANCELLED' | 'REJECTED',
+      );
     } else {
       updated = await this.ordersRepo.updateOrderStatus(targetOrderId, newStatus);
     }

@@ -177,12 +177,30 @@ export class PaymentsService {
     }
 
     if (code === '00' && data?.code === '00') {
-      // Atomic update transaction, order, and store wallet ledger
-      await this.paymentsRepo.processPaymentCreditToWallet(
+      // Validate currency: Must be VND
+      if (data?.currency && data.currency.toUpperCase() !== 'VND') {
+        this.logger.warn(`[PayOS Webhook] Invalid currency: ${data.currency} for orderCode: ${orderCodeStr}`);
+        return { success: false, message: 'Invalid currency' };
+      }
+
+      // Validate amount: Webhook amount must strictly equal transaction amount
+      if (data?.amount !== undefined && Number(data.amount) !== Number(transaction.amount)) {
+        this.logger.warn(`[PayOS Webhook] Amount mismatch: webhook amount=${data?.amount}, tx amount=${transaction.amount} for orderCode: ${orderCodeStr}`);
+        return { success: false, message: 'Amount mismatch' };
+      }
+
+      // Validate paymentLinkId if transaction has linkId recorded
+      if ((transaction as any).paymentLinkId && data?.paymentLinkId && (transaction as any).paymentLinkId !== data.paymentLinkId) {
+        this.logger.warn(`[PayOS Webhook] Payment link ID mismatch for orderCode: ${orderCodeStr}`);
+        return { success: false, message: 'Payment link ID mismatch' };
+      }
+
+      // Atomic update transaction to PAID and order to CONFIRMED (Escrow hold - no wallet credit yet)
+      await this.paymentsRepo.confirmPaymentAtomicTx(
         transaction.paymentTransactionId,
       );
-      this.logger.log(`[PayOS Webhook] Payment confirmed and wallet credited for Order #${transaction.orderId} (Transaction #${transaction.paymentTransactionId})`);
-      return { success: true, message: 'Payment confirmed and credited successfully' };
+      this.logger.log(`[PayOS Webhook] Payment confirmed and marked as PAID (Escrow hold) for Order #${transaction.orderId} (Transaction #${transaction.paymentTransactionId})`);
+      return { success: true, message: 'Payment confirmed successfully' };
     } else {
       await this.paymentsRepo.updateTransactionStatus(transaction.paymentTransactionId, 'FAILED');
       this.logger.log(`[PayOS Webhook] Payment failed for Order #${transaction.orderId}`);

@@ -58,6 +58,7 @@ export class MediaController {
     };
   }
 
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('upload')
   @ApiOperation({
     summary: 'Tải ảnh lên Cloudinary qua Server (Hỗ trợ kiểm tra Magic Bytes chống mã độc)',
@@ -88,12 +89,37 @@ export class MediaController {
   async uploadImage(
     @UploadedFile() file: Express.Multer.File,
     @Body('folder') folder?: string,
+    @Request() req?: any,
   ) {
-    const result = await this.mediaService.uploadImageBuffer(file, folder || 'smart-order');
+    const user = req?.user;
+    let targetFolder = folder || 'smart-order';
+    if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (folder && folder.startsWith('stores/')) {
+        const parts = folder.split('/');
+        if (parts[1] && parts[1] !== user.storeId.toString()) {
+          throw new ForbiddenException('Bạn không được phép tải ảnh vào thư mục của cửa hàng khác');
+        }
+      } else if (!folder || !folder.startsWith('smart-button')) {
+        targetFolder = `stores/${user.storeId}/products`;
+      }
+    }
+
+    const result = await this.mediaService.uploadImageBuffer(file, targetFolder);
     return {
       success: true,
       message: 'Tải tệp hình ảnh lên Cloudinary thành công',
       data: result,
+    };
+  }
+
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Post('destroy')
+  @ApiOperation({ summary: 'Xóa tệp ảnh trên Cloudinary khi thay thế hoặc hủy ảnh' })
+  async destroyAsset(@Body('publicId') publicId: string) {
+    const success = await this.mediaService.deleteAsset(publicId);
+    return {
+      success,
+      message: success ? 'Xóa tài nguyên trên Cloudinary thành công' : 'Không thể xóa tài nguyên hoặc tệp không tồn tại',
     };
   }
 }

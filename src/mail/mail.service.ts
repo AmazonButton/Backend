@@ -7,6 +7,11 @@ export class MailService {
   private transporter: nodemailer.Transporter | null = null;
   private isConfigured = false;
 
+  private maskEmail(email: string): string {
+    if (!email || typeof email !== 'string') return '';
+    return email.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*');
+  }
+
   constructor() {
     this.initTransporter();
   }
@@ -63,7 +68,7 @@ export class MailService {
     // In test environment or for dummy test domains (like customer@smartorder.local),
     // skip actual SMTP delivery to avoid mailer-daemon bounce loops and inbox spam.
     if (process.env.NODE_ENV === 'production' && (!this.isConfigured || !this.transporter)) {
-      this.logger.error(`[CRITICAL] SMTP not configured in production. Cannot send email to ${options.to}`);
+      this.logger.error(`[CRITICAL] SMTP not configured in production. Cannot send email to ${this.maskEmail(options.to)}`);
       return false;
     }
 
@@ -85,7 +90,7 @@ export class MailService {
       this.logger.log(`Email dispatched successfully to ${options.to.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')}`);
       return true;
     } catch (err: any) {
-      this.logger.error(`Failed to send email to ${options.to}: ${err.message}`);
+      this.logger.error(`Failed to send email to ${this.maskEmail(options.to)}: ${err.message}`);
       return false;
     }
   }

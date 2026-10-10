@@ -6,8 +6,10 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../prisma/prisma.service';
+import { TokenBlacklist } from '../auth/token-blacklist';
 
 @Injectable()
 @WebSocketGateway({
@@ -23,6 +25,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   private readonly logger = new Logger(EventsGateway.name);
+  constructor(@Optional() private readonly prisma?: PrismaService) {}
   private readonly jwtService = new JwtService({
     secret: process.env.JWT_SECRET || 'sob_jwt_secret_dev_2026',
   });
@@ -50,6 +53,35 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.warn(`⚠️ [WS] Invalid token payload for socket: ${client.id}`);
         client.disconnect(true);
         return;
+      }
+
+      // 1. Check if token is in blacklist
+      const isRevoked = TokenBlacklist.isRevoked(token, payload.userId, payload.iat);
+      if (isRevoked) {
+        this.logger.warn(`⚠️ [WS] Token revoked for socket: ${client.id}`);
+        client.disconnect(true);
+        return;
+      }
+
+      // 2. Query user to verify ACTIVE status and passwordChangedAt
+      const dbUser = this.prisma ? await this.prisma.user.findUnique({
+        where: { userId: BigInt(payload.userId) },
+        select: { status: true, passwordChangedAt: true },
+      }) : null;
+
+      if (this.prisma && (!dbUser || dbUser.status !== 'ACTIVE')) {
+        this.logger.warn(`⚠️ [WS] Inactive or non-existent user for socket: ${client.id}`);
+        client.disconnect(true);
+        return;
+      }
+
+      if (dbUser.passwordChangedAt && payload.iat) {
+        const pwTimeSec = Math.floor(dbUser.passwordChangedAt.getTime() / 1000);
+        if (payload.iat < pwTimeSec) {
+          this.logger.warn(`⚠️ [WS] Token invalidated by password change for socket: ${client.id}`);
+          client.disconnect(true);
+          return;
+        }
       }
 
       client.data.user = {
