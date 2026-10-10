@@ -1,3 +1,4 @@
+import { MediaService } from '../media/media.service';
 ﻿import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
 import { Injectable, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
 import { ProductsRepository, ProductImageInput } from './products.repository';
@@ -6,31 +7,51 @@ import { ProductsRepository, ProductImageInput } from './products.repository';
 export class ProductsService {
   constructor(
     @Inject(ProductsRepository) private readonly productsRepo: ProductsRepository,
-    @Inject(StoreSubscriptionsService) private readonly subscriptionsService: StoreSubscriptionsService
+    @Inject(StoreSubscriptionsService) private readonly subscriptionsService: StoreSubscriptionsService,
+    @Inject(MediaService) private readonly mediaService: MediaService
   ) {}
 
+  private extractPublicIdFromUrl(url?: string): string | undefined {
+    if (!url || typeof url !== 'string') return undefined;
+    const match = url.match(/\/upload\/(?:v\d+\/)?([^\.]+)/);
+    return match ? match[1] : undefined;
+  }
+
   private parseImageInputs(body: any): ProductImageInput[] | undefined {
-    const { imageUrl, images, imageDetails } = body;
+    const { imageUrl, images, imageDetails, cloudinaryPublicId } = body;
     if (imageDetails && Array.isArray(imageDetails) && imageDetails.length > 0) {
       return imageDetails.map((img: any, idx: number) => ({
         imageUrl: img.imageUrl || img.url,
+        cloudinaryPublicId: img.cloudinaryPublicId || img.publicId || this.extractPublicIdFromUrl(img.imageUrl || img.url),
         isThumbnail: img.isThumbnail !== undefined ? Boolean(img.isThumbnail) : idx === 0,
         displayOrder: img.displayOrder !== undefined ? Number(img.displayOrder) : idx,
       }));
     }
 
     if (images && Array.isArray(images) && images.length > 0) {
-      return images.map((url: string, idx: number) => ({
-        imageUrl: typeof url === 'string' ? url : (url as any).url || (url as any).imageUrl,
-        isThumbnail: idx === 0,
-        displayOrder: idx,
-      }));
+      return images.map((img: any, idx: number) => {
+        if (typeof img === 'string') {
+          return {
+            imageUrl: img,
+            cloudinaryPublicId: this.extractPublicIdFromUrl(img),
+            isThumbnail: idx === 0,
+            displayOrder: idx,
+          };
+        }
+        return {
+          imageUrl: img.imageUrl || img.url,
+          cloudinaryPublicId: img.cloudinaryPublicId || img.publicId || this.extractPublicIdFromUrl(img.imageUrl || img.url),
+          isThumbnail: img.isThumbnail !== undefined ? Boolean(img.isThumbnail) : idx === 0,
+          displayOrder: img.displayOrder !== undefined ? Number(img.displayOrder) : idx,
+        };
+      });
     }
 
     if (imageUrl && typeof imageUrl === 'string' && imageUrl.trim().length > 0) {
       return [
         {
           imageUrl: imageUrl.trim(),
+          cloudinaryPublicId: cloudinaryPublicId || this.extractPublicIdFromUrl(imageUrl.trim()),
           isThumbnail: true,
           displayOrder: 0,
         },

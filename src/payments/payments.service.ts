@@ -88,6 +88,8 @@ export class PaymentsService {
 
         // Support local test mock
     if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id') {
+      const mockPaymentLinkId = `mock_link_${orderCode}`;
+      await this.paymentsRepo.updatePaymentLinkId(transaction.paymentTransactionId, mockPaymentLinkId);
       return {
         success: true,
         message: 'Tạo link thanh toán PayOS thành công (mock)',
@@ -98,6 +100,7 @@ export class PaymentsService {
           description,
           checkoutUrl: `https://pay.payos.vn/web/mock-${orderCode}`,
           qrCode: `00020101021238540010A000000727012600069704220112${orderCode}`,
+          paymentLinkId: mockPaymentLinkId,
           status: 'PENDING',
         },
       };
@@ -214,9 +217,10 @@ export class PaymentsService {
         return { success: false, message: 'Amount mismatch' };
       }
 
-      // Validate paymentLinkId if transaction has linkId recorded
-      if ((transaction as any).paymentLinkId && (transaction as any).paymentLinkId !== data.paymentLinkId) {
-        this.logger.warn(`[PayOS Webhook] Payment link ID mismatch for orderCode: ${orderCodeStr}`);
+      // Validate paymentLinkId: FAIL-CLOSED strict equality
+      const recordedLinkId = (transaction as any).paymentLinkId;
+      if (!recordedLinkId || recordedLinkId !== data.paymentLinkId) {
+        this.logger.warn(`[PayOS Webhook] Payment link ID mismatch for orderCode ${orderCodeStr}: recorded="${recordedLinkId}", received="${data.paymentLinkId}"`);
         return { success: false, message: 'Payment link ID mismatch' };
       }
 

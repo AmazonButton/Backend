@@ -127,6 +127,8 @@ async function testPayOSThuChi() {
       paymentMethod: 'QR',
       status: 'PENDING',
     });
+    // Set paymentLinkId for strict fail-closed webhook validation
+    await paymentsRepo.updatePaymentLinkId(paymentTx.paymentTransactionId, 'link_9999');
 
     const initialWallet = await walletService.getOrCreateStoreWallet(store.storeId);
     const initialBalance = Number(initialWallet.balance);

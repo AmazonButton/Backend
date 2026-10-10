@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService } from '../orders/orders.service';
 
@@ -16,6 +16,7 @@ if (cleanupTimer && typeof cleanupTimer.unref === 'function') {
 
 @Injectable()
 export class IotService {
+  private readonly logger = new Logger(IotService.name);
   public readonly deviceCooldowns = new Map<string, number>();
   public readonly debounceCooldownMs = 2500;
 
@@ -33,27 +34,42 @@ export class IotService {
       throw new BadRequestException('Thiếu trường requestId');
     }
 
-    // Multi-instance persistent idempotency check in PostgreSQL
-    const existingOrder = await this.prisma.order.findFirst({
-      where: {
-        orderNote: { contains: `REQ:${requestId}` },
-      },
-    });
+    const rawDeviceId = device?.buttonId || device?.deviceId || device?.id;
+    const deviceId = rawDeviceId ? BigInt(rawDeviceId) : null;
 
-    if (existingOrder || processedRequests.has(requestId)) {
-      const cached = processedRequests.get(requestId) || {
-        orderId: existingOrder?.orderId.toString(),
-        orderCode: existingOrder?.orderCode,
-      };
-      return {
-        success: true,
-        isDuplicate: true,
-        message: 'Yêu cầu trùng lặp đã được ngăn chặn (Idempotency Key)',
-        data: {
-          ...cached,
-          isDuplicate: true,
-        },
-      };
+    // Multi-instance atomic idempotency check via PostgreSQL unique index on (device_id, request_id)
+    if (eventType !== 'HEARTBEAT') {
+      try {
+        const insertRes = await this.prisma.$queryRawUnsafe<any[]>(
+          `INSERT INTO iot_idempotency_keys (device_id, request_id)
+           VALUES ($1, $2)
+           ON CONFLICT (device_id, request_id) DO NOTHING
+           RETURNING id`,
+          deviceId,
+          requestId,
+        );
+
+        if (!insertRes || insertRes.length === 0) {
+          // Atomic conflict detected: another concurrent or earlier instance already acquired this key!
+          const existingRow = await this.prisma.$queryRawUnsafe<any[]>(
+            `SELECT order_id FROM iot_idempotency_keys WHERE device_id = $1 AND request_id = $2`,
+            deviceId,
+            requestId,
+          );
+          const existingOrderId = existingRow?.[0]?.order_id;
+          return {
+            success: true,
+            isDuplicate: true,
+            message: 'Yêu cầu trùng lặp đã được ngăn chặn (Idempotency Key)',
+            data: {
+              orderId: existingOrderId ? existingOrderId.toString() : undefined,
+              isDuplicate: true,
+            },
+          };
+        }
+      } catch (err: any) {
+        this.logger.error(`Idempotency DB error: ${err.message}`);
+      }
     }
 
     // Handle Heartbeat
@@ -147,8 +163,21 @@ export class IotService {
       shippingFee: body.shippingFee || 0,
     });
 
-    // Save into idempotency map
+    // Save into idempotency map & update order_id in PostgreSQL table
     processedRequests.set(requestId, orderResult);
+    const targetCreatedOrderId = (orderResult as any)?.order?.orderId || (orderResult as any)?.orderId;
+    if (targetCreatedOrderId) {
+      try {
+        await this.prisma.$executeRawUnsafe(
+          `UPDATE iot_idempotency_keys SET order_id = $1 WHERE device_id = $2 AND request_id = $3`,
+          BigInt(targetCreatedOrderId),
+          deviceId,
+          requestId,
+        );
+      } catch (e: any) {
+        this.logger.warn(`Failed to update order_id in iot_idempotency_keys: ${e.message}`);
+      }
+    }
 
     return {
       success: true,

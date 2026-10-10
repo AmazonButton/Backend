@@ -140,13 +140,27 @@ export class PaymentsRepository {
           },
         });
       } else {
-        // If order was already processed/cancelled, only update paymentStatus to PAID
+        // If order was already CANCELLED or REJECTED, mark paymentStatus as REFUND_PENDING for financial reconciliation
+        const isCancelledOrRejected = order.order_status === 'CANCELLED' || order.order_status === 'REJECTED';
+        const finalPaymentStatus = isCancelledOrRejected ? 'REFUND_PENDING' : 'PAID';
+
         await tx.order.update({
           where: { orderId: payment.order_id },
           data: {
-            paymentStatus: 'PAID',
+            paymentStatus: finalPaymentStatus,
           },
         });
+
+        if (isCancelledOrRejected) {
+          await tx.orderStatusHistory.create({
+            data: {
+              orderId: payment.order_id,
+              oldStatus: order.order_status,
+              newStatus: order.order_status,
+              reason: `PayOS webhook nhận tiền sau khi đơn hàng đã ${order.order_status}. Đánh dấu paymentStatus: REFUND_PENDING để đối soát hoàn tiền.`,
+            },
+          });
+        }
       }
 
       return this.findTransactionByIdTx(tx, paymentTransactionId);

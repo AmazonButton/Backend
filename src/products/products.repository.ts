@@ -161,6 +161,20 @@ export class ProductsRepository {
     });
   }
 
+  
+  async findProductImages(productId: bigint) {
+    return this.prisma.productImage.findMany({
+      where: { productId },
+      select: { imageId: true, cloudinaryPublicId: true, imageUrl: true },
+    });
+  }
+
+  async countImageReferences(cloudinaryPublicId: string) {
+    return this.prisma.productImage.count({
+      where: { cloudinaryPublicId },
+    });
+  }
+
   async updateInventoryStock(
     productId: bigint,
     storeId: bigint,
