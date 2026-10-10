@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Inject, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, InternalServerErrorException, Inject, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService } from '../orders/orders.service';
 
@@ -35,44 +35,28 @@ export class IotService {
     }
 
     const rawDeviceId = device?.buttonId || device?.deviceId || device?.id;
-    const deviceId = rawDeviceId ? BigInt(rawDeviceId) : null;
-
-    // Multi-instance atomic idempotency check via PostgreSQL unique index on (device_id, request_id)
-    if (eventType !== 'HEARTBEAT') {
-      try {
-        const insertRes = await this.prisma.$queryRawUnsafe<any[]>(
-          `INSERT INTO iot_idempotency_keys (device_id, request_id)
-           VALUES ($1, $2)
-           ON CONFLICT (device_id, request_id) DO NOTHING
-           RETURNING id`,
-          deviceId,
-          requestId,
-        );
-
-        if (!insertRes || insertRes.length === 0) {
-          // Atomic conflict detected: another concurrent or earlier instance already acquired this key!
-          const existingRow = await this.prisma.$queryRawUnsafe<any[]>(
-            `SELECT order_id FROM iot_idempotency_keys WHERE device_id = $1 AND request_id = $2`,
-            deviceId,
-            requestId,
-          );
-          const existingOrderId = existingRow?.[0]?.order_id;
-          return {
-            success: true,
-            isDuplicate: true,
-            message: 'Yêu cầu trùng lặp đã được ngăn chặn (Idempotency Key)',
-            data: {
-              orderId: existingOrderId ? existingOrderId.toString() : undefined,
-              isDuplicate: true,
-            },
-          };
-        }
-      } catch (err: any) {
-        this.logger.error(`Idempotency DB error: ${err.message}`);
-      }
+    if (!rawDeviceId) {
+      throw new BadRequestException('Thiết bị không xác định hợp lệ (Thiếu buttonId/deviceId)');
     }
+    const deviceId = BigInt(rawDeviceId);
 
-    // Handle Heartbeat
+    // 1. Hardware switch debounce / anti-jamming check FIRST (before idempotency lock)
+    const now = Date.now();
+    const lastPressTime = this.deviceCooldowns.get(device.deviceId || rawDeviceId.toString()) || 0;
+    if (now - lastPressTime < this.debounceCooldownMs) {
+      return {
+        success: false,
+        code: 'BUTTON_DEBOUNCE_ACTIVE',
+        message: 'Nút bấm đang trong thời gian giãn cách chống kẹt phím (Debounce cooldown). Vui lòng thử lại sau giây lát.',
+        data: {
+          deviceId: device.deviceId || rawDeviceId.toString(),
+          retryAfterMs: this.debounceCooldownMs - (now - lastPressTime),
+        },
+      };
+    }
+    this.deviceCooldowns.set(device.deviceId || rawDeviceId.toString(), now);
+
+    // 2. Handle Heartbeat (No order creation, no idempotency lock needed)
     if (eventType === 'HEARTBEAT') {
       const hbPayload = {
         deviceId: device.deviceId,
@@ -94,39 +78,7 @@ export class IotService {
       };
     }
 
-    // Hardware switch debounce / anti-jamming check (per deviceId)
-    const now = Date.now();
-    const lastPressTime = this.deviceCooldowns.get(device.deviceId) || 0;
-    if (now - lastPressTime < this.debounceCooldownMs) {
-      return {
-        success: false,
-        code: 'BUTTON_DEBOUNCE_ACTIVE',
-        message: 'Nút bấm đang trong thời gian giãn cách chống kẹt phím (Debounce cooldown). Vui lòng thử lại sau giây lát.',
-        data: {
-          deviceId: device.deviceId,
-          retryAfterMs: this.debounceCooldownMs - (now - lastPressTime),
-        },
-      };
-    }
-    this.deviceCooldowns.set(device.deviceId, now);
-
-    // Reserve requestId in idempotency map immediately to block concurrent duplicate bursts
-    processedRequests.set(requestId, { status: 'PROCESSING' });
-
-    // Emit real-time tactile pressing animation to web UI
-    const pressingPayload = {
-      deviceId: device.deviceId,
-      buttonName: device.buttonName || 'Smart Order Button',
-      message: 'Nút vật lý đang được bấm...',
-    };
-    if (device.customerId) {
-      this.ordersService['eventsGateway'].emitToCustomer(device.customerId.toString(), 'BUTTON_PRESSING', pressingPayload);
-    }
-    if (device.storeId) {
-      this.ordersService['eventsGateway'].emitToStore(device.storeId.toString(), 'BUTTON_PRESSING', pressingPayload);
-    }
-
-    // If CANCEL action requested via double press
+    // 3. Handle CANCEL action requested via double press
     if (eventType === 'CANCEL') {
       const pendingOrder = await this.prisma.order.findFirst({
         where: { buttonId: device.buttonId, orderStatus: 'PENDING' },
@@ -155,35 +107,106 @@ export class IotService {
       };
     }
 
-    // Single / Double press or other triggers: Delegate to OrdersService to create order via Stored Procedure
-    const orderResult = await this.ordersService.handleButtonEvent(device, {
-      eventType,
-      requestId,
-      paymentMethod: body.paymentMethod || 'COD',
-      shippingFee: body.shippingFee || 0,
-    });
+    // 4. Multi-instance atomic idempotency lease acquisition in PostgreSQL (Fail-Closed)
+    try {
+      const insertRes = await this.prisma.$queryRawUnsafe<any[]>(
+        `INSERT INTO iot_idempotency_keys (device_id, request_id, status, locked_until)
+         VALUES ($1, $2, 'PROCESSING', NOW() + INTERVAL '30 seconds')
+         ON CONFLICT (device_id, request_id) DO UPDATE
+           SET status = 'PROCESSING',
+               locked_until = NOW() + INTERVAL '30 seconds',
+               updated_at = NOW()
+           WHERE iot_idempotency_keys.status = 'FAILED'
+              OR (iot_idempotency_keys.status = 'PROCESSING' AND iot_idempotency_keys.locked_until < NOW())
+         RETURNING id, status, order_id`,
+        deviceId,
+        requestId,
+      );
 
-    // Save into idempotency map & update order_id in PostgreSQL table
-    processedRequests.set(requestId, orderResult);
-    const targetCreatedOrderId = (orderResult as any)?.order?.orderId || (orderResult as any)?.orderId;
-    if (targetCreatedOrderId) {
-      try {
-        await this.prisma.$executeRawUnsafe(
-          `UPDATE iot_idempotency_keys SET order_id = $1 WHERE device_id = $2 AND request_id = $3`,
-          BigInt(targetCreatedOrderId),
+      if (!insertRes || insertRes.length === 0) {
+        // Row exists and is not eligible for acquisition (COMPLETED or active PROCESSING)
+        const existingRow = await this.prisma.$queryRawUnsafe<any[]>(
+          `SELECT status, order_id, locked_until FROM iot_idempotency_keys WHERE device_id = $1 AND request_id = $2`,
           deviceId,
           requestId,
         );
-      } catch (e: any) {
-        this.logger.warn(`Failed to update order_id in iot_idempotency_keys: ${e.message}`);
+        const existing = existingRow?.[0];
+        const existingOrderId = existing?.order_id;
+
+        return {
+          success: true,
+          isDuplicate: true,
+          message: existing?.status === 'COMPLETED'
+            ? 'Yêu cầu trùng lặp đã được ngăn chặn (Idempotency Key)'
+            : 'Yêu cầu đang được xử lý bởi một tiến trình khác (In-Flight Concurrency)',
+          data: {
+            orderId: existingOrderId ? existingOrderId.toString() : undefined,
+            isDuplicate: true,
+          },
+        };
       }
+    } catch (dbErr: any) {
+      this.logger.error(`Idempotency verification error: ${dbErr.message}`);
+      throw new InternalServerErrorException('Lỗi hệ thống khi xác thực tính duy nhất của yêu cầu (Fail-Closed)');
     }
 
-    return {
-      success: true,
-      message: 'Đã xử lý tín hiệu đặt hàng từ nút bấm IoT thành công!',
-      data: orderResult,
+    // 5. Emit real-time tactile pressing animation to web UI
+    const pressingPayload = {
+      deviceId: device.deviceId,
+      buttonName: device.buttonName || 'Smart Order Button',
+      message: 'Nút vật lý đang được bấm...',
     };
+    if (device.customerId) {
+      this.ordersService['eventsGateway'].emitToCustomer(device.customerId.toString(), 'BUTTON_PRESSING', pressingPayload);
+    }
+    if (device.storeId) {
+      this.ordersService['eventsGateway'].emitToStore(device.storeId.toString(), 'BUTTON_PRESSING', pressingPayload);
+    }
+
+    // 6. Create Order with atomic completion & failure recovery in PostgreSQL
+    try {
+      const orderResult = await this.ordersService.handleButtonEvent(device, {
+        eventType,
+        requestId,
+        paymentMethod: body.paymentMethod || 'COD',
+        shippingFee: body.shippingFee || 0,
+      });
+
+      const targetCreatedOrderId = (orderResult as any)?.order?.orderId || (orderResult as any)?.orderId;
+
+      // Mark idempotency key as COMPLETED with associated order_id
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE iot_idempotency_keys
+         SET status = 'COMPLETED', order_id = $1, updated_at = NOW()
+         WHERE device_id = $2 AND request_id = $3`,
+        targetCreatedOrderId ? BigInt(targetCreatedOrderId) : null,
+        deviceId,
+        requestId,
+      );
+
+      processedRequests.set(requestId, orderResult);
+
+      return {
+        success: true,
+        message: 'Đã xử lý tín hiệu đặt hàng từ nút bấm IoT thành công!',
+        data: orderResult,
+      };
+    } catch (orderErr: any) {
+      // Order creation failed: mark key as FAILED to unlock retry!
+      this.logger.warn(`Order creation failed for requestId ${requestId}: ${orderErr.message}. Marking key as FAILED for retry.`);
+      try {
+        await this.prisma.$executeRawUnsafe(
+          `UPDATE iot_idempotency_keys
+           SET status = 'FAILED', updated_at = NOW()
+           WHERE device_id = $1 AND request_id = $2`,
+          deviceId,
+          requestId,
+        );
+      } catch (updateErr: any) {
+        this.logger.error(`Failed to update key status to FAILED: ${updateErr.message}`);
+      }
+      throw orderErr;
+    }
   }
 
   async handleTelemetry(device: any, body: any) {

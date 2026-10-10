@@ -250,8 +250,9 @@ model IoTButton {
   rentalId    BigInt?         @map("rental_id")
   rental      ButtonRental?   @relation(fields: [rentalId], references: [rentalId], onDelete: SetNull)
 
-  buttonProducts ButtonProduct[]
-  orders         Order[]
+  buttonProducts  ButtonProduct[]
+  orders          Order[]
+  idempotencyKeys IotIdempotencyKey[]
 
   @@unique([buttonId, customerId, storeId], name: "uq_iot_button_context")
   @@map("iot_button")
@@ -282,7 +283,7 @@ model Order {
   button                IoTButton       @relation(fields: [buttonId, customerId, storeId], references: [buttonId, customerId, storeId], onDelete: Restrict)
   orderStatus           String          @default("PENDING") @map("order_status")
   paymentStatus         String          @default("UNPAID") @map("payment_status")
-  paymentMethod        String    @map("payment_method")
+  paymentMethod         String          @map("payment_method")
   subtotalAmount        Decimal         @default(0) @map("subtotal_amount") @db.Decimal(15, 2)
   discountAmount        Decimal         @default(0) @map("discount_amount") @db.Decimal(15, 2)
   shippingFee           Decimal         @default(0) @map("shipping_fee") @db.Decimal(15, 2)
@@ -302,6 +303,7 @@ model Order {
   items               OrderItem[]
   statusHistories     OrderStatusHistory[]
   paymentTransactions PaymentTransaction[]
+  iotIdempotencyKeys  IotIdempotencyKey[]
 
   @@map("orders")
 }
@@ -523,15 +525,15 @@ model StoreWithdrawal {
 }
 
 model ProductImage {
-  imageId      BigInt   @id @default(autoincrement()) @map("image_id")
-  productId    BigInt   @map("product_id")
-  product      Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  imageId            BigInt   @id @default(autoincrement()) @map("image_id")
+  productId          BigInt   @map("product_id")
+  product            Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
   imageUrl           String   @map("image_url")
   cloudinaryPublicId String?  @map("cloudinary_public_id")
-  isThumbnail  Boolean  @default(false) @map("is_thumbnail")
-  displayOrder Int      @default(0) @map("display_order")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+  isThumbnail        Boolean  @default(false) @map("is_thumbnail")
+  displayOrder       Int      @default(0) @map("display_order")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("product_image")
 }
@@ -576,4 +578,21 @@ model AuthOtp {
   @@index([email, purpose])
   @@index([userId, purpose])
   @@map("auth_otps")
+}
+
+model IotIdempotencyKey {
+  id          BigInt    @id @default(autoincrement())
+  deviceId    BigInt    @map("device_id")
+  device      IoTButton @relation(fields: [deviceId], references: [buttonId], onDelete: Cascade)
+  requestId   String    @map("request_id") @db.VarChar(128)
+  orderId     BigInt?   @map("order_id")
+  order       Order?    @relation(fields: [orderId], references: [orderId], onDelete: SetNull)
+  status      String    @default("PROCESSING") @db.VarChar(20)
+  lockedUntil DateTime  @default(now()) @map("locked_until")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([deviceId, requestId], map: "uq_iot_idempotency_device_request")
+  @@index([requestId], map: "idx_iot_idempotency_request_id")
+  @@map("iot_idempotency_keys")
 }

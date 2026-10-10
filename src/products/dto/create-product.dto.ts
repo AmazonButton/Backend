@@ -1,5 +1,6 @@
-import { IsNotEmpty, IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize } from 'class-validator';
+﻿import { IsNotEmpty, IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ProductImageDto, IsImageArray } from './product-image.dto';
 
 export class CreateProductDto {
   @IsNotEmpty({ message: 'Tên sản phẩm không được để trống' })
@@ -39,8 +40,19 @@ export class CreateProductDto {
   imageUrl?: string;
 
   @IsOptional()
-  @IsArray({ message: 'images phải là một danh sách URL' })
+  @IsString({ message: 'cloudinaryPublicId phải là chuỗi ký tự' })
+  cloudinaryPublicId?: string;
+
+  @IsOptional()
+  @IsArray({ message: 'images phải là một danh sách' })
   @ArrayMaxSize(10, { message: 'Tối đa 10 ảnh cho mỗi sản phẩm' })
-  @IsUrl({}, { each: true, message: 'Mỗi đường dẫn trong images phải là một URL hợp lệ' })
-  images?: string[];
+  @IsImageArray({ message: 'Mỗi đường dẫn trong images phải là một URL hợp lệ' })
+  images?: any[];
+
+  @IsOptional()
+  @IsArray({ message: 'imageDetails phải là danh sách chi tiết ảnh' })
+  @ArrayMaxSize(10, { message: 'Tối đa 10 ảnh cho mỗi sản phẩm' })
+  @ValidateNested({ each: true })
+  @Type(() => ProductImageDto)
+  imageDetails?: ProductImageDto[];
 }

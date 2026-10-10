@@ -136,9 +136,17 @@ export class PaymentsService {
         });
       }
 
-      if (result.data?.paymentLinkId) {
-        await this.paymentsRepo.updatePaymentLinkId(transaction.paymentTransactionId, result.data.paymentLinkId);
+      if (!result.data?.paymentLinkId) {
+        this.logger.error(`PayOS API response missing paymentLinkId: ${JSON.stringify(result)}`);
+        await this.paymentsRepo.updateTransactionStatus(transaction.paymentTransactionId, 'FAILED');
+        throw new BadRequestException({
+          success: false,
+          code: 'PAYOS_CREATION_FAILED',
+          message: 'PayOS không trả về paymentLinkId hợp lệ để đối soát webhook',
+        });
       }
+
+      await this.paymentsRepo.updatePaymentLinkId(transaction.paymentTransactionId, result.data.paymentLinkId);
 
       return {
         success: true,

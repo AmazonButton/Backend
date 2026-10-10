@@ -1,10 +1,11 @@
 import { MediaService } from '../media/media.service';
 ﻿import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
-import { Injectable, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, Inject, Logger } from '@nestjs/common';
 import { ProductsRepository, ProductImageInput } from './products.repository';
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
   constructor(
     @Inject(ProductsRepository) private readonly productsRepo: ProductsRepository,
     @Inject(StoreSubscriptionsService) private readonly subscriptionsService: StoreSubscriptionsService,
@@ -188,6 +189,12 @@ export class ProductsService {
 
     const imageInputs = this.parseImageInputs(body);
 
+    // 1. Capture existing images before update for Cloudinary asset lifecycle
+    const oldImages = imageInputs !== undefined
+      ? await this.productsRepo.findProductImages(targetProductId)
+      : [];
+
+    // 2. Perform DB update
     const updated = await this.productsRepo.update(
       targetProductId,
       {
@@ -199,6 +206,28 @@ export class ProductsService {
       },
       imageInputs,
     );
+
+    // 3. Cloudinary Asset Lifecycle: Destroy removed store assets if reference count is 0
+    if (imageInputs !== undefined && oldImages.length > 0) {
+      const newPublicIds = new Set(imageInputs.map((img) => img.cloudinaryPublicId).filter(Boolean));
+      const storePrefix = existing.storeId ? `stores/${existing.storeId.toString()}/` : 'stores/';
+
+      for (const oldImg of oldImages) {
+        const oldPubId = oldImg.cloudinaryPublicId;
+        // Strictly protect seed catalog (smart-order/...) and only target store-scoped assets
+        if (oldPubId && !newPublicIds.has(oldPubId) && oldPubId.startsWith(storePrefix)) {
+          const remainingCount = await this.productsRepo.countImageReferences(oldPubId);
+          if (remainingCount === 0) {
+            try {
+              await this.mediaService.deleteAsset(oldPubId);
+              this.logger.log(`[Cloudinary Lifecycle] Safely destroyed orphaned asset: ${oldPubId}`);
+            } catch (cloudErr: any) {
+              this.logger.error(`[Cloudinary Lifecycle] Failed to destroy asset ${oldPubId}: ${cloudErr.message}`);
+            }
+          }
+        }
+      }
+    }
 
     return this.formatProduct(updated);
   }

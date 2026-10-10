@@ -1,5 +1,6 @@
-import { IsString, IsNumber, IsOptional, IsBoolean, Min, IsArray, IsUrl, ArrayMaxSize } from 'class-validator';
+﻿import { IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ProductImageDto, IsImageArray } from './product-image.dto';
 
 export class UpdateProductDto {
   @IsOptional()
@@ -8,7 +9,23 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsString()
+  productName?: string;
+
+  @IsOptional()
+  @IsString()
   brand?: string;
+
+  @IsOptional()
+  @IsString()
+  sku?: string;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  unit?: string;
 
   @IsOptional()
   @Type(() => Number)
@@ -18,29 +35,46 @@ export class UpdateProductDto {
 
   @IsOptional()
   @Type(() => Number)
+  @IsNumber({}, { message: 'Giá phải là số hợp lệ' })
+  @Min(0, { message: 'Giá không được âm' })
+  basePrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
   @IsNumber({}, { message: 'Số lượng tồn kho phải là số' })
   @Min(0)
   stock?: number;
 
   @IsOptional()
   @IsString()
-  unit?: string;
+  status?: string;
 
   @IsOptional()
   @IsString()
-  category?: string;
+  description?: string;
 
   @IsOptional()
-  @IsUrl({ protocols: ['http', 'https'], require_protocol: true }, { message: 'URL hình ảnh phải hợp lệ (http/https)' })
+  @IsString()
+  reason?: string;
+
+  @IsOptional()
+  @IsUrl({}, { message: 'imageUrl phải là một URL hợp lệ' })
   imageUrl?: string;
 
   @IsOptional()
-  @IsArray({ message: 'Danh sách hình ảnh phải là mảng chuỗi' })
-  @IsUrl({ protocols: ['http', 'https'], require_protocol: true }, { each: true, message: 'Mỗi URL hình ảnh phải hợp lệ (http/https)' })
-  @ArrayMaxSize(10, { message: 'Tối đa 10 ảnh cho mỗi sản phẩm' })
-  images?: string[];
+  @IsString({ message: 'cloudinaryPublicId phải là chuỗi ký tự' })
+  cloudinaryPublicId?: string;
 
   @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
+  @IsArray({ message: 'images phải là một danh sách' })
+  @ArrayMaxSize(10, { message: 'Tối đa 10 ảnh cho mỗi sản phẩm' })
+  @IsImageArray({ message: 'Mỗi đường dẫn trong images phải là một URL hợp lệ' })
+  images?: any[];
+
+  @IsOptional()
+  @IsArray({ message: 'imageDetails phải là danh sách chi tiết ảnh' })
+  @ArrayMaxSize(10, { message: 'Tối đa 10 ảnh cho mỗi sản phẩm' })
+  @ValidateNested({ each: true })
+  @Type(() => ProductImageDto)
+  imageDetails?: ProductImageDto[];
 }

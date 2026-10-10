@@ -1,6 +1,7 @@
-import { Controller, Post, Get, Body, UseGuards, Request, Inject, HttpCode } from '@nestjs/common';
+﻿import { Controller, Post, Get, Body, UseGuards, Request, Inject, HttpCode } from '@nestjs/common';
 import { IotService } from './iot.service';
 import { HmacAuthGuard } from '../common/guards/hmac-auth.guard';
+import { IotEventDto } from './dto/iot-event.dto';
 
 @UseGuards(HmacAuthGuard)
 @Controller('iot')
@@ -9,7 +10,7 @@ export class IotController {
 
   @HttpCode(200)
   @Post('events')
-  handleEvent(@Request() req: any, @Body() body: any) {
+  handleEvent(@Request() req: any, @Body() body: IotEventDto) {
     return this.iotService.handleEvent(req.device, body);
   }
 
