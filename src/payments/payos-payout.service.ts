@@ -46,9 +46,9 @@ export class PayOSPayoutService {
   private readonly baseUrl = 'https://api-merchant.payos.vn';
 
   private getCredentials() {
-    const clientId = process.env.PAYOS_CLIENT_ID?.trim();
-    const apiKey = process.env.PAYOS_API_KEY?.trim();
-    const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
+    const clientId = process.env.PAYOS_PAYOUT_CLIENT_ID?.trim() || process.env.PAYOS_CLIENT_ID?.trim();
+    const apiKey = process.env.PAYOS_PAYOUT_API_KEY?.trim() || process.env.PAYOS_API_KEY?.trim();
+    const checksumKey = process.env.PAYOS_PAYOUT_CHECKSUM_KEY?.trim() || process.env.PAYOS_CHECKSUM_KEY?.trim();
 
     return { clientId, apiKey, checksumKey };
   }
@@ -56,7 +56,7 @@ export class PayOSPayoutService {
   createPayoutSignature(params: PayosPayoutRequestParams): string {
     const { checksumKey } = this.getCredentials();
     if (!checksumKey) {
-      throw new InternalServerErrorException('PAYOS_CHECKSUM_KEY chua du?c c?u h�nh');
+      throw new InternalServerErrorException('PAYOS_CHECKSUM_KEY chua du?c c?u h�nh');
     }
     return signPayoutRequest(params, checksumKey);
   }
@@ -66,7 +66,7 @@ export class PayOSPayoutService {
 
     if (!clientId || !apiKey || !checksumKey) {
       throw new InternalServerErrorException(
-        'Chua c?u h�nh d?y d? PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY trong server .env'
+        'Chua c?u h�nh d?y d? PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY trong server .env'
       );
     }
 
@@ -117,13 +117,14 @@ export class PayOSPayoutService {
         throw new BadRequestException({
           success: false,
           code: 'PAYOS_PAYOUT_FAILED',
-          message: result.desc || 'T?o y�u c?u chi ti?n PayOS th?t b?i',
+          message: result.desc || 'T?o y�u c?u chi ti?n PayOS th?t b?i',
           details: result,
         });
       }
 
       return result;
     } catch (err: any) {
+      if (err instanceof BadRequestException) throw err;
       if (err instanceof BadRequestException) throw err;
       this.logger.error(`PayOS Payout request network error: ${err.message}`);
       throw new InternalServerErrorException(`L?i k?t n?i t?i PayOS Payout API: ${err.message}`);
@@ -159,7 +160,7 @@ export class PayOSPayoutService {
       return await response.json();
     } catch (err: any) {
       this.logger.error(`PayOS getPayout error: ${err.message}`);
-      throw new InternalServerErrorException(`Kh�ng th? tra c?u payout: ${err.message}`);
+      throw new InternalServerErrorException(`Kh�ng th? tra c?u payout: ${err.message}`);
     }
   }
 
@@ -186,7 +187,7 @@ export class PayOSPayoutService {
       return await response.json();
     } catch (err: any) {
       this.logger.error(`PayOS getPayouts error: ${err.message}`);
-      throw new InternalServerErrorException(`Kh�ng th? tra c?u danh s�ch payout: ${err.message}`);
+      throw new InternalServerErrorException(`Kh�ng th? tra c?u danh s�ch payout: ${err.message}`);
     }
   }
 
@@ -209,6 +210,7 @@ export class PayOSPayoutService {
       };
     }
 
+    let result: any;
     try {
       const response = await fetch(`${this.baseUrl}/v1/payouts-account/balance`, {
         method: 'GET',
@@ -217,10 +219,22 @@ export class PayOSPayoutService {
           'x-api-key': apiKey,
         },
       });
-      return await response.json();
+      result = await response.json();
     } catch (err: any) {
-      this.logger.error(`PayOS getPayoutBalance error: ${err.message}`);
-      throw new InternalServerErrorException(`Kh�ng th? l?y s? du chi PayOS: ${err.message}`);
+      this.logger.error(`PayOS getPayoutBalance network error: ${err.message}`);
+      throw new InternalServerErrorException(`Lỗi kết nối tới PayOS Payout: ${err.message}`);
     }
+
+    if (result && result.code !== '00') {
+      this.logger.warn(`[PayOS Payout] Kênh chi hộ (Payout) trả mã lỗi ${result.code}: ${result.desc}`);
+      throw new BadRequestException({
+        success: false,
+        code: result.code === '601' ? 'PAYOS_PAYOUT_NOT_CONFIGURED' : 'PAYOS_PAYOUT_ERROR',
+        message: result.desc || `API Key PayOS chưa được kích hoạt quyền Chi hộ (Payout) hoặc không tồn tại (Code: ${result.code})`,
+        details: result,
+      });
+    }
+
+    return result;
   }
 }

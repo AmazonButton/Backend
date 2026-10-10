@@ -7,6 +7,7 @@ import { sortObjDataByKey, convertObjToQueryStr } from '../src/payments/payos.he
 import bcrypt from 'bcryptjs';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AdminService } from '../src/admin/admin.service';
+import { AdminRepository } from '../src/admin/admin.repository';
 import { RentalsService } from '../src/rentals/rentals.service';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { StoreSubscriptionsService } from '../src/store-subscriptions/store-subscriptions.service';
@@ -16,6 +17,8 @@ import { CryptoService } from '../src/security/crypto.service';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
 async function runMasterSuperpowersQASuite() {
+  let createdQaProduct: any = null;
+  let createdStore: any = null;
   console.log('================================================================================');
   console.log('⚡ SUPERPOWERS MASTER QA TEST SUITE: SMART ORDER BUTTON & MARKETPLACE ECOSYSTEM');
   console.log('================================================================================\n');
@@ -24,7 +27,8 @@ async function runMasterSuperpowersQASuite() {
   await prisma.$connect();
 
   const cryptoService = new CryptoService();
-  const adminService = new AdminService(prisma);
+  const adminRepo = new AdminRepository(prisma);
+  const adminService = new AdminService(adminRepo);
   const rentalsService = new RentalsService(prisma);
   const walletService = new StoreWalletService(prisma);
   const subscriptionsService = new StoreSubscriptionsService(prisma, walletService);
@@ -104,6 +108,7 @@ async function runMasterSuperpowersQASuite() {
         status: 'ACTIVE',
       },
     });
+    createdStore = store;
     assert('1.A-IAM', 'Khởi tạo tài khoản Store Owner, Customer và Store trong DB thành công', !!store.storeId);
 
     // 1.B Marketplace Subscription Plan & Listing Enforcement
@@ -179,6 +184,7 @@ async function runMasterSuperpowersQASuite() {
       },
     });
 
+    const SMART_IOT_BULB_URL = 'https://res.cloudinary.com/daiqbvy5y/image/upload/v1791547383/smart-order/smart-iot-bulb.svg';
     const product = await prisma.product.create({
       data: {
         storeId: store.storeId,
@@ -187,8 +193,16 @@ async function runMasterSuperpowersQASuite() {
         productCode: `PROD_QA_${timestamp}`,
         basePrice: 200000,
         status: 'ACTIVE',
+        images: {
+          create: {
+            imageUrl: SMART_IOT_BULB_URL,
+            isThumbnail: true,
+            displayOrder: 0,
+          },
+        },
       },
     });
+    createdQaProduct = product;
 
     await prisma.inventory.update({
       where: { productId: product.productId },
@@ -213,6 +227,7 @@ async function runMasterSuperpowersQASuite() {
         storeId: store.storeId,
         addressId: customerAddress.addressId,
         status: 'ACTIVE',
+        hmacSecret: 'sec_qa_' + timestamp,
         buttonProducts: {
           create: {
             productId: product.productId,
@@ -601,6 +616,7 @@ async function runMasterSuperpowersQASuite() {
         addressId: customerAddress.addressId,
         buttonName: 'Jammed Switch Test Button',
         status: 'ACTIVE',
+        hmacSecret: 'sec_jam_' + timestamp,
         buttonProducts: {
           create: {
             productId: product.productId,
@@ -700,6 +716,26 @@ async function runMasterSuperpowersQASuite() {
     console.error('Fatal error during Superpowers QA Suite:', err);
     process.exit(1);
   } finally {
+    try {
+      if (createdQaProduct?.productId) {
+        if (createdStore?.storeId) {
+          const qaOrders = await prisma.order.findMany({ where: { storeId: createdStore.storeId } });
+          const qaOrderIds = qaOrders.map((o: any) => o.orderId);
+          if (qaOrderIds.length > 0) {
+            await prisma.paymentTransaction.deleteMany({ where: { orderId: { in: qaOrderIds } } });
+            await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: qaOrderIds } } });
+            await prisma.orderItem.deleteMany({ where: { orderId: { in: qaOrderIds } } });
+            await prisma.order.deleteMany({ where: { orderId: { in: qaOrderIds } } });
+          }
+        }
+        await prisma.buttonProduct.deleteMany({ where: { productId: createdQaProduct.productId } });
+        await prisma.inventory.deleteMany({ where: { productId: createdQaProduct.productId } });
+        await prisma.productImage.deleteMany({ where: { productId: createdQaProduct.productId } });
+        await prisma.product.deleteMany({ where: { productId: createdQaProduct.productId } });
+      }
+    } catch (cleanupErr: any) {
+      console.warn('QA fixture cleanup warning:', cleanupErr.message);
+    }
     await prisma.$disconnect();
   }
 }

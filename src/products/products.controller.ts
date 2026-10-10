@@ -15,6 +15,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { ProductQueryDto } from './dto/query-product.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -28,10 +29,22 @@ export class ProductsController {
 
   @Get()
   @ApiOperation({ summary: 'Xem danh sách sản phẩm và tồn kho' })
-  async list(@Request() req: any, @Query('storeId') storeId?: string) {
-    const targetStoreId = req.user.storeId || storeId;
-    const data = await this.productsService.list(targetStoreId);
-    return { success: true, data };
+  async list(
+    @Request() req: any,
+    @Query() query: ProductQueryDto,
+  ) {
+    const targetStoreId = req.user.storeId || query.storeId;
+    const effectivePageSize = query.pageSize || query.limit;
+    const pagination = {
+      page: query.page,
+      pageSize: effectivePageSize,
+    };
+    const res = await this.productsService.list(targetStoreId, pagination);
+    return {
+      success: true,
+      data: res.data,
+      ...(res.pagination ? { pagination: res.pagination } : {}),
+    };
   }
 
   @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')

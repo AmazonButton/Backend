@@ -11,22 +11,34 @@ export interface ProductImageInput {
 export class ProductsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async findMany(storeId?: bigint) {
+  async findMany(storeId?: bigint, pagination?: { page?: number; pageSize?: number }) {
     const whereClause: any = {};
     if (storeId) {
       whereClause.storeId = storeId;
     }
-    return this.prisma.product.findMany({
-      where: whereClause,
-      include: {
-        inventory: true,
-        category: true,
-        images: {
-          orderBy: { displayOrder: 'asc' },
+    const page = pagination?.page && pagination.page > 0 ? Number(pagination.page) : 1;
+    const pageSize = pagination?.pageSize && pagination.pageSize > 0 ? Number(pagination.pageSize) : undefined;
+    const skip = pageSize ? (page - 1) * pageSize : undefined;
+    const take = pageSize ? pageSize : undefined;
+
+    const [items, total] = await Promise.all([
+      this.prisma.product.findMany({
+        where: whereClause,
+        include: {
+          inventory: true,
+          category: true,
+          images: {
+            orderBy: { displayOrder: 'asc' },
+          },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        ...(skip !== undefined ? { skip } : {}),
+        ...(take !== undefined ? { take } : {}),
+      }),
+      this.prisma.product.count({ where: whereClause }),
+    ]);
+
+    return { items, total, page, pageSize: pageSize || total };
   }
 
   async findById(productId: bigint) {
@@ -67,9 +79,15 @@ export class ProductsRepository {
         data: productData,
       });
 
-      // Automatically create Inventory record for product
-      const inventory = await tx.inventory.create({
-        data: {
+      // Automatically create or sync Inventory record for product (safe against DB trigger)
+      const inventory = await tx.inventory.upsert({
+        where: {
+          productId: product.productId,
+        },
+        update: {
+          quantityOnHand: initialStock,
+        },
+        create: {
           storeId: product.storeId,
           productId: product.productId,
           quantityOnHand: initialStock,

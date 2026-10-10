@@ -1,6 +1,8 @@
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
 import crypto from 'crypto';
 
-const BASE_URL = 'http://localhost:5000';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000/api/v1';
 
 function logTest(name: string, passed: boolean, detail?: string) {
   if (passed) {
@@ -21,7 +23,7 @@ async function runTests() {
   // 1. Auth: Store Owner Login
   let storeToken = '';
   try {
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+    const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -31,7 +33,7 @@ async function runTests() {
     });
     const data = await res.json();
     if (res.status === 200 && data.data?.token) {
-      storeToken = data.data.token;
+      storeToken = data.data?.token || data.data?.accessToken || data.accessToken;
       logTest('1. Auth: Store Owner Login', true);
       passed++;
     } else {
@@ -46,7 +48,7 @@ async function runTests() {
   let customerToken = '';
   let customerProfileId = '';
   try {
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+    const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -56,7 +58,7 @@ async function runTests() {
     });
     const data = await res.json();
     if (res.status === 200 && data.data?.token) {
-      customerToken = data.data.token;
+      customerToken = data.data?.token || data.data?.accessToken || data.accessToken;
       customerProfileId = data.data.user.customerProfileId;
       logTest('2. Auth: Customer Login', true, `Profile: ${customerProfileId}`);
       passed++;
@@ -72,7 +74,7 @@ async function runTests() {
   let registeredDevice: any = null;
   const mockDeviceSecret = `sec_zt_${crypto.randomBytes(16).toString('hex')}`;
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -100,11 +102,17 @@ async function runTests() {
   // 4. Start Provisioning Session via QR Code Payload
   let provisioningSession: any = null;
   try {
-    const qrPayload = registeredDevice.qrPayload || `SOBPAIR://setup?device=${registeredDevice.deviceId}&token=${registeredDevice.pairingToken}&v=1`;
-    const res = await fetch(`${BASE_URL}/api/provisioning/session`, {
+    const repairRes = await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/re-pair`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${storeToken}` },
+    });
+    const repairData = await repairRes.json();
+    const token = repairData.data?.pairingToken || repairData.pairingToken;
+
+    const res = await fetch(`${BASE_URL}/provisioning/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qrPayload }),
+      body: JSON.stringify({ deviceId: registeredDevice.deviceId, token }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {
@@ -121,7 +129,7 @@ async function runTests() {
 
   // 5. Verify Session Validity
   try {
-    const res = await fetch(`${BASE_URL}/api/provisioning/verify`, {
+    const res = await fetch(`${BASE_URL}/provisioning/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: provisioningSession.sessionId }),
@@ -140,7 +148,7 @@ async function runTests() {
 
   // 6. Security: Tampered Token Rejection
   try {
-    const res = await fetch(`${BASE_URL}/api/provisioning/session`, {
+    const res = await fetch(`${BASE_URL}/provisioning/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -164,7 +172,8 @@ async function runTests() {
   try {
     // Lookup device secret directly from backend db (known for seeded test devices, e.g. BTN-8829-WTR)
     const testDeviceId = 'BTN-8829-WTR';
-    const testSecret = 'sec_smart_button_8829_wtr_key_99';
+    const devRecord = await prisma.ioTButton.findFirst({ where: { deviceId: testDeviceId } });
+    const testSecret = devRecord?.hmacSecret || 'sec_smart_button_8829_wtr_key_99';
 
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = `boot_${crypto.randomBytes(8).toString('hex')}`;
@@ -181,7 +190,7 @@ async function runTests() {
       .update(`${testDeviceId}:${timestamp}:${nonce}:${bodyJson}`)
       .digest('hex');
 
-    const res = await fetch(`${BASE_URL}/api/devices/bootstrap`, {
+    const res = await fetch(`${BASE_URL}/devices/bootstrap`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -207,7 +216,8 @@ async function runTests() {
   // 8. Security: Anti-Replay Attack on Bootstrap (Reused Nonce)
   try {
     const testDeviceId = 'BTN-8829-WTR';
-    const testSecret = 'sec_smart_button_8829_wtr_key_99';
+    const devRecord = await prisma.ioTButton.findFirst({ where: { deviceId: testDeviceId } });
+    const testSecret = devRecord?.hmacSecret || 'sec_smart_button_8829_wtr_key_99';
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = 'FIXED_REPLAY_NONCE_9988';
     const body = { deviceId: testDeviceId, uptime: 10 };
@@ -218,7 +228,7 @@ async function runTests() {
       .digest('hex');
 
     // First request
-    await fetch(`${BASE_URL}/api/devices/bootstrap`, {
+    await fetch(`${BASE_URL}/devices/bootstrap`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -231,7 +241,7 @@ async function runTests() {
     });
 
     // Replayed request
-    const replayRes = await fetch(`${BASE_URL}/api/devices/bootstrap`, {
+    const replayRes = await fetch(`${BASE_URL}/devices/bootstrap`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -256,7 +266,7 @@ async function runTests() {
 
   // 9. Customer Claims Device Ownership
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${registeredDevice.deviceId}/claim`, {
+    const res = await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/claim`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -278,7 +288,7 @@ async function runTests() {
 
   // 10. Customer Unclaims Device
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${registeredDevice.deviceId}/unclaim`, {
+    const res = await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/unclaim`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -300,7 +310,7 @@ async function runTests() {
   // 11. Transfer Device Workflow
   try {
     // First claim again
-    await fetch(`${BASE_URL}/api/devices/${registeredDevice.deviceId}/claim`, {
+    await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/claim`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -309,7 +319,7 @@ async function runTests() {
     });
 
     // Transfer
-    const res = await fetch(`${BASE_URL}/api/devices/${registeredDevice.deviceId}/transfer`, {
+    const res = await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/transfer`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -330,7 +340,7 @@ async function runTests() {
 
   // 12. Factory Reset (Keeps Hardware ID & HMAC Key)
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${registeredDevice.deviceId}/factory-reset`, {
+    const res = await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/factory-reset`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -352,7 +362,7 @@ async function runTests() {
   // 13. Admin Security Hub: Review Recorded Incidents
   try {
     // Admin login
-    const adminLoginRes = await fetch(`${BASE_URL}/api/auth/login`, {
+    const adminLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -361,9 +371,9 @@ async function runTests() {
       }),
     });
     const adminData = await adminLoginRes.json();
-    const adminToken = adminData.data.token;
+    const adminToken = adminData.data?.token || adminData.data?.accessToken || adminData.accessToken;
 
-    const res = await fetch(`${BASE_URL}/api/admin/security/devices`, {
+    const res = await fetch(`${BASE_URL}/admin/security/devices`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
     const data = await res.json();

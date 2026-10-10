@@ -13,7 +13,7 @@ export class MailService {
 
   private initTransporter() {
     const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASSWORD?.trim();
+    const pass = (process.env.SMTP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s+/g, '');
     const host = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
     const port = Number(process.env.SMTP_PORT) || 465;
 
@@ -31,7 +31,7 @@ export class MailService {
     }
   }
 
-  private buildOtpTemplate(title: string, message: string, otp: string, expiryMinutes = 10): string {
+  private buildOtpTemplate(title: string, message: string, otp: string, expiryMinutes = 15): string {
     return `
       <div style="max-width: 500px; margin: 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; background-color: #ffffff;">
         <div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #ffffff; padding: 24px; text-align: center;">
@@ -53,15 +53,30 @@ export class MailService {
   }
 
   async sendMail(options: { to: string; subject: string; text: string; html: string }): Promise<boolean> {
-    if (!this.isConfigured || !this.transporter) {
-      this.logger.log(`[DEV EMAIL DISPATCH] TO: ${options.to} | SUBJECT: ${options.subject}`);
-      this.logger.log(`[DEV EMAIL CONTENT] ${options.text}`);
+    // Mask OTP digits in all environment logs
+    const maskedText = options.text.replace(/\b\d{6}\b/g, '******');
+
+    const isDummyDomain = /@.*\.(local|test|example|invalid)$/i.test(options.to) ||
+                          /@(smartorder\.local|smartorder\.test|localhost)$/i.test(options.to);
+    const isTestEnv = process.env.NODE_ENV === 'test' || process.env.DISABLE_REAL_EMAIL === 'true';
+
+    // In test environment or for dummy test domains (like customer@smartorder.local),
+    // skip actual SMTP delivery to avoid mailer-daemon bounce loops and inbox spam.
+    if (process.env.NODE_ENV === 'production' && (!this.isConfigured || !this.transporter)) {
+      this.logger.error(`[CRITICAL] SMTP not configured in production. Cannot send email to ${options.to}`);
+      return false;
+    }
+
+    if (!this.isConfigured || !this.transporter || isDummyDomain || isTestEnv) {
+      this.logger.log(`[SIMULATED EMAIL DISPATCH] TO: ${options.to} | SUBJECT: ${options.subject}`);
+      this.logger.log(`[SIMULATED EMAIL CONTENT] ${maskedText}`);
       return true;
     }
     try {
-      const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+      const rawFrom = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@smartorder.vn';
+      const from = rawFrom.includes('<') ? rawFrom : `"Smart Order Platform" <${rawFrom}>`;
       await this.transporter.sendMail({
-        from: `"Smart Order Platform" <${from}>`,
+        from,
         to: options.to,
         subject: options.subject,
         text: options.text,
@@ -81,8 +96,8 @@ export class MailService {
     return this.sendMail({
       to: email,
       subject: '[Smart Order] Mã OTP xác minh tài khoản',
-      text: `${title} - ${message} Mã OTP: ${otp} (Hiệu lực: 10 phút)`,
-      html: this.buildOtpTemplate(title, message, otp, 10),
+      text: `${title} - ${message} Mã OTP: ${otp} (Hiệu lực: 15 phút)`,
+      html: this.buildOtpTemplate(title, message, otp, 15),
     });
   }
 
@@ -92,8 +107,8 @@ export class MailService {
     return this.sendMail({
       to: email,
       subject: '[Smart Order] Mã OTP đặt lại mật khẩu',
-      text: `${title} - ${message} Mã OTP: ${otp} (Hiệu lực: 10 phút)`,
-      html: this.buildOtpTemplate(title, message, otp, 10),
+      text: `${title} - ${message} Mã OTP: ${otp} (Hiệu lực: 15 phút)`,
+      html: this.buildOtpTemplate(title, message, otp, 15),
     });
   }
 }

@@ -193,6 +193,20 @@ CREATE TABLE IF NOT EXISTS product_price_history (
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Bảng lưu trữ đa hình ảnh sản phẩm qua Cloudinary (Option 2 - Gallery & Thumbnail)
+CREATE TABLE IF NOT EXISTS product_image (
+    image_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    product_id BIGINT NOT NULL REFERENCES product(product_id) ON DELETE CASCADE,
+    image_url TEXT NOT NULL,
+    is_thumbnail BOOLEAN NOT NULL DEFAULT FALSE,
+    display_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_image_product_id ON product_image(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_image_is_thumbnail ON product_image(is_thumbnail);
+
 CREATE TABLE IF NOT EXISTS product_discount (
     discount_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     product_id BIGINT NOT NULL REFERENCES product(product_id) ON DELETE RESTRICT,

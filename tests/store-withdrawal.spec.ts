@@ -1,6 +1,7 @@
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { AdminService } from '../src/admin/admin.service';
+import { AdminRepository } from '../src/admin/admin.repository';
 
 async function testStoreWithdrawal() {
   console.log('Testing Store Withdrawal Flow & Admin Transfer Approval...');
@@ -8,7 +9,8 @@ async function testStoreWithdrawal() {
   await prisma.$connect();
 
   const walletService = new StoreWalletService(prisma);
-  const adminService = new AdminService(prisma);
+  const adminRepo = new AdminRepository(prisma);
+  const adminService = new AdminService(adminRepo);
   let failed = 0;
 
   try {

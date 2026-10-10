@@ -29,8 +29,9 @@ export class PaymentsController {
     return this.paymentsService.handlePayosWebhook(body);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
-  getTransaction(@Param('id') id: string) {
-    return this.paymentsService.getTransaction(id);
+  getTransaction(@Param('id') id: string, @Request() req: any) {
+    return this.paymentsService.getTransaction(id, req.user);
   }
 }

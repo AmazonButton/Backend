@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PaymentsRepository } from './payments.repository';
@@ -23,8 +24,21 @@ export class PaymentsService {
       throw new NotFoundException({
         success: false,
         code: 'ORDER_NOT_FOUND',
-        message: `KhÙng tÏm th?y don h‡ng v?i m„ #${dto.orderId}`,
+        message: `Kh√¥ng t√¨m th·∫•y ƒë∆°n h√†ng v·ªõi m√£ #${dto.orderId}`,
       });
+    }
+
+    // Ownership verification (Anti-BOLA/IDOR)
+    if (userId) {
+      const isCustomerOwner = (order as any).customer && (order as any).customer.userId === userId;
+      const isStoreOwner = (order as any).store && (order as any).store.ownerUserId === userId;
+      if (!isCustomerOwner && !isStoreOwner) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ORDER_ACCESS_DENIED',
+          message: 'B·∫°n kh√¥ng c√≥ quy·ªÅn t·∫°o li√™n k·∫øt thanh to√°n cho ƒë∆°n h√†ng n√†y',
+        });
+      }
     }
 
     const clientId = process.env.PAYOS_CLIENT_ID?.trim();
@@ -35,22 +49,23 @@ export class PaymentsService {
       throw new InternalServerErrorException({
         success: false,
         code: 'PAYOS_CONFIG_MISSING',
-        message: 'Chua c?u hÏnh d?y d? PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY trong server .env',
+        message: 'Ch∆∞a c·∫•u h√¨nh ƒë·∫ßy ƒë·ªß PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY trong server .env',
       });
     }
 
-    const orderAmount = dto.amount || Number(order.totalAmount);
+    // Strict security: Enforce official order totalAmount from DB (ignore client dto.amount to prevent tampering)
+    const orderAmount = Number(order.totalAmount);
     if (!orderAmount || orderAmount < 1000) {
-      throw new BadRequestException('S? ti?n thanh to·n ph?i t? 1,000 VND tr? lÍn');
+      throw new BadRequestException('S? ti?n thanh toÔøΩn ph?i t? 1,000 VND tr? lÔøΩn');
     }
 
-    // Sinh orderCode ng?u nhiÍn duy nh?t d?ng s? nguyÍn duong cho PayOS (PayOS yÍu c?u orderCode l‡ int <= 9007199254740991)
+    // Sinh orderCode ng?u nhiÔøΩn duy nh?t d?ng s? nguyÔøΩn duong cho PayOS (PayOS yÔøΩu c?u orderCode lÔøΩ int <= 9007199254740991)
     const orderCode = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
     const description = (dto.description || `DH${order.orderCode || order.orderId}`).slice(0, 25);
     const returnUrl = dto.returnUrl || process.env.PAYOS_RETURN_URL || 'http://localhost:3000/payment/success';
     const cancelUrl = dto.cancelUrl || process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payment/cancel';
 
-    // T?o b?n ghi PaymentTransaction ? tr?ng th·i PENDING tru?c
+    // T?o b?n ghi PaymentTransaction ? tr?ng thÔøΩi PENDING tru?c
     const transaction = await this.paymentsRepo.createTransaction({
       orderId: rawOrderId,
       provider: 'PAYOS',
@@ -75,7 +90,7 @@ export class PaymentsService {
     if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id') {
       return {
         success: true,
-        message: 'T?o link thanh to·n PayOS th‡nh cÙng (mock)',
+        message: 'T?o link thanh toÔøΩn PayOS thÔøΩnh cÔøΩng (mock)',
         data: {
           paymentTransactionId: transaction.paymentTransactionId.toString(),
           orderCode,
@@ -114,13 +129,13 @@ export class PaymentsService {
         throw new BadRequestException({
           success: false,
           code: 'PAYOS_CREATION_FAILED',
-          message: result.desc || 'KhÙng th? t?o link thanh to·n PayOS',
+          message: result.desc || 'KhÔøΩng th? t?o link thanh toÔøΩn PayOS',
         });
       }
 
       return {
         success: true,
-        message: 'T?o link thanh to·n PayOS th‡nh cÙng',
+        message: 'T?o link thanh toÔøΩn PayOS thÔøΩnh cÔøΩng',
         data: {
           paymentTransactionId: transaction.paymentTransactionId.toString(),
           orderCode,
@@ -135,7 +150,7 @@ export class PaymentsService {
       if (err instanceof BadRequestException) throw err;
       this.logger.error(`PayOS request failed: ${err.message}`);
       await this.paymentsRepo.updateTransactionStatus(transaction.paymentTransactionId, 'FAILED');
-      throw new InternalServerErrorException('L?i k?t n?i t?i c?ng thanh to·n PayOS');
+      throw new InternalServerErrorException('L?i k?t n?i t?i c?ng thanh toÔøΩn PayOS');
     }
   }
 
@@ -156,7 +171,7 @@ export class PaymentsService {
       return { success: false, message: 'Transaction not found' };
     }
 
-    // N?u d„ ho‡n th‡nh tru?c dÛ, tr? v? idempotency OK (Section 13)
+    // N?u dÔøΩ hoÔøΩn thÔøΩnh tru?c dÔøΩ, tr? v? idempotency OK (Section 13)
     if (transaction.status === 'PAID') {
       return { success: true, message: 'Already processed' };
     }
@@ -175,11 +190,26 @@ export class PaymentsService {
     }
   }
 
-  async getTransaction(id: string) {
+  async getTransaction(id: string, user?: any) {
+    if (!id || !/^\d+$/.test(id)) {
+      throw new NotFoundException('Kh√¥ng t√¨m th·∫•y th√¥ng tin giao d·ªãch');
+    }
     const transaction = await this.paymentsRepo.findTransactionById(BigInt(id));
     if (!transaction) {
-      throw new NotFoundException('KhÙng tÏm th?y thÙng tin giao d?ch');
+      throw new NotFoundException('Kh√¥ng t√¨m th·∫•y th√¥ng tin giao d·ªãch');
     }
+
+    // BOLA / IDOR Protection
+    if (user) {
+      const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN';
+      const isStoreStaff = user.storeId && transaction.order?.storeId && user.storeId.toString() === transaction.order.storeId.toString();
+      const isCustomerOwner = user.customerProfileId && transaction.order?.customerId && user.customerProfileId.toString() === transaction.order.customerId.toString();
+
+      if (!isSuperAdmin && !isStoreStaff && !isCustomerOwner) {
+        throw new ForbiddenException('B·∫°n kh√¥ng c√≥ quy·ªÅn truy c·∫≠p th√¥ng tin giao d·ªãch thanh to√°n n√†y');
+      }
+    }
+
     return {
       success: true,
       data: {

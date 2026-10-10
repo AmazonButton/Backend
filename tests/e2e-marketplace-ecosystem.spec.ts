@@ -1,5 +1,6 @@
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AdminService } from '../src/admin/admin.service';
+import { AdminRepository } from '../src/admin/admin.repository';
 import { RentalsService } from '../src/rentals/rentals.service';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { StoreSubscriptionsService } from '../src/store-subscriptions/store-subscriptions.service';
@@ -12,7 +13,8 @@ async function testFullMarketplaceE2E() {
   const prisma = new PrismaService();
   await prisma.$connect();
 
-  const adminService = new AdminService(prisma);
+  const adminRepo = new AdminRepository(prisma);
+  const adminService = new AdminService(adminRepo);
   const rentalsService = new RentalsService(prisma);
   const walletService = new StoreWalletService(prisma);
   const subscriptionsService = new StoreSubscriptionsService(prisma, walletService);

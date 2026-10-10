@@ -58,6 +58,9 @@ export class StoresService {
   }
 
   async getStoreById(id: string | number | bigint) {
+    if (typeof id === 'string' && !/^\d+$/.test(id)) {
+      throw new NotFoundException('Cửa hàng không tồn tại hoặc đã ngừng hoạt động');
+    }
     const rawId = BigInt(id);
     const store = await this.prisma.store.findFirst({
       where: {

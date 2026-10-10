@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-const BASE_URL = 'http://localhost:5000';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000/api/v1';
 
 function logTest(name: string, passed: boolean, detail?: string) {
   if (passed) {
@@ -22,7 +22,7 @@ async function runTests() {
   let storeToken = '';
   let storeId = '';
   try {
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+    const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -48,7 +48,7 @@ async function runTests() {
   let waterProduct: any = null;
   let gasProduct: any = null;
   try {
-    const res = await fetch(`${BASE_URL}/api/products`, {
+    const res = await fetch(`${BASE_URL}/products`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
@@ -68,7 +68,7 @@ async function runTests() {
   // 3. Register New Physical Device with auto-generated SOB ID
   let autoDevice: any = null;
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -99,7 +99,7 @@ async function runTests() {
 
   // 4. Verify QR Payload and Zero HMAC Secret Leak
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.id}`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.id}`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
@@ -120,7 +120,7 @@ async function runTests() {
 
   // 5. Test Duplicate Device ID Rejection
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -145,7 +145,7 @@ async function runTests() {
 
   // 6. Test Duplicate MAC Address Rejection
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -170,7 +170,7 @@ async function runTests() {
 
   // 7. Assign Product (Water SKU) to Device
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.deviceId}/assign-product`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.deviceId}/assign-product`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -195,7 +195,7 @@ async function runTests() {
 
   // 8. Reassign to a Different Product (Gas SKU) WITHOUT touching firmware
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.deviceId}/assign-product`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.deviceId}/assign-product`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -220,7 +220,7 @@ async function runTests() {
 
   // 9. Verify Device Audit Logs (recorded old vs new values)
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.deviceId}/audit-logs`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.deviceId}/audit-logs`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
@@ -238,7 +238,7 @@ async function runTests() {
 
   // 10. Fleet Stats API Verification
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/fleet/stats`, {
+    const res = await fetch(`${BASE_URL}/devices/fleet/stats`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
@@ -265,7 +265,7 @@ async function runTests() {
       },
     ];
 
-    const res = await fetch(`${BASE_URL}/api/devices/bulk-import`, {
+    const res = await fetch(`${BASE_URL}/devices/bulk-import`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -288,7 +288,7 @@ async function runTests() {
   // 12. Device Templates: Create and Deploy
   try {
     // Create Template
-    const createRes = await fetch(`${BASE_URL}/api/device-templates`, {
+    const createRes = await fetch(`${BASE_URL}/device-templates`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -308,7 +308,7 @@ async function runTests() {
     const templateId = createData.data.id;
 
     // Deploy Template to autoDevice
-    const deployRes = await fetch(`${BASE_URL}/api/device-templates/${templateId}/deploy`, {
+    const deployRes = await fetch(`${BASE_URL}/device-templates/${templateId}/deploy`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

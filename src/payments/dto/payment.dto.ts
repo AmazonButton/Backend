@@ -1,7 +1,8 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Min, Matches, IsUrl } from 'class-validator';
 
 export class CreatePaymentLinkDto {
   @IsNotEmpty({ message: 'orderId không được để trống' })
+  @Matches(/^\d+$/, { message: 'orderId phải là số' })
   orderId: string | number;
 
   @IsOptional()
@@ -14,11 +15,11 @@ export class CreatePaymentLinkDto {
   description?: string;
 
   @IsOptional()
-  @IsString()
+  @IsUrl({ require_tld: false }, { message: 'returnUrl phải là URL hợp lệ' })
   returnUrl?: string;
 
   @IsOptional()
-  @IsString()
+  @IsUrl({ require_tld: false }, { message: 'cancelUrl phải là URL hợp lệ' })
   cancelUrl?: string;
 }
 
@@ -28,6 +29,10 @@ export class PayosWebhookDto {
 
   @IsNotEmpty()
   desc: string;
+
+  @IsOptional()
+  @IsBoolean()
+  success?: boolean;
 
   @IsNotEmpty()
   data: any;

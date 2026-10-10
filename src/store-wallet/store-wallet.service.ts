@@ -72,10 +72,11 @@ export class StoreWalletService {
       if (!currentWallet) throw new NotFoundException('Ví cửa hàng không tồn tại');
 
       // Idempotency guard: không cộng tiền trùng lặp cho cùng một đơn hàng
+      const cleanRef = orderCode.replace(/^ORDER:/, '');
       const existingTx = await tx.walletTransaction.findFirst({
         where: {
           walletId: wallet.walletId,
-          referenceId: orderCode,
+          referenceId: { in: [orderCode, `ORDER:${cleanRef}`, cleanRef] },
           type: { in: ['ORDER_REVENUE', 'PAYMENT_CREDIT'] },
         },
       });

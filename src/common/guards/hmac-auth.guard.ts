@@ -1,3 +1,4 @@
+import * as nodeCrypto from 'crypto';
 import {
   Injectable,
   CanActivate,
@@ -84,7 +85,14 @@ export class HmacAuthGuard implements CanActivate {
       throw new ForbiddenException(`Thiết bị đang ở trạng thái không hoạt động (${button.status})`);
     }
 
-    const deviceSecret = (button as any).deviceSecret || 'sec_smart_button_8829_wtr_key_99';
+    const deviceSecret = (button as any).hmacSecret;
+    if (!deviceSecret) {
+      throw new UnauthorizedException({
+        statusCode: 401,
+        code: 'DEVICE_SECRET_NOT_CONFIGURED',
+        message: 'Thiết bị chưa được cấu hình khóa bảo mật HMAC',
+      });
+    }
     const bodyString = JSON.stringify(req.body || {});
     const expectedSignature = this.crypto.calculateDeviceSignature(
       deviceSecret,
@@ -95,9 +103,6 @@ export class HmacAuthGuard implements CanActivate {
     );
 
     if (!this.crypto.safeCompare(signature, expectedSignature)) {
-      console.warn(`[HMAC ERROR] Received sig: "${signature}"`);
-      console.warn(`[HMAC ERROR] Expected sig: "${expectedSignature}"`);
-      console.warn(`[HMAC ERROR] Payload: "${deviceId}:${timestampStr}:${nonce}:${bodyString}"`);
       throw new UnauthorizedException({
         statusCode: 401,
         code: 'INVALID_SIGNATURE',

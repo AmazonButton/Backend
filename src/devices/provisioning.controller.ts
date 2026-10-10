@@ -13,6 +13,13 @@ import { ProvisioningService } from './provisioning.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import {
+  CreateSessionDto,
+  VerifySessionDto,
+  DeviceBootstrapDto,
+  ClaimDeviceDto,
+  ChangeWifiDto,
+} from './dto/provisioning.dto';
 
 @Controller()
 export class ProvisioningController {
@@ -25,7 +32,7 @@ export class ProvisioningController {
    * 1. Public endpoint: Start provisioning session by scanning QR
    */
   @Post('provisioning/session')
-  async createSession(@Body() body: any) {
+  async createSession(@Body() body: CreateSessionDto) {
     return this.provisioningService.createSession(body);
   }
 
@@ -33,15 +40,15 @@ export class ProvisioningController {
    * 2. Public endpoint: Verify provisioning session status
    */
   @Post('provisioning/verify')
-  async verifySession(@Body('sessionId') sessionId: string) {
-    return this.provisioningService.verifySession(sessionId);
+  async verifySession(@Body() body: VerifySessionDto) {
+    return this.provisioningService.verifySession(body.sessionId);
   }
 
   /**
    * 3. Hardware endpoint: ESP32 Cloud Bootstrap via HMAC-SHA256
    */
   @Post('devices/bootstrap')
-  async bootstrap(@Headers() headers: any, @Body() body: any) {
+  async bootstrap(@Headers() headers: any, @Body() body: DeviceBootstrapDto) {
     return this.provisioningService.bootstrap(headers, body);
   }
 
@@ -51,7 +58,7 @@ export class ProvisioningController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('CUSTOMER')
   @Post('devices/:id/claim')
-  async claim(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async claim(@Param('id') id: string, @Body() body: ClaimDeviceDto, @Request() req: any) {
     return this.provisioningService.claim(id, body, req.user);
   }
 
@@ -93,8 +100,8 @@ export class ProvisioningController {
   @Post(['devices/:id/change-wifi', 'provisioning/devices/:id/change-wifi'])
   async changeWifi(
     @Param('id') id: string,
-    @Body() body: { ssid?: string; password?: string },
-    @Request() req: any
+    @Body() body: ChangeWifiDto,
+    @Request() req: any,
   ) {
     return this.provisioningService.changeWifi(id, req.user, body);
   }

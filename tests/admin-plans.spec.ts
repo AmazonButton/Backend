@@ -1,12 +1,14 @@
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AdminService } from '../src/admin/admin.service';
+import { AdminRepository } from '../src/admin/admin.repository';
 
 async function testAdminPlans() {
   console.log('Testing Admin Subscription Plans & Rental Packages Management...');
   const prisma = new PrismaService();
   await prisma.$connect();
 
-  const adminService = new AdminService(prisma);
+  const adminRepo = new AdminRepository(prisma);
+  const adminService = new AdminService(adminRepo);
   let failed = 0;
 
   try {

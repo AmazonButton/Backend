@@ -25,9 +25,9 @@ async function bootstrap() {
   // Enable shutdown hooks for graceful termination
   app.enableShutdownHooks();
 
-  // Express body size limit (prevent DoS via massive payloads)
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ limit: '10mb', extended: true }));
+  // Express body size limit (prevent DoS via massive payloads) - 10kb project standard
+  app.use(express.json({ limit: '10kb' }));
+  app.use(express.urlencoded({ limit: '10kb', extended: true }));
 
   // Global exception filter for uniform error envelopes & security error masking
   app.useGlobalFilters(new AllExceptionsFilter());
@@ -63,9 +63,15 @@ async function bootstrap() {
       crossOriginOpenerPolicy: { policy: 'unsafe-none' },
     }),
   );
+  const defaultCorsOrigins = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:3000',
+  ];
   const corsOrigins = process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
-    : true;
+    : defaultCorsOrigins;
 
   app.enableCors({
     origin: corsOrigins,
@@ -74,7 +80,9 @@ async function bootstrap() {
     allowedHeaders: 'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature',
   });
 
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', {
+    exclude: ['health', 'healthz', 'readyz', 'api/v1/health'],
+  });
 
   // Setup Swagger Documentation
   const swaggerConfig = new DocumentBuilder()

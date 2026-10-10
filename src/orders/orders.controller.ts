@@ -50,8 +50,8 @@ export class OrdersController {
 
   @Roles('STORE_OWNER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/status')
-  async updateStatus(@Param('id') id: string, @Body() body: UpdateOrderStatusDto) {
-    const data = await this.ordersService.updateOrderStatus(id, body.status);
+  async updateStatus(@Param('id') id: string, @Body() body: UpdateOrderStatusDto, @Request() req: any) {
+    const data = await this.ordersService.updateOrderStatus(id, body.status, req.user);
     return { success: true, message: `Đã cập nhật trạng thái đơn: ${body.status}`, data };
   }
 

@@ -20,6 +20,20 @@ export interface UploadResult {
 
 @Injectable()
 export class MediaService {
+  private readonly ALLOWED_ROOTS = ['smart-order', 'smart-button', 'products', 'avatars', 'stores', 'general'];
+
+  private validateFolder(folder: string): string {
+    const clean = (folder || 'smart-order').trim();
+    if (clean.includes('..') || clean.includes('\\') || clean.startsWith('/')) {
+      throw new BadRequestException('Tên thư mục không hợp lệ hoặc chứa ký tự bị cấm (Path Traversal)');
+    }
+    const rootFolder = clean.split('/')[0];
+    if (!this.ALLOWED_ROOTS.includes(rootFolder)) {
+      throw new BadRequestException(`Thư mục "${clean}" không nằm trong danh sách thư mục được phép (products, avatars, stores, smart-order, smart-button, general)`);
+    }
+    return clean;
+  }
+
   constructor() {
     configureCloudinary();
   }
@@ -84,6 +98,7 @@ export class MediaService {
    * This preserves backend memory and bandwidth.
    */
   getUploadSignature(folder: string = 'smart-order'): CloudinarySignatureResponse {
+    folder = this.validateFolder(folder);
     const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -118,6 +133,7 @@ export class MediaService {
     file: Express.Multer.File,
     folder: string = 'smart-order',
   ): Promise<UploadResult> {
+    folder = this.validateFolder(folder);
     if (!file || !file.buffer) {
       throw new BadRequestException('Không tìm thấy tệp tải lên');
     }

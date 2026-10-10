@@ -1,9 +1,11 @@
+import { TokenBlacklist } from './token-blacklist';
 import {
   Injectable,
   UnauthorizedException,
   ConflictException,
   BadRequestException,
   Inject,
+  Logger,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -23,7 +25,17 @@ import {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private resendCooldowns = new Map<string, number>();
+
+  private getOtpPepper(): string {
+    return process.env.OTP_PEPPER || process.env.JWT_SECRET || 'sob_secure_otp_pepper_2026';
+  }
+
+  private hashOtp(otpCode: string, purpose: 'EMAIL_VERIFICATION' | 'PASSWORD_RESET'): string {
+    const pepper = this.getOtpPepper();
+    return crypto.createHmac('sha256', pepper).update(`${otpCode.trim()}:${purpose}`).digest('hex');
+  }
 
   constructor(
     @Inject(MailService) private readonly mailService: MailService,
@@ -70,17 +82,23 @@ export class AuthService {
     // Hash password with bcryptjs (salt rounds 12)
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Create Base User via AuthRepository
-    const newUser = await this.authRepo.createUser({
+    // Generate secure email verification token using crypto.randomInt and HMAC pepper
+    const registrationOtp = crypto.randomInt(100000, 1_000_000).toString();
+    const verificationTokenHash = this.hashOtp(registrationOtp, 'EMAIL_VERIFICATION');
+    const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    // 1. Transactional Registration with PENDING_VERIFICATION status
+    const userCreateData = {
       username,
       email,
       passwordHash,
       fullName,
       phone: phone || null,
-      status: 'ACTIVE',
-    });
+      status: 'PENDING_VERIFICATION',
+      emailVerificationToken: verificationTokenHash,
+      emailVerificationExpiresAt: verificationExpiresAt,
+    };
 
-    // Handle Store Owner registration
     if (role === 'STORE_OWNER') {
       if (!storeName) {
         throw new BadRequestException({
@@ -91,53 +109,38 @@ export class AuthService {
       }
 
       const storeCode = `STORE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      const newStore = await this.authRepo.createStoreWithOwner({
-        ownerUserId: newUser.userId,
-        name: storeName,
-        code: storeCode,
-        phone: phone || '0900000000',
-        email,
-        address: address || 'Chưa cập nhật địa chỉ',
-        status: 'ACTIVE',
-      });
-
-      // Ensure STORE_OWNER role exists
-      let ownerRole = await this.authRepo.findRoleByCode('STORE_OWNER');
-      if (!ownerRole) {
-        ownerRole = await this.authRepo.createRole({
+      const { newUser, newStore } = await this.authRepo.registerStoreOwnerTx(
+        userCreateData,
+        {
+          name: storeName,
+          code: storeCode,
+          phone: phone || '0900000000',
+          email,
+          address: address || 'Chưa cập nhật địa chỉ',
+          status: 'ACTIVE',
+        },
+        {
           roleCode: 'STORE_OWNER',
           roleName: 'Store Owner',
           description: 'Chủ cửa hàng, toàn quyền trên Store',
-        });
-      }
+        }
+      );
 
-      // Create StoreStaff record
-      await this.authRepo.createStoreStaff({
-        storeId: newStore.storeId,
+      await this.authRepo.createAuthOtp({
         userId: newUser.userId,
-        roleId: ownerRole.roleId,
-        status: 'ACTIVE',
+        email: newUser.email,
+        purpose: 'EMAIL_VERIFICATION',
+        tokenHash: verificationTokenHash,
+        expiresAt: verificationExpiresAt,
       });
 
-      const accessToken = this.jwtService.sign(
-        {
-          userId: newUser.userId.toString(),
-          email: newUser.email,
-          username: newUser.username,
-          role: 'STORE_OWNER',
-          storeId: newStore.storeId.toString(),
-          customerProfileId: null,
-        },
-        { expiresIn: '7d' },
-      );
+      // Dispatch 6-digit OTP to store owner's email
+      await this.mailService.sendRegistrationOtp(email, registrationOtp);
 
       return {
         success: true,
-        message: 'Đăng ký cửa hàng thành công!',
-        accessToken,
-        token: accessToken,
+        message: 'Đăng ký cửa hàng thành công! Vui lòng kiểm tra email để xác minh mã OTP 6 số kích hoạt tài khoản.',
         data: {
-          token: accessToken,
           user: {
             id: newUser.userId.toString(),
             userId: newUser.userId.toString(),
@@ -146,6 +149,7 @@ export class AuthService {
             fullName: newUser.fullName,
             role: 'STORE_OWNER',
             storeId: newStore.storeId.toString(),
+            status: newUser.status,
           },
           store: {
             storeId: newStore.storeId.toString(),
@@ -156,41 +160,33 @@ export class AuthService {
       };
     }
 
-    // Handle Global Customer registration
-    const customerProfile = await this.authRepo.createCustomerProfile({
-      userId: newUser.userId,
-      phone: phone || null,
-    });
-
-    if (address) {
-      await this.authRepo.createCustomerAddress({
-        customerId: customerProfile.customerId,
+    // Handle Global Customer registration transactionally
+    const { newUser, customerProfile } = await this.authRepo.registerCustomerTx(
+      userCreateData,
+      { phone: phone || null },
+      address ? {
         recipientName: fullName,
         phone: phone || '0900000000',
         addressDetail: address,
         isDefault: true,
-      });
-    }
-
-    const accessToken = this.jwtService.sign(
-      {
-        userId: newUser.userId.toString(),
-        email: newUser.email,
-        username: newUser.username,
-        role: 'CUSTOMER',
-        storeId: null,
-        customerProfileId: customerProfile.customerId.toString(),
-      },
-      { expiresIn: '7d' },
+      } : undefined
     );
+
+    await this.authRepo.createAuthOtp({
+      userId: newUser.userId,
+      email: newUser.email,
+      purpose: 'EMAIL_VERIFICATION',
+      tokenHash: verificationTokenHash,
+      expiresAt: verificationExpiresAt,
+    });
+
+    // Dispatch 6-digit OTP to customer's email
+    await this.mailService.sendRegistrationOtp(email, registrationOtp);
 
     return {
       success: true,
-      message: 'Tạo tài khoản khách hàng thành công!',
-      accessToken,
-      token: accessToken,
+      message: 'Tạo tài khoản khách hàng thành công! Vui lòng kiểm tra email để xác minh mã OTP 6 số kích hoạt tài khoản.',
       data: {
-        token: accessToken,
         user: {
           id: newUser.userId.toString(),
           userId: newUser.userId.toString(),
@@ -199,6 +195,7 @@ export class AuthService {
           fullName: newUser.fullName,
           role: 'CUSTOMER',
           customerProfileId: customerProfile.customerId.toString(),
+          status: newUser.status,
         },
       },
     };
@@ -231,6 +228,23 @@ export class AuthService {
       }
 
       supabaseUser = await response.json();
+
+      // Enforce explicit Google identity & email verification
+      const identities = supabaseUser.identities || [];
+      const hasGoogleIdentity =
+        identities.some((id: any) => id.provider === 'google') ||
+        supabaseUser.app_metadata?.provider === 'google';
+      if (!hasGoogleIdentity) {
+        throw new UnauthorizedException('Token không có định danh Google OAuth hợp lệ');
+      }
+
+      const emailVerified =
+        !!supabaseUser.email_confirmed_at ||
+        supabaseUser.user_metadata?.email_verified === true ||
+        supabaseUser.app_metadata?.email_verified === true;
+      if (!emailVerified && !supabaseUser.email_confirmed_at) {
+        throw new UnauthorizedException('Email Google chưa được xác minh');
+      }
     } catch (err: any) {
       if (err instanceof UnauthorizedException) throw err;
       throw new UnauthorizedException('Không thể xác thực token với Supabase Auth: ' + err.message);
@@ -258,20 +272,20 @@ export class AuthService {
         const passwordHash = await bcrypt.hash(randomPassword, 12);
         const username = `google_${email.split('@')[0]}_${Math.random().toString(36).substring(2, 6)}`.slice(0, 30);
 
-        const newUser = await this.authRepo.createUser({
-          username,
-          email,
-          passwordHash,
-          fullName,
-          phone: metadata.phone || null,
-          status: 'ACTIVE',
-          authId,
-        });
-
-        const customerProfile = await this.authRepo.createCustomerProfile({
-          userId: newUser.userId,
-          phone: metadata.phone || null,
-        });
+        const { newUser, customerProfile } = await this.authRepo.createGoogleUserTx(
+          {
+            username,
+            email,
+            passwordHash,
+            fullName,
+            phone: metadata.phone || null,
+            status: 'ACTIVE',
+            authId,
+          },
+          {
+            phone: metadata.phone || null,
+          },
+        );
 
         user = {
           ...newUser,
@@ -294,7 +308,11 @@ export class AuthService {
     let storeId: string | null = null;
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
 
-    if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
+    const isSuperAdmin = user.storeStaffs?.some(
+      (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
+    );
+
+    if (isSuperAdmin) {
       role = 'SUPER_ADMIN';
     } else if (user.ownedStores && user.ownedStores.length > 0) {
       role = 'STORE_OWNER';
@@ -313,8 +331,9 @@ export class AuthService {
         role,
         storeId,
         customerProfileId,
+        tokenType: 'ACCESS',
       },
-      { expiresIn: '7d' },
+      { expiresIn: '15m' },
     );
 
     // Generate rotated refresh token
@@ -398,7 +417,15 @@ export class AuthService {
     let storeId: string | null = null;
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
 
-    if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
+    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
+      .split(',')
+      .map((e) => e.trim().toLowerCase());
+    const isSuperAdmin =
+      user.storeStaffs?.some((s: any) => s.role?.roleCode === 'SUPER_ADMIN') ||
+      superAdminEmails.includes((user.email || '').toLowerCase()) ||
+      user.username === 'admin';
+
+    if (isSuperAdmin) {
       role = 'SUPER_ADMIN';
     } else if (user.ownedStores && user.ownedStores.length > 0) {
       role = 'STORE_OWNER';
@@ -416,8 +443,9 @@ export class AuthService {
         role,
         storeId,
         customerProfileId,
+        tokenType: 'ACCESS',
       },
-      { expiresIn: '1d' },
+      { expiresIn: '15m' },
     );
 
     // Generate secure 40-byte raw refresh token and store SHA-256 hash in database
@@ -495,26 +523,42 @@ export class AuthService {
       let role = 'CUSTOMER';
       let storeId: string | null = null;
       let customerProfileId: string | null = null;
+      let newRawRefreshToken = '';
 
       if (storedToken) {
         if (storedToken.isRevoked || storedToken.expiresAt < new Date()) {
           throw new UnauthorizedException('Refresh token không hợp lệ hoặc đã bị thu hồi/hết hạn');
         }
 
-        // Revoke the old refresh token (Single-use rotation)
-        await this.authRepo.revokeRefreshToken(tokenHash);
+        // Atomic refresh token rotation
+        newRawRefreshToken = crypto.randomBytes(40).toString('hex');
+        const newHash = crypto.createHash('sha256').update(newRawRefreshToken).digest('hex');
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await this.authRepo.rotateRefreshToken(tokenHash, {
+          userId: storedToken.userId,
+          tokenHash: newHash,
+          expiresAt,
+        });
         user = await this.authRepo.findById(storedToken.userId);
       } else {
         // Fallback for JWT format tokens
         const payload = this.jwtService.verify(cleanToken);
+        if (payload.tokenType !== 'REFRESH') {
+          throw new UnauthorizedException('Token không hợp lệ: Yêu cầu Refresh Token, không chấp nhận Access Token.');
+        }
         user = await this.authRepo.findById(BigInt(payload.userId));
+        newRawRefreshToken = crypto.randomBytes(40).toString('hex');
+        const newHash = crypto.createHash('sha256').update(newRawRefreshToken).digest('hex');
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await this.authRepo.createRefreshToken(user.userId, newHash, expiresAt);
       }
 
       if (!user || user.status !== 'ACTIVE') {
         throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị khóa');
       }
 
-      if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
+      const isAdmin = user.storeStaffs?.some((s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN');
+      if (isAdmin) {
         role = 'SUPER_ADMIN';
       } else if (user.ownedStores && user.ownedStores.length > 0) {
         role = 'STORE_OWNER';
@@ -533,15 +577,10 @@ export class AuthService {
           role,
           storeId,
           customerProfileId,
+          tokenType: 'ACCESS',
         },
-        { expiresIn: '1d' },
+        { expiresIn: '15m' },
       );
-
-      // Issue new rotated raw refresh token
-      const newRawRefreshToken = crypto.randomBytes(40).toString('hex');
-      const newRefreshTokenHash = crypto.createHash('sha256').update(newRawRefreshToken).digest('hex');
-      const newRefreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      await this.authRepo.createRefreshToken(user.userId, newRefreshTokenHash, newRefreshExpiresAt);
 
       return {
         success: true,
@@ -564,13 +603,27 @@ export class AuthService {
   /**
    * 6. Logout (Token Revocation & Invalidation)
    */
-  async logout(userId?: string, refreshToken?: string) {
+  async logout(userId?: string, refreshToken?: string, accessToken?: string) {
+    if (accessToken) {
+      TokenBlacklist.revokeToken(accessToken);
+      try {
+        const decoded: any = this.jwtService.decode(accessToken);
+        if (decoded?.userId) {
+          TokenBlacklist.revokeUser(decoded.userId.toString());
+        }
+      } catch {}
+    }
     if (refreshToken) {
       const hash = crypto.createHash('sha256').update(refreshToken.trim()).digest('hex');
+      const stored = await this.authRepo.findRefreshToken(hash);
+      if (stored && stored.userId) {
+        TokenBlacklist.revokeUser(stored.userId.toString());
+      }
       await this.authRepo.revokeRefreshToken(hash);
     }
     if (userId) {
       await this.authRepo.revokeAllUserRefreshTokens(BigInt(userId));
+      TokenBlacklist.revokeUser(userId.toString());
     }
     return {
       success: true,
@@ -584,6 +637,7 @@ export class AuthService {
   async forgotPassword(body: ForgotPasswordDto) {
     const email = body.email?.trim().toLowerCase();
     if (!email) {
+      await bcrypt.hash('dummy_timing_salt_anti_enumeration_pad', 12);
       return {
         success: true,
         message: 'Nếu email tồn tại trong hệ thống, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.',
@@ -592,20 +646,28 @@ export class AuthService {
 
     const user = await this.authRepo.findByEmail(email);
     if (user && user.status === 'ACTIVE') {
-      // Generate 6-digit secure numeric OTP
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      // Hash OTP with SHA-256 for secure database storage
-      const tokenHash = crypto.createHash('sha256').update(otpCode).digest('hex');
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+      const otpCode = crypto.randomInt(100000, 1_000_000).toString();
+      const tokenHash = this.hashOtp(otpCode, 'PASSWORD_RESET');
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
+      await this.authRepo.createAuthOtp({
+        userId: user.userId,
+        email: user.email,
+        purpose: 'PASSWORD_RESET',
+        tokenHash,
+        expiresAt,
+      });
       await this.authRepo.setPasswordResetToken(user.userId, tokenHash, expiresAt);
 
-      // Dispatch OTP via MailService (Gmail SMTP or Console Dev Fallback)
-      await this.mailService.sendPasswordResetOtp(user.email, otpCode);
-      console.log(`[AUTH] Password reset requested for ${user.email}. Demo OTP: ${otpCode}`);
+      // Asynchronous / non-blocking email dispatch to prevent timing enumeration
+      this.mailService.sendPasswordResetOtp(user.email, otpCode).catch((err) => {
+        this.logger.error(`Failed to send password reset email: ${err.message}`);
+      });
+    } else {
+      // Dummy bcrypt hashing pad to neutralize timing enumeration when email does not exist
+      await bcrypt.hash('dummy_timing_salt_anti_enumeration_pad', 12);
     }
 
-    // Anti-Enumeration: Always respond with identical message and 200 OK
     return {
       success: true,
       message: 'Nếu email tồn tại trong hệ thống, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.',
@@ -616,7 +678,7 @@ export class AuthService {
    * 8. Reset Password with Token (SHA-256 Verification + Single-Use Invalidation)
    */
   async resetPassword(body: ResetPasswordDto) {
-    const { token, newPassword } = body;
+    const { token, newPassword, email } = body;
     if (!token || !newPassword) {
       throw new BadRequestException({
         success: false,
@@ -624,22 +686,34 @@ export class AuthService {
       });
     }
 
-    // Hash the incoming raw token with SHA-256 to compare against stored hash
-    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+    const tokenHash = this.hashOtp(token.trim(), 'PASSWORD_RESET');
 
-    const user = await this.authRepo.findByPasswordResetToken(tokenHash);
-    if (!user) {
+    // Atomic OTP consumption in PostgreSQL
+    const consumeResult = await this.authRepo.consumeOtpAtomically({
+      tokenHash,
+      purpose: 'PASSWORD_RESET',
+      email,
+    });
+
+    if (!consumeResult.success || !consumeResult.otp) {
       throw new BadRequestException({
         success: false,
-        message: 'Mã đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
+        message: consumeResult.reason || 'Mã đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
       });
     }
 
-    // Hash new password with bcrypt (salt rounds 12)
+    const targetUserId = BigInt(consumeResult.otp.user_id);
     const newPasswordHash = await bcrypt.hash(newPassword, 12);
 
-    // Update password and invalidate reset token immediately (single-use)
-    await this.authRepo.updatePasswordAndClearResetToken(user.userId, newPasswordHash);
+    // Update password, set passwordChangedAt, clear reset token, and revoke ALL refresh tokens in single transaction
+    await this.authRepo.resetPasswordTx({
+      userId: targetUserId,
+      newPasswordHash,
+      otpId: consumeResult.otp.id,
+    });
+
+    // Invalidate local session cache
+    TokenBlacklist.revokeUser(targetUserId);
 
     return {
       success: true,
@@ -651,19 +725,28 @@ export class AuthService {
    * 9. Verify Email (SHA-256 Hashed Token Verification)
    */
   async verifyEmail(body: VerifyEmailDto) {
-    const { token } = body;
+    const { token, email } = body;
     if (!token) {
       throw new BadRequestException('Vui lòng cung cấp mã xác minh email');
     }
 
-    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
-    const user = await this.authRepo.findByEmailVerificationToken(tokenHash);
+    const tokenHash = this.hashOtp(token.trim(), 'EMAIL_VERIFICATION');
 
-    if (!user) {
-      throw new BadRequestException('Mã xác minh email không hợp lệ hoặc đã hết hạn');
+    const consumeResult = await this.authRepo.consumeOtpAtomically({
+      tokenHash,
+      purpose: 'EMAIL_VERIFICATION',
+      email,
+    });
+
+    if (!consumeResult.success || !consumeResult.otp) {
+      throw new BadRequestException({
+        success: false,
+        message: consumeResult.reason || 'Mã xác minh email không hợp lệ hoặc đã hết hạn',
+      });
     }
 
-    await this.authRepo.markEmailVerified(user.userId);
+    const targetUserId = BigInt(consumeResult.otp.user_id);
+    await this.authRepo.markEmailVerified(targetUserId, consumeResult.otp.id);
 
     return {
       success: true,
@@ -678,14 +761,28 @@ export class AuthService {
     const email = body.email?.trim().toLowerCase();
     if (email) {
       const user = await this.authRepo.findByEmail(email);
-      if (user) {
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-        const tokenHash = crypto.createHash('sha256').update(otpCode).digest('hex');
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+      if (user && user.status === 'PENDING_VERIFICATION') {
+        const otpCode = crypto.randomInt(100000, 1_000_000).toString();
+        const tokenHash = this.hashOtp(otpCode, 'EMAIL_VERIFICATION');
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+        await this.authRepo.createAuthOtp({
+          userId: user.userId,
+          email: user.email,
+          purpose: 'EMAIL_VERIFICATION',
+          tokenHash,
+          expiresAt,
+        });
         await this.authRepo.setEmailVerificationToken(user.userId, tokenHash, expiresAt);
-        await this.mailService.sendRegistrationOtp(user.email, otpCode);
-        console.log(`[AUTH] Resent email verification for ${user.email}. Demo OTP: ${otpCode}`);
+
+        this.mailService.sendRegistrationOtp(user.email, otpCode).catch((err) => {
+          this.logger.error(`Failed to resend registration OTP: ${err.message}`);
+        });
+      } else {
+        await bcrypt.hash('dummy_resend_verification_salt', 12);
       }
+    } else {
+      await bcrypt.hash('dummy_resend_verification_salt', 12);
     }
 
     return {

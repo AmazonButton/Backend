@@ -63,7 +63,11 @@ export class MediaController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit before memory allocation
+    }),
+  )
   async uploadImage(
     @UploadedFile() file: Express.Multer.File,
     @Body('folder') folder?: string,

@@ -119,26 +119,37 @@ export class PaymentsRepository {
           });
         }
 
-        const balanceBefore = Number(wallet.balance);
-        const creditAmount = Number(payment.amount);
-        const balanceAfter = balanceBefore + creditAmount;
-
-        await tx.storeWallet.update({
-          where: { walletId: wallet.walletId },
-          data: { balance: balanceAfter },
-        });
-
-        await tx.walletTransaction.create({
-          data: {
+        const orderRef = `ORDER:${payment.orderId}`;
+        const existingTx = await tx.walletTransaction.findFirst({
+          where: {
             walletId: wallet.walletId,
-            amount: creditAmount,
-            type: 'PAYMENT_CREDIT',
-            balanceBefore,
-            balanceAfter,
-            referenceId: payment.transactionCode || payment.orderId.toString(),
-            description: `Doanh thu don h�ng #${payment.order.orderCode || payment.orderId} qua PayOS`,
+            referenceId: { in: [orderRef, payment.orderId.toString(), payment.transactionCode || ''] },
+            type: { in: ['PAYMENT_CREDIT', 'ORDER_REVENUE'] },
           },
         });
+
+        if (!existingTx) {
+          const balanceBefore = Number(wallet.balance);
+          const creditAmount = Number(payment.amount);
+          const balanceAfter = balanceBefore + creditAmount;
+
+          await tx.storeWallet.update({
+            where: { walletId: wallet.walletId },
+            data: { balance: balanceAfter },
+          });
+
+          await tx.walletTransaction.create({
+            data: {
+              walletId: wallet.walletId,
+              amount: creditAmount,
+              type: 'PAYMENT_CREDIT',
+              balanceBefore,
+              balanceAfter,
+              referenceId: orderRef,
+              description: `Doanh thu đơn hàng #${payment.order.orderCode || payment.orderId} qua PayOS`,
+            },
+          });
+        }
       }
 
       return { alreadyPaid: false, payment: updatedPayment };

@@ -9,6 +9,21 @@ import {
 import { OrdersRepository } from './orders.repository';
 import { CryptoService } from '../security/crypto.service';
 import { EventsGateway } from '../websocket/events.gateway';
+import { toOrderResponseDto } from './dto/order-response.dto';
+
+const ALLOWED_ORDER_TRANSITIONS: Record<string, string[]> = {
+  PENDING: ['CONFIRMED', 'CANCELLED', 'REJECTED'],
+  CONFIRMED: ['PREPARING', 'PROCESSING', 'CANCELLED', 'REJECTED'],
+  PREPARING: ['READY_FOR_DELIVERY', 'PROCESSING', 'CANCELLED'],
+  PROCESSING: ['READY_FOR_DELIVERY', 'SHIPPING', 'CANCELLED'],
+  READY_FOR_DELIVERY: ['SHIPPING', 'OUT_FOR_DELIVERY', 'CANCELLED'],
+  OUT_FOR_DELIVERY: ['DELIVERED', 'SHIPPING', 'CANCELLED'],
+  SHIPPING: ['DELIVERED', 'CANCELLED'],
+  DELIVERED: ['COMPLETED'],
+  COMPLETED: [],
+  CANCELLED: [],
+  REJECTED: [],
+};
 
 @Injectable()
 export class OrdersService {
@@ -75,26 +90,19 @@ export class OrdersService {
     // Fetch the created order with full details
     const newOrder = await this.ordersRepo.findOrderById(BigInt(newOrderId));
 
-    const formattedOrder = {
-      ...newOrder,
-      id: newOrder?.orderId.toString(),
-      orderId: newOrder?.orderId.toString(),
-      orderNumber: newOrder?.orderCode,
-      orderCode: newOrder?.orderCode,
-    };
+    const formattedOrder = toOrderResponseDto(newOrder);
 
     const orderPayload = {
       order: formattedOrder,
       buttonCode: button.buttonCode,
-      customerName: button.customer.user.fullName,
+      customerName: (button.customer?.user?.fullName || (button.customer as any)?.fullName || ""),
       storeId: button.storeId.toString(),
       customerId: button.customerId.toString(),
     };
 
-    // Emit Realtime WebSockets
+    // Emit Realtime WebSockets to authorized rooms ONLY (no emitGlobal)
     this.eventsGateway.emitToStore(button.storeId.toString(), 'ORDER_CREATED', orderPayload);
     this.eventsGateway.emitToCustomer(button.customerId.toString(), 'ORDER_CREATED', orderPayload);
-    this.eventsGateway.emitGlobal('ORDER_CREATED', orderPayload);
 
     return {
       order: formattedOrder,
@@ -175,16 +183,13 @@ export class OrdersService {
 
     const orders = await this.ordersRepo.findOrders(whereClause);
 
-    return orders.map((o) => ({
-      ...o,
-      id: o.orderId.toString(),
-      orderId: o.orderId.toString(),
-      orderNumber: o.orderCode,
-      orderCode: o.orderCode,
-    }));
+    return orders.map((o) => toOrderResponseDto(o));
   }
 
   async getById(id: string | number | bigint, user?: any) {
+    if (typeof id === 'string' && !/^\d+$/.test(id)) {
+      throw new NotFoundException('Đơn hàng không tồn tại');
+    }
     const targetOrderId = BigInt(id);
     const order = await this.ordersRepo.findOrderById(targetOrderId);
 
@@ -203,13 +208,7 @@ export class OrdersService {
       }
     }
 
-    return {
-      ...order,
-      id: order.orderId.toString(),
-      orderId: order.orderId.toString(),
-      orderNumber: order.orderCode,
-      orderCode: order.orderCode,
-    };
+    return toOrderResponseDto(order);
   }
 
   async cancelOrder(orderId: string | number | bigint, reason: string = 'Khách hàng hủy đơn', user?: any) {
@@ -220,8 +219,12 @@ export class OrdersService {
       throw new NotFoundException('Đơn hàng không tồn tại');
     }
 
-    if (order.orderStatus !== 'PENDING') {
-      throw new BadRequestException('Đơn hàng đã được xử lý hoặc hủy trước đó, không thể hủy');
+    if (order.orderStatus === 'CANCELLED') {
+      return toOrderResponseDto(order);
+    }
+
+    if (!['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING'].includes(order.orderStatus)) {
+      throw new BadRequestException('Đơn hàng đã được xử lý giao hàng hoặc hoàn tất, không thể hủy');
     }
 
     // BOLA / IDOR Protection
@@ -242,21 +245,15 @@ export class OrdersService {
 
     const updated = await this.ordersRepo.updateOrderStatus(targetOrderId, 'CANCELLED');
 
-    const cancelPayload = { order: updated, reason, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
+    const formattedOrder = toOrderResponseDto(updated);
+    const cancelPayload = { order: formattedOrder, reason, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_CANCELLED', cancelPayload);
     this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_CANCELLED', cancelPayload);
-    this.eventsGateway.emitGlobal('ORDER_CANCELLED', cancelPayload);
 
-    return {
-      ...updated,
-      id: updated.orderId.toString(),
-      orderId: updated.orderId.toString(),
-      orderNumber: updated.orderCode,
-      orderCode: updated.orderCode,
-    };
+    return formattedOrder;
   }
 
-  async updateOrderStatus(orderId: string | number | bigint, newStatus: string) {
+  async updateOrderStatus(orderId: string | number | bigint, newStatus: string, user?: any) {
     const targetOrderId = BigInt(orderId);
     const order = await this.ordersRepo.findOrderById(targetOrderId);
 
@@ -264,16 +261,38 @@ export class OrdersService {
       throw new NotFoundException('Đơn hàng không tồn tại');
     }
 
+    if (user) {
+      const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN';
+      const isSameStore = user.storeId && order.storeId && user.storeId.toString() === order.storeId.toString();
+      if (!isSuperAdmin && !isSameStore) {
+        throw new ForbiddenException('Bạn không có quyền cập nhật đơn hàng của cửa hàng khác');
+      }
+    }
+
+    // Idempotent check: if already at target status, return directly
+    if (order.orderStatus === newStatus) {
+      return toOrderResponseDto(order);
+    }
+
+    // Validate transition graph according to BRD
+    const allowedNext = ALLOWED_ORDER_TRANSITIONS[order.orderStatus] || [];
+    if (!allowedNext.includes(newStatus)) {
+      throw new BadRequestException(
+        `Không thể chuyển trạng thái đơn hàng từ ${order.orderStatus} sang ${newStatus}`,
+      );
+    }
+
     if (newStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
       // Khấu trừ tồn thực tế
       await this.ordersRepo.deductInventoryOnCompleted(order.items);
       try {
-        if (['PAID', 'SUCCESS'].includes(order.paymentStatus) || ['ONLINE', 'PAYOS'].includes(order.paymentMethod)) {
-          const payoutAmount = (order as any).netAmount ? Number((order as any).netAmount) : Number(order.totalAmount);
+        // Enforce: ONLY credit store wallet if paymentStatus is PAID (fix OR payos bug)
+        if (['PAID', 'SUCCESS'].includes(order.paymentStatus)) {
+          const payoutAmount = (order as any).netAmount ? Number((order as any).netAmount) : Math.round(Number(order.totalAmount) * 0.92);
           await this.storeWalletService.creditOrderRevenue(
             order.storeId,
             payoutAmount,
-            order.orderCode || order.orderId.toString()
+            `ORDER:${order.orderId}`
           );
         }
       } catch (err) {
@@ -286,17 +305,11 @@ export class OrdersService {
 
     const updated = await this.ordersRepo.updateOrderStatus(targetOrderId, newStatus);
 
-    const statusPayload = { order: updated, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
+    const formattedOrder = toOrderResponseDto(updated);
+    const statusPayload = { order: formattedOrder, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
     this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
-    this.eventsGateway.emitGlobal('ORDER_STATUS_CHANGED', statusPayload);
 
-    return {
-      ...updated,
-      id: updated.orderId.toString(),
-      orderId: updated.orderId.toString(),
-      orderNumber: updated.orderCode,
-      orderCode: updated.orderCode,
-    };
+    return formattedOrder;
   }
 }

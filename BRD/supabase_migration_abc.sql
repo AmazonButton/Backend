@@ -1,10 +1,11 @@
--- ============================================================================
--- SMART ORDER BUTTON (BRD V2.1) — SUPABASE POSTGRESQL MIGRATION
+﻿-- ============================================================================
+-- SMART ORDER BUTTON (BRD V2.1 & V2.2) — SUPABASE POSTGRESQL MIGRATION
 -- File: supabase_migration_abc.sql
--- Mục đích: Kích hoạt đầy đủ 3 tính năng bảo mật & cấu hình cốt lõi:
+-- Mục đích: Kích hoạt đầy đủ các tính năng bảo mật, cấu hình cốt lõi & hình ảnh:
 --   A. Refresh Token Rotation & Session Revocation (Skill: auth-rbac-implementation)
 --   B. Password Reset & Email Verification bằng mã băm SHA-256 (Skill: advanced-auth-and-webhooks)
 --   C. Quản lý Mẫu Nút Bấm Thiết Bị Đa Cửa Hàng (Device Templates in PostgreSQL)
+--   D. Quản lý Đa Hình Ảnh Sản Phẩm qua Cloudinary (Product Images - Option 2)
 -- ============================================================================
 
 -- Bắt đầu giao dịch an toàn (Transaction Block)
@@ -26,10 +27,10 @@ CREATE TABLE IF NOT EXISTS public.refresh_tokens (
     expires_at TIMESTAMPTZ NOT NULL,
     is_revoked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    CONSTRAINT fk_refresh_tokens_user 
-        FOREIGN KEY (user_id) 
-        REFERENCES public.users(user_id) 
+
+    CONSTRAINT fk_refresh_tokens_user
+        FOREIGN KEY (user_id)
+        REFERENCES public.users(user_id)
         ON DELETE CASCADE
 );
 
@@ -50,7 +51,7 @@ COMMENT ON COLUMN public.refresh_tokens.is_revoked IS 'Cờ đánh dấu token �
 -- 2. email_verification_token: Lưu mã băm SHA-256 của token kích hoạt tài khoản (thời hạn 24 giờ).
 -- 3. Sau khi xác thực thành công, các trường này được xóa về NULL (chống dùng lại mã).
 
-ALTER TABLE public.users 
+ALTER TABLE public.users
     ADD COLUMN IF NOT EXISTS password_reset_token VARCHAR(255),
     ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR(255),
@@ -90,9 +91,9 @@ CREATE TABLE IF NOT EXISTS public.device_templates (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT fk_device_templates_store 
-        FOREIGN KEY (store_id) 
-        REFERENCES public.store(store_id) 
+    CONSTRAINT fk_device_templates_store
+        FOREIGN KEY (store_id)
+        REFERENCES public.store(store_id)
         ON DELETE CASCADE
 );
 
@@ -108,10 +109,49 @@ COMMENT ON COLUMN public.device_templates.cancel_window_seconds IS 'Thời gian 
 -- DỮ LIỆU MẪU MẶC ĐỊNH (SEED TEMPLATES CHO HỆ THỐNG)
 -- ============================================================================
 INSERT INTO public.device_templates (code, name, description, category, store_id, single_press_action, double_press_action, default_quantity, cancel_window_seconds)
-VALUES 
+VALUES
     ('TMPL-WATER-20L', 'Nút Nước Khoáng 20L Tiêu Chuẩn', 'Cấu hình tiêu chuẩn cho dịch vụ giao nước đóng bình 20L tận nhà', 'Nước uống', NULL, 'CREATE_ORDER', 'CANCEL_ORDER', 1, 60),
     ('TMPL-GAS-12KG', 'Nút Đổi Bình Gas 12kg', 'Cấu hình cho dịch vụ đổi bình gas gia đình kèm kiểm tra van an toàn', 'Gas & Nhiên liệu', NULL, 'CREATE_ORDER', 'CANCEL_ORDER', 1, 60)
 ON CONFLICT (code) DO NOTHING;
+
+
+-- ============================================================================
+-- PHẦN D: BẢNG PRODUCT_IMAGE (QUẢN LÝ ĐA HÌNH ẢNH SẢN PHẨM & CLOUDINARY URL - OPTION 2)
+-- ============================================================================
+-- Lý do thiết kế:
+-- 1. Chuẩn hóa theo Phương án 2 (Option 2): Một sản phẩm có thể có nhiều hình ảnh (Gallery & Carousel).
+-- 2. Tách biệt hình ảnh thành bảng riêng public.product_image liên kết khóa ngoại với public.product(product_id).
+-- 3. Hỗ trợ cờ is_thumbnail để đánh dấu ảnh đại diện nhanh và display_order để sắp xếp thứ tự hiển thị ảnh trên UI.
+-- 4. Ràng buộc toàn vẹn ON DELETE CASCADE: Khi xóa sản phẩm thì toàn bộ ảnh liên quan tự động xóa sạch sẽ.
+-- 5. image_url lưu trữ trực tiếp đường dẫn CDN Cloudinary đã upload qua Presigned Signature (GET /media/signature)
+--    hoặc Server Upload API (POST /media/upload) với xác thực Magic Bytes chống RCE.
+
+CREATE TABLE IF NOT EXISTS public.product_image (
+    image_id BIGSERIAL PRIMARY KEY,
+    product_id BIGINT NOT NULL,
+    image_url TEXT NOT NULL,
+    is_thumbnail BOOLEAN NOT NULL DEFAULT FALSE,
+    display_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT fk_product_image_product
+        FOREIGN KEY (product_id)
+        REFERENCES public.product(product_id)
+        ON DELETE CASCADE
+);
+
+-- Tối ưu chỉ mục truy vấn danh sách ảnh theo sản phẩm và tìm ảnh đại diện
+CREATE INDEX IF NOT EXISTS idx_product_image_product_id ON public.product_image(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_image_is_thumbnail ON public.product_image(is_thumbnail);
+
+COMMENT ON TABLE public.product_image IS 'Lưu trữ danh sách hình ảnh của sản phẩm lưu qua Cloudinary (hỗ trợ nhiều ảnh/gallery và thumbnail)';
+COMMENT ON COLUMN public.product_image.image_id IS 'Khóa chính định danh ảnh sản phẩm';
+COMMENT ON COLUMN public.product_image.product_id IS 'Mã sản phẩm sở hữu ảnh (FK -> product.product_id)';
+COMMENT ON COLUMN public.product_image.image_url IS 'Đường dẫn URL an toàn của ảnh trên Cloudinary CDN';
+COMMENT ON COLUMN public.product_image.is_thumbnail IS 'Đánh dấu ảnh làm ảnh đại diện chính của sản phẩm (Thumbnail)';
+COMMENT ON COLUMN public.product_image.display_order IS 'Thứ tự ưu tiên hiển thị của ảnh trên giao diện người dùng (0, 1, 2, ...)';
+
 
 -- Xác nhận hoàn tất thành công toàn bộ giao dịch
 COMMIT;
@@ -126,9 +166,42 @@ COMMIT;
 --    SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'users' AND column_name LIKE '%token%';
 -- 3. Kiểm tra bảng device_templates:
 --    SELECT template_id, code, name, category, store_id FROM public.device_templates;
+-- 4. Kiểm tra bảng product_image:
+--    SELECT table_name FROM information_schema.tables WHERE table_name = 'product_image';
+--    SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = 'product_image';
+--    SELECT p.product_id, p.product_name, count(pi.image_id) as total_images
+--    FROM public.product p
+--    LEFT JOIN public.product_image pi ON p.product_id = pi.product_id
+--    GROUP BY p.product_id, p.product_name
+--    LIMIT 10;
 
 
--- ============================================================================
--- PHẦN D: MARKETPLACE ESCROW, RENTALS & STORE WALLETS (BRD V2.2)
--- Lưu ý: Đã tách thành file riêng đầy đủ: supabase_migration_v2_2_marketplace.sql
--- ============================================================================
+-- =========================================================================
+-- Wallet Idempotency & Security Tables
+-- =========================================================================
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_tx_idempotency
+  ON public.wallet_transactions (wallet_id, type, reference_id);
+
+CREATE TABLE IF NOT EXISTS public.pairing_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  device_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pairing_tokens_device_status ON public.pairing_tokens(device_id, status);
+
+CREATE TABLE IF NOT EXISTS public.revoked_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_id BIGINT,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_hash ON public.revoked_tokens(token_hash);
+
+
+-- Foreign key and check constraints for pairing_tokens
+ALTER TABLE public.pairing_tokens ADD CONSTRAINT fk_pairing_tokens_device FOREIGN KEY (device_id) REFERENCES public.iot_button(device_id) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE public.pairing_tokens ADD CONSTRAINT chk_pairing_token_status CHECK (status IN ('ACTIVE', 'USED', 'REVOKED'));

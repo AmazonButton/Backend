@@ -40,13 +40,27 @@ export class AllExceptionsFilter implements ExceptionFilter {
         }
       }
     } else if (exception instanceof Error) {
-      this.logger.error(`Unhandled Exception at ${request.method} ${request.url}: ${exception.message}`, exception.stack);
-      
-      // Protect sensitive database/server errors in production
-      if (process.env.NODE_ENV === 'production') {
-        message = 'Đã có lỗi xảy ra. Vui lòng liên hệ quản trị viên hoặc thử lại sau.';
+      const errAny = exception as any;
+      if (
+        errAny.status === 413 ||
+        errAny.statusCode === 413 ||
+        errAny.type === 'entity.too.large' ||
+        errAny.name === 'PayloadTooLargeError' ||
+        exception.message?.toLowerCase().includes('entity too large') ||
+        exception.message?.toLowerCase().includes('payload too large')
+      ) {
+        status = HttpStatus.PAYLOAD_TOO_LARGE;
+        message = 'Kích thước dữ liệu gửi lên vượt quá giới hạn cho phép (Payload Too Large: tối đa 10kb)';
+        errorCode = 'PAYLOAD_TOO_LARGE';
       } else {
-        message = exception.message;
+        this.logger.error(`Unhandled Exception at ${request.method} ${request.url}: ${exception.message}`, exception.stack);
+
+        // Protect sensitive database/server errors in production
+        if (process.env.NODE_ENV === 'production') {
+          message = 'Đã có lỗi xảy ra. Vui lòng liên hệ quản trị viên hoặc thử lại sau.';
+        } else {
+          message = exception.message;
+        }
       }
     }
 

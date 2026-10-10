@@ -30,6 +30,7 @@ model User {
   passwordResetExpiresAt     DateTime? @map("password_reset_expires_at")
   emailVerificationToken     String?   @map("email_verification_token")
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
+  passwordChangedAt          DateTime? @map("password_changed_at")
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @default(now()) @updatedAt @map("updated_at")
 
@@ -40,23 +41,24 @@ model User {
   orderStatusHistories OrderStatusHistory[]
   refreshTokens        RefreshToken[]
   approvedWithdrawals  StoreWithdrawal[]     @relation("ApprovedWithdrawals")
+  authOtps             AuthOtp[]
 
   @@map("users")
 }
 
 model Store {
-  storeId     BigInt   @id @default(autoincrement()) @map("store_id")
-  ownerUserId BigInt   @map("owner_user_id")
-  owner       User     @relation("StoreOwner", fields: [ownerUserId], references: [userId], onDelete: Restrict)
-  name        String
-  code        String   @unique
-  email       String?
-  phone       String
-  address     String
+  storeId        BigInt   @id @default(autoincrement()) @map("store_id")
+  ownerUserId    BigInt   @map("owner_user_id")
+  owner          User     @relation("StoreOwner", fields: [ownerUserId], references: [userId], onDelete: Restrict)
+  name           String
+  code           String   @unique
+  email          String?
+  phone          String
+  address        String
   commissionRate Decimal? @default(8.0) @map("commission_rate") @db.Decimal(5, 2)
-  status      String   @default("ACTIVE")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 
   staffs          StoreStaff[]
   storeCustomers  StoreCustomer[]
@@ -147,7 +149,7 @@ model Category {
   storeId          BigInt     @map("store_id")
   store            Store      @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
   parentCategoryId BigInt?    @map("parent_category_id")
-  parentCategory   Category?  @relation("CategoryHierarchy", fields: [storeId, parentCategoryId], references: [storeId, categoryId], onDelete: SetNull)
+  parentCategory   Category?  @relation("CategoryHierarchy", fields: [storeId, parentCategoryId], references: [storeId, categoryId], onDelete: NoAction)
   subCategories    Category[] @relation("CategoryHierarchy")
   categoryName     String     @map("category_name")
   status           String     @default("ACTIVE")
@@ -165,7 +167,7 @@ model Product {
   storeId     BigInt    @map("store_id")
   store       Store     @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
   categoryId  BigInt?   @map("category_id")
-  category    Category? @relation(fields: [storeId, categoryId], references: [storeId, categoryId], onDelete: SetNull)
+  category    Category? @relation(fields: [storeId, categoryId], references: [storeId, categoryId], onDelete: NoAction)
   productCode String    @map("product_code")
   productName String    @map("product_name")
   brand       String?
@@ -240,6 +242,7 @@ model IoTButton {
   deviceId    String          @unique @map("device_id")
   buttonCode  String          @unique @map("button_code")
   buttonName  String?         @map("button_name")
+  hmacSecret  String          @map("hmac_secret")
   status      String          @default("ACTIVE")
   installedAt DateTime?       @map("installed_at")
   createdAt   DateTime        @default(now()) @map("created_at")
@@ -485,6 +488,7 @@ model WalletTransaction {
   description   String?     @map("description")
   createdAt     DateTime    @default(now()) @map("created_at")
 
+  @@unique([walletId, type, referenceId], name: "uq_wallet_tx_idempotency")
   @@map("wallet_transactions")
 }
 
@@ -528,4 +532,46 @@ model ProductImage {
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("product_image")
+}
+
+model PairingToken {
+  id        BigInt   @id @default(autoincrement()) @map("id")
+  deviceId  String   @map("device_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([deviceId, status])
+  @@map("pairing_tokens")
+}
+
+model RevokedToken {
+  id        BigInt   @id @default(autoincrement()) @map("id")
+  tokenHash String   @unique @map("token_hash")
+  userId    BigInt?  @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tokenHash])
+  @@map("revoked_tokens")
+}
+
+model AuthOtp {
+  id          BigInt    @id @default(autoincrement())
+  userId      BigInt?   @map("user_id")
+  user        User?     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  email       String
+  purpose     String
+  tokenHash   String    @map("token_hash")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  expiresAt   DateTime  @map("expires_at")
+  consumedAt  DateTime? @map("consumed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([tokenHash, purpose])
+  @@index([email, purpose])
+  @@index([userId, purpose])
+  @@map("auth_otps")
 }

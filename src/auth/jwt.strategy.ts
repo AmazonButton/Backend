@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException, Inject } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { TokenBlacklist } from './token-blacklist';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -10,12 +11,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: process.env.JWT_SECRET || 'sob_jwt_secret_dev_2026',
+      passReqToCallback: true,
     });
   }
 
-  async validate(payload: any) {
+  async validate(req: any, payload: any) {
     if (!payload || !payload.userId) {
       throw new UnauthorizedException('Token không hợp lệ');
+    }
+
+    const rawToken = ExtractJwt.fromAuthHeaderAsBearerToken()(req);
+
+    // Multi-Instance Distributed Blacklist Check via PostgreSQL
+    if (rawToken) {
+      const tokenHash = TokenBlacklist.hashToken(rawToken);
+      const revokedInDb = await this.prisma.revokedToken.findUnique({
+        where: { tokenHash },
+      });
+      if (revokedInDb) {
+        throw new UnauthorizedException('Phiên đăng nhập đã kết thúc do bạn đã đăng xuất. Vui lòng đăng nhập lại.');
+      }
+    }
+
+    // Check local memory cache & user-wide logout timestamp
+    if (TokenBlacklist.isRevoked(payload.userId, payload.iat, rawToken || undefined)) {
+      throw new UnauthorizedException('Phiên đăng nhập đã kết thúc do bạn đã đăng xuất. Vui lòng đăng nhập lại.');
     }
 
     try {
@@ -33,14 +53,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị vô hiệu hóa');
       }
 
-      let role = payload.role || 'CUSTOMER';
+      let role = 'CUSTOMER';
       let storeId = payload.storeId || null;
       let customerProfileId = user.customerProfile?.customerId?.toString() || payload.customerProfileId || null;
 
-      if (!storeId && user.ownedStores.length > 0) {
+      const isSuperAdmin = user.storeStaffs?.some(
+        (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
+      );
+
+      if (isSuperAdmin) {
+        role = 'SUPER_ADMIN';
+      } else if (user.ownedStores && user.ownedStores.length > 0) {
         storeId = user.ownedStores[0].storeId.toString();
         role = 'STORE_OWNER';
-      } else if (!storeId && user.storeStaffs.length > 0) {
+      } else if (user.storeStaffs && user.storeStaffs.length > 0) {
         storeId = user.storeStaffs[0].storeId.toString();
         role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
       }
@@ -55,7 +81,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         storeId,
         customerProfileId,
       };
-    } catch {
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        throw err;
+      }
       throw new UnauthorizedException('Không thể xác thực phiên làm việc');
     }
   }

@@ -1,4 +1,4 @@
-﻿import { IsString, IsNumber, IsOptional, IsBoolean, Min, IsArray } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsBoolean, Min, IsArray, IsUrl, ArrayMaxSize } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class UpdateProductDto {
@@ -31,11 +31,13 @@ export class UpdateProductDto {
   category?: string;
 
   @IsOptional()
-  @IsString()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true }, { message: 'URL hình ảnh phải hợp lệ (http/https)' })
   imageUrl?: string;
 
   @IsOptional()
-  @IsArray()
+  @IsArray({ message: 'Danh sách hình ảnh phải là mảng chuỗi' })
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true }, { each: true, message: 'Mỗi URL hình ảnh phải hợp lệ (http/https)' })
+  @ArrayMaxSize(10, { message: 'Tối đa 10 ảnh cho mỗi sản phẩm' })
   images?: string[];
 
   @IsOptional()

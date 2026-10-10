@@ -40,8 +40,45 @@ export class ProductsService {
     return undefined;
   }
 
-  async list(storeId?: string | number | bigint) {
-    return this.productsRepo.findMany(storeId ? BigInt(storeId) : undefined);
+  private formatProduct(p: any) {
+    if (!p) return null;
+    const thumb = p.images?.find((img: any) => img.isThumbnail) || p.images?.[0];
+    const thumbUrl = thumb?.imageUrl || null;
+    return {
+      ...p,
+      id: p.productId.toString(),
+      productId: p.productId.toString(),
+      sku: p.productCode || p.sku || ('SKU-' + p.productId.toString()),
+      storeId: p.storeId ? p.storeId.toString() : null,
+      categoryId: p.categoryId ? p.categoryId.toString() : null,
+      basePrice: Number(p.basePrice),
+      imageUrl: thumbUrl,
+      thumbnailUrl: thumbUrl,
+      images: p.images?.map((img: any) => ({
+        imageId: img.imageId.toString(),
+        productId: img.productId.toString(),
+        imageUrl: img.imageUrl,
+        isThumbnail: img.isThumbnail,
+        displayOrder: img.displayOrder,
+      })) || [],
+    };
+  }
+
+  async list(storeId?: string | number | bigint, pagination?: { page?: number; pageSize?: number }) {
+    const targetStoreId = storeId ? BigInt(storeId) : undefined;
+    const { items, total, page, pageSize } = await this.productsRepo.findMany(targetStoreId, pagination);
+    const data = items.map((p: any) => this.formatProduct(p));
+    return {
+      data,
+      pagination: pagination?.pageSize
+        ? {
+            page: page || 1,
+            pageSize: pageSize || total,
+            total,
+            totalPages: Math.ceil(total / (pageSize || 1)),
+          }
+        : undefined,
+    };
   }
 
   async create(user: any, body: any) {
@@ -74,7 +111,7 @@ export class ProductsService {
 
     const imageInputs = this.parseImageInputs(body);
 
-    return this.productsRepo.create({
+    const created = await this.productsRepo.create({
       storeId: targetStoreId,
       productName: finalProductName,
       productCode: finalCode,
@@ -86,6 +123,7 @@ export class ProductsService {
       initialStock: initialStock !== undefined ? initialStock : stock || 50,
       images: imageInputs,
     });
+    return this.formatProduct(created);
   }
 
   async update(id: string | number | bigint, body: any, user?: any) {
@@ -125,7 +163,7 @@ export class ProductsService {
 
     const imageInputs = this.parseImageInputs(body);
 
-    return this.productsRepo.update(
+    const updated = await this.productsRepo.update(
       targetProductId,
       {
         ...(finalProductName ? { productName: finalProductName } : {}),
@@ -136,6 +174,8 @@ export class ProductsService {
       },
       imageInputs,
     );
+
+    return this.formatProduct(updated);
   }
 
   async updateStock(

@@ -73,6 +73,9 @@ export class ForgotPasswordDto {
 }
 
 export class ResetPasswordDto {
+  @IsNotEmpty({ message: 'Vui lòng nhập email' })
+  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
+  email: string;
   @IsNotEmpty({ message: 'Thiếu mã xác thực đặt lại mật khẩu' })
   @IsString()
   token: string;
@@ -86,6 +89,9 @@ export class ResetPasswordDto {
 }
 
 export class VerifyEmailDto {
+  @IsNotEmpty({ message: 'Vui lòng nhập email' })
+  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
+  email: string;
   @IsNotEmpty({ message: 'Thiếu mã xác minh email' })
   @IsString()
   token: string;
@@ -104,7 +110,7 @@ export class RefreshTokenDto {
 }
 
 export class GoogleLoginDto {
-  @IsNotEmpty({ message: 'Thiếu Supabase access token hoặc Google ID token' })
+  @IsNotEmpty({ message: 'Thiếu access token Supabase Google OAuth' })
   @IsString()
   token: string;
 }

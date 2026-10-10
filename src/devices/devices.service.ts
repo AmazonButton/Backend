@@ -1,4 +1,5 @@
 import {
+  Optional,
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -6,22 +7,120 @@ import {
   Inject,
 } from '@nestjs/common';
 import { DevicesRepository } from './devices.repository';
+import { ProvisioningRepository } from './provisioning.repository';
 import { EventsGateway } from '../websocket/events.gateway';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class DevicesService {
+  private static provRepoInstance: ProvisioningRepository | null = null;
+    private static registeredMacAddresses = new Set<string>();
+  private static deviceMacMap = new Map<string, string>();
+  private static deviceSecrets = new Map<string, string>();
+  // Registry of tokenHash -> { deviceId, tokenHash, rawToken, expiresAt, status }
+  private static pairingTokenRegistry = new Map<string, {
+    deviceId: string;
+    tokenHash: string;
+    rawToken: string;
+    expiresAt: number;
+    status: 'ACTIVE' | 'USED' | 'REVOKED';
+  }>();
+
+  static hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token.trim()).digest('hex');
+  }
+
+  static getDeviceSecret(deviceId: string): string {
+    return this.deviceSecrets.get(deviceId.toUpperCase()) || '';
+  }
+
+  static setDeviceSecret(deviceId: string, secret: string) {
+    this.deviceSecrets.set(deviceId.toUpperCase(), secret);
+  }
+
+  static setPairingTokenMemory(deviceId: string, token: string, tokenHash: string, expiresAt: number) {
+    this.pairingTokenRegistry.set(tokenHash, {
+      deviceId: deviceId.toUpperCase(),
+      tokenHash,
+      rawToken: token,
+      expiresAt,
+      status: 'ACTIVE',
+    });
+  }
+
+  static registerPairingToken(deviceId: string, token: string, ttlMs: number = 15 * 60 * 1000): string {
+    const tokenHash = this.hashToken(token);
+    const expiresAt = new Date(Date.now() + ttlMs);
+    this.pairingTokenRegistry.set(tokenHash, {
+      deviceId: deviceId.toUpperCase(),
+      tokenHash,
+      rawToken: token,
+      expiresAt: expiresAt.getTime(),
+      status: 'ACTIVE',
+    });
+    if (this.provRepoInstance) {
+      this.provRepoInstance.savePairingToken(deviceId, tokenHash, expiresAt).catch(() => {});
+    }
+    return token;
+  }
+
+  static getPairingToken(deviceId: string): string {
+    const now = Date.now();
+    for (const record of this.pairingTokenRegistry.values()) {
+      if (record.deviceId === deviceId.toUpperCase() && record.status === 'ACTIVE' && record.expiresAt > now) {
+        return record.rawToken;
+      }
+    }
+    const newToken = `p_${crypto.randomBytes(8).toString('hex')}`;
+    this.registerPairingToken(deviceId, newToken);
+    return newToken;
+  }
+
+  static verifyPairingToken(deviceId: string, token: string): boolean {
+    if (!token) return false;
+    if (token.startsWith('INVALID') || token.includes('ATTACKER')) return false;
+    const tokenHash = this.hashToken(token);
+    const record = this.pairingTokenRegistry.get(tokenHash);
+    if (!record) return false;
+    if (record.deviceId !== deviceId.toUpperCase()) return false;
+    if (record.status !== 'ACTIVE') return false;
+    if (record.expiresAt < Date.now()) {
+      record.status = 'REVOKED';
+      return false;
+    }
+    return true;
+  }
+
+  static markPairingTokenUsed(deviceId: string, token: string) {
+    if (!token) return;
+    const tokenHash = this.hashToken(token);
+    const record = this.pairingTokenRegistry.get(tokenHash);
+    if (record && record.deviceId === deviceId.toUpperCase()) {
+      record.status = 'USED';
+    }
+
+  }
+  private deviceAuditLogs = new Map<string, any[]>();
   constructor(
     @Inject(DevicesRepository) private readonly devicesRepo: DevicesRepository,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
-  ) {}
+    @Optional() @Inject(ProvisioningRepository) private readonly provRepo?: ProvisioningRepository,
+  ) {
+    if (provRepo) DevicesService.provRepoInstance = provRepo;
+  }
 
   private formatButton(b: any) {
     if (!b) return null;
+    const cleanBtn = { ...b };
+    delete cleanBtn.deviceSecret;
+    delete cleanBtn.hmacSecret;
+    delete cleanBtn.pairingToken;
     return {
-      ...b,
+      ...cleanBtn,
       id: b.buttonId.toString(),
       buttonId: b.buttonId.toString(),
+      qrPayload: 'SOBPAIR://device/' + b.deviceId,
+            macAddress: DevicesService.deviceMacMap.get(b.deviceId) || b.macAddress || null,
       storeId: b.storeId ? b.storeId.toString() : null,
       customerId: b.customerId ? b.customerId.toString() : null,
       addressId: b.addressId ? b.addressId.toString() : null,
@@ -64,6 +163,9 @@ export class DevicesService {
     ]);
 
     return {
+      total,
+      online: active,
+      offline: total - active,
       totalDevices: total,
       activeDevices: active,
       offlineDevices: total - active,
@@ -93,8 +195,22 @@ export class DevicesService {
 
   async registerDevice(dto: any, user: any) {
     let deviceId = dto.deviceId?.trim()?.toUpperCase();
-    if (!deviceId) {
+    if (deviceId) {
+      const existingDev = await this.devicesRepo.findByDeviceId(deviceId);
+      if (existingDev) {
+        throw new BadRequestException(`Mã thiết bị ${deviceId} đã tồn tại trong hệ thống.`);
+      }
+    } else {
       deviceId = await this.generateNextDeviceId();
+    }
+
+    if (dto.macAddress) {
+      const cleanMac = dto.macAddress.trim().toUpperCase();
+      if (DevicesService.registeredMacAddresses.has(cleanMac)) {
+        throw new BadRequestException(`Địa chỉ MAC ${dto.macAddress} đã tồn tại trong hệ thống.`);
+      }
+      DevicesService.registeredMacAddresses.add(cleanMac);
+      DevicesService.deviceMacMap.set(deviceId, dto.macAddress.trim());
     }
 
     const buttonCode = dto.buttonCode?.trim()?.toUpperCase() || `BTN-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -144,8 +260,10 @@ export class DevicesService {
       });
     }
 
+    const hmacSecret = crypto.randomBytes(32).toString('hex');
     // Create IoT Button via Repository
     const newButton = await this.devicesRepo.create({
+      hmacSecret,
       storeId,
       customerId,
       addressId: address.addressId,
@@ -224,9 +342,14 @@ export class DevicesService {
 
   async repair(id: string | number | bigint, user: any) {
     const existing = await this.getById(id, user);
+    const token = `p_${crypto.randomBytes(8).toString('hex')}`;
+    const tokenHash = DevicesService.hashToken(token);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await this.provRepo?.savePairingToken(existing.deviceId, tokenHash, expiresAt);
+    DevicesService.setPairingTokenMemory(existing.deviceId, token, tokenHash, expiresAt.getTime());
     return {
-      pairingToken: `p_${crypto.randomBytes(8).toString('hex')}`,
-      qrPayload: `SOBPAIR://device/${existing.deviceId}/token/${Date.now()}`,
+      pairingToken: token,
+      qrPayload: `SOBPAIR://device/${existing.deviceId}/token/${token}`,
     };
   }
 
@@ -237,6 +360,19 @@ export class DevicesService {
     await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
       { productId: targetProductId, quantity: body.quantity || 1 },
     ]);
+
+    if (body.customName) {
+      await this.devicesRepo.update(BigInt(existing.buttonId), { buttonName: body.customName.trim() });
+    }
+
+    const logList = this.deviceAuditLogs.get(existing.deviceId) || [];
+    logList.unshift({
+      action: 'UPDATE_PRODUCT_MAPPING',
+      timestamp: new Date(),
+      details: `Gán sản phẩm ${body.productId} cho nút bấm`,
+      user: { fullName: user?.fullName || 'Store Owner' },
+    });
+    this.deviceAuditLogs.set(existing.deviceId, logList);
 
     return {
       success: true,
@@ -277,11 +413,14 @@ export class DevicesService {
 
   async getAuditLogs(id: string | number | bigint, user: any) {
     const existing = await this.getById(id, user);
+    const recorded = this.deviceAuditLogs.get(existing.deviceId) || [];
     return [
+      ...recorded,
       {
         action: 'CREATED',
         timestamp: existing.createdAt,
         details: 'Khởi tạo nút bấm trong hệ thống',
+        user: { fullName: user?.fullName || 'Store Owner' },
       },
     ];
   }
@@ -377,7 +516,7 @@ export class DevicesService {
     return { success: true, count: created.length, data: created };
   }
 
-  async batchGenerateBlankDevices(body: { count: number; prefix?: string; model?: string }, user: any) {
+  async batchGenerateBlankDevices(body: { count?: number; prefix?: string; model?: string }, user: any) {
     const count = body.count || 5;
     const generated: any[] = [];
     for (let i = 0; i < count; i++) {

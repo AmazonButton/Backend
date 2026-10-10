@@ -1,4 +1,4 @@
-﻿import { IsNotEmpty, IsString, IsNumber, IsOptional, Min, IsArray } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateProductDto {
@@ -35,10 +35,12 @@ export class CreateProductDto {
   stock?: number;
 
   @IsOptional()
-  @IsString()
+  @IsUrl({}, { message: 'imageUrl phải là một URL hợp lệ' })
   imageUrl?: string;
 
   @IsOptional()
-  @IsArray()
+  @IsArray({ message: 'images phải là một danh sách URL' })
+  @ArrayMaxSize(10, { message: 'Tối đa 10 ảnh cho mỗi sản phẩm' })
+  @IsUrl({}, { each: true, message: 'Mỗi đường dẫn trong images phải là một URL hợp lệ' })
   images?: string[];
 }
