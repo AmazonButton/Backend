@@ -34,7 +34,8 @@ export class StoreSubscriptionsController {
   @Post('subscribe')
   async subscribe(@Request() req: any, @Body() body: SubscribePlanDto, @Query() query?: StoreQueryDto) {
     const storeId = this.extractStoreId(req, query);
-    const data = await this.subscriptionsService.subscribeWithWallet(storeId, body.planId);
+    const idempotencyKey = body.idempotencyKey || req.headers?.['idempotency-key'] || req.headers?.['x-idempotency-key'];
+    const data = await this.subscriptionsService.subscribeWithWallet(storeId, body.planId, idempotencyKey);
     return { success: true, message: 'Đăng ký gói thuê gian hàng thành công!', data };
   }
 }

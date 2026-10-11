@@ -209,7 +209,7 @@ export class AuthRepository {
              AND purpose = 'EMAIL_VERIFICATION'
              AND ($2::text IS NULL OR LOWER(email) = LOWER($2))
              AND consumed_at IS NULL
-             AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
+             AND expires_at > CURRENT_TIMESTAMP
              AND attempts < max_attempts
            ORDER BY id DESC
            LIMIT 1
@@ -406,7 +406,7 @@ export class AuthRepository {
            AND purpose = $2
            AND ($3::text IS NULL OR LOWER(email) = LOWER($3))
            AND consumed_at IS NULL
-           AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
+           AND expires_at > CURRENT_TIMESTAMP
            AND attempts < max_attempts
          ORDER BY id DESC
          LIMIT 1
@@ -429,7 +429,7 @@ export class AuthRepository {
          WHERE LOWER(email) = LOWER($1)
            AND purpose = $2
            AND consumed_at IS NULL
-           AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
+           AND expires_at > CURRENT_TIMESTAMP
            AND attempts < max_attempts;`,
         normalizedEmail,
         params.purpose,

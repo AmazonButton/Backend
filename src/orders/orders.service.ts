@@ -11,19 +11,7 @@ import { CryptoService } from '../security/crypto.service';
 import { EventsGateway } from '../websocket/events.gateway';
 import { toOrderResponseDto } from './dto/order-response.dto';
 
-const ALLOWED_ORDER_TRANSITIONS: Record<string, string[]> = {
-  PENDING: ['CONFIRMED', 'CANCELLED', 'REJECTED'],
-  CONFIRMED: ['PREPARING', 'PROCESSING', 'CANCELLED', 'REJECTED'],
-  PREPARING: ['READY_FOR_DELIVERY', 'PROCESSING', 'CANCELLED'],
-  PROCESSING: ['READY_FOR_DELIVERY', 'SHIPPING', 'CANCELLED'],
-  READY_FOR_DELIVERY: ['SHIPPING', 'OUT_FOR_DELIVERY', 'CANCELLED'],
-  OUT_FOR_DELIVERY: ['DELIVERED', 'SHIPPING', 'CANCELLED'],
-  SHIPPING: ['DELIVERED', 'CANCELLED'],
-  DELIVERED: ['COMPLETED'],
-  COMPLETED: [],
-  CANCELLED: [],
-  REJECTED: [],
-};
+import { ALLOWED_ORDER_TRANSITIONS } from './dto/update-order-status.dto';
 
 @Injectable()
 export class OrdersService {
@@ -353,7 +341,12 @@ export class OrdersService {
         newStatus as 'CANCELLED' | 'REJECTED',
       );
     } else {
-      updated = await this.ordersRepo.updateOrderStatus(targetOrderId, newStatus);
+      updated = await this.ordersRepo.transitionOrderStatusAtomicTx(
+        targetOrderId,
+        newStatus,
+        user?.userId || user?.id,
+        `Chuyển trạng thái sang ${newStatus}`,
+      );
     }
 
     const formattedOrder = toOrderResponseDto(updated);

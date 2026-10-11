@@ -1,5 +1,6 @@
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StoreSubscriptionsService } from '../src/store-subscriptions/store-subscriptions.service';
+import { StoreSubscriptionsRepository } from '../src/store-subscriptions/store-subscriptions.repository';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 
 async function testStoreSubscriptions() {
@@ -8,7 +9,7 @@ async function testStoreSubscriptions() {
   await prisma.$connect();
 
   const walletService = new StoreWalletService(prisma);
-  const subService = new StoreSubscriptionsService(prisma, walletService);
+  const subService = new StoreSubscriptionsService(new StoreSubscriptionsRepository(prisma), walletService);
   let failed = 0;
 
   try {

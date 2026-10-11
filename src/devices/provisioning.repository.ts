@@ -98,7 +98,7 @@ export class ProvisioningRepository {
        WHERE token_hash = $1
          AND device_id = $2
          AND status = 'ACTIVE'
-         AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
+         AND expires_at > CURRENT_TIMESTAMP
        RETURNING id, device_id, token_hash, status, expires_at;`,
       tokenHash,
       deviceId.toUpperCase()
@@ -154,7 +154,7 @@ export class ProvisioningRepository {
   async findProvisioningSession(sessionId: string): Promise<any> {
     const rows: any[] = await this.prisma.$queryRawUnsafe(
       `SELECT * FROM provisioning_sessions
-       WHERE session_id = $1 AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC')) AND status = 'ACTIVE';`,
+       WHERE session_id = $1 AND expires_at > CURRENT_TIMESTAMP AND status = 'ACTIVE';`,
       sessionId
     );
     return rows && rows.length > 0 ? rows[0] : null;
@@ -164,7 +164,7 @@ export class ProvisioningRepository {
     return this.prisma.$transaction(async (tx) => {
       const rows: any[] = await tx.$queryRawUnsafe(
         `SELECT * FROM provisioning_sessions
-         WHERE session_id = $1 AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC')) AND status = 'ACTIVE'
+         WHERE session_id = $1 AND expires_at > CURRENT_TIMESTAMP AND status = 'ACTIVE'
          FOR UPDATE;`,
         sessionId
       );
@@ -187,7 +187,6 @@ export class ProvisioningRepository {
     );
   }
 
-
   async createSessionAtomicTx(
     deviceId: string,
     tokenHash: string,
@@ -204,7 +203,7 @@ export class ProvisioningRepository {
          WHERE token_hash = $1
            AND device_id = $2
            AND status = 'ACTIVE'
-           AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
+           AND expires_at > CURRENT_TIMESTAMP
          RETURNING id, device_id, token_hash, status, expires_at;`,
         tokenHash,
         deviceId.toUpperCase(),
@@ -234,7 +233,7 @@ export class ProvisioningRepository {
     sessionId: string,
     customerId: bigint,
     dto: {
-      deviceId: string;
+      deviceId?: string;
       buttonName?: string;
       productId: string | number | bigint;
     },
@@ -263,19 +262,27 @@ export class ProvisioningRepository {
         throw new Error('CONFLICT: Phiên ghép nối đã được gán cho một tài khoản khác');
       }
 
-      // 2. Lock device row
+      // 2. Lock device row using session.device_id (which is button_id)
+      const sessionButtonId = BigInt(session.device_id);
       const deviceRows: any[] = await tx.$queryRawUnsafe(
         `SELECT * FROM iot_button
-         WHERE device_id = $1
+         WHERE button_id = $1
          FOR UPDATE;`,
-        dto.deviceId,
+        sessionButtonId,
       );
 
       if (!deviceRows || deviceRows.length === 0) {
-        throw new Error(`NOT_FOUND: Không tìm thấy thiết bị ${dto.deviceId}`);
+        throw new Error('NOT_FOUND: Thiết bị liên kết với phiên ghép nối không tồn tại');
       }
 
       const device = deviceRows[0];
+
+      // CRITICAL SECURITY ENFORCEMENT:
+      // If dto.deviceId is provided, assert it strictly matches the session device!
+      if (dto.deviceId && dto.deviceId.trim().toUpperCase() !== device.device_id.trim().toUpperCase()) {
+        throw new Error('BAD_REQUEST: Mã thiết bị không khớp với phiên ghép nối');
+      }
+
       const targetStoreId = device.store_id;
 
       // 3. Verify product belongs to device store
@@ -351,4 +358,35 @@ export class ProvisioningRepository {
     });
   }
 
+  async unclaimDeviceAtomicTx(buttonId: bigint): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.ioTButton.update({
+        where: { buttonId },
+        data: {
+          status: 'UNASSIGNED',
+          installedAt: null,
+        },
+      });
+
+      await tx.buttonProduct.deleteMany({
+        where: { buttonId },
+      });
+    });
+  }
+
+  async factoryResetAtomicTx(buttonId: bigint): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.ioTButton.update({
+        where: { buttonId },
+        data: {
+          status: 'INACTIVE',
+          installedAt: null,
+        },
+      });
+
+      await tx.buttonProduct.deleteMany({
+        where: { buttonId },
+      });
+    });
+  }
 }

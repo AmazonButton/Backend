@@ -1,0 +1,143 @@
+flowchart LR
+    subgraph USER["LANE 1 - Nguoi dung"]
+        START((Bat dau))
+        CHOOSE{"Chon phuong thuc dang nhap"}
+        INPUT([Nhap email hoac username va mat khau])
+        GOOGLE_CLICK([Chon dang nhap bang Google])
+        RECEIVE([Nhan Access Token, Refresh Token va thong tin nguoi dung])
+        END_OK(((Dang nhap thanh cong)))
+        END_FAIL(((Dang nhap that bai)))
+    end
+
+    subgraph FRONTEND["LANE 2 - Frontend"]
+        SEND_LOCAL([POST /api/v1/auth/login])
+        REDIRECT_GOOGLE([Chuyen huong den Google OAuth])
+        RECEIVE_GOOGLE([Nhan Supabase Google Access Token])
+        SEND_GOOGLE([POST /api/v1/auth/google-login])
+        HANDLE_SUCCESS([Luu trang thai phien va chuyen trang])
+        SHOW_ERROR([Hien thi thong bao loi])
+    end
+
+    subgraph BACKEND["LANE 3 - Auth API"]
+        RATE_LIMIT([Kiem tra rate limit])
+        RATE_OK{"Duoc phep tiep tuc?"}
+        METHOD{"Loai dang nhap?"}
+
+        VALIDATE_LOCAL([Validate LoginDto va chuan hoa identifier])
+        LOCAL_VALID{"Du lieu hop le?"}
+        FIND_LOCAL([Tim user theo email hoac username])
+        USER_FOUND{"Tim thay user?"}
+        ACTIVE_LOCAL{"Tai khoan ACTIVE?"}
+        VERIFY_PASSWORD([So sanh mat khau bang bcrypt])
+        PASSWORD_OK{"Mat khau dung?"}
+
+        VALIDATE_GOOGLE([Gui token den Supabase Auth de xac minh])
+        GOOGLE_VALID{"Token Google hop le va email da xac minh?"}
+        FIND_GOOGLE([Tim user theo authId hoac email])
+        GOOGLE_USER_FOUND{"User da ton tai?"}
+        LINK_ACCOUNT([Lien ket authId voi user hien co])
+        CREATE_USER([Tao User va CustomerProfile])
+        ACTIVE_GOOGLE{"Tai khoan ACTIVE?"}
+
+        DETERMINE_ROLE([Xac dinh role, storeId va customerProfileId])
+        CREATE_ACCESS([Tao JWT Access Token 15 phut])
+        CREATE_REFRESH([Sinh Refresh Token va bam SHA-256])
+        RESPONSE_SUCCESS([Tra response success])
+
+        ERROR_400([HTTP 400 - Du lieu khong hop le])
+        ERROR_401([HTTP 401 - Thong tin khong chinh xac])
+        ERROR_LOCKED([HTTP 401 - Tai khoan bi khoa])
+        ERROR_429([HTTP 429 - Qua nhieu yeu cau])
+    end
+
+    subgraph EXTERNAL["LANE 4 - Google va Supabase Auth"]
+        GOOGLE_AUTH([Google xac thuc nguoi dung])
+        SUPABASE_TOKEN([Supabase phat hanh access token])
+        VERIFY_SUPABASE([Supabase tra thong tin danh tinh])
+    end
+
+    subgraph DATABASE["LANE 5 - PostgreSQL Supabase"]
+        USER_DB[(Users, CustomerProfile, StoreStaff va Role)]
+        REFRESH_DB[(Refresh Tokens - chi luu token hash)]
+    end
+
+    START --> CHOOSE
+    CHOOSE -->|Email va mat khau| INPUT
+    CHOOSE -->|Google OAuth| GOOGLE_CLICK
+
+    INPUT --> SEND_LOCAL
+    SEND_LOCAL -. Login request .-> RATE_LIMIT
+    GOOGLE_CLICK --> REDIRECT_GOOGLE
+    REDIRECT_GOOGLE -. OAuth request .-> GOOGLE_AUTH
+    GOOGLE_AUTH --> SUPABASE_TOKEN
+    SUPABASE_TOKEN -. Access token .-> RECEIVE_GOOGLE
+    RECEIVE_GOOGLE --> SEND_GOOGLE
+    SEND_GOOGLE -. Google login request .-> RATE_LIMIT
+
+    RATE_LIMIT --> RATE_OK
+    RATE_OK -->|Khong| ERROR_429
+    RATE_OK -->|Co| METHOD
+
+    METHOD -->|Email va mat khau| VALIDATE_LOCAL
+    VALIDATE_LOCAL --> LOCAL_VALID
+    LOCAL_VALID -->|Khong| ERROR_400
+    LOCAL_VALID -->|Co| FIND_LOCAL
+    FIND_LOCAL --> USER_DB
+    USER_DB --> USER_FOUND
+    USER_FOUND -->|Khong| ERROR_401
+    USER_FOUND -->|Co| ACTIVE_LOCAL
+    ACTIVE_LOCAL -->|Khong| ERROR_LOCKED
+    ACTIVE_LOCAL -->|Co| VERIFY_PASSWORD
+    VERIFY_PASSWORD --> PASSWORD_OK
+    PASSWORD_OK -->|Khong| ERROR_401
+    PASSWORD_OK -->|Co| DETERMINE_ROLE
+
+    METHOD -->|Google OAuth| VALIDATE_GOOGLE
+    VALIDATE_GOOGLE -. Verify token .-> VERIFY_SUPABASE
+    VERIFY_SUPABASE -. Identity data .-> GOOGLE_VALID
+    GOOGLE_VALID -->|Khong| ERROR_401
+    GOOGLE_VALID -->|Co| FIND_GOOGLE
+    FIND_GOOGLE --> USER_DB
+    USER_DB --> GOOGLE_USER_FOUND
+    GOOGLE_USER_FOUND -->|Co, theo authId| ACTIVE_GOOGLE
+    GOOGLE_USER_FOUND -->|Co, theo email| LINK_ACCOUNT
+    GOOGLE_USER_FOUND -->|Khong| CREATE_USER
+    LINK_ACCOUNT --> USER_DB
+    CREATE_USER --> USER_DB
+    LINK_ACCOUNT --> ACTIVE_GOOGLE
+    CREATE_USER --> ACTIVE_GOOGLE
+    ACTIVE_GOOGLE -->|Khong| ERROR_LOCKED
+    ACTIVE_GOOGLE -->|Co| DETERMINE_ROLE
+
+    DETERMINE_ROLE --> USER_DB
+    USER_DB --> CREATE_ACCESS
+    CREATE_ACCESS --> CREATE_REFRESH
+    CREATE_REFRESH --> REFRESH_DB
+    REFRESH_DB --> RESPONSE_SUCCESS
+    RESPONSE_SUCCESS -. Tokens va user data .-> RECEIVE
+    RECEIVE --> HANDLE_SUCCESS
+    HANDLE_SUCCESS --> END_OK
+
+    ERROR_400 --> SHOW_ERROR
+    ERROR_401 --> SHOW_ERROR
+    ERROR_LOCKED --> SHOW_ERROR
+    ERROR_429 --> SHOW_ERROR
+    SHOW_ERROR --> END_FAIL
+
+    classDef startEvent fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+    classDef endEvent fill:#e8f5e9,stroke:#1b5e20,stroke-width:4px,color:#1b5e20
+    classDef userTask fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#0d47a1
+    classDef serviceTask fill:#fff3e0,stroke:#ef6c00,stroke-width:1.5px,color:#e65100
+    classDef gateway fill:#fffde7,stroke:#f9a825,stroke-width:2px,color:#5d4037
+    classDef errorTask fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c
+    classDef datastore fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1.5px,color:#4a148c
+    classDef externalTask fill:#e0f2f1,stroke:#00796b,stroke-width:1.5px,color:#004d40
+
+    class START startEvent
+    class END_OK,END_FAIL endEvent
+    class INPUT,GOOGLE_CLICK,RECEIVE,SEND_LOCAL,REDIRECT_GOOGLE,RECEIVE_GOOGLE,SEND_GOOGLE,HANDLE_SUCCESS,SHOW_ERROR userTask
+    class RATE_LIMIT,VALIDATE_LOCAL,FIND_LOCAL,VERIFY_PASSWORD,VALIDATE_GOOGLE,FIND_GOOGLE,LINK_ACCOUNT,CREATE_USER,DETERMINE_ROLE,CREATE_ACCESS,CREATE_REFRESH,RESPONSE_SUCCESS serviceTask
+    class CHOOSE,RATE_OK,METHOD,LOCAL_VALID,USER_FOUND,ACTIVE_LOCAL,PASSWORD_OK,GOOGLE_VALID,GOOGLE_USER_FOUND,ACTIVE_GOOGLE gateway
+    class ERROR_400,ERROR_401,ERROR_LOCKED,ERROR_429 errorTask
+    class USER_DB,REFRESH_DB datastore
+    class GOOGLE_AUTH,SUPABASE_TOKEN,VERIFY_SUPABASE externalTask

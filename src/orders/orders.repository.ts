@@ -1,3 +1,4 @@
+import { ALLOWED_ORDER_TRANSITIONS, OrderStatusType } from './dto/update-order-status.dto';
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -166,6 +167,53 @@ export class OrdersRepository {
     });
   }
 
+
+  async transitionOrderStatusAtomicTx(
+    orderId: bigint,
+    newStatus: string,
+    userId?: any,
+    reason?: string,
+  ): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+
+      // Idempotent: already at target status
+      if (order.order_status === newStatus) {
+        return this.findOrderByIdTx(tx, orderId);
+      }
+
+      // Check transition validity
+      const allowedNext = (ALLOWED_ORDER_TRANSITIONS as any)[order.order_status] || [];
+      if (!allowedNext.includes(newStatus)) {
+        throw new BadRequestException(
+          `Không thể chuyển trạng thái đơn hàng từ ${order.order_status} sang ${newStatus}`,
+        );
+      }
+
+      if (userId) {
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('app.current_user_id', $1, true)`,
+          userId.toString(),
+        );
+      }
+
+      await tx.order.update({
+        where: { orderId },
+        data: { orderStatus: newStatus },
+      });
+
+      // Lịch sử trạng thái được tự động ghi nhận bởi DB trigger trg_sync_inventory_on_order_status_change
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
   async updateOrderStatus(orderId: bigint, orderStatus: string) {
     return this.prisma.order.update({
       where: { orderId },
@@ -328,15 +376,7 @@ export class OrdersRepository {
         },
       });
 
-      // 5. Record status history
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId,
-          oldStatus: order.order_status,
-          newStatus: 'COMPLETED',
-          reason: 'Đơn hàng hoàn tất và kết chuyển doanh thu vào ví cửa hàng',
-        },
-      });
+      // 5. Status history is recorded by DB trigger trg_sync_inventory_on_order_status_change
 
       return this.findOrderByIdTx(tx, orderId);
     });
@@ -391,20 +431,19 @@ export class OrdersRepository {
         );
       }
 
+      if (userId) {
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('app.current_user_id', $1, true)`,
+          userId.toString(),
+        );
+      }
+
       await tx.order.update({
         where: { orderId },
         data: { orderStatus: targetStatus },
       });
 
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId,
-          oldStatus: order.order_status,
-          newStatus: targetStatus,
-          reason,
-          changedByUserId: userId ? BigInt(userId) : null,
-        },
-      });
+      // Lịch sử trạng thái được tự động ghi nhận bởi DB trigger trg_sync_inventory_on_order_status_change
 
       return this.findOrderByIdTx(tx, orderId);
     });

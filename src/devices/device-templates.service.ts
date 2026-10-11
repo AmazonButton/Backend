@@ -1,3 +1,4 @@
+import { DeployDeviceTemplateDto } from './dto/device-template.dto';
 import {
   Injectable,
   NotFoundException,
@@ -191,25 +192,36 @@ export class DeviceTemplatesService {
     return { success: true, message: 'Đã xóa template mẫu thành công' };
   }
 
-  async deploy(id: string, body: any, user: any) {
+  async deploy(id: string, body: DeployDeviceTemplateDto, user: any) {
+    if (!body?.deviceId) {
+      throw new BadRequestException('Mã thiết bị (deviceId) là bắt buộc khi triển khai template');
+    }
     const template = await this.getById(id, user);
 
-    if (body?.deviceId) {
-      const button = await this.devicesRepo.findByIdentifier(body.deviceId.toString());
-      if (!button) throw new NotFoundException('Không tìm thấy thiết bị đích');
+    const button = await this.devicesRepo.findByIdentifier(body.deviceId.toString().trim());
+    if (!button) throw new NotFoundException('Không tìm thấy thiết bị đích');
 
-      const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
-      if (!isAdmin) {
-        if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
-          throw new ForbiddenException('Thiết bị không thuộc quyền quản lý của cửa hàng bạn');
-        }
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (!isAdmin) {
+      if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException('Thiết bị không thuộc quyền quản lý của cửa hàng bạn');
       }
     }
 
+    const clickBehavior = template.doublePressAction ? 'DOUBLE' : 'SINGLE';
+    await this.devicesRepo.update(button.buttonId, {
+      clickBehavior,
+    });
+
     return {
       success: true,
-      message: `Đã triển khai template "${template.name}" cho thiết bị`,
-      data: { templateId: template.id, deployedAt: new Date() },
+      message: `Đã triển khai template "${template.name}" cho thiết bị ${button.deviceId}`,
+      data: {
+        templateId: template.id,
+        deviceId: button.deviceId,
+        clickBehavior,
+        deployedAt: new Date(),
+      },
     };
   }
 }

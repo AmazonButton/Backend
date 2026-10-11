@@ -6,6 +6,8 @@ import {
   UnauthorizedException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
+  Logger,
   Inject,
 } from '@nestjs/common';
 import { ProvisioningRepository } from './provisioning.repository';
@@ -17,6 +19,7 @@ import * as crypto from 'crypto';
 
 @Injectable()
 export class ProvisioningService {
+  private readonly logger = new Logger(ProvisioningService.name);
   // usedNonces migrated to PostgreSQL device_nonces
   private failedAttempts: Array<{
     type: string;
@@ -169,7 +172,9 @@ export class ProvisioningService {
       const msg = err.message || '';
       if (msg.startsWith('NOT_FOUND:')) throw new NotFoundException(msg.replace('NOT_FOUND: ', ''));
       if (msg.startsWith('CONFLICT:')) throw new ConflictException(msg.replace('CONFLICT: ', ''));
-      throw new BadRequestException(msg.replace('BAD_REQUEST: ', ''));
+      if (msg.startsWith('BAD_REQUEST:')) throw new BadRequestException(msg.replace('BAD_REQUEST: ', ''));
+      this.logger.error('Unexpected error in confirmPairing:', err);
+      throw new InternalServerErrorException('Lỗi hệ thống khi xác nhận ghép nối');
     }
   }
 
@@ -276,16 +281,7 @@ export class ProvisioningService {
   async unclaim(id: string, user: any) {
     const button = await this.assertDeviceAccess(id, user);
 
-    await this.provRepo.updateButton(button.buttonId, {
-      customerId: null,
-      status: 'UNASSIGNED',
-      installedAt: null,
-      addressId: null,
-    });
-
-    await this.provRepo.prisma.buttonProduct.deleteMany({
-      where: { buttonId: button.buttonId },
-    });
+    await this.provRepo.unclaimDeviceAtomicTx(button.buttonId);
 
     return {
       success: true,
@@ -317,23 +313,14 @@ export class ProvisioningService {
   async factoryReset(id: string, user: any) {
     const button = await this.assertDeviceAccess(id, user);
 
-    await this.provRepo.updateButton(button.buttonId, {
-      customerId: null,
-      status: 'INACTIVE',
-      installedAt: null,
-      addressId: null,
-    });
-
-    await this.provRepo.prisma.buttonProduct.deleteMany({
-      where: { buttonId: button.buttonId },
-    });
+    await this.provRepo.factoryResetAtomicTx(button.buttonId);
 
     return {
       success: true,
       message: 'Đã khôi phục cài đặt gốc thiết bị thành công',
       data: {
         deviceId: button.deviceId,
-        status: 'READY_FOR_CUSTOMER',
+        status: 'INACTIVE',
       },
     };
   }

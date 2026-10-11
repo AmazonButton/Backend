@@ -11,6 +11,7 @@ import { AdminRepository } from '../src/admin/admin.repository';
 import { RentalsService } from '../src/rentals/rentals.service';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { StoreSubscriptionsService } from '../src/store-subscriptions/store-subscriptions.service';
+import { StoreSubscriptionsRepository } from '../src/store-subscriptions/store-subscriptions.repository';
 import { OrdersService } from '../src/orders/orders.service';
 import { OrdersRepository } from '../src/orders/orders.repository';
 import { CryptoService } from '../src/security/crypto.service';
@@ -31,7 +32,7 @@ async function runMasterSuperpowersQASuite() {
   const adminService = new AdminService(adminRepo);
   const rentalsService = new RentalsService(prisma);
   const walletService = new StoreWalletService(prisma);
-  const subscriptionsService = new StoreSubscriptionsService(prisma, walletService);
+  const subscriptionsService = new StoreSubscriptionsService(new StoreSubscriptionsRepository(prisma), walletService);
   const ordersRepo = new OrdersRepository(prisma);
   const mockEventsGateway: any = {
     emitToStore: () => {},
