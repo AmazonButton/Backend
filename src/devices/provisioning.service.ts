@@ -81,23 +81,7 @@ export class ProvisioningService {
 
     const tokenHash = DevicesService.hashToken(token);
 
-    // ATOMIC TOKEN CONSUMPTION: PostgreSQL is the single source of truth across all instances
-    const consumedToken = await this.provRepo.consumeActivePairingToken(button.deviceId, tokenHash);
-
-    if (!consumedToken) {
-      this.failedAttempts.push({
-        type: 'INVALID_PAIRING_TOKEN',
-        deviceId: button.deviceId,
-        reason: 'Mã token ghép nối không hợp lệ, đã hết hạn hoặc đã qua sử dụng',
-        timestamp: new Date(),
-      });
-      throw new UnauthorizedException('Mã token ghép nối không hợp lệ, đã hết hạn hoặc đã qua sử dụng');
-    }
-
-    DevicesService.markPairingTokenUsed(button.deviceId, token);
-
     const sessionId = `sess_${crypto.randomBytes(12).toString('hex')}`;
-
     const sessionData = {
       sessionId,
       deviceId: button.deviceId,
@@ -108,17 +92,30 @@ export class ProvisioningService {
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
       createdAt: new Date(),
     };
-
-    // Store tokenHash internally in memory for confirmPairing validation without exposing in API response
     const sessionHash = crypto.createHash('sha256').update(sessionId).digest('hex');
-    await this.provRepo.createProvisioningSession(
-      sessionId,
-      sessionHash,
-      button.buttonId,
-      sessionData,
-      tokenHash || null,
-      sessionData.expiresAt,
-    );
+
+    // ATOMIC TRANSACTION: Consume token and create session in a single database transaction
+    try {
+      await this.provRepo.createSessionAtomicTx(
+        button.deviceId,
+        tokenHash,
+        sessionId,
+        sessionHash,
+        button.buttonId,
+        sessionData,
+        sessionData.expiresAt,
+      );
+    } catch (err: any) {
+      this.failedAttempts.push({
+        type: 'INVALID_PAIRING_TOKEN',
+        deviceId: button.deviceId,
+        reason: 'Mã token ghép nối không hợp lệ, đã hết hạn hoặc đã qua sử dụng',
+        timestamp: new Date(),
+      });
+      throw new UnauthorizedException('Mã token ghép nối không hợp lệ, đã hết hạn hoặc đã qua sử dụng');
+    }
+
+    DevicesService.markPairingTokenUsed(button.deviceId, token);
 
     return {
       success: true,
@@ -150,134 +147,30 @@ export class ProvisioningService {
       throw new UnauthorizedException('Chỉ khách hàng cá nhân có hồ sơ mới có thể kích hoạt ghép nối thiết bị');
     }
 
-    return this.provRepo.prisma.$transaction(async (tx: any) => {
-      // 1. Lock session row
-      const sessionRows: any[] = await tx.$queryRawUnsafe(
-        `SELECT * FROM provisioning_sessions
-         WHERE session_id = $1
-         FOR UPDATE;`,
-        sessionId,
-      );
-
-      if (!sessionRows || sessionRows.length === 0) {
-        throw new NotFoundException('Phiên ghép nối không tồn tại');
-      }
-
-      const session = sessionRows[0];
-
-      if (session.status !== 'ACTIVE') {
-        throw new BadRequestException('Phiên ghép nối đã được sử dụng hoặc bị vô hiệu hóa');
-      }
-
-      if (new Date(session.expires_at) < new Date()) {
-        throw new BadRequestException('Phiên ghép nối đã hết hạn');
-      }
-
-      if (session.claimed_by && session.claimed_by.toString() !== customerId.toString()) {
-        throw new ForbiddenException('Phiên ghép nối thuộc về khách hàng khác');
-      }
-
-      // 2. Lock button row
-      const buttonRows: any[] = await tx.$queryRawUnsafe(
-        `SELECT * FROM iot_button
-         WHERE button_id = $1
-         FOR UPDATE;`,
-        BigInt(session.device_id),
-      );
-
-      if (!buttonRows || buttonRows.length === 0) {
-        throw new NotFoundException('Thiết bị nút bấm không tồn tại');
-      }
-
-      const button = buttonRows[0];
-
-      if (button.customer_id && button.customer_id.toString() !== customerId.toString() && button.status === 'ACTIVE') {
-        throw new ConflictException('Thiết bị này đã có chủ sở hữu khác');
-      }
-
-      // 3. Product validation if specified
-      if (dto.productId) {
-        const prod = await tx.product.findUnique({
-          where: { productId: BigInt(dto.productId) },
-        });
-
-        if (!prod || (button.store_id && prod.storeId !== button.store_id)) {
-          throw new BadRequestException('Sản phẩm không thuộc cửa hàng quản lý thiết bị này');
-        }
-
-        await tx.buttonProduct.upsert({
-          where: {
-            uq_button_product: {
-              buttonId: button.button_id,
-              productId: prod.productId,
-            },
-          },
-          update: { quantity: Number(dto.quantity) || 1 },
-          create: {
-            buttonId: button.button_id,
-            productId: prod.productId,
-            quantity: Number(dto.quantity) || 1,
-          },
-        });
-      }
-
-      // 4. Upsert store_customer
-      if (button.store_id) {
-        await tx.storeCustomer.upsert({
-          where: {
-            uq_store_customer: {
-              storeId: button.store_id,
-              customerId,
-            },
-          },
-          update: { status: 'ACTIVE' },
-          create: {
-            storeId: button.store_id,
-            customerId,
-            status: 'ACTIVE',
-          },
-        });
-      }
-
-      // 5. Update button ownership and active status
-      const updatedButton = await tx.ioTButton.update({
-        where: { buttonId: button.button_id },
-        data: {
-          customerId,
-          buttonName: dto.buttonName || dto.customName || button.button_name,
-          status: 'ACTIVE',
-          installedAt: button.installed_at || new Date(),
-        },
+    try {
+      const result = await this.provRepo.confirmPairingAtomicTx(sessionId, customerId, {
+        deviceId: dto.deviceId,
+        buttonName: dto.buttonName,
+        productId: dto.productId,
       });
 
-      // 6. Mark pairing token USED if bound
-      if (session.token_hash) {
-        await tx.pairingToken.updateMany({
-          where: { tokenHash: session.token_hash, status: 'ACTIVE' },
-          data: { status: 'USED' },
-        });
-      }
-
-      // 7. Mark session CLAIMED atomically
-      await tx.$executeRawUnsafe(
-        `UPDATE provisioning_sessions
-         SET status = 'CLAIMED', claimed_by = $2, updated_at = NOW()
-         WHERE session_id = $1;`,
-        sessionId,
-        customerId,
-      );
+      this.eventsGateway.emitToStore(result.storeId, 'DEVICE_PROVISIONED', {
+        deviceId: result.deviceId,
+        buttonName: result.buttonName,
+        customerId: result.customerId,
+      });
 
       return {
         success: true,
-        message: 'Kích hoạt và ghép nối nút bấm thành công!',
-        data: {
-          buttonId: updatedButton.buttonId.toString(),
-          deviceId: updatedButton.deviceId,
-          buttonCode: updatedButton.buttonCode,
-          status: updatedButton.status,
-        },
+        message: 'Kích hoạt sở hữu và ghép nối thiết bị thành công!',
+        data: result,
       };
-    });
+    } catch (err: any) {
+      const msg = err.message || '';
+      if (msg.startsWith('NOT_FOUND:')) throw new NotFoundException(msg.replace('NOT_FOUND: ', ''));
+      if (msg.startsWith('CONFLICT:')) throw new ConflictException(msg.replace('CONFLICT: ', ''));
+      throw new BadRequestException(msg.replace('BAD_REQUEST: ', ''));
+    }
   }
 
   async cancelSession(sessionId: string) {
@@ -347,58 +240,62 @@ export class ProvisioningService {
     };
   }
 
-  async claim(id: string, body: any, user: any) {
+  private async assertDeviceAccess(id: string, user: any) {
+    if (!user) {
+      throw new ForbiddenException('Thiếu thông tin người thực hiện');
+    }
     const button = await this.provRepo.findButtonByIdentifier(id);
     if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
 
-    const targetCustomerId = user?.customerProfileId ? BigInt(user.customerProfileId) : null;
-    if (!targetCustomerId) {
-      throw new UnauthorizedException('Chỉ khách hàng có hồ sơ cá nhân mới có thể liên kết thiết bị');
+    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      return button;
     }
+    if (user.role === 'CUSTOMER') {
+      const userCustId = user.customerProfileId ? user.customerProfileId.toString() : null;
+      if (!userCustId || !button.customerId || button.customerId.toString() !== userCustId) {
+        throw new ForbiddenException('Bạn không có quyền truy cập nút bấm này');
+      }
+      return button;
+    }
+    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+      const userStoreId = user.storeId ? user.storeId.toString() : null;
+      if (!userStoreId || !button.storeId || button.storeId.toString() !== userStoreId) {
+        throw new ForbiddenException('Thiết bị không thuộc phạm vi cửa hàng của bạn');
+      }
+      return button;
+    }
+    throw new ForbiddenException('Bạn không có quyền thực hiện thao tác trên thiết bị này');
+  }
 
-    if (button.customerId && button.customerId.toString() !== targetCustomerId.toString() && button.status === 'ACTIVE') {
-      throw new ConflictException('Thiết bị này đã có chủ sở hữu khác đang sử dụng. Vui lòng yêu cầu chủ sở hữu cũ hủy liên kết hoặc chuyển quyền.');
-    }
+  async claim(id: string, body: any, user: any) {
+    throw new BadRequestException(
+      'Quy trình kích hoạt sở hữu thiết bị cũ không còn được hỗ trợ. Bắt buộc kích hoạt qua phiên ghép nối bảo mật (POST /api/v1/provisioning/sessions/:id/confirmation)',
+    );
+  }
+
+  async unclaim(id: string, user: any) {
+    const button = await this.assertDeviceAccess(id, user);
 
     await this.provRepo.updateButton(button.buttonId, {
-      customerId: targetCustomerId,
-      status: 'ACTIVE',
+      customerId: null,
+      status: 'UNASSIGNED',
+      installedAt: null,
+      addressId: null,
+    });
+
+    await this.provRepo.prisma.buttonProduct.deleteMany({
+      where: { buttonId: button.buttonId },
     });
 
     return {
       success: true,
-      message: 'Kích hoạt sở hữu nút bấm thành công!',
-      data: { deviceId: button.deviceId },
+      message: 'Đã hủy sở hữu và tách liên kết thiết bị thành công',
+      data: { deviceId: button.deviceId, status: 'UNASSIGNED' },
     };
   }
 
-  async unclaim(id: string, user: any) {
-    const button = await this.provRepo.findButtonByIdentifier(id);
-    if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
-
-    if (user && user.role === 'CUSTOMER' && user.customerProfileId) {
-      if (button.customerId && button.customerId.toString() !== user.customerProfileId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền hủy sở hữu thiết bị của người khác');
-      }
-    }
-
-    await this.provRepo.updateButton(button.buttonId, {
-      status: 'INACTIVE',
-      installedAt: null,
-    });
-
-    return { success: true, message: 'Đã hủy sở hữu thiết bị', data: { deviceId: button.deviceId, status: 'INACTIVE' } };
-  }
-
   async transfer(id: string, user: any) {
-    const button = await this.provRepo.findButtonByIdentifier(id);
-    if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
-
-    if (user && user.role === 'CUSTOMER' && user.customerProfileId) {
-      if (button.customerId && button.customerId.toString() !== user.customerProfileId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền chuyển giao thiết bị của người khác');
-      }
-    }
+    const button = await this.assertDeviceAccess(id, user);
 
     const token = `tok_${crypto.randomBytes(8).toString('hex')}`;
     const tokenHash = DevicesService.hashToken(token);
@@ -418,41 +315,31 @@ export class ProvisioningService {
   }
 
   async factoryReset(id: string, user: any) {
-    const button = await this.provRepo.findButtonByIdentifier(id);
+    const button = await this.assertDeviceAccess(id, user);
 
-    if (button) {
-      await this.provRepo.updateButton(button.buttonId, {
-        status: 'INACTIVE',
-      });
-      return {
-        success: true,
-        message: 'Đã khôi phục cài đặt gốc thiết bị thành công',
-        data: {
-          deviceId: button.deviceId,
-          status: 'READY_FOR_CUSTOMER',
-        },
-      };
-    }
+    await this.provRepo.updateButton(button.buttonId, {
+      customerId: null,
+      status: 'INACTIVE',
+      installedAt: null,
+      addressId: null,
+    });
+
+    await this.provRepo.prisma.buttonProduct.deleteMany({
+      where: { buttonId: button.buttonId },
+    });
 
     return {
       success: true,
-      message: 'Đã khôi phục cài đặt gốc thiết bị',
+      message: 'Đã khôi phục cài đặt gốc thiết bị thành công',
       data: {
-        deviceId: id,
+        deviceId: button.deviceId,
         status: 'READY_FOR_CUSTOMER',
       },
     };
   }
 
   async changeWifi(id: string, user: any, body?: any) {
-    const button = await this.provRepo.findButtonByIdentifier(id);
-    if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
-
-    if (user && user.role === 'CUSTOMER' && user.customerProfileId) {
-      if (button.customerId && button.customerId.toString() !== user.customerProfileId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền cập nhật Wi-Fi của thiết bị người khác');
-      }
-    }
+    const button = await this.assertDeviceAccess(id, user);
 
     const ssid = body?.ssid || 'Smart-Order-WiFi';
     return {

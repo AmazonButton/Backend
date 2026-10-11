@@ -307,7 +307,13 @@ async function run() {
       if (testEmail) {
         const createdUser = await prisma.user.findFirst({ where: { email: testEmail } });
         if (createdUser) {
-          await prisma.store.deleteMany({ where: { ownerUserId: createdUser.userId } });
+          const stores = await prisma.store.findMany({ where: { ownerUserId: createdUser.userId } });
+          const storeIds = stores.map((s) => s.storeId);
+          if (storeIds.length > 0) {
+            await prisma.storeStaff.deleteMany({ where: { storeId: { in: storeIds } } });
+            await prisma.store.deleteMany({ where: { storeId: { in: storeIds } } });
+          }
+          await prisma.storeStaff.deleteMany({ where: { userId: createdUser.userId } });
           await prisma.user.delete({ where: { userId: createdUser.userId } });
         }
       }

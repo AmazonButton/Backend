@@ -734,21 +734,17 @@ export class AuthService {
 
     const tokenHash = this.hashOtp(token.trim(), 'EMAIL_VERIFICATION');
 
-    const consumeResult = await this.authRepo.consumeOtpAtomically({
+    const result = await this.authRepo.verifyEmailAtomicTx({
       tokenHash,
-      purpose: 'EMAIL_VERIFICATION',
       email,
     });
 
-    if (!consumeResult.success || !consumeResult.otp) {
+    if (!result.success || !result.user) {
       throw new BadRequestException({
         success: false,
-        message: consumeResult.reason || 'Mã xác minh email không hợp lệ hoặc đã hết hạn',
+        message: result.reason || 'Mã xác minh email không hợp lệ hoặc đã hết hạn',
       });
     }
-
-    const targetUserId = BigInt(consumeResult.otp.user_id);
-    await this.authRepo.markEmailVerified(targetUserId, consumeResult.otp.id);
 
     return {
       success: true,

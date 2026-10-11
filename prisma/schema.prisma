@@ -50,15 +50,15 @@ model Store {
   storeId        BigInt   @id @default(autoincrement()) @map("store_id")
   ownerUserId    BigInt   @map("owner_user_id")
   owner          User     @relation("StoreOwner", fields: [ownerUserId], references: [userId], onDelete: Restrict)
-  name           String
-  code           String   @unique
-  email          String?
-  phone          String
+  name           String   @db.VarChar(255)
+  code           String   @unique @db.VarChar(50)
+  email          String?  @db.VarChar(255)
+  phone          String   @db.VarChar(20)
   address        String
   commissionRate Decimal? @default(8.0) @map("commission_rate") @db.Decimal(5, 2)
-  status         String   @default("ACTIVE")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+  status         String   @default("ACTIVE") @db.VarChar(20)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   staffs          StoreStaff[]
   storeCustomers  StoreCustomer[]
@@ -168,14 +168,14 @@ model Product {
   store       Store     @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
   categoryId  BigInt?   @map("category_id")
   category    Category? @relation(fields: [storeId, categoryId], references: [storeId, categoryId], onDelete: NoAction)
-  productCode String    @map("product_code")
-  productName String    @map("product_name")
-  brand       String?
+  productCode String    @map("product_code") @db.VarChar(50)
+  productName String    @map("product_name") @db.VarChar(255)
+  brand       String?   @db.VarChar(100)
   description String?
   basePrice   Decimal   @map("base_price") @db.Decimal(15, 2)
-  status      String    @default("ACTIVE")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  status      String    @default("ACTIVE") @db.VarChar(20)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   priceHistories ProductPriceHistory[]
   discounts      ProductDiscount[]
@@ -208,11 +208,11 @@ model ProductDiscount {
   product         Product  @relation(fields: [productId], references: [productId], onDelete: Restrict)
   discountPercent Decimal? @map("discount_percent") @db.Decimal(5, 2)
   discountAmount  Decimal? @map("discount_amount") @db.Decimal(15, 2)
-  startAt         DateTime @map("start_at")
-  endAt           DateTime @map("end_at")
-  status          String   @default("ACTIVE")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+  startAt         DateTime @map("start_at") @db.Timestamptz(6)
+  endAt           DateTime @map("end_at") @db.Timestamptz(6)
+  status          String   @default("ACTIVE") @db.VarChar(20)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("product_discount")
 }
@@ -279,31 +279,31 @@ model ButtonProduct {
 
 model Order {
   orderId               BigInt          @id @default(autoincrement()) @map("order_id")
-  orderCode             String          @unique @map("order_code")
+  orderCode             String          @unique @map("order_code") @db.VarChar(50)
   storeId               BigInt          @map("store_id")
   store                 Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
   customerId            BigInt          @map("customer_id")
   customer              CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
   buttonId              BigInt          @map("button_id")
   button                IoTButton       @relation(fields: [buttonId, customerId, storeId], references: [buttonId, customerId, storeId], onDelete: Restrict)
-  orderStatus           String          @default("PENDING") @map("order_status")
-  paymentStatus         String          @default("UNPAID") @map("payment_status")
-  paymentMethod         String          @map("payment_method")
+  orderStatus           String          @default("PENDING") @map("order_status") @db.VarChar(30)
+  paymentStatus         String          @default("UNPAID") @map("payment_status") @db.VarChar(30)
+  paymentMethod         String          @map("payment_method") @db.VarChar(30)
   subtotalAmount        Decimal         @default(0) @map("subtotal_amount") @db.Decimal(15, 2)
   discountAmount        Decimal         @default(0) @map("discount_amount") @db.Decimal(15, 2)
   shippingFee           Decimal         @default(0) @map("shipping_fee") @db.Decimal(15, 2)
   totalAmount           Decimal         @default(0) @map("total_amount") @db.Decimal(15, 2)
-  commissionRate        Decimal         @default(8.0) @map("commission_rate") @db.Decimal(5, 2)
-  commissionAmount      Decimal         @default(0) @map("commission_amount") @db.Decimal(15, 2)
-  netAmount             Decimal         @default(0) @map("net_amount") @db.Decimal(15, 2)
-  shippingRecipientName String          @map("shipping_recipient_name")
-  shippingPhone         String          @map("shipping_phone")
-  shippingAddress       String          @map("shipping_address")
+  commissionRate        Decimal?        @default(8.0) @map("commission_rate") @db.Decimal(5, 2)
+  commissionAmount      Decimal?        @default(0) @map("commission_amount") @db.Decimal(15, 2)
+  netAmount             Decimal?        @default(0) @map("net_amount") @db.Decimal(15, 2)
+  shippingRecipientName String          @map("shipping_recipient_name") @db.VarChar(255)
+  shippingPhone         String          @map("shipping_phone") @db.VarChar(20)
+  shippingAddress       String          @map("shipping_address") @db.VarChar(500)
   orderNote             String?         @map("order_note")
-  orderDate             DateTime        @default(now()) @map("order_date")
-  completedAt           DateTime?       @map("completed_at")
-  createdAt             DateTime        @default(now()) @map("created_at")
-  updatedAt             DateTime        @default(now()) @updatedAt @map("updated_at")
+  orderDate             DateTime        @default(now()) @map("order_date") @db.Timestamptz(6)
+  completedAt           DateTime?       @map("completed_at") @db.Timestamptz(6)
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   iotRequestId          String?         @map("iot_request_id") @db.VarChar(128)
 
   items               OrderItem[]
@@ -551,9 +551,9 @@ model PairingToken {
   id        BigInt   @id @default(autoincrement()) @map("id")
   deviceId  String   @map("device_id")
   tokenHash String   @unique @map("token_hash")
-  expiresAt DateTime @map("expires_at")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
   status    String   @default("ACTIVE")
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([deviceId, status])
   @@map("pairing_tokens")
@@ -579,9 +579,9 @@ model AuthOtp {
   tokenHash   String    @map("token_hash")
   attempts    Int       @default(0)
   maxAttempts Int       @default(5) @map("max_attempts")
-  expiresAt   DateTime  @map("expires_at")
-  consumedAt  DateTime? @map("consumed_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt  DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tokenHash, purpose])
   @@index([email, purpose])
@@ -628,9 +628,9 @@ model ProvisioningSession {
   tokenHash   String?   @map("token_hash") @db.VarChar(128)
   status      String    @default("ACTIVE") @db.VarChar(20)
   claimedBy   BigInt?   @map("claimed_by")
-  expiresAt   DateTime  @map("expires_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([sessionId])
   @@map("provisioning_sessions")

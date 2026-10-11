@@ -1,6 +1,15 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+const SAFE_USER_SELECT = {
+  userId: true,
+  username: true,
+  email: true,
+  fullName: true,
+  phone: true,
+  status: true,
+};
+
 @Injectable()
 export class AdminRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -8,7 +17,9 @@ export class AdminRepository {
   async findPendingStores() {
     return this.prisma.store.findMany({
       where: { status: 'INACTIVE' },
-      include: { owner: true },
+      include: {
+        owner: { select: SAFE_USER_SELECT },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -17,14 +28,19 @@ export class AdminRepository {
     return this.prisma.store.findMany({
       orderBy: { name: 'asc' },
       include: {
-        owner: true,
+        owner: { select: SAFE_USER_SELECT },
         _count: { select: { iotButtons: true, products: true, orders: true } },
       },
     });
   }
 
   async findStoreById(storeId: bigint) {
-    return this.prisma.store.findUnique({ where: { storeId } });
+    return this.prisma.store.findUnique({
+      where: { storeId },
+      include: {
+        owner: { select: SAFE_USER_SELECT },
+      },
+    });
   }
 
   async approveStore(storeId: bigint, ownerUserId: bigint) {
@@ -68,12 +84,18 @@ export class AdminRepository {
       this.prisma.orderStatusHistory.findMany({
         take: 50,
         orderBy: { changedAt: 'desc' },
-        include: { changedByUser: true, order: true },
+        include: {
+          changedByUser: { select: SAFE_USER_SELECT },
+          order: true,
+        },
       }),
       this.prisma.productPriceHistory.findMany({
         take: 50,
         orderBy: { changedAt: 'desc' },
-        include: { changedByUser: true, product: true },
+        include: {
+          changedByUser: { select: SAFE_USER_SELECT },
+          product: true,
+        },
       }),
     ]);
   }
@@ -96,13 +118,27 @@ export class AdminRepository {
   }
 
   async findUserById(userId: bigint) {
-    return this.prisma.user.findUnique({ where: { userId } });
+    return this.prisma.user.findUnique({
+      where: { userId },
+      select: {
+        userId: true,
+        email: true,
+        username: true,
+        fullName: true,
+        phone: true,
+        status: true,
+        createdAt: true,
+        customerProfile: true,
+        ownedStores: { select: { name: true, code: true } },
+      },
+    });
   }
 
   async updateUserStatus(userId: bigint, status: string) {
     return this.prisma.user.update({
       where: { userId },
       data: { status },
+      select: SAFE_USER_SELECT,
     });
   }
 
@@ -186,7 +222,7 @@ export class AdminRepository {
     return this.prisma.storeWithdrawal.findMany({
       include: {
         wallet: { include: { store: true } },
-        approvedByUser: true,
+        approvedByUser: { select: SAFE_USER_SELECT },
       },
       orderBy: { requestedAt: 'desc' },
     });
@@ -195,7 +231,10 @@ export class AdminRepository {
   async findWithdrawalById(withdrawalId: bigint) {
     return this.prisma.storeWithdrawal.findUnique({
       where: { withdrawalId },
-      include: { wallet: true },
+      include: {
+        wallet: true,
+        approvedByUser: { select: SAFE_USER_SELECT },
+      },
     });
   }
 

@@ -13,11 +13,15 @@ export class StoreWalletController {
   constructor(private readonly walletService: StoreWalletService) {}
 
   private extractStoreId(req: any, query?: StoreQueryDto): bigint {
-    const raw = req.user.storeId || req.user.ownedStores?.[0]?.storeId || query?.storeId;
-    if (!raw) {
-      throw new ForbiddenException('Không tìm thấy thông tin cửa hàng liên kết (storeId)');
+    const isSuperAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(req.user?.role);
+    if (isSuperAdmin && query?.storeId) {
+      return BigInt(query.storeId);
     }
-    return BigInt(raw);
+    const storeId = req.user?.storeId || req.user?.ownedStores?.[0]?.storeId;
+    if (!storeId) {
+      throw new ForbiddenException('Không tìm thấy thông tin cửa hàng liên kết (storeId) trong phiên đăng nhập');
+    }
+    return BigInt(storeId);
   }
 
   @Get()

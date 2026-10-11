@@ -67,9 +67,13 @@ export class StoreSubscriptionsService {
       });
 
       const now = new Date();
-      const startDate = now;
+      const activeSub = await tx.storeSubscription.findFirst({
+        where: { storeId: rawStoreId, status: 'ACTIVE', endDate: { gt: now } },
+        orderBy: { endDate: 'desc' },
+      });
+      const startDate = activeSub && activeSub.endDate > now ? activeSub.endDate : now;
       const durationMs = plan.durationDays * 24 * 60 * 60 * 1000;
-      const endDate = new Date(now.getTime() + durationMs);
+      const endDate = new Date(startDate.getTime() + durationMs);
 
       const subscription = await tx.storeSubscription.create({
         data: {

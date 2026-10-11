@@ -193,6 +193,53 @@ export class AuthRepository {
     });
   }
 
+    async verifyEmailAtomicTx(params: {
+    tokenHash: string;
+    email?: string;
+  }): Promise<{ success: boolean; user?: any; reason?: string }> {
+    const normalizedEmail = params.email ? params.email.toLowerCase().trim() : null;
+
+    return this.prisma.$transaction(async (tx) => {
+      const rows: any[] = await tx.$queryRawUnsafe(
+        `UPDATE auth_otps
+         SET consumed_at = NOW()
+         WHERE id = (
+           SELECT id FROM auth_otps
+           WHERE token_hash = $1
+             AND purpose = 'EMAIL_VERIFICATION'
+             AND ($2::text IS NULL OR LOWER(email) = LOWER($2))
+             AND consumed_at IS NULL
+             AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
+             AND attempts < max_attempts
+           ORDER BY id DESC
+           LIMIT 1
+           FOR UPDATE
+         )
+         RETURNING id, user_id, email;`,
+        params.tokenHash,
+        normalizedEmail,
+      );
+
+      if (!rows || rows.length === 0) {
+        return { success: false, reason: 'Mã xác thực không hợp lệ hoặc đã được sử dụng.' };
+      }
+
+      const otp = rows[0];
+      const targetUserId = BigInt(otp.user_id);
+
+      const user = await tx.user.update({
+        where: { userId: targetUserId },
+        data: {
+          status: 'ACTIVE',
+          emailVerificationToken: null,
+          emailVerificationExpiresAt: null,
+        },
+      });
+
+      return { success: true, user };
+    });
+  }
+
   async markEmailVerified(userId: bigint, otpId?: bigint) {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.update({
@@ -359,7 +406,7 @@ export class AuthRepository {
            AND purpose = $2
            AND ($3::text IS NULL OR LOWER(email) = LOWER($3))
            AND consumed_at IS NULL
-           AND expires_at > NOW()
+           AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
            AND attempts < max_attempts
          ORDER BY id DESC
          LIMIT 1
@@ -382,7 +429,7 @@ export class AuthRepository {
          WHERE LOWER(email) = LOWER($1)
            AND purpose = $2
            AND consumed_at IS NULL
-           AND expires_at > NOW()
+           AND (expires_at > NOW() OR expires_at > (NOW() AT TIME ZONE 'UTC'))
            AND attempts < max_attempts;`,
         normalizedEmail,
         params.purpose,

@@ -43,7 +43,19 @@ export class DeviceTemplatesService {
   ) {}
 
   async create(dto: any, user: any) {
-    const storeId = user.role === 'SUPER_ADMIN' ? (dto.storeId ? BigInt(dto.storeId) : null) : (user.storeId ? BigInt(user.storeId) : null);
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    
+    let storeId: bigint | null = null;
+    if (isAdmin) {
+      storeId = dto.storeId ? BigInt(dto.storeId) : null;
+    } else {
+      if (!user.storeId) {
+        throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin storeId');
+      }
+      storeId = BigInt(user.storeId);
+    }
+
     const code = `TMPL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
     
     const created = await this.devicesRepo.createTemplate({
@@ -67,11 +79,23 @@ export class DeviceTemplatesService {
   }
 
   async list(user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+
     let where: any = {};
-    if (user.role !== 'SUPER_ADMIN' && user.storeId) {
-      where = {
-        OR: [{ storeId: BigInt(user.storeId) }, { storeId: null }],
-      };
+    if (!isAdmin) {
+      if (user.role === 'CUSTOMER') {
+        where = { storeId: null };
+      } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+        if (!user.storeId) {
+          throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin storeId');
+        }
+        where = {
+          OR: [{ storeId: BigInt(user.storeId) }, { storeId: null }],
+        };
+      } else {
+        throw new ForbiddenException('Không có quyền xem template thiết bị');
+      }
     }
 
     const list = await this.devicesRepo.findTemplates(where);
@@ -85,13 +109,20 @@ export class DeviceTemplatesService {
   }
 
   async getById(id: string, user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
     const template = await this.devicesRepo.findTemplateByIdOrCode(id);
 
     if (!template) {
-      // Fallback check in memory seed templates
       const fallback = inMemoryTemplates.find((x) => x.id === id);
       if (fallback) return fallback;
       throw new NotFoundException('Không tìm thấy template mẫu');
+    }
+
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (!isAdmin && template.storeId !== null) {
+      if (!user.storeId || user.storeId.toString() !== template.storeId.toString()) {
+        throw new ForbiddenException('Bạn không có quyền truy cập template của cửa hàng khác');
+      }
     }
 
     return {
@@ -103,9 +134,24 @@ export class DeviceTemplatesService {
   }
 
   async update(id: string, dto: any, user: any) {
-    const template = await this.getById(id, user);
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const template = await this.devicesRepo.findTemplateByIdOrCode(id);
+    if (!template) throw new NotFoundException('Không tìm thấy template mẫu');
 
-    const updated = await this.devicesRepo.updateTemplate(BigInt(template.id || template.templateId), {
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (template.storeId === null) {
+      if (!isAdmin) {
+        throw new ForbiddenException('Chỉ quản trị viên hệ thống (SUPER_ADMIN) mới có quyền chỉnh sửa template toàn cục');
+      }
+    } else {
+      if (!isAdmin) {
+        if (!user.storeId || user.storeId.toString() !== template.storeId.toString()) {
+          throw new ForbiddenException('Bạn không có quyền chỉnh sửa template của cửa hàng khác');
+        }
+      }
+    }
+
+    const updated = await this.devicesRepo.updateTemplate(BigInt(template.templateId), {
       name: dto.name,
       description: dto.description,
       category: dto.category,
@@ -124,13 +170,42 @@ export class DeviceTemplatesService {
   }
 
   async delete(id: string, user: any) {
-    const template = await this.getById(id, user);
-    await this.devicesRepo.deleteTemplate(BigInt(template.id || template.templateId));
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const template = await this.devicesRepo.findTemplateByIdOrCode(id);
+    if (!template) throw new NotFoundException('Không tìm thấy template mẫu');
+
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (template.storeId === null) {
+      if (!isAdmin) {
+        throw new ForbiddenException('Chỉ quản trị viên hệ thống (SUPER_ADMIN) mới có quyền xóa template toàn cục');
+      }
+    } else {
+      if (!isAdmin) {
+        if (!user.storeId || user.storeId.toString() !== template.storeId.toString()) {
+          throw new ForbiddenException('Bạn không có quyền xóa template của cửa hàng khác');
+        }
+      }
+    }
+
+    await this.devicesRepo.deleteTemplate(BigInt(template.templateId));
     return { success: true, message: 'Đã xóa template mẫu thành công' };
   }
 
   async deploy(id: string, body: any, user: any) {
     const template = await this.getById(id, user);
+
+    if (body?.deviceId) {
+      const button = await this.devicesRepo.findByIdentifier(body.deviceId.toString());
+      if (!button) throw new NotFoundException('Không tìm thấy thiết bị đích');
+
+      const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+      if (!isAdmin) {
+        if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
+          throw new ForbiddenException('Thiết bị không thuộc quyền quản lý của cửa hàng bạn');
+        }
+      }
+    }
+
     return {
       success: true,
       message: `Đã triển khai template "${template.name}" cho thiết bị`,

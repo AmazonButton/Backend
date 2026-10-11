@@ -358,7 +358,8 @@ export class OrdersRepository {
       }
       const order = lockedOrders[0];
 
-      if (order.order_status === 'CANCELLED') {
+      if (order.order_status === 'CANCELLED' || order.order_status === 'REJECTED') {
+        // Idempotent: already terminal, do not release stock again
         return this.findOrderByIdTx(tx, orderId);
       }
 

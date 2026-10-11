@@ -166,14 +166,16 @@ export class OrdersService {
     }
 
     // BOLA Check
-    if (user && user.role === 'CUSTOMER' && user.customerProfileId) {
-      if (button.customerId.toString() !== user.customerProfileId.toString()) {
+    if (user?.role === 'CUSTOMER') {
+      if (!user.customerProfileId || button.customerId?.toString() !== user.customerProfileId.toString()) {
         throw new ForbiddenException('Bạn không sở hữu nút bấm này');
       }
-    } else if (user && ['STORE_OWNER', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
-      if (button.storeId.toString() !== user.storeId.toString()) {
+    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user?.role)) {
+      if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Nút bấm không thuộc quyền quản lý của cửa hàng bạn');
       }
+    } else if (!['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user?.role)) {
+      throw new ForbiddenException('Không có quyền mô phỏng nút bấm này');
     }
 
     const result = await this.handleButtonEvent(button, {
@@ -196,8 +198,19 @@ export class OrdersService {
   async quickReorder(user: any, deviceId: string) {
     const button = await this.ordersRepo.findButtonByDeviceId(deviceId);
 
-    if (!button || (user.customerProfileId && button.customerId.toString() !== user.customerProfileId.toString())) {
-      throw new NotFoundException('Thiết bị không tồn tại hoặc không thuộc sở hữu của bạn');
+    if (!button) {
+      throw new NotFoundException('Thiết bị không tồn tại');
+    }
+
+    if (user.role === 'CUSTOMER') {
+      if (!user.customerProfileId) {
+        throw new ForbiddenException('Tài khoản khách hàng thiếu hồ sơ định danh');
+      }
+      if (button.customerId?.toString() !== user.customerProfileId.toString()) {
+        throw new ForbiddenException('Thiết bị không thuộc sở hữu của bạn');
+      }
+    } else if (!['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ khách hàng mới có thể đặt hàng nhanh qua thiết bị');
     }
 
     const data = await this.handleButtonEvent(button, {
@@ -209,11 +222,23 @@ export class OrdersService {
   }
 
   async list(user: any, status?: string) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+
     const whereClause: any = {};
-    if (user.role === 'CUSTOMER' && user.customerProfileId) {
+    if (user.role === 'CUSTOMER') {
+      if (!user.customerProfileId) {
+        throw new ForbiddenException('Tài khoản khách hàng thiếu hồ sơ định danh (customerProfileId)');
+      }
       whereClause.customerId = BigInt(user.customerProfileId);
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
+    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user.role)) {
+      if (!user.storeId) {
+        throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
+      }
       whereClause.storeId = BigInt(user.storeId);
+    } else if (['ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      // Admin may view all orders or filter
+    } else {
+      throw new ForbiddenException('Không có quyền truy cập danh sách đơn hàng');
     }
 
     if (status) {
