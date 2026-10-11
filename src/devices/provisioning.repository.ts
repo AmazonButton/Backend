@@ -363,6 +363,8 @@ export class ProvisioningRepository {
       await tx.ioTButton.update({
         where: { buttonId },
         data: {
+          customerId: null,
+          addressId: null,
           status: 'UNASSIGNED',
           installedAt: null,
         },
@@ -379,6 +381,8 @@ export class ProvisioningRepository {
       await tx.ioTButton.update({
         where: { buttonId },
         data: {
+          customerId: null,
+          addressId: null,
           status: 'INACTIVE',
           installedAt: null,
         },

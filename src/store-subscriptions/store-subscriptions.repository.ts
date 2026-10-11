@@ -41,7 +41,18 @@ export class StoreSubscriptionsRepository {
     idempotencyKey?: string;
   }): Promise<any> {
     return this.prisma.$transaction(async (tx) => {
-      // 0. Idempotency check if idempotencyKey provided
+      // 1. Lock store_wallets row (FOR UPDATE)
+      const walletRows = await tx.$queryRawUnsafe<any[]>(
+        `SELECT wallet_id, balance, store_id FROM store_wallets WHERE wallet_id = $1 FOR UPDATE;`,
+        params.walletId,
+      );
+      if (!walletRows || walletRows.length === 0) {
+        throw new NotFoundException('Ví cửa hàng không tồn tại');
+      }
+      const walletRow = walletRows[0];
+
+      // 2. Strict Idempotency check AFTER acquiring row-level lock on wallet
+      // Serialises concurrent requests sharing the same key and prevents duplicate charges or 500 errors
       if (params.idempotencyKey) {
         const idempRef = `SUB-IDEMP-${params.idempotencyKey.trim()}`;
         const existingTx = await tx.walletTransaction.findFirst({
@@ -61,16 +72,6 @@ export class StoreSubscriptionsRepository {
           if (latestSub) return latestSub;
         }
       }
-
-      // 1. Lock store_wallets row (FOR UPDATE)
-      const walletRows = await tx.$queryRawUnsafe<any[]>(
-        `SELECT wallet_id, balance, store_id FROM store_wallets WHERE wallet_id = $1 FOR UPDATE;`,
-        params.walletId,
-      );
-      if (!walletRows || walletRows.length === 0) {
-        throw new NotFoundException('Ví cửa hàng không tồn tại');
-      }
-      const walletRow = walletRows[0];
 
       // 2. Lock active subscription for store (FOR UPDATE)
       const activeSubRows = await tx.$queryRawUnsafe<any[]>(

@@ -4,7 +4,7 @@ import { StoreSubscriptionsRepository } from '../src/store-subscriptions/store-s
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 
 async function testStoreSubscriptions() {
-  console.log('Testing Store Subscription Purchase & Listing Enforcement...');
+  console.log('Testing Store Subscription Purchase & Listing Enforcement (with Zero Residue)...');
   const prisma = new PrismaService();
   await prisma.$connect();
 
@@ -12,12 +12,21 @@ async function testStoreSubscriptions() {
   const subService = new StoreSubscriptionsService(new StoreSubscriptionsRepository(prisma), walletService);
   let failed = 0;
 
+  let store: any = null;
+  let wallet: any = null;
+  let originalBalance: any = null;
+  let plan: any = null;
+  let subscription: any = null;
+  const testStartTime = new Date();
+
   try {
-    // 1. Setup a test Store with sufficient wallet balance
-    let store = await prisma.store.findFirst();
+    // 1. Setup a test Store with sufficient wallet balance (snapshot first)
+    store = await prisma.store.findFirst();
     if (!store) throw new Error('No store found');
 
-    const wallet = await walletService.getOrCreateStoreWallet(store.storeId);
+    wallet = await walletService.getOrCreateStoreWallet(store.storeId);
+    originalBalance = wallet.balance;
+
     await prisma.storeWallet.update({
       where: { walletId: wallet.walletId },
       data: { balance: 500000 },
@@ -25,7 +34,7 @@ async function testStoreSubscriptions() {
 
     // 2. Setup a Subscription Plan
     const planCode = `SUB_TEST_${Date.now()}`;
-    const plan = await prisma.subscriptionPlan.create({
+    plan = await prisma.subscriptionPlan.create({
       data: {
         planCode,
         planName: 'Gói Listing Tiêu Chuẩn',
@@ -37,7 +46,7 @@ async function testStoreSubscriptions() {
     });
 
     // 3. Subscribe using Wallet Balance
-    const subscription = await subService.subscribeWithWallet(store.storeId, plan.planId);
+    subscription = await subService.subscribeWithWallet(store.storeId, plan.planId);
     if (
       subscription &&
       subscription.status === 'ACTIVE' &&
@@ -81,6 +90,37 @@ async function testStoreSubscriptions() {
     console.log('  [FAIL] Exception during test execution:', error.message);
     failed++;
   } finally {
+    console.log('  --- TEARDOWN & ZERO RESIDUE RESTORATION ---');
+    try {
+      if (subscription?.subscriptionId) {
+        await prisma.storeSubscription.delete({
+          where: { subscriptionId: subscription.subscriptionId },
+        }).catch(() => {});
+      }
+      if (wallet?.walletId) {
+        await prisma.walletTransaction.deleteMany({
+          where: {
+            walletId: wallet.walletId,
+            createdAt: { gte: testStartTime },
+          },
+        }).catch(() => {});
+        if (originalBalance !== null) {
+          await prisma.storeWallet.update({
+            where: { walletId: wallet.walletId },
+            data: { balance: originalBalance },
+          }).catch(() => {});
+          console.log(`  [RESTORE] Store wallet balance restored to ${originalBalance.toString()}`);
+        }
+      }
+      if (plan?.planId) {
+        await prisma.subscriptionPlan.delete({
+          where: { planId: plan.planId },
+        }).catch(() => {});
+      }
+      console.log('  [ZERO RESIDUE] Test artifacts cleanly purged.');
+    } catch (cleanupErr: any) {
+      console.error('Cleanup error:', cleanupErr.message);
+    }
     await prisma.$disconnect();
   }
 

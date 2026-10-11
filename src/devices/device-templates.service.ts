@@ -209,9 +209,20 @@ export class DeviceTemplatesService {
     }
 
     const clickBehavior = template.doublePressAction ? 'DOUBLE' : 'SINGLE';
-    await this.devicesRepo.update(button.buttonId, {
+    const updateData: any = {
       clickBehavior,
-    });
+    };
+    if (template.cancelWindowSeconds) {
+      updateData.doubleClickWindowMs = Math.min(template.cancelWindowSeconds * 1000, 1000);
+    }
+    await this.devicesRepo.update(button.buttonId, updateData);
+
+    if (template.defaultQuantity && template.defaultQuantity > 0) {
+      await (this.devicesRepo as any).prisma.buttonProduct.updateMany({
+        where: { buttonId: button.buttonId },
+        data: { quantity: template.defaultQuantity },
+      });
+    }
 
     return {
       success: true,
@@ -220,6 +231,10 @@ export class DeviceTemplatesService {
         templateId: template.id,
         deviceId: button.deviceId,
         clickBehavior,
+        singlePressAction: template.singlePressAction,
+        doublePressAction: template.doublePressAction,
+        defaultQuantity: template.defaultQuantity,
+        cancelWindowSeconds: template.cancelWindowSeconds,
         deployedAt: new Date(),
       },
     };
