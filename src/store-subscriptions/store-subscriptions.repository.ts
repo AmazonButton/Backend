@@ -1,4 +1,5 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import * as crypto from 'crypto';
+import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 
@@ -52,24 +53,40 @@ export class StoreSubscriptionsRepository {
       const walletRow = walletRows[0];
 
       // 2. Strict Idempotency check AFTER acquiring row-level lock on wallet
-      // Serialises concurrent requests sharing the same key and prevents duplicate charges or 500 errors
+      // Detects key reuse with mismatched payloads (storeId, planId) and throws HTTP 409 ConflictException
       if (params.idempotencyKey) {
-        const idempRef = `SUB-IDEMP-${params.idempotencyKey.trim()}`;
+        const cleanKey = params.idempotencyKey.trim();
+        const payloadHash = crypto.createHash('sha256').update(`${params.storeId}:${params.planId}`).digest('hex').slice(0, 16);
+        const expectedRef = `SUB-IDEMP-${cleanKey}:${payloadHash}`;
+
         const existingTx = await tx.walletTransaction.findFirst({
           where: {
             walletId: params.walletId,
             type: 'SUBSCRIPTION_PAYMENT',
-            referenceId: idempRef,
+            OR: [
+              { referenceId: expectedRef },
+              { referenceId: { startsWith: `SUB-IDEMP-${cleanKey}:` } },
+              { referenceId: `SUB-IDEMP-${cleanKey}` },
+            ],
           },
+          orderBy: { createdAt: 'desc' },
         });
+
         if (existingTx) {
-          // Idempotent: return the latest active subscription
+          // If existing transaction was created with a different payload hash -> 409 Conflict
+          if (existingTx.referenceId && existingTx.referenceId.startsWith(`SUB-IDEMP-${cleanKey}:`) && existingTx.referenceId !== expectedRef) {
+            throw new ConflictException('IDEMPOTENCY_KEY_REUSED: Khóa idempotency đã được sử dụng với payload khác');
+          }
+
+          // Check if subscription matches current plan
           const latestSub = await tx.storeSubscription.findFirst({
             where: { storeId: params.storeId, planId: params.planId },
             include: { plan: true },
             orderBy: { createdAt: 'desc' },
           });
           if (latestSub) return latestSub;
+
+          throw new ConflictException('IDEMPOTENCY_KEY_REUSED: Khóa idempotency đã được sử dụng với payload khác');
         }
       }
 
@@ -129,8 +146,9 @@ export class StoreSubscriptionsRepository {
       });
 
       // 7. Create wallet_transaction
+      const payloadHash = crypto.createHash('sha256').update(`${params.storeId}:${params.planId}`).digest('hex').slice(0, 16);
       const referenceId = params.idempotencyKey
-        ? `SUB-IDEMP-${params.idempotencyKey.trim()}`
+        ? `SUB-IDEMP-${params.idempotencyKey.trim()}:${payloadHash}`
         : `SUB-${subscription.subscriptionId}`;
 
       await tx.walletTransaction.create({

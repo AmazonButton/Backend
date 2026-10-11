@@ -275,4 +275,60 @@ export class DevicesRepository {
     return res;
   }
 
+
+  async deployTemplateAtomicTx(buttonId: bigint, template: {
+    singlePressAction?: string | null;
+    doublePressAction?: string | null;
+    defaultQuantity?: number | null;
+    cancelWindowSeconds?: number | null;
+    doubleClickWindowMs?: number | null;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Lock button row for update
+      const lockedButton = await tx.$queryRawUnsafe<any[]>(
+        'SELECT button_id, device_id, store_id FROM iot_button WHERE button_id = $1 FOR UPDATE',
+        buttonId
+      );
+      if (!lockedButton || lockedButton.length === 0) {
+        throw new Error('Thiết bị không tồn tại');
+      }
+
+      // 2. Hardware click behavior logic
+      // Business cancellation window (cancelWindowSeconds) is strictly separated from
+      // hardware debounce double-click window (doubleClickWindowMs, standard 300ms)
+      const clickBehavior = template.doublePressAction ? 'DOUBLE' : 'SINGLE';
+      const doubleClickWindowMs = template.doubleClickWindowMs !== undefined
+        ? template.doubleClickWindowMs
+        : (template.doublePressAction ? 300 : undefined);
+
+      const updateData: any = {
+        clickBehavior,
+      };
+      if (doubleClickWindowMs !== undefined) {
+        updateData.doubleClickWindowMs = doubleClickWindowMs;
+      }
+
+      const updatedButton = await tx.ioTButton.update({
+        where: { buttonId },
+        data: updateData,
+        include: {
+          store: true,
+          customer: { include: { user: true } },
+          address: true,
+          buttonProducts: { include: { product: true } },
+        },
+      });
+
+      // 3. Atomically update button product default quantity if specified
+      if (template.defaultQuantity && template.defaultQuantity > 0) {
+        await tx.buttonProduct.updateMany({
+          where: { buttonId },
+          data: { quantity: template.defaultQuantity },
+        });
+      }
+
+      return updatedButton;
+    });
+  }
+
 }

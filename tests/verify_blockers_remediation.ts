@@ -1,76 +1,71 @@
 import { PrismaClient } from '@prisma/client';
 import { DevicesRepository } from '../src/devices/devices.repository';
+import { ProvisioningRepository } from '../src/devices/provisioning.repository';
+import { ProvisioningService } from '../src/devices/provisioning.service';
+import { OrdersRepository } from '../src/orders/orders.repository';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const prisma = new PrismaClient();
 
 async function run() {
   console.log('===============================================================');
-  console.log('⚡ TESTING ALL 5 BLOCKERS REMEDIATION & ZERO RESIDUE');
+  console.log('🚀 TESTING ALL BLOCKERS REMEDIATION WITH DIRECT DB & ZERO RESIDUE');
   console.log('===============================================================\n');
 
   let passed = 0;
-  let total = 5;
+  const total = 7;
+  const testRunId = Date.now();
 
   try {
     // -------------------------------------------------------------------------
     // TEST 1: Blocker 2 - Prisma schema IotIdempotencyKey & Migration Status
     // -------------------------------------------------------------------------
-    console.log('▶ [1/5] Testing Blocker 2: Prisma Schema & No P2022 on IotIdempotencyKey...');
-    const idempotencyRecord = await prisma.iotIdempotencyKey.findFirst({
-      take: 1,
-    });
-    // Query executed without throwing P2022
-    console.log('  ✔ [PASS] prisma.iotIdempotencyKey.findFirst() executed without P2022 error!');
+    console.log('👉 [1/7] Testing Blocker 2: Prisma Schema & No P2022 on IotIdempotencyKey...');
+    await prisma.iotIdempotencyKey.findFirst({ take: 1 });
+    console.log('  ✅ [PASS] prisma.iotIdempotencyKey.findFirst() executed without P2022 error!');
 
     const migrations: any[] = await prisma.$queryRawUnsafe(
       `SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY finished_at ASC;`
     );
-    console.log(`  ✔ [PASS] Verified ${migrations.length} applied migrations in database.`);
+    console.log(`  ✅ [PASS] Verified ${migrations.length} applied migrations in database.`);
     if (migrations.length < 8) {
       throw new Error(`Expected at least 8 migrations, found ${migrations.length}`);
     }
     passed++;
 
     // -------------------------------------------------------------------------
-    // TEST 2: Blocker 4 - Atomic Nonce Upsert & Expired Nonce Re-use
+    // TEST 2: Blocker 4 - Device Nonce TTL & Atomic Anti-Replay
     // -------------------------------------------------------------------------
-    console.log('\n▶ [2/5] Testing Blocker 4: Device Nonce TTL & Atomic Anti-Replay...');
-    const testDeviceId = 'SOB-TEST-NONCE-01';
-    const testNonce = 'nonce-test-' + Date.now();
-
+    console.log('\n👉 [2/7] Testing Blocker 4: Device Nonce TTL & Atomic Anti-Replay...');
+    const testDeviceId = 'SOB-TEST-NONCE-' + testRunId;
+    const testNonce = 'nonce-test-' + testRunId;
     const devicesRepo = new DevicesRepository(prisma as unknown as PrismaService);
 
     try {
-      // Step A: First consumption of nonce must succeed
       const firstConsume = await devicesRepo.consumeDeviceNonce(testDeviceId, testNonce);
       if (!firstConsume) {
         throw new Error('FAIL: First consumeDeviceNonce should succeed');
       }
 
-      // Step B: Immediate duplicate within TTL must be rejected (false)
       const duplicateConsume = await devicesRepo.consumeDeviceNonce(testDeviceId, testNonce);
       if (duplicateConsume) {
         throw new Error('FAIL: Replay attack with same active nonce was NOT rejected!');
       }
-      console.log('  ✔ [PASS] Same nonce within TTL was strictly rejected (anti-replay)');
+      console.log('  ✅ [PASS] Same nonce within TTL was strictly rejected (anti-replay)');
 
-      // Step C: Simulate expired nonce by setting expires_at to past
       await prisma.$executeRawUnsafe(
         `UPDATE device_nonces SET expires_at = NOW() - INTERVAL '10 seconds' WHERE device_id = $1 AND nonce = $2;`,
         testDeviceId,
         testNonce
       );
 
-      // Step D: After TTL expiration, nonce can be accepted again
       const expiredReconsume = await devicesRepo.consumeDeviceNonce(testDeviceId, testNonce);
       if (!expiredReconsume) {
         throw new Error('FAIL: Expired nonce was blocked after TTL!');
       }
-      console.log('  ✔ [PASS] Nonce after TTL was successfully accepted & refreshed (no infinite block)');
+      console.log('  ✅ [PASS] Nonce after TTL was successfully accepted & refreshed (no infinite block)');
       passed++;
     } finally {
-      // Clean up test nonces
       await prisma.$executeRawUnsafe(
         `DELETE FROM device_nonces WHERE device_id = $1;`,
         testDeviceId
@@ -80,31 +75,25 @@ async function run() {
     // -------------------------------------------------------------------------
     // TEST 3: Blocker 3 - DB Status Constraint & Devices toggleStatus
     // -------------------------------------------------------------------------
-    console.log('\n▶ [3/5] Testing Blocker 3: Unified Statuses & DB Check Constraint...');
-    // Verify valid statuses conform to DB constraint: ACTIVE, INACTIVE, LOCKED, SUSPENDED, UNASSIGNED, MAINTENANCE
+    console.log('\n👉 [3/7] Testing Blocker 3: Unified Statuses & DB Check Constraint...');
     const validStatuses = ['ACTIVE', 'INACTIVE', 'LOCKED', 'SUSPENDED', 'UNASSIGNED', 'MAINTENANCE'];
-    
-    // Test that DB constraint allows all 6 valid statuses on a rollback transaction
+
     await prisma.$transaction(async (tx) => {
       for (const st of validStatuses) {
         await tx.$executeRawUnsafe(
-          `UPDATE iot_button SET status = $1 WHERE button_id = 50;`,
+          `UPDATE iot_button SET status = $1 WHERE button_id = (SELECT button_id FROM iot_button LIMIT 1);`,
           st
         );
       }
-      // Force rollback so no permanent DB mutation occurs
       throw new Error('ROLLBACK_INTENTIONAL');
     }).catch((err) => {
-      if (err.message !== 'ROLLBACK_INTENTIONAL') {
-        throw err;
-      }
+      if (err.message !== 'ROLLBACK_INTENTIONAL') throw err;
     });
 
-    // Test that an invalid status throws constraint violation
     let invalidRejected = false;
     try {
       await prisma.$executeRawUnsafe(
-        `UPDATE iot_button SET status = 'INVALID_FOO_BAR' WHERE button_id = 50;`
+        `UPDATE iot_button SET status = 'INVALID_FOO_BAR' WHERE button_id = (SELECT button_id FROM iot_button LIMIT 1);`
       );
     } catch {
       invalidRejected = true;
@@ -112,28 +101,168 @@ async function run() {
     if (!invalidRejected) {
       throw new Error('FAIL: Invalid status was not rejected by database constraint!');
     }
-    console.log('  ✔ [PASS] DB constraint iot_button_status_check correctly permits all standard BRD statuses & blocks invalid');
+    console.log('  ✅ [PASS] DB constraint iot_button_status_check correctly permits all standard BRD statuses & blocks invalid');
     passed++;
+
+    // -------------------------------------------------------------------------
+    // TEST 3B: Test 3B - Anti-Double Inventory & Dual-Order Reservation Isolation
+    // -------------------------------------------------------------------------
+    console.log('\n👉 [4/7] Testing Test 3B: Dual-Order Inventory Reservation Isolation & Single Deduction...');
+    const activeStore = await prisma.store.findFirst({ where: { status: 'ACTIVE' } });
+    if (!activeStore) throw new Error('FAIL: No active store available for inventory test');
+    const activeCustomer = await prisma.customerProfile.findFirst();
+    if (!activeCustomer) throw new Error('FAIL: No customer profile available for inventory test');
+    const activeBtn = await prisma.ioTButton.findFirst({ where: { storeId: activeStore.storeId } });
+    if (!activeBtn) throw new Error('FAIL: No button available for inventory test');
+
+    const testCategory = await prisma.category.findFirst({ where: { storeId: activeStore.storeId } });
+    const testInvProduct = await prisma.product.create({
+      data: {
+        storeId: activeStore.storeId,
+        categoryId: testCategory ? testCategory.categoryId : null,
+        productCode: `PRD_INV_${testRunId}`,
+        productName: `Test Inv Product ${testRunId}`,
+        basePrice: 50000,
+        status: 'ACTIVE',
+      },
+    });
+
+    await prisma.inventory.upsert({
+      where: { productId: testInvProduct.productId },
+      update: {
+        quantityOnHand: 100,
+        reservedQuantity: 0,
+      },
+      create: {
+        storeId: activeStore.storeId,
+        productId: testInvProduct.productId,
+        quantityOnHand: 100,
+        reservedQuantity: 0,
+        minStockAlert: 5,
+      },
+    });
+
+    const order1 = await prisma.order.create({
+      data: {
+        orderCode: `ORD_T3B_1_${testRunId}`,
+        storeId: activeStore.storeId,
+        customerId: activeCustomer.customerId,
+        buttonId: activeBtn.buttonId,
+        orderStatus: 'PENDING',
+        paymentStatus: 'UNPAID',
+        paymentMethod: 'COD',
+        subtotalAmount: 100000,
+        totalAmount: 100000,
+        shippingRecipientName: 'Test Recipient',
+        shippingPhone: '0901234567',
+        shippingAddress: '123 Test St',
+        items: {
+          create: [{
+            productId: testInvProduct.productId,
+            productNameSnapshot: testInvProduct.productName,
+            unitPriceSnapshot: 50000,
+            finalUnitPrice: 50000,
+            quantity: 2,
+            itemSubtotal: 100000,
+          }],
+        },
+      },
+    });
+    await prisma.inventory.update({
+      where: { productId: testInvProduct.productId },
+      data: { reservedQuantity: { increment: 2 } },
+    });
+
+    const order2 = await prisma.order.create({
+      data: {
+        orderCode: `ORD_T3B_2_${testRunId}`,
+        storeId: activeStore.storeId,
+        customerId: activeCustomer.customerId,
+        buttonId: activeBtn.buttonId,
+        orderStatus: 'PENDING',
+        paymentStatus: 'UNPAID',
+        paymentMethod: 'COD',
+        subtotalAmount: 150000,
+        totalAmount: 150000,
+        shippingRecipientName: 'Test Recipient',
+        shippingPhone: '0901234567',
+        shippingAddress: '123 Test St',
+        items: {
+          create: [{
+            productId: testInvProduct.productId,
+            productNameSnapshot: testInvProduct.productName,
+            unitPriceSnapshot: 50000,
+            finalUnitPrice: 50000,
+            quantity: 3,
+            itemSubtotal: 150000,
+          }],
+        },
+      },
+    });
+    await prisma.inventory.update({
+      where: { productId: testInvProduct.productId },
+      data: { reservedQuantity: { increment: 3 } },
+    });
+
+    try {
+      let invSnapshot = await prisma.inventory.findUnique({ where: { productId: testInvProduct.productId } });
+      if (invSnapshot?.reservedQuantity !== 5 || invSnapshot?.quantityOnHand !== 100) {
+        throw new Error(`Initial reservation mismatch: reserved ${invSnapshot?.reservedQuantity}, onHand ${invSnapshot?.quantityOnHand}`);
+      }
+      console.log(`  📸 [SNAPSHOT] Both orders reserved stock: onHand = 100, reserved = 5 (Order1: 2, Order2: 3)`);
+
+      const ordersRepo = new OrdersRepository(prisma as unknown as PrismaService);
+      await ordersRepo.cancelOrderAtomicTx(order1.orderId, 'Hủy đơn 1 kiểm tra bảo toàn reserved đơn 2');
+
+      invSnapshot = await prisma.inventory.findUnique({ where: { productId: testInvProduct.productId } });
+      if (invSnapshot?.reservedQuantity !== 3 || invSnapshot?.quantityOnHand !== 100) {
+        throw new Error(`Reservation leaked on cancel! Expected reserved 3, onHand 100; got reserved ${invSnapshot?.reservedQuantity}, onHand ${invSnapshot?.quantityOnHand}`);
+      }
+      console.log(`  ✅ [PASS] Cancelling Order 1 accurately retained Order 2's reserved stock at exactly 3 units!`);
+
+      // Strictly transition order2 along valid state machine path to DELIVERED
+      for (const nextStatus of ['CONFIRMED', 'PREPARING', 'READY_FOR_DELIVERY', 'SHIPPING', 'DELIVERED']) {
+        await prisma.order.update({
+          where: { orderId: order2.orderId },
+          data: { orderStatus: nextStatus },
+        });
+      }
+      await ordersRepo.completeOrderAtomicTx(order2.orderId);
+
+      invSnapshot = await prisma.inventory.findUnique({ where: { productId: testInvProduct.productId } });
+      if (invSnapshot?.quantityOnHand !== 97 || invSnapshot?.reservedQuantity !== 0) {
+        throw new Error(`Double inventory deduction detected! Expected onHand 97, reserved 0; got onHand ${invSnapshot?.quantityOnHand}, reserved ${invSnapshot?.reservedQuantity}`);
+      }
+      console.log(`  ✅ [PASS] Completing Order 2 deducted on-hand strictly ONCE (100 -> 97), reserved = 0!`);
+      passed++;
+    } finally {
+      await prisma.orderItem.deleteMany({ where: { orderId: { in: [order1.orderId, order2.orderId] } } });
+      await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: [order1.orderId, order2.orderId] } } });
+      await prisma.order.deleteMany({ where: { orderId: { in: [order1.orderId, order2.orderId] } } });
+      await prisma.inventory.deleteMany({ where: { productId: testInvProduct.productId } });
+      await prisma.product.deleteMany({ where: { productId: testInvProduct.productId } });
+      console.log(`  🧹 [CLEANUP] Test 3B orders and inventory entities cleaned up (Zero residue).`);
+    }
 
     // -------------------------------------------------------------------------
     // TEST 4: Blocker 1 - Provisioning Atomic Transaction & confirmPairing
     // -------------------------------------------------------------------------
-    console.log('\n▶ [4/5] Testing Blocker 1: Atomic confirmPairing & Session Claiming...');
-    const testSessionToken = 'PROV-TEST-' + Date.now();
-    
+    console.log('\n👉 [5/7] Testing Blocker 1: Atomic confirmPairing & Session Claiming...');
+    const testSessionToken = 'PROV-TEST-' + testRunId;
+    const dummyButton = await prisma.ioTButton.findFirst();
+    if (!dummyButton) throw new Error('FAIL: No button found for session test');
+
     const createdSession: any = await prisma.provisioningSession.create({
       data: {
         sessionId: testSessionToken,
-        deviceId: 50n,
-        sessionHash: 'hash-' + Date.now(),
+        deviceId: dummyButton.buttonId,
+        sessionHash: 'hash-' + testRunId,
         status: 'ACTIVE',
         expiresAt: new Date(Date.now() + 600000),
       },
     });
 
     try {
-      const { ProvisioningRepository } = await import('../src/devices/provisioning.repository');
-      const { ProvisioningService } = await import('../src/devices/provisioning.service');
       const provRepo = new ProvisioningRepository(prisma as unknown as PrismaService);
       const provService = new ProvisioningService(
         provRepo,
@@ -148,13 +277,13 @@ async function run() {
           {
             customerId: '1',
             storeId: '1',
-            deviceId: 'SOB-000038',
+            deviceId: dummyButton.deviceId,
             buttonName: 'Test Atomic Button',
-            productId: '99999999999', // non-existent product
+            productId: '99999999999',
           },
           { customerProfileId: '1' }
         );
-      } catch (err: any) {
+      } catch {
         caughtExpected = true;
       }
 
@@ -162,33 +291,124 @@ async function run() {
         throw new Error('FAIL: confirmPairing should fail when product does not exist');
       }
 
-      // Verify that session is STILL ACTIVE because the transaction rolled back atomically!
       const sessionAfterFail = await prisma.provisioningSession.findUnique({
         where: { id: createdSession.id },
       });
       if (sessionAfterFail?.status !== 'ACTIVE') {
-        throw new Error('FAIL: Session status prematurely changed to ' + sessionAfterFail?.status + ' before transaction committed!');
+        throw new Error('FAIL: Session status prematurely changed to ' + sessionAfterFail?.status);
       }
-      console.log('  ✔ [PASS] Transaction rollback verified: session is NOT prematurely claimed if downstream validation fails!');
+      console.log('  ✅ [PASS] Transaction rollback verified: session is NOT prematurely claimed if downstream validation fails!');
       passed++;
     } finally {
-      // Clean up test session
       await prisma.provisioningSession.delete({
         where: { id: createdSession.id },
       });
     }
 
     // -------------------------------------------------------------------------
-    // TEST 5: Blocker 5 - PayOS URL Preservation & Concurrent Link Creation
+    // TEST 5: Test 5 - Direct DB Verification for Unclaim & Factory Reset
     // -------------------------------------------------------------------------
-    console.log('\n▶ [5/5] Testing Blocker 5: PayOS Direct URL Fields & Concurrency Safe Handling...');
-    // Verify PaymentTransaction schema has checkoutUrl and qrCode fields and updates atomically
+    console.log('\n👉 [6/7] Testing Test 5: Unclaim & Factory Reset Direct Database State Verification...');
+    const provRepo = new ProvisioningRepository(prisma as unknown as PrismaService);
+
+    const testBtn = await prisma.ioTButton.create({
+      data: {
+        deviceId: `SOB-TEST-UNC-${testRunId}`,
+        buttonCode: `BTN_UNC_${testRunId}`,
+        storeId: activeStore.storeId,
+        customerId: activeCustomer.customerId,
+        hmacSecret: 'sec_0123456789abcdef0123456789abcdef',
+        status: 'ACTIVE',
+      },
+    });
+
+    const activeProduct = await prisma.product.findFirst({ where: { storeId: activeStore.storeId } });
+    if (activeProduct) {
+      await prisma.buttonProduct.create({
+        data: {
+          buttonId: testBtn.buttonId,
+          productId: activeProduct.productId,
+          quantity: 1,
+        },
+      });
+    }
+
+    try {
+      // Step A: Execute unclaim and verify DB directly
+      await provRepo.unclaimDeviceAtomicTx(testBtn.buttonId);
+
+      const unclaimDbBtn = await prisma.ioTButton.findUnique({ where: { buttonId: testBtn.buttonId } });
+      const unclaimBpCount = await prisma.buttonProduct.count({ where: { buttonId: testBtn.buttonId } });
+
+      console.log('  Direct DB state after Unclaim:', {
+        customerId: unclaimDbBtn?.customerId,
+        addressId: unclaimDbBtn?.addressId,
+        status: unclaimDbBtn?.status,
+        buttonProductCount: unclaimBpCount,
+      });
+
+      if (
+        unclaimDbBtn?.customerId !== null ||
+        unclaimDbBtn?.addressId !== null ||
+        unclaimDbBtn?.status !== 'UNASSIGNED' ||
+        unclaimBpCount !== 0
+      ) {
+        throw new Error('FAIL: Unclaim direct DB state failed! customerId/addressId not null, bp not purged, or status != UNASSIGNED');
+      }
+      console.log('  ✅ [PASS] Direct DB Unclaim verified: customerId === null, addressId === null, status === "UNASSIGNED", buttonProduct === 0!');
+
+      // Step B: Reassign button and execute factory reset
+      await prisma.ioTButton.update({
+        where: { buttonId: testBtn.buttonId },
+        data: { customerId: activeCustomer.customerId, status: 'ACTIVE' },
+      });
+      if (activeProduct) {
+        await prisma.buttonProduct.create({
+          data: {
+            buttonId: testBtn.buttonId,
+            productId: activeProduct.productId,
+            quantity: 2,
+          },
+        });
+      }
+
+      await provRepo.factoryResetAtomicTx(testBtn.buttonId);
+
+      const resetDbBtn = await prisma.ioTButton.findUnique({ where: { buttonId: testBtn.buttonId } });
+      const resetBpCount = await prisma.buttonProduct.count({ where: { buttonId: testBtn.buttonId } });
+
+      console.log('  Direct DB state after Factory Reset:', {
+        customerId: resetDbBtn?.customerId,
+        addressId: resetDbBtn?.addressId,
+        status: resetDbBtn?.status,
+        buttonProductCount: resetBpCount,
+      });
+
+      if (
+        resetDbBtn?.customerId !== null ||
+        resetDbBtn?.addressId !== null ||
+        resetDbBtn?.status !== 'INACTIVE' ||
+        resetBpCount !== 0
+      ) {
+        throw new Error('FAIL: Factory reset direct DB state failed! customerId/addressId not null, bp not purged, or status != INACTIVE');
+      }
+      console.log('  ✅ [PASS] Direct DB Factory Reset verified: customerId === null, addressId === null, status === "INACTIVE", buttonProduct === 0!');
+      passed++;
+    } finally {
+      await prisma.buttonProduct.deleteMany({ where: { buttonId: testBtn.buttonId } });
+      await prisma.ioTButton.delete({ where: { buttonId: testBtn.buttonId } });
+      console.log(`  🧹 [CLEANUP] Test 5 device cleaned up (Zero residue).`);
+    }
+
+    // -------------------------------------------------------------------------
+    // TEST 6: Blocker 5 - PayOS URL Preservation & Direct Field Retention
+    // -------------------------------------------------------------------------
+    console.log('\n👉 [7/7] Testing Blocker 5: PayOS Direct URL Fields & Concurrency Safe Handling...');
     const testOrder = await prisma.order.findFirst({ select: { orderId: true } });
     if (!testOrder) {
       throw new Error('FAIL: No order found to test payment transaction schema');
     }
 
-    // Verify transaction insert & direct checkoutUrl retention
     const txRecord = await prisma.paymentTransaction.create({
       data: {
         orderId: testOrder.orderId,
@@ -209,7 +429,7 @@ async function run() {
       if (txRecord.qrCode !== 'vietqr://payos/mock-test') {
         throw new Error('FAIL: qrCode not preserved directly');
       }
-      console.log('  ✔ [PASS] Direct checkoutUrl and qrCode successfully persisted on PaymentTransaction');
+      console.log('  ✅ [PASS] Direct checkoutUrl and qrCode successfully persisted on PaymentTransaction');
       passed++;
     } finally {
       await prisma.paymentTransaction.delete({
@@ -218,12 +438,13 @@ async function run() {
     }
 
     console.log('\n===============================================================');
-    console.log(`🎉 ALL ${passed}/${total} BLOCKER VERIFICATION CHECKS PASSED WITH ZERO RESIDUE!`);
+    console.log(`🎉 ALL ${passed}/${total} VERIFICATION CHECKS PASSED WITH ZERO RESIDUE!`);
     console.log('===============================================================\n');
   } catch (error) {
     console.error('\n❌ VERIFICATION TEST FAILED:', error);
     process.exit(1);
   } finally {
+    await prisma.product.deleteMany({ where: { productCode: { startsWith: 'PRD_INV_' } } });
     await prisma.$disconnect();
   }
 }

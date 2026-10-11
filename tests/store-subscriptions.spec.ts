@@ -2,42 +2,67 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { StoreSubscriptionsService } from '../src/store-subscriptions/store-subscriptions.service';
 import { StoreSubscriptionsRepository } from '../src/store-subscriptions/store-subscriptions.repository';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
+import { ConflictException } from '@nestjs/common';
 
 async function testStoreSubscriptions() {
-  console.log('Testing Store Subscription Purchase & Listing Enforcement (with Zero Residue)...');
+  console.log('Testing Store Subscription Isolation & Idempotency Enforcement (Zero Residue)...');
   const prisma = new PrismaService();
   await prisma.$connect();
 
   const walletService = new StoreWalletService(prisma);
-  const subService = new StoreSubscriptionsService(new StoreSubscriptionsRepository(prisma), walletService);
-  let failed = 0;
+  const subRepo = new StoreSubscriptionsRepository(prisma);
+  const subService = new StoreSubscriptionsService(subRepo, walletService);
 
-  let store: any = null;
-  let wallet: any = null;
-  let originalBalance: any = null;
-  let plan: any = null;
-  let subscription: any = null;
-  const testStartTime = new Date();
+  let failed = 0;
+  const testRunId = Date.now();
+
+  // Test entities to track for strict, non-silent zero-residue cleanup
+  let testUser: any = null;
+  let testStore: any = null;
+  let testWallet: any = null;
+  let planA: any = null;
+  let planB: any = null;
+  const trackedSubscriptionIds: bigint[] = [];
+  const trackedTransactionIds: bigint[] = [];
 
   try {
-    // 1. Setup a test Store with sufficient wallet balance (snapshot first)
-    store = await prisma.store.findFirst();
-    if (!store) throw new Error('No store found');
-
-    wallet = await walletService.getOrCreateStoreWallet(store.storeId);
-    originalBalance = wallet.balance;
-
-    await prisma.storeWallet.update({
-      where: { walletId: wallet.walletId },
-      data: { balance: 500000 },
+    // 1. Setup isolated Test User & Store (never touches production/real stores)
+    testUser = await prisma.user.create({
+      data: {
+        username: `test_sub_owner_${testRunId}`,
+        email: `test_sub_owner_${testRunId}@example.com`,
+        passwordHash: '$2b$10$' + 'e'.repeat(53), // >= 60 chars bcrypt check constraint
+        fullName: `Test Sub Owner ${testRunId}`,
+        phone: `090${String(testRunId).slice(-7)}`,
+        status: 'ACTIVE',
+      },
     });
 
-    // 2. Setup a Subscription Plan
-    const planCode = `SUB_TEST_${Date.now()}`;
-    plan = await prisma.subscriptionPlan.create({
+    testStore = await prisma.store.create({
       data: {
-        planCode,
-        planName: 'Gói Listing Tiêu Chuẩn',
+        ownerUserId: testUser.userId,
+        name: `Isolated Test Store ${testRunId}`,
+        code: `STR_SUB_${testRunId}`,
+        phone: testUser.phone,
+        address: '123 Isolated Test Street, District 1, HCMC',
+        status: 'ACTIVE',
+      },
+    });
+    console.log(`  [SETUP] Created isolated test store: ${testStore.name} (ID: ${testStore.storeId})`);
+
+    // 2. Setup isolated Test Wallet with 1,000,000 initial balance
+    testWallet = await walletService.getOrCreateStoreWallet(testStore.storeId);
+    await prisma.storeWallet.update({
+      where: { walletId: testWallet.walletId },
+      data: { balance: 1000000 },
+    });
+    console.log(`  [SETUP] Created isolated wallet (ID: ${testWallet.walletId}) with balance 1,000,000`);
+
+    // 3. Create two test subscription plans
+    planA = await prisma.subscriptionPlan.create({
+      data: {
+        planCode: `PLN_A_${testRunId}`,
+        planName: 'Gói Listing Tiêu Chuẩn Test A',
         price: 200000,
         durationDays: 30,
         maxProducts: 20,
@@ -45,90 +70,171 @@ async function testStoreSubscriptions() {
       },
     });
 
-    // 3. Subscribe using Wallet Balance
-    subscription = await subService.subscribeWithWallet(store.storeId, plan.planId);
-    if (
-      subscription &&
-      subscription.status === 'ACTIVE' &&
-      subscription.paymentMethod === 'WALLET'
-    ) {
+    planB = await prisma.subscriptionPlan.create({
+      data: {
+        planCode: `PLN_B_${testRunId}`,
+        planName: 'Gói Listing Nâng Cao Test B',
+        price: 350000,
+        durationDays: 60,
+        maxProducts: 50,
+        isActive: true,
+      },
+    });
+    console.log(`  [SETUP] Created isolated plans: ${planA.planCode} and ${planB.planCode}`);
+
+    // 4. Test Subscribe using Wallet Balance with Idempotency Key
+    const idempotencyKey = `idemp_sub_${testRunId}`;
+    const sub1 = await subService.subscribeWithWallet(testStore.storeId, planA.planId, idempotencyKey);
+    if (sub1 && sub1.status === 'ACTIVE' && sub1.paymentMethod === 'WALLET') {
+      trackedSubscriptionIds.push(BigInt(sub1.subscriptionId));
       console.log('  [PASS] subscribeWithWallet created active subscription');
     } else {
-      console.log('  [FAIL] subscribeWithWallet failed');
+      console.error('  [FAIL] subscribeWithWallet failed to create active subscription');
       failed++;
     }
 
-    // Verify wallet balance deducted
-    const updatedWallet = await prisma.storeWallet.findUnique({
-      where: { walletId: wallet.walletId },
+    // Capture the wallet transaction created by this step
+    const tx1 = await prisma.walletTransaction.findFirst({
+      where: { walletId: testWallet.walletId },
+      orderBy: { transactionId: 'desc' },
     });
-    if (Number(updatedWallet?.balance) === 300000) {
-      console.log('  [PASS] Wallet balance deducted by 200,000 VND (300,000 VND remaining)');
+    if (tx1) {
+      trackedTransactionIds.push(tx1.transactionId);
+    }
+
+    // Verify balance was deducted exactly once (1,000,000 - 200,000 = 800,000)
+    const walletAfterSub1 = await prisma.storeWallet.findUnique({
+      where: { walletId: testWallet.walletId },
+    });
+    if (Number(walletAfterSub1?.balance) === 800000) {
+      console.log('  [PASS] Wallet balance correctly deducted to 800,000');
     } else {
-      console.log(`  [FAIL] Wallet balance incorrect: ${updatedWallet?.balance}`);
+      console.error(`  [FAIL] Wallet balance incorrect: expected 800000, got ${walletAfterSub1?.balance}`);
       failed++;
     }
 
-    // 4. Get Current Subscription
-    const current = await subService.getCurrentSubscription(store.storeId);
-    if (current && current.plan?.planCode === planCode && current.daysRemaining >= 29) {
+    // 5. Test Idempotency with exact same key and same payload -> MUST NOT double-charge
+    const sub1Retry = await subService.subscribeWithWallet(testStore.storeId, planA.planId, idempotencyKey);
+    const walletAfterRetry = await prisma.storeWallet.findUnique({
+      where: { walletId: testWallet.walletId },
+    });
+    if (
+      sub1Retry &&
+      sub1Retry.subscriptionId.toString() === sub1.subscriptionId.toString() &&
+      Number(walletAfterRetry?.balance) === 800000
+    ) {
+      console.log('  [PASS] Idempotent retry returned original subscription without double deduction');
+    } else {
+      console.error('  [FAIL] Idempotent retry failed or double deducted balance');
+      failed++;
+    }
+
+    // 6. Test Idempotency Key Reuse with DIFFERENT Payload (Item 6) -> MUST throw ConflictException (409)
+    let caughtConflict = false;
+    try {
+      await subService.subscribeWithWallet(testStore.storeId, planB.planId, idempotencyKey);
+    } catch (err: any) {
+      if (err instanceof ConflictException && err.message.includes('IDEMPOTENCY_KEY_REUSED')) {
+        caughtConflict = true;
+      } else if (err.status === 409 || err.message?.includes('IDEMPOTENCY_KEY_REUSED')) {
+        caughtConflict = true;
+      } else {
+        console.error('  [DEBUG] Unexpected error during payload mismatch:', err);
+      }
+    }
+
+    if (caughtConflict) {
+      console.log('  [PASS] Reusing idempotency key with different planId correctly rejected with HTTP 409 IDEMPOTENCY_KEY_REUSED');
+    } else {
+      console.error('  [FAIL] Reusing idempotency key with different planId did not throw ConflictException 409');
+      failed++;
+    }
+
+    // 7. Verify getCurrentSubscription
+    const current = await subService.getCurrentSubscription(testStore.storeId);
+    if (current && current.plan?.planCode === planA.planCode && current.daysRemaining >= 29) {
       console.log('  [PASS] getCurrentSubscription returned active plan and days remaining');
     } else {
-      console.log('  [FAIL] getCurrentSubscription failed');
+      console.error('  [FAIL] getCurrentSubscription failed');
       failed++;
     }
 
-    // 5. Listing Enforcement Check
-    const canList = await subService.validateStoreCanListProducts(store.storeId);
+    // 8. Verify validateStoreCanListProducts
+    const canList = await subService.validateStoreCanListProducts(testStore.storeId);
     if (canList === true) {
       console.log('  [PASS] validateStoreCanListProducts allowed listing within limits');
     } else {
-      console.log('  [FAIL] validateStoreCanListProducts failed');
+      console.error('  [FAIL] validateStoreCanListProducts failed');
       failed++;
     }
   } catch (error: any) {
-    console.log('  [FAIL] Exception during test execution:', error.message);
+    console.error('  [FAIL] Exception during test execution:', error);
     failed++;
   } finally {
-    console.log('  --- TEARDOWN & ZERO RESIDUE RESTORATION ---');
+    console.log('  --- STRICT TARGETED TEARDOWN (NO SILENT CATCH) ---');
     try {
-      if (subscription?.subscriptionId) {
-        await prisma.storeSubscription.delete({
-          where: { subscriptionId: subscription.subscriptionId },
-        }).catch(() => {});
+      // 1. Delete tracked wallet transactions
+      if (trackedTransactionIds.length > 0) {
+        const deletedTxs = await prisma.walletTransaction.deleteMany({
+          where: { transactionId: { in: trackedTransactionIds } },
+        });
+        console.log(`  [TEARDOWN] Deleted ${deletedTxs.count} tracked test wallet transaction(s).`);
       }
-      if (wallet?.walletId) {
-        await prisma.walletTransaction.deleteMany({
-          where: {
-            walletId: wallet.walletId,
-            createdAt: { gte: testStartTime },
-          },
-        }).catch(() => {});
-        if (originalBalance !== null) {
-          await prisma.storeWallet.update({
-            where: { walletId: wallet.walletId },
-            data: { balance: originalBalance },
-          }).catch(() => {});
-          console.log(`  [RESTORE] Store wallet balance restored to ${originalBalance.toString()}`);
-        }
+
+      // 2. Delete tracked subscriptions
+      if (trackedSubscriptionIds.length > 0) {
+        const deletedSubs = await prisma.storeSubscription.deleteMany({
+          where: { subscriptionId: { in: trackedSubscriptionIds } },
+        });
+        console.log(`  [TEARDOWN] Deleted ${deletedSubs.count} tracked test store subscription(s).`);
       }
-      if (plan?.planId) {
-        await prisma.subscriptionPlan.delete({
-          where: { planId: plan.planId },
-        }).catch(() => {});
+
+      // 3. Delete test plans
+      if (planA?.planId || planB?.planId) {
+        const planIds = [planA?.planId, planB?.planId].filter(Boolean);
+        const deletedPlans = await prisma.subscriptionPlan.deleteMany({
+          where: { planId: { in: planIds } },
+        });
+        console.log(`  [TEARDOWN] Deleted ${deletedPlans.count} test subscription plan(s).`);
       }
-      console.log('  [ZERO RESIDUE] Test artifacts cleanly purged.');
+
+      // 4. Delete test wallet
+      if (testWallet?.walletId) {
+        await prisma.storeWallet.delete({
+          where: { walletId: testWallet.walletId },
+        });
+        console.log(`  [TEARDOWN] Deleted test wallet ID: ${testWallet.walletId}.`);
+      }
+
+      // 5. Delete test store
+      if (testStore?.storeId) {
+        await prisma.store.delete({
+          where: { storeId: testStore.storeId },
+        });
+        console.log(`  [TEARDOWN] Deleted test store ID: ${testStore.storeId}.`);
+      }
+
+      // 6. Delete test user
+      if (testUser?.userId) {
+        await prisma.user.delete({
+          where: { userId: testUser.userId },
+        });
+        console.log(`  [TEARDOWN] Deleted test user ID: ${testUser.userId}.`);
+      }
+
+      console.log('  [ZERO RESIDUE] All isolated test artifacts cleanly purged without touching production data.');
     } catch (cleanupErr: any) {
-      console.error('Cleanup error:', cleanupErr.message);
+      console.error('  [FATAL TEARDOWN ERROR]:', cleanupErr);
+      failed++;
     }
     await prisma.$disconnect();
   }
 
   if (failed > 0) {
-    console.error(`Store subscriptions test failed with ${failed} failures.`);
+    console.error(`Store subscriptions test failed with ${failed} failure(s).`);
     process.exit(1);
   } else {
-    console.log('All Store Subscriptions tests passed successfully!');
+    console.log('ALL STORE SUBSCRIPTIONS ISOLATION TESTS PASSED 100%!');
   }
 }
 
