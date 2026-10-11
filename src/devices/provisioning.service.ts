@@ -13,11 +13,11 @@ import { CryptoService } from '../security/crypto.service';
 import { EventsGateway } from '../websocket/events.gateway';
 import * as crypto from 'crypto';
 
-const activeSessions = new Map<string, any>();
+// activeSessions migrated to PostgreSQL provisioning_sessions
 
 @Injectable()
 export class ProvisioningService {
-  private static usedNonces = new Set<string>();
+  // usedNonces migrated to PostgreSQL device_nonces
   private failedAttempts: Array<{
     type: string;
     deviceId: string;
@@ -110,10 +110,15 @@ export class ProvisioningService {
     };
 
     // Store tokenHash internally in memory for confirmPairing validation without exposing in API response
-    activeSessions.set(sessionId, {
-      ...sessionData,
-      tokenHash,
-    });
+    const sessionHash = crypto.createHash('sha256').update(sessionId).digest('hex');
+    await this.provRepo.createProvisioningSession(
+      sessionId,
+      sessionHash,
+      button.buttonId,
+      sessionData,
+      tokenHash || null,
+      sessionData.expiresAt,
+    );
 
     return {
       success: true,
@@ -122,11 +127,11 @@ export class ProvisioningService {
   }
 
   async verifySession(sessionId: string) {
-    const session = activeSessions.get(sessionId);
-    if (!session || new Date(session.expiresAt) < new Date()) {
+    const session = await this.provRepo.findProvisioningSession(sessionId);
+    if (!session) {
       throw new NotFoundException('Phiên ghép nối không tồn tại hoặc đã hết hạn');
     }
-    const { tokenHash, ...safeData } = session;
+    const safeData = session.session_data || {};
     return { success: true, valid: true, data: safeData };
   }
 
@@ -135,39 +140,18 @@ export class ProvisioningService {
   }
 
   async confirmPairing(sessionId: string, body: any, user: any) {
-    const session = activeSessions.get(sessionId);
+    const session = await this.provRepo.lockAndConsumeProvisioningSession(
+      sessionId,
+      user?.userId ? BigInt(user.userId) : undefined,
+    );
     if (!session) {
       throw new NotFoundException('Phiên ghép nối không tồn tại hoặc đã hết hạn');
     }
 
-    const button = await this.provRepo.findButtonById(BigInt(session.buttonId));
-    if (!button) throw new NotFoundException('Không tìm thấy nút bấm');
-
-    let customerId = button.customerId;
-    if (user && user.customerProfileId) {
-      customerId = BigInt(user.customerProfileId);
-    } else if (body.customerId) {
-      customerId = BigInt(body.customerId);
+    const button = await this.provRepo.findButtonById(BigInt(session.device_id));
+    if (session.token_hash) {
+      await this.provRepo.markPairingTokenUsed(session.token_hash);
     }
-
-    await this.provRepo.updateButton(button.buttonId, {
-      customerId,
-      buttonName: body.buttonName || body.name || button.buttonName,
-      status: 'ACTIVE',
-    });
-
-    if (button.storeId && customerId) {
-      await this.provRepo.upsertStoreCustomer(button.storeId, customerId);
-    }
-
-    if (body.productId) {
-      await this.provRepo.upsertButtonProduct(button.buttonId, BigInt(body.productId), body.quantity || 1);
-    }
-
-    if (session.tokenHash) {
-      await this.provRepo.markPairingTokenUsed(session.tokenHash);
-    }
-    activeSessions.delete(sessionId);
 
     return {
       success: true,
@@ -181,7 +165,7 @@ export class ProvisioningService {
   }
 
   async cancelSession(sessionId: string) {
-    activeSessions.delete(sessionId);
+    await this.provRepo.deleteProvisioningSession(sessionId);
     return { success: true, message: 'Đã hủy phiên ghép nối' };
   }
 
@@ -202,31 +186,20 @@ export class ProvisioningService {
       throw new NotFoundException(`Thiết bị không tồn tại trong hệ thống: ${deviceId}`);
     }
 
-    // Anti-replay defense
-    if (ProvisioningService.usedNonces.has(nonce)) {
-      this.failedAttempts.push({
-        type: 'REPLAY_ATTACK',
-        deviceId,
-        reason: 'Phát hiện Replay Attack: Nonce đã được sử dụng',
-        timestamp: new Date(),
-      });
-      throw new ConflictException('Phát hiện tấn công phát lại (Replay Attack): Nonce đã được sử dụng');
-    }
-    ProvisioningService.usedNonces.add(nonce);
-
-    // Verify timestamp freshness (within 5 minutes)
+    // 1. Verify timestamp freshness first (strictly within 300s)
     const nowSec = Math.floor(Date.now() / 1000);
     const reqTime = parseInt(timestamp, 10);
     if (isNaN(reqTime) || Math.abs(nowSec - reqTime) > 300) {
-      throw new UnauthorizedException('Chữ ký HMAC đã hết hạn');
+      throw new UnauthorizedException('Chữ ký HMAC đã hết hạn (lệch > 300s)');
     }
 
-    // Strictly enforce device-specific secret from DB - ZERO FALLBACK!
+    // 2. Strictly enforce device-specific secret from DB - ZERO FALLBACK!
     const secret = (button as any).hmacSecret;
     if (!secret) {
       throw new UnauthorizedException('Thiết bị chưa được cấu hình khóa bảo mật HMAC');
     }
 
+    // 3. Verify HMAC Signature FIRST (prevents Nonce Poisoning DoS)
     const bodyJson = typeof body === 'string' ? body : JSON.stringify(body || {});
     const expectedSig = crypto
       .createHmac('sha256', secret)
@@ -237,6 +210,18 @@ export class ProvisioningService {
     const expBuf = Buffer.from(expectedSig, 'hex');
     if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
       throw new UnauthorizedException('Chữ ký HMAC không hợp lệ');
+    }
+
+    // 4. Consume Nonce ONLY AFTER signature is verified (Atomic PostgreSQL insert with 5-minute TTL)
+    const nonceConsumed = await this.provRepo.consumeDeviceNonce(deviceId, nonce);
+    if (!nonceConsumed) {
+      this.failedAttempts.push({
+        type: 'REPLAY_ATTACK',
+        deviceId,
+        reason: 'Phát hiện Replay Attack: Nonce đã được sử dụng',
+        timestamp: new Date(),
+      });
+      throw new ConflictException('Phát hiện tấn công phát lại (Replay Attack): Nonce đã được sử dụng');
     }
 
     return {

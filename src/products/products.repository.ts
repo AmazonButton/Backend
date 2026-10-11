@@ -135,18 +135,20 @@ export class ProductsRepository {
         },
       });
 
-      if (images && images.length > 0) {
+      if (images !== undefined) {
         // Clear previous images and insert updated list
         await tx.productImage.deleteMany({ where: { productId } });
-        await tx.productImage.createMany({
+        if (images.length > 0) {
+          await tx.productImage.createMany({
           data: images.map((img, idx) => ({
             productId,
             imageUrl: img.imageUrl,
             cloudinaryPublicId: img.cloudinaryPublicId || null,
             isThumbnail: img.isThumbnail !== undefined ? img.isThumbnail : idx === 0,
             displayOrder: img.displayOrder !== undefined ? img.displayOrder : idx,
-          })),
-        });
+            })),
+          });
+        }
       }
 
       const currentImages = await tx.productImage.findMany({

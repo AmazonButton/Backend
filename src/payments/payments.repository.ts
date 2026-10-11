@@ -26,6 +26,13 @@ export class PaymentsRepository {
     });
   }
 
+  async findTransactionsByOrderId(orderId: bigint) {
+    return this.prisma.paymentTransaction.findMany({
+      where: { orderId },
+      orderBy: { paymentTransactionId: 'desc' },
+    });
+  }
+
   async findTransactionById(transactionId: bigint) {
     return this.prisma.paymentTransaction.findUnique({
       where: { paymentTransactionId: transactionId },

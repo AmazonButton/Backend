@@ -400,7 +400,7 @@ async function runTests() {
 
     // 12. Media: Cloudinary Upload Signature
     try {
-      const res = await fetch(`${API_URL}/media/signature?folder=smart-button/products`, {
+      const res = await fetch(`${API_URL}/media/signature?folder=stores/1/products`, {
         headers: { Authorization: `Bearer ${storeToken}` },
       });
       const data = await res.json();

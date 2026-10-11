@@ -12,17 +12,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../security/crypto.service';
 
-const nonceCache = new Map<string, number>();
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [nonce, expiresAt] of nonceCache.entries()) {
-    if (expiresAt < now) {
-      nonceCache.delete(nonce);
-    }
-  }
-}, 60000);
-
 @Injectable()
 export class HmacAuthGuard implements CanActivate {
   constructor(
@@ -51,22 +40,12 @@ export class HmacAuthGuard implements CanActivate {
     }
     const now = Date.now();
     const driftSeconds = Math.abs(now - timestamp) / 1000;
-    const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
-    if (isNaN(timestamp) || (!isDev && driftSeconds > 900)) {
+    // Strictly enforce 300s (5-minute) drift window across all environments
+    if (isNaN(timestamp) || driftSeconds > 300) {
       throw new UnauthorizedException(
-        `Thời gian thiết bị không đồng bộ hoặc đã hết hạn (${Math.round(driftSeconds)}s lệch)`,
+        `Thời gian thiết bị không đồng bộ hoặc đã hết hạn (${Math.round(driftSeconds)}s lệch, tối đa 300s)`,
       );
     }
-
-    const nonceKey = `${deviceId}:${nonce}`;
-    if (nonceCache.has(nonceKey)) {
-      throw new ConflictException({
-        statusCode: 409,
-        code: 'REPLAY_DETECTED',
-        message: 'Nonce đã được sử dụng. Phát hiện dấu hiệu Replay Attack!',
-      });
-    }
-    nonceCache.set(nonceKey, now + 120000);
 
     const button = await this.prisma.ioTButton.findUnique({
       where: { deviceId },
@@ -93,6 +72,8 @@ export class HmacAuthGuard implements CanActivate {
         message: 'Thiết bị chưa được cấu hình khóa bảo mật HMAC',
       });
     }
+
+    // 1. Verify HMAC Signature FIRST (prevents Nonce Poisoning DoS)
     const bodyString = JSON.stringify(req.body || {});
     const expectedSignature = this.crypto.calculateDeviceSignature(
       deviceSecret,
@@ -108,6 +89,29 @@ export class HmacAuthGuard implements CanActivate {
         code: 'INVALID_SIGNATURE',
         message: 'Chữ ký mã hóa của thiết bị không hợp lệ',
       });
+    }
+
+    // 2. Consume Nonce ONLY AFTER signature is verified (Atomic PostgreSQL insert with 5-minute TTL)
+    const inserted: any[] = await this.prisma.$queryRawUnsafe(
+      `INSERT INTO device_nonces (device_id, nonce, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
+       ON CONFLICT (device_id, nonce) DO NOTHING
+       RETURNING nonce;`,
+      deviceId,
+      nonce,
+    );
+
+    if (!inserted || inserted.length === 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'REPLAY_DETECTED',
+        message: 'Nonce đã được sử dụng. Phát hiện dấu hiệu Replay Attack!',
+      });
+    }
+
+    // Opportunistic cleanup of expired nonces (background, 3% sample rate)
+    if (Math.random() < 0.03) {
+      this.prisma.$executeRawUnsafe(`DELETE FROM device_nonces WHERE expires_at < NOW();`).catch(() => {});
     }
 
     req.device = button;

@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Injectable, Inject } from '@nestjs/common';
 import { AnalyticsRepository } from './analytics.repository';
 
@@ -5,7 +6,10 @@ import { AnalyticsRepository } from './analytics.repository';
 export class AnalyticsService {
   constructor(@Inject(AnalyticsRepository) private readonly analyticsRepo: AnalyticsRepository) {}
 
-  async getDashboardAnalytics(storeId?: string | number | bigint) {
+  async getDashboardAnalytics(storeId?: string | number | bigint, user?: any) {
+    if (!storeId && (!user || !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role))) {
+      throw new ForbiddenException('Không có quyền truy cập dữ liệu thống kê khi thiếu storeId');
+    }
     const targetStoreId = storeId ? BigInt(storeId) : undefined;
     const { orders, buttons } = await this.analyticsRepo.getDashboardData(targetStoreId);
 

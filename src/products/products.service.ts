@@ -20,7 +20,8 @@ export class ProductsService {
 
   private parseImageInputs(body: any): ProductImageInput[] | undefined {
     const { imageUrl, images, imageDetails, cloudinaryPublicId } = body;
-    if (imageDetails && Array.isArray(imageDetails) && imageDetails.length > 0) {
+    if (Array.isArray(imageDetails)) {
+      if (imageDetails.length === 0) return [];
       return imageDetails.map((img: any, idx: number) => ({
         imageUrl: img.imageUrl || img.url,
         cloudinaryPublicId: img.cloudinaryPublicId || img.publicId || this.extractPublicIdFromUrl(img.imageUrl || img.url),
@@ -29,7 +30,8 @@ export class ProductsService {
       }));
     }
 
-    if (images && Array.isArray(images) && images.length > 0) {
+    if (Array.isArray(images)) {
+      if (images.length === 0) return [];
       return images.map((img: any, idx: number) => {
         if (typeof img === 'string') {
           return {

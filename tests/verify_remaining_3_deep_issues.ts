@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 ﻿import { PrismaClient } from '@prisma/client';
 import { ProductsService } from '../src/products/products.service';
 import { ProductsRepository } from '../src/products/products.repository';
@@ -32,67 +33,121 @@ async function runComprehensiveVerification() {
       throw new Error(`Found ${orphanPending.length} active PENDING transactions without paymentLinkId`);
     }
 
-    // B. Strict fail-closed check
-    const paymentsRepo = new PaymentsRepository(prisma as any);
-    const paymentsService = new PaymentsService(paymentsRepo);
-
-    const testOrderCode = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
-    const existingOrder = await prisma.order.findFirst();
-    if (!existingOrder) throw new Error('No order found');
-
-    const createdTx = await paymentsRepo.createTransaction({
-      orderId: existingOrder.orderId,
-      provider: 'PAYOS',
+    // B. Strict fail-closed unit probe with isolated mock repository (Zero DB mutation & Zero real secret!)
+    const testOrderCode = 888000111222;
+    const mockTx = {
+      paymentTransactionId: 999999n,
+      orderId: 999999n,
       transactionCode: testOrderCode.toString(),
       amount: 100000,
-      paymentMethod: 'QR',
+      currency: 'VND',
+      paymentLinkId: null as string | null,
       status: 'PENDING',
-    });
+    };
+
+    const mockRepo: any = {
+      findTransactionByCode: async (code: string) => {
+        if (code === testOrderCode.toString()) return mockTx;
+        return null;
+      },
+      confirmPaymentAtomicTx: async (id: bigint) => {
+        mockTx.status = 'PAID';
+        return { success: true };
+      },
+      updatePaymentLinkId: async (id: bigint, linkId: string) => {
+        mockTx.paymentLinkId = linkId;
+      },
+    };
+
+    const paymentsService = new PaymentsService(mockRepo);
+    // Strictly mock test checksum key - NEVER commit real production secret!
+    const checksumKey = process.env.PAYOS_TEST_CHECKSUM_KEY;
+    if (!checksumKey) {
+      throw new Error('PAYOS_TEST_CHECKSUM_KEY is required');
+    }
+    const oldEnvKey = process.env.PAYOS_CHECKSUM_KEY;
+    process.env.PAYOS_CHECKSUM_KEY = checksumKey;
+
+    function makeSignedWebhook(data: any) {
+      const sorted = Object.keys(data).sort().reduce((acc: any, key) => { acc[key] = data[key]; return acc; }, {});
+      const queryStr = Object.keys(sorted).filter(k => sorted[k] !== undefined).map(k => `${k}=${sorted[k]}`).join('&');
+      const sig = crypto.createHmac('sha256', checksumKey).update(queryStr).digest('hex');
+      return { code: '00', data, signature: sig };
+    }
 
     try {
-      // 1. When DB paymentLinkId is null, webhook with any ID must be rejected
-      const webhookRes1 = await paymentsService.handlePayosWebhook({
+      // 1. When DB paymentLinkId is null: webhook with any link ID must fail-closed with link mismatch
+      const webhookRes1 = await paymentsService.handlePayosWebhook(makeSignedWebhook({
+        orderCode: testOrderCode,
+        amount: 100000,
+        currency: 'VND',
+        paymentLinkId: 'attacker_random_link',
         code: '00',
-        data: {
-          orderCode: testOrderCode,
-          amount: 100000,
-          currency: 'VND',
-          paymentLinkId: 'attacker_random_link',
-          code: '00',
-        },
-        signature: 'mock_sig',
-      } as any);
+      }) as any);
 
-      if (webhookRes1.success) {
-        throw new Error('FAIL: Webhook accepted arbitrary paymentLinkId when DB was null');
+      if (webhookRes1.success || !webhookRes1.message?.includes('link ID')) {
+        throw new Error('FAIL: Webhook accepted arbitrary paymentLinkId when DB was null (expected link mismatch)');
       }
 
-      // 2. Set valid paymentLinkId
-      await paymentsRepo.updatePaymentLinkId(createdTx.paymentTransactionId, 'legit_payos_link_123');
+      // 2. Set valid paymentLinkId in mockTx
+      mockTx.paymentLinkId = 'legit_payos_link_123';
 
-      // 3. Webhook with mismatched ID must be rejected
-      const webhookRes2 = await paymentsService.handlePayosWebhook({
+      // 3. Webhook with mismatched link ID must be rejected
+      const webhookRes2 = await paymentsService.handlePayosWebhook(makeSignedWebhook({
+        orderCode: testOrderCode,
+        amount: 100000,
+        currency: 'VND',
+        paymentLinkId: 'wrong_link_456',
         code: '00',
-        data: {
-          orderCode: testOrderCode,
-          amount: 100000,
-          currency: 'VND',
-          paymentLinkId: 'wrong_link_456',
-          code: '00',
-        },
-        signature: 'mock_sig',
-      } as any);
+      }) as any);
 
-      if (webhookRes2.success) {
+      if (webhookRes2.success || !webhookRes2.message?.includes('link ID')) {
         throw new Error('FAIL: Webhook accepted mismatched paymentLinkId');
       }
 
-      console.log('  ✔ [PASS] PayOS Fail-Closed: 0 giao dịch pending mồ côi; chặn 100% ID sai lệch hoặc null');
+      // 4. Webhook with mismatched amount must be rejected
+      const webhookRes3 = await paymentsService.handlePayosWebhook(makeSignedWebhook({
+        orderCode: testOrderCode,
+        amount: 999999,
+        currency: 'VND',
+        paymentLinkId: 'legit_payos_link_123',
+        code: '00',
+      }) as any);
+
+      if (webhookRes3.success || !webhookRes3.message?.toLowerCase().includes('amount')) {
+        throw new Error('FAIL: Webhook accepted mismatched amount');
+      }
+
+      // 5. Webhook with mismatched currency must be rejected
+      const webhookRes4 = await paymentsService.handlePayosWebhook(makeSignedWebhook({
+        orderCode: testOrderCode,
+        amount: 100000,
+        currency: 'USD',
+        paymentLinkId: 'legit_payos_link_123',
+        code: '00',
+      }) as any);
+
+      if (webhookRes4.success || !webhookRes4.message?.toLowerCase().includes('currency')) {
+        throw new Error('FAIL: Webhook accepted mismatched currency');
+      }
+
+      // 6. Webhook with matching paymentLinkId, amount and currency must succeed
+      const webhookRes5 = await paymentsService.handlePayosWebhook(makeSignedWebhook({
+        orderCode: testOrderCode,
+        amount: 100000,
+        currency: 'VND',
+        paymentLinkId: 'legit_payos_link_123',
+        code: '00',
+      }) as any);
+
+      if (!webhookRes5.success) {
+        throw new Error('FAIL: Webhook failed on valid matching payload: ' + webhookRes5.message);
+      }
+
+      console.log('  ✔ [PASS] PayOS Fail-Closed (Mock Isolation): Không can thiệp DB order thật; 100% test key cô lập; chặn mọi link/amount/currency sai');
       passed++;
     } finally {
-      await prisma.paymentTransaction.delete({
-        where: { paymentTransactionId: createdTx.paymentTransactionId },
-      });
+      process.env.PAYOS_CHECKSUM_KEY = oldEnvKey;
     }
   } catch (e: any) {
     console.error('  ✖ [FAIL] Probe 1 Error:', e.message);
@@ -525,6 +580,10 @@ async function runComprehensiveVerification() {
   console.log('\n========================================================================');
   console.log(`KẾT QUẢ KIỂM THỬ: ${passed}/${total} TIÊU CHÍ ĐẠT (${Math.round((passed/total)*100)}%)`);
   console.log('========================================================================\n');
+
+  if (passed !== total) {
+    process.exitCode = 1;
+  }
 }
 
 runComprehensiveVerification()

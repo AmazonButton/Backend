@@ -41,6 +41,43 @@ export class PaymentsService {
       }
     }
 
+    // State machine check: Chặn tạo link cho đơn đã PAID, CANCELLED, REJECTED, COMPLETED
+    if (['CANCELLED', 'REJECTED', 'COMPLETED'].includes(order.orderStatus)) {
+      throw new BadRequestException({
+        success: false,
+        code: 'ORDER_NOT_PAYABLE',
+        message: `Đơn hàng ở trạng thái ${order.orderStatus} không thể tạo liên kết thanh toán`,
+      });
+    }
+
+    if (order.paymentStatus === 'PAID') {
+      throw new BadRequestException({
+        success: false,
+        code: 'ORDER_ALREADY_PAID',
+        message: 'Đơn hàng này đã được thanh toán thành công',
+      });
+    }
+
+    // Trả lại link PENDING hiện tại nếu đã có link đang hoạt động (chống tạo nhiều link trùng lặp)
+    const existingTransactions = await this.paymentsRepo.findTransactionsByOrderId(rawOrderId);
+    const existingActive = existingTransactions?.find(
+      (tx: any) => tx.status === 'PENDING' && tx.paymentLinkId
+    );
+    if (existingActive) {
+      return {
+        success: true,
+        message: 'Đơn hàng đã có liên kết thanh toán đang chờ xử lý',
+        data: {
+          paymentTransactionId: existingActive.paymentTransactionId.toString(),
+          orderCode: Number(existingActive.transactionCode),
+          checkoutUrl: `https://pay.payos.vn/web/${existingActive.paymentLinkId}`,
+          paymentLinkId: existingActive.paymentLinkId,
+          amount: Number(existingActive.amount),
+          status: 'PENDING',
+        },
+      };
+    }
+
     const clientId = process.env.PAYOS_CLIENT_ID?.trim();
     const apiKey = process.env.PAYOS_API_KEY?.trim();
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
@@ -66,14 +103,37 @@ export class PaymentsService {
     const cancelUrl = dto.cancelUrl || process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payment/cancel';
 
     // T?o b?n ghi PaymentTransaction ? tr?ng th�i PENDING tru?c
-    const transaction = await this.paymentsRepo.createTransaction({
-      orderId: rawOrderId,
-      provider: 'PAYOS',
-      transactionCode: orderCode.toString(),
-      amount: orderAmount,
-      paymentMethod: 'QR',
-      status: 'PENDING',
-    });
+    let transaction;
+    try {
+      transaction = await this.paymentsRepo.createTransaction({
+        orderId: rawOrderId,
+        provider: 'PAYOS',
+        transactionCode: orderCode.toString(),
+        amount: orderAmount,
+        paymentMethod: 'QR',
+        status: 'PENDING',
+      });
+    } catch (createErr: any) {
+      if (createErr.code === 'P2002' || createErr.message?.includes('uq_payment_active_per_order')) {
+        const recheck = await this.paymentsRepo.findTransactionsByOrderId(rawOrderId);
+        const activeTx = recheck?.find((tx: any) => tx.status === 'PENDING' && tx.paymentLinkId);
+        if (activeTx) {
+          return {
+            success: true,
+            message: 'Đơn hàng đã có liên kết thanh toán đang chờ xử lý',
+            data: {
+              paymentTransactionId: activeTx.paymentTransactionId.toString(),
+              orderCode: Number(activeTx.transactionCode),
+              checkoutUrl: `https://pay.payos.vn/web/${activeTx.paymentLinkId}`,
+              paymentLinkId: activeTx.paymentLinkId,
+              amount: Number(activeTx.amount),
+              status: 'PENDING',
+            },
+          };
+        }
+      }
+      throw createErr;
+    }
 
     const signature = signPaymentRequest(
       {

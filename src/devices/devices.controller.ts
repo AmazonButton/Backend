@@ -33,6 +33,8 @@ import {
   UpdateConfigDto,
   ExtendWarrantyDto,
   UpdateBehaviorDto,
+  UpdateBatteryDto,
+  UpdateDeviceStatusDto,
   SimulatePressDto,
 } from './dto/devices.dto';
 
@@ -214,8 +216,8 @@ export class DevicesController {
 
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
   @Patch(':id/status')
-  async toggleStatus(@Param('id') id: string, @Body('status') status: string) {
-    const data = await this.devicesService.toggleStatus(id, status);
+  async toggleStatus(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
+    const data = await this.devicesService.toggleStatus(id, body.status, req.user);
     return { success: true, message: `Trạng thái đã chuyển sang ${status}`, data };
   }
 
@@ -235,8 +237,8 @@ export class DevicesController {
    */
   @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/battery')
-  async updateBattery(@Param('id') id: string, @Body('batteryLevel') batteryLevel: number, @Request() req: any) {
-    const data = await this.devicesService.updateBattery(id, batteryLevel !== undefined ? batteryLevel : 100, req.user);
+  async updateBattery(@Param('id') id: string, @Body() body: UpdateBatteryDto, @Request() req: any) {
+    const data = await this.devicesService.updateBattery(id, body.batteryLevel, req.user);
     return { success: true, message: 'Cập nhật pin thiết bị thành công!', data };
   }
 
@@ -255,14 +257,15 @@ export class DevicesController {
    */
   @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/toggle-active')
-  async toggleActive(@Param('id') id: string, @Body('status') status: string, @Request() req: any) {
-    const data = await this.devicesService.toggleDeviceStatus(id, status, req.user);
+  async toggleActive(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
+    const data = await this.devicesService.toggleDeviceStatus(id, body.status, req.user);
     return { success: true, message: `Đã chuyển trạng thái thiết bị sang ${data.status}`, data };
   }
 
   /**
    * Cấu hình hành vi nút bấm (SmartSupply Behavior Designer)
    */
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
   @Put(':id/behavior')
   async updateBehavior(@Param('id') id: string, @Body() body: UpdateBehaviorDto, @Request() req: any) {
     const data = await this.devicesService.updateBehavior(id, body, req.user);

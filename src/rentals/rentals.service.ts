@@ -27,7 +27,7 @@ export class RentalsService {
     const months = Number(dto.monthsRented) || 1;
     const monthlyPrice = Number(pkg.monthlyPrice);
     const depositFee = Number(pkg.depositFee || 0);
-    const totalRentAmount = monthlyPrice * months;
+    const totalRentAmount = monthlyPrice * months + depositFee;
 
     const startDate = new Date();
     const endDate = new Date(startDate.getTime() + months * 30 * 24 * 60 * 60 * 1000);
@@ -67,6 +67,10 @@ export class RentalsService {
     const rawRentalId = BigInt(rentalId);
     const rental = await this.prisma.buttonRental.findUnique({ where: { rentalId: rawRentalId } });
     if (!rental) throw new NotFoundException('Không tìm thấy hợp đồng thuê');
+
+    if (rental.status !== 'PAID' && rental.status !== 'ACTIVE') {
+      throw new BadRequestException('Hợp đồng thuê chưa hoàn tất thanh toán (PENDING_PAYMENT), không thể kích hoạt');
+    }
 
     return this.prisma.buttonRental.update({
       where: { rentalId: rawRentalId },

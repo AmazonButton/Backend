@@ -243,7 +243,12 @@ model IoTButton {
   buttonCode  String          @unique @map("button_code")
   buttonName  String?         @map("button_name")
   hmacSecret  String          @map("hmac_secret")
-  status      String          @default("ACTIVE")
+  status              String          @default("ACTIVE")
+  batteryLevel        Int?            @default(100) @map("battery_level")
+  warrantyUntil       DateTime?       @map("warranty_until")
+  clickBehavior       String?         @default("SINGLE") @map("click_behavior")
+  doubleClickWindowMs Int?            @default(300) @map("double_click_window_ms")
+  holdDurationMs      Int?            @default(1500) @map("hold_duration_ms")
   installedAt DateTime?       @map("installed_at")
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @default(now()) @updatedAt @map("updated_at")
@@ -585,6 +590,7 @@ model AuthOtp {
 model IotIdempotencyKey {
   id          BigInt    @id @default(autoincrement())
   deviceId    BigInt    @map("device_id")
+  sessionData Json?     @map("session_data")
   device      IoTButton @relation(fields: [deviceId], references: [buttonId], onDelete: Cascade)
   requestId   String    @map("request_id") @db.VarChar(128)
   orderId     BigInt?   @map("order_id")
@@ -598,4 +604,33 @@ model IotIdempotencyKey {
   @@unique([deviceId, requestId], map: "uq_iot_idempotency_device_request")
   @@index([requestId], map: "idx_iot_idempotency_request_id")
   @@map("iot_idempotency_keys")
+}
+
+
+model DeviceNonce {
+  deviceId  String   @map("device_id") @db.VarChar(64)
+  nonce     String   @db.VarChar(128)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@id([deviceId, nonce])
+  @@index([expiresAt])
+  @@map("device_nonces")
+}
+
+model ProvisioningSession {
+  id          BigInt    @id @default(autoincrement())
+  sessionId   String    @unique @map("session_id") @db.VarChar(64)
+  sessionHash String    @map("session_hash") @db.VarChar(128)
+  deviceId    BigInt    @map("device_id")
+  sessionData Json?     @map("session_data")
+  tokenHash   String?   @map("token_hash") @db.VarChar(128)
+  status      String    @default("ACTIVE") @db.VarChar(20)
+  claimedBy   BigInt?   @map("claimed_by")
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@map("provisioning_sessions")
 }

@@ -82,6 +82,15 @@ async function testPayOSThuChi() {
     // ------------------------------------------------------------------------
     // SECTION 2: THU TI?N (PAYMENT WEBHOOK & ATOMIC WALLET REVENUE)
     // ------------------------------------------------------------------------
+    if (process.env.RUN_PAYOS_THU_CHI_MUTATING !== 'true') {
+      console.log('\nℹ [BẢO VỆ DỮ LIỆU TÀI CHÍNH] Bỏ qua các bước tạo đơn và rút tiền trên Database dùng chung.');
+      console.log('   Để chạy kiểm thử luồng thu/chi thật trên test database riêng, hãy đặt RUN_PAYOS_THU_CHI_MUTATING=true.');
+      console.log('\n------------------------------------------------------------------------');
+      console.log('✔ STAGE 1 SIGNATURE INTEGRITY PASSED (100% IN-MEMORY)');
+      console.log('------------------------------------------------------------------------');
+      return;
+    }
+
     console.log('\n[STAGE 2] PayOS Thu Ti?n (Payment Webhook -> Store Wallet Credit):');
     const store = await prisma.store.findFirst();
     if (!store) throw new Error('No store found in database');

@@ -111,25 +111,50 @@ export class DevicesService {
 
   private formatButton(b: any) {
     if (!b) return null;
-    const cleanBtn = { ...b };
-    delete cleanBtn.deviceSecret;
-    delete cleanBtn.hmacSecret;
-    delete cleanBtn.pairingToken;
     return {
-      ...cleanBtn,
       id: b.buttonId.toString(),
       buttonId: b.buttonId.toString(),
-      qrPayload: 'SOBPAIR://device/' + b.deviceId,
-            macAddress: DevicesService.deviceMacMap.get(b.deviceId) || b.macAddress || null,
+      deviceId: b.deviceId,
+      buttonCode: b.buttonCode,
+      status: b.status,
+      name: b.buttonName || 'Smart Order Button',
+      buttonName: b.buttonName || 'Smart Order Button',
+      customName: b.buttonName || 'Smart Order Button',
       storeId: b.storeId ? b.storeId.toString() : null,
       customerId: b.customerId ? b.customerId.toString() : null,
       addressId: b.addressId ? b.addressId.toString() : null,
-      name: b.buttonName || 'Smart Order Button',
-      customName: b.buttonName || 'Smart Order Button',
-      batteryLevel: 98,
-      wifiRSSI: -55,
+      batteryLevel: b.batteryLevel !== null && b.batteryLevel !== undefined ? b.batteryLevel : 98,
+      warrantyUntil: b.warrantyUntil ?? null,
+      clickBehavior: b.clickBehavior ?? 'SINGLE',
+      doubleClickWindowMs: b.doubleClickWindowMs ?? 300,
+      holdDurationMs: b.holdDurationMs ?? 1500,
+      wifiRSSI: b.wifiRssi ?? -55,
       healthScore: 95,
       healthStatus: 'OPTIMAL',
+      qrPayload: 'SOBPAIR://device/' + b.deviceId,
+      macAddress: DevicesService.deviceMacMap.get(b.deviceId) || b.macAddress || null,
+      createdAt: b.createdAt,
+      updatedAt: b.updatedAt,
+      customer: b.customer ? {
+        customerId: b.customer.customerId.toString(),
+        fullName: b.customer.user?.fullName || null,
+        phoneNumber: b.customer.user?.phone || b.customer.user?.phoneNumber || null,
+        phone: b.customer.user?.phone || b.customer.user?.phoneNumber || null,
+      } : null,
+      store: b.store ? {
+        storeId: b.store.storeId.toString(),
+        storeName: b.store.name || b.store.storeName || null,
+        name: b.store.name || b.store.storeName || null,
+      } : null,
+      address: b.address ? {
+        addressId: b.address.addressId.toString(),
+        recipientName: b.address.recipientName,
+        phone: b.address.phone,
+        addressDetail: b.address.addressDetail,
+        ward: b.address.ward,
+        district: b.address.district,
+        province: b.address.province,
+      } : null,
       products: b.buttonProducts
         ? b.buttonProducts.map((bp: any) => ({
             buttonProductId: bp.buttonProductId ? bp.buttonProductId.toString() : null,
@@ -143,6 +168,67 @@ export class DevicesService {
     };
   }
 
+  private async assertDeviceAccess(id: string | number | bigint, user: any) {
+    if (!user) {
+      throw new ForbiddenException('Thiếu thông tin người thực hiện');
+    }
+    const button = await this.devicesRepo.findByIdentifier(id.toString());
+    if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
+
+    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      return button;
+    }
+    if (user.role === 'CUSTOMER') {
+      const userCustId = user.customerProfileId ? user.customerProfileId.toString() : null;
+      if (!userCustId || !button.customerId || button.customerId.toString() !== userCustId) {
+        throw new ForbiddenException('Bạn không có quyền truy cập nút bấm này');
+      }
+      return button;
+    }
+    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+      const userStoreId = user.storeId ? user.storeId.toString() : null;
+      if (!userStoreId || !button.storeId || button.storeId.toString() !== userStoreId) {
+        throw new ForbiddenException('Thiết bị không thuộc phạm vi cửa hàng của bạn');
+      }
+      return button;
+    }
+    throw new ForbiddenException('Bạn không có quyền thực hiện thao tác trên thiết bị này');
+  }
+
+  private buildDeviceScope(user: any, query?: any): any {
+    if (!user) {
+      throw new ForbiddenException('Thiếu thông tin người dùng');
+    }
+
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role);
+    const whereClause: any = {};
+
+    if (isAdmin) {
+      if (query?.storeId) {
+        whereClause.storeId = BigInt(query.storeId);
+      }
+      return whereClause;
+    }
+
+    if (user.role === 'CUSTOMER') {
+      if (!user.customerProfileId) {
+        throw new ForbiddenException('Tài khoản khách hàng chưa có hồ sơ liên kết');
+      }
+      whereClause.customerId = BigInt(user.customerProfileId);
+      return whereClause;
+    }
+
+    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+      if (!user.storeId) {
+        throw new ForbiddenException('Tài khoản cửa hàng chưa được liên kết với cửa hàng nào');
+      }
+      whereClause.storeId = BigInt(user.storeId);
+      return whereClause;
+    }
+
+    throw new ForbiddenException('Vai trò không được phép truy cập danh sách thiết bị');
+  }
+
   async generateNextDeviceId(): Promise<string> {
     const count = await this.devicesRepo.count();
     const nextNumber = count + 1;
@@ -150,13 +236,7 @@ export class DevicesService {
   }
 
   async getFleetStats(user: any) {
-    let whereClause: any = {};
-    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
-      whereClause.storeId = BigInt(user.storeId);
-    } else if (user.role === 'CUSTOMER' && user.customerProfileId) {
-      whereClause.customerId = BigInt(user.customerProfileId);
-    }
-
+    const whereClause = this.buildDeviceScope(user);
     const [total, active] = await Promise.all([
       this.devicesRepo.count(whereClause),
       this.devicesRepo.count({ ...whereClause, status: 'ACTIVE' }),
@@ -175,20 +255,10 @@ export class DevicesService {
   }
 
   async list(user: any, query: any) {
-    const whereClause: any = {};
-
-    if (user.role === 'CUSTOMER' && user.customerProfileId) {
-      whereClause.customerId = BigInt(user.customerProfileId);
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
-      whereClause.storeId = BigInt(user.storeId);
-    } else if (query.storeId) {
-      whereClause.storeId = BigInt(query.storeId);
-    }
-
-    if (query.status) {
+    const whereClause = this.buildDeviceScope(user, query);
+    if (query?.status) {
       whereClause.status = query.status;
     }
-
     const buttons = await this.devicesRepo.findMany(whereClause);
     return buttons.map((b) => this.formatButton(b));
   }
@@ -289,23 +359,7 @@ export class DevicesService {
   }
 
   async getById(id: string | number | bigint, user: any) {
-    const button = await this.devicesRepo.findByIdentifier(id.toString());
-
-    if (!button) {
-      throw new NotFoundException('Không tìm thấy nút bấm');
-    }
-
-    // BOLA Check
-    if (user && user.role === 'CUSTOMER' && user.customerProfileId) {
-      if (button.customerId.toString() !== user.customerProfileId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền truy cập nút bấm này');
-      }
-    } else if (user && ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role) && user.storeId) {
-      if (button.storeId.toString() !== user.storeId.toString()) {
-        throw new ForbiddenException('Nút bấm không thuộc quyền quản lý của cửa hàng bạn');
-      }
-    }
-
+    const button = await this.assertDeviceAccess(id, user);
     return this.formatButton(button);
   }
 
@@ -439,8 +493,9 @@ export class DevicesService {
     return this.update(id, body, user);
   }
 
-  async toggleStatus(id: string, status: string) {
-    const updated = await this.devicesRepo.update(BigInt(id), { status });
+  async toggleStatus(id: string, status: string, user: any) {
+    const existing = await this.assertDeviceAccess(id, user);
+    const updated = await this.devicesRepo.update(existing.buttonId, { status });
     return this.formatButton(updated);
   }
 
@@ -485,20 +540,38 @@ export class DevicesService {
   }
 
   async updateBattery(id: string, level: number, user: any) {
-    return { success: true, batteryLevel: level };
+    const existing = await this.assertDeviceAccess(id, user);
+    await this.devicesRepo.update(existing.buttonId, { batteryLevel: level });
+    return { success: true, buttonId: existing.buttonId.toString(), batteryLevel: level };
   }
 
   async extendWarranty(id: string, body: any, user: any) {
-    return { success: true, extendedUntil: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) };
+    const existing = await this.assertDeviceAccess(id, user);
+    const months = Number(body?.months) || 12;
+    const extendedUntil = new Date(Date.now() + months * 30 * 24 * 60 * 60 * 1000);
+    await this.devicesRepo.update(existing.buttonId, { warrantyUntil: extendedUntil });
+    return { success: true, buttonId: existing.buttonId.toString(), extendedUntil };
   }
 
   async toggleDeviceStatus(id: string, status: string, user: any) {
-    const updated = await this.devicesRepo.update(BigInt(id), { status });
+    const existing = await this.assertDeviceAccess(id, user);
+    const updated = await this.devicesRepo.update(existing.buttonId, { status });
     return this.formatButton(updated);
   }
 
   async updateBehavior(id: string, body: any, user: any) {
-    return { success: true, message: 'Cập nhật hành vi nút bấm thành công' };
+    const existing = await this.assertDeviceAccess(id, user);
+    const updateData: any = {};
+    if (body.clickBehavior) updateData.clickBehavior = body.clickBehavior;
+    if (body.doubleClickWindowMs) updateData.doubleClickWindowMs = Number(body.doubleClickWindowMs);
+    if (body.holdDurationMs) updateData.holdDurationMs = Number(body.holdDurationMs);
+    const updated = await this.devicesRepo.update(existing.buttonId, updateData);
+    return {
+      success: true,
+      buttonId: existing.buttonId.toString(),
+      message: 'Cập nhật hành vi nút bấm thành công',
+      data: this.formatButton(updated),
+    };
   }
 
   async bulkImport(body: { rows: any[]; storeId?: string }, user: any) {
@@ -545,14 +618,21 @@ export class DevicesService {
   async lookupByCode(code: string) {
     const button = await this.devicesRepo.findByIdentifier(code.toUpperCase());
     if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
-    return this.formatButton(button);
+    return {
+      deviceId: button.deviceId,
+      buttonCode: button.buttonCode,
+      status: button.status,
+      isClaimed: !!button.customerId,
+      canClaim: button.status === 'ACTIVE' && !button.customerId,
+    };
   }
 
   async configureByCode(body: any, user: any) {
-    const button = await this.lookupByCode(body.code || body.deviceId);
+    const rawButton = await this.devicesRepo.findByIdentifier(body.code || body.deviceId);
+    if (!rawButton) throw new NotFoundException('Không tìm thấy thiết bị');
     if (body.productId) {
-      await this.assignProduct(button.buttonId, body, user);
+      await this.assignProduct(rawButton.buttonId.toString(), body, user);
     }
-    return this.getById(button.buttonId, user);
+    return this.getById(rawButton.buttonId.toString(), user);
   }
 }

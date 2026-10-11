@@ -1,4 +1,6 @@
 import {
+  IsIn,
+  IsInt,
   IsString,
   IsOptional,
   IsArray,
@@ -288,23 +290,32 @@ export class UpdateConfigDto {
 }
 
 export class ExtendWarrantyDto {
-  @IsOptional()
+  @IsNotEmpty()
   @IsNumber()
+  @IsInt()
   @Min(1)
-  months?: number;
+  @Max(120)
+  months: number;
 }
 
 export class UpdateBehaviorDto {
   @IsOptional()
   @IsString()
+  @IsIn(['SINGLE', 'DOUBLE', 'HOLD'])
   clickBehavior?: string;
 
   @IsOptional()
   @IsNumber()
+  @IsInt()
+  @Min(100)
+  @Max(2000)
   doubleClickWindowMs?: number;
 
   @IsOptional()
   @IsNumber()
+  @IsInt()
+  @Min(500)
+  @Max(10000)
   holdDurationMs?: number;
 }
 
@@ -312,4 +323,21 @@ export class SimulatePressDto {
   @IsOptional()
   @IsString()
   pressType?: string;
+}
+
+
+export class UpdateBatteryDto {
+  @IsNotEmpty()
+  @IsNumber()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  batteryLevel: number;
+}
+
+export class UpdateDeviceStatusDto {
+  @IsNotEmpty()
+  @IsString()
+  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'UNPAIRED', 'SUSPENDED'])
+  status: string;
 }

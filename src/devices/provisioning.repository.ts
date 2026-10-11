@@ -112,4 +112,75 @@ export class ProvisioningRepository {
       data: { status: 'USED' },
     });
   }
+
+  async consumeDeviceNonce(deviceId: string, nonce: string): Promise<boolean> {
+    const rows: any[] = await this.prisma.$queryRawUnsafe(
+      `INSERT INTO device_nonces (device_id, nonce, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
+       ON CONFLICT (device_id, nonce) DO NOTHING
+       RETURNING nonce;`,
+      deviceId,
+      nonce
+    );
+    return rows && rows.length > 0;
+  }
+
+  async createProvisioningSession(
+    sessionId: string,
+    sessionHash: string,
+    deviceId: bigint,
+    sessionData: any,
+    tokenHash: string | null,
+    expiresAt: Date,
+  ) {
+    return this.prisma.$executeRawUnsafe(
+      `INSERT INTO provisioning_sessions (session_id, session_hash, device_id, session_data, token_hash, status, expires_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, 'ACTIVE', $6)
+       ON CONFLICT (session_id) DO UPDATE
+       SET session_data = EXCLUDED.session_data, expires_at = EXCLUDED.expires_at, status = 'ACTIVE';`,
+      sessionId,
+      sessionHash,
+      deviceId,
+      JSON.stringify(sessionData),
+      tokenHash,
+      expiresAt
+    );
+  }
+
+  async findProvisioningSession(sessionId: string): Promise<any> {
+    const rows: any[] = await this.prisma.$queryRawUnsafe(
+      `SELECT * FROM provisioning_sessions
+       WHERE session_id = $1 AND expires_at > NOW() AND status = 'ACTIVE';`,
+      sessionId
+    );
+    return rows && rows.length > 0 ? rows[0] : null;
+  }
+
+  async lockAndConsumeProvisioningSession(sessionId: string, claimedBy?: bigint): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      const rows: any[] = await tx.$queryRawUnsafe(
+        `SELECT * FROM provisioning_sessions
+         WHERE session_id = $1 AND expires_at > NOW() AND status = 'ACTIVE'
+         FOR UPDATE;`,
+        sessionId
+      );
+      if (!rows || rows.length === 0) return null;
+      await tx.$executeRawUnsafe(
+        `UPDATE provisioning_sessions
+         SET status = 'CLAIMED', claimed_by = $2, updated_at = NOW()
+         WHERE session_id = $1;`,
+        sessionId,
+        claimedBy || null
+      );
+      return rows[0];
+    });
+  }
+
+  async deleteProvisioningSession(sessionId: string) {
+    return this.prisma.$executeRawUnsafe(
+      `DELETE FROM provisioning_sessions WHERE session_id = $1;`,
+      sessionId
+    );
+  }
+
 }

@@ -7,6 +7,9 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  BadRequestException,
+  ForbiddenException,
+  Request,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -19,15 +22,18 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { ForbiddenException, Request } from '@nestjs/common';
 import { MediaService } from './media.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('Media & Cloud Storage')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('media')
 export class MediaController {
-  constructor(private readonly mediaService: MediaService) {}
+  constructor(
+    private readonly mediaService: MediaService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Get('signature')
@@ -40,12 +46,13 @@ export class MediaController {
     const user = req?.user;
     let targetFolder = folder || 'smart-order';
     if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      if (folder && folder.startsWith('stores/')) {
-        const parts = folder.split('/');
-        if (parts[1] && parts[1] !== user.storeId.toString()) {
-          throw new ForbiddenException('Bạn không được phép tải ảnh vào thư mục của cửa hàng khác');
+      const allowedPrefix = `stores/${user.storeId}/`;
+      if (folder) {
+        if (!folder.startsWith(allowedPrefix)) {
+          throw new ForbiddenException(`Cửa hàng chỉ được phép lưu vào thư mục ${allowedPrefix}`);
         }
-      } else if (!folder || !folder.startsWith('smart-button')) {
+        targetFolder = folder;
+      } else {
         targetFolder = `stores/${user.storeId}/products`;
       }
     }
@@ -94,12 +101,13 @@ export class MediaController {
     const user = req?.user;
     let targetFolder = folder || 'smart-order';
     if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      if (folder && folder.startsWith('stores/')) {
-        const parts = folder.split('/');
-        if (parts[1] && parts[1] !== user.storeId.toString()) {
-          throw new ForbiddenException('Bạn không được phép tải ảnh vào thư mục của cửa hàng khác');
+      const allowedPrefix = `stores/${user.storeId}/`;
+      if (folder) {
+        if (!folder.startsWith(allowedPrefix)) {
+          throw new ForbiddenException(`Cửa hàng chỉ được phép lưu vào thư mục ${allowedPrefix}`);
         }
-      } else if (!folder || !folder.startsWith('smart-button')) {
+        targetFolder = folder;
+      } else {
         targetFolder = `stores/${user.storeId}/products`;
       }
     }
@@ -116,12 +124,28 @@ export class MediaController {
   @Post('destroy')
   @ApiOperation({ summary: 'Xóa tệp ảnh trên Cloudinary khi thay thế hoặc hủy ảnh' })
   async destroyAsset(@Body('publicId') publicId: string, @Request() req?: any) {
+    if (!publicId) {
+      throw new BadRequestException('publicId không được để trống');
+    }
     const user = req?.user;
     if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
       const allowedPrefix = `stores/${user.storeId}/`;
-      if (!publicId || !publicId.startsWith(allowedPrefix)) {
+      if (!publicId.startsWith(allowedPrefix)) {
         throw new ForbiddenException('Bạn chỉ có quyền xóa tài nguyên trong thư mục của cửa hàng mình');
       }
+    }
+    if (publicId.startsWith('smart-order/') || publicId.startsWith('smart-button/')) {
+      throw new ForbiddenException('Không thể xóa tài nguyên hệ thống dùng chung');
+    }
+    const refCount = await this.prisma.productImage.count({
+      where: { cloudinaryPublicId: publicId },
+    });
+    if (refCount > 0) {
+      throw new BadRequestException({
+        success: false,
+        code: 'ASSET_IN_USE',
+        message: `Hình ảnh vẫn đang được sử dụng bởi ${refCount} sản phẩm, không thể xóa trực tiếp`,
+      });
     }
     const success = await this.mediaService.deleteAsset(publicId);
     return {
