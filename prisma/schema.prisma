@@ -355,6 +355,8 @@ model PaymentTransaction {
   amount               Decimal   @db.Decimal(15, 2)
   paymentMethod        String    @map("payment_method")
   paymentLinkId        String?   @map("payment_link_id")
+  checkoutUrl          String?   @map("checkout_url")
+  qrCode               String?   @map("qr_code")
   status               String    @default("PENDING")
   paidAt               DateTime? @map("paid_at")
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -590,7 +592,6 @@ model AuthOtp {
 model IotIdempotencyKey {
   id          BigInt    @id @default(autoincrement())
   deviceId    BigInt    @map("device_id")
-  sessionData Json?     @map("session_data")
   device      IoTButton @relation(fields: [deviceId], references: [buttonId], onDelete: Cascade)
   requestId   String    @map("request_id") @db.VarChar(128)
   orderId     BigInt?   @map("order_id")

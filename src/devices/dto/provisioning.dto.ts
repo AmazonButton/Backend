@@ -103,3 +103,23 @@ export class ChangeWifiDto {
   @IsString()
   password?: string;
 }
+
+export class ConfirmPairingDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  buttonName?: string;
+
+  @IsOptional()
+  @IsString()
+  customName?: string;
+
+  @IsOptional()
+  productId?: string | number;
+
+  @IsOptional()
+  quantity?: number;
+
+  @IsOptional()
+  addressId?: string | number;
+}

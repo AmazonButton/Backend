@@ -180,4 +180,21 @@ export class PaymentsRepository {
       include: { order: true },
     });
   }
+
+  async updatePaymentLinkDetails(
+    paymentTransactionId: bigint,
+    paymentLinkId: string,
+    checkoutUrl?: string,
+    qrCode?: string,
+  ) {
+    return this.prisma.paymentTransaction.update({
+      where: { paymentTransactionId },
+      data: {
+        paymentLinkId,
+        ...(checkoutUrl ? { checkoutUrl } : {}),
+        ...(qrCode ? { qrCode } : {}),
+      },
+    });
+  }
+
 }

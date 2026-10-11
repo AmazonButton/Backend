@@ -251,4 +251,28 @@ export class DevicesRepository {
       where: { productId, storeId, status: 'ACTIVE' },
     });
   }
+
+  async consumeDeviceNonce(deviceId: string, nonce: string): Promise<boolean> {
+    const rows: any[] = await this.prisma.$queryRawUnsafe(
+      `INSERT INTO device_nonces (device_id, nonce, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
+       ON CONFLICT (device_id, nonce)
+       DO UPDATE SET
+         expires_at = EXCLUDED.expires_at,
+         created_at = NOW()
+       WHERE device_nonces.expires_at <= NOW()
+       RETURNING nonce;`,
+      deviceId,
+      nonce,
+    );
+    return rows && rows.length > 0;
+  }
+
+  async cleanupExpiredNonces(): Promise<number> {
+    const res = await this.prisma.$executeRawUnsafe(
+      `DELETE FROM device_nonces WHERE expires_at < NOW();`
+    );
+    return res;
+  }
+
 }

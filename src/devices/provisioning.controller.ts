@@ -19,6 +19,7 @@ import {
   DeviceBootstrapDto,
   ClaimDeviceDto,
   ChangeWifiDto,
+  ConfirmPairingDto,
 } from './dto/provisioning.dto';
 
 @Controller()
@@ -43,6 +44,21 @@ export class ProvisioningController {
   async verifySession(@Body() body: VerifySessionDto) {
     return this.provisioningService.verifySession(body.sessionId);
   }
+
+  /**
+   * 2b. Customer endpoint: Confirm pairing and claim device within atomic session
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('CUSTOMER')
+  @Post(['provisioning/sessions/:id/confirmation', 'provisioning/sessions/:id/confirm'])
+  async confirmPairing(
+    @Param('id') id: string,
+    @Body() body: ConfirmPairingDto,
+    @Request() req: any,
+  ) {
+    return this.provisioningService.confirmPairing(id, body, req.user);
+  }
+
 
   /**
    * 3. Hardware endpoint: ESP32 Cloud Bootstrap via HMAC-SHA256

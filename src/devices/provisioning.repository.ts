@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ProvisioningRepository {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) public readonly prisma: PrismaService) {}
 
   async findButtonByIdentifier(identifier: string) {
     const trimmed = identifier.trim().toUpperCase();
@@ -117,7 +117,11 @@ export class ProvisioningRepository {
     const rows: any[] = await this.prisma.$queryRawUnsafe(
       `INSERT INTO device_nonces (device_id, nonce, expires_at)
        VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
-       ON CONFLICT (device_id, nonce) DO NOTHING
+       ON CONFLICT (device_id, nonce)
+       DO UPDATE SET
+         expires_at = EXCLUDED.expires_at,
+         created_at = NOW()
+       WHERE device_nonces.expires_at <= NOW()
        RETURNING nonce;`,
       deviceId,
       nonce

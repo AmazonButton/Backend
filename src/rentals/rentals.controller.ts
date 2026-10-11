@@ -1,8 +1,9 @@
-import { ForbiddenException } from '@nestjs/common';
-import { Controller, Get, Post, Body, UseGuards, Request } from '@nestjs/common';
+import { ForbiddenException, Controller, Get, Post, Body, UseGuards, Request, Param } from '@nestjs/common';
 import { RentalsService } from './rentals.service';
 import { CreateRentalOrderDto } from './dto/rentals.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('rentals')
 export class RentalsController {
@@ -34,5 +35,13 @@ export class RentalsController {
     }
     const data = await this.rentalsService.listCustomerRentals(customerProfileId);
     return { success: true, data };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SYSTEM_ADMIN')
+  @Post(':id/activate')
+  async activateRental(@Param('id') id: string) {
+    const data = await this.rentalsService.activateRental(BigInt(id));
+    return { success: true, message: 'Kích hoạt hợp đồng thuê thành công!', data };
   }
 }

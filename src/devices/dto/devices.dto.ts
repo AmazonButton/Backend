@@ -338,6 +338,6 @@ export class UpdateBatteryDto {
 export class UpdateDeviceStatusDto {
   @IsNotEmpty()
   @IsString()
-  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'UNPAIRED', 'SUSPENDED'])
+  @IsIn(['ACTIVE', 'INACTIVE', 'LOCKED', 'SUSPENDED', 'UNASSIGNED', 'MAINTENANCE'])
   status: string;
 }

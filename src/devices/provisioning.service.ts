@@ -139,29 +139,145 @@ export class ProvisioningService {
     return this.verifySession(sessionId);
   }
 
-  async confirmPairing(sessionId: string, body: any, user: any) {
-    const session = await this.provRepo.lockAndConsumeProvisioningSession(
-      sessionId,
-      user?.userId ? BigInt(user.userId) : undefined,
-    );
-    if (!session) {
-      throw new NotFoundException('Phiên ghép nối không tồn tại hoặc đã hết hạn');
+    async confirmPairing(sessionId: string, dto: any, user: any) {
+    const customerId = user?.customerProfileId
+      ? BigInt(user.customerProfileId)
+      : user?.customerId
+      ? BigInt(user.customerId)
+      : null;
+
+    if (!customerId) {
+      throw new UnauthorizedException('Chỉ khách hàng cá nhân có hồ sơ mới có thể kích hoạt ghép nối thiết bị');
     }
 
-    const button = await this.provRepo.findButtonById(BigInt(session.device_id));
-    if (session.token_hash) {
-      await this.provRepo.markPairingTokenUsed(session.token_hash);
-    }
+    return this.provRepo.prisma.$transaction(async (tx: any) => {
+      // 1. Lock session row
+      const sessionRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT * FROM provisioning_sessions
+         WHERE session_id = $1
+         FOR UPDATE;`,
+        sessionId,
+      );
 
-    return {
-      success: true,
-      message: 'Kích hoạt và ghép nối nút bấm thành công!',
-      data: {
-        buttonId: button.buttonId.toString(),
-        deviceId: button.deviceId,
-        buttonCode: button.buttonCode,
-      },
-    };
+      if (!sessionRows || sessionRows.length === 0) {
+        throw new NotFoundException('Phiên ghép nối không tồn tại');
+      }
+
+      const session = sessionRows[0];
+
+      if (session.status !== 'ACTIVE') {
+        throw new BadRequestException('Phiên ghép nối đã được sử dụng hoặc bị vô hiệu hóa');
+      }
+
+      if (new Date(session.expires_at) < new Date()) {
+        throw new BadRequestException('Phiên ghép nối đã hết hạn');
+      }
+
+      if (session.claimed_by && session.claimed_by.toString() !== customerId.toString()) {
+        throw new ForbiddenException('Phiên ghép nối thuộc về khách hàng khác');
+      }
+
+      // 2. Lock button row
+      const buttonRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT * FROM iot_button
+         WHERE button_id = $1
+         FOR UPDATE;`,
+        BigInt(session.device_id),
+      );
+
+      if (!buttonRows || buttonRows.length === 0) {
+        throw new NotFoundException('Thiết bị nút bấm không tồn tại');
+      }
+
+      const button = buttonRows[0];
+
+      if (button.customer_id && button.customer_id.toString() !== customerId.toString() && button.status === 'ACTIVE') {
+        throw new ConflictException('Thiết bị này đã có chủ sở hữu khác');
+      }
+
+      // 3. Product validation if specified
+      if (dto.productId) {
+        const prod = await tx.product.findUnique({
+          where: { productId: BigInt(dto.productId) },
+        });
+
+        if (!prod || (button.store_id && prod.storeId !== button.store_id)) {
+          throw new BadRequestException('Sản phẩm không thuộc cửa hàng quản lý thiết bị này');
+        }
+
+        await tx.buttonProduct.upsert({
+          where: {
+            uq_button_product: {
+              buttonId: button.button_id,
+              productId: prod.productId,
+            },
+          },
+          update: { quantity: Number(dto.quantity) || 1 },
+          create: {
+            buttonId: button.button_id,
+            productId: prod.productId,
+            quantity: Number(dto.quantity) || 1,
+          },
+        });
+      }
+
+      // 4. Upsert store_customer
+      if (button.store_id) {
+        await tx.storeCustomer.upsert({
+          where: {
+            uq_store_customer: {
+              storeId: button.store_id,
+              customerId,
+            },
+          },
+          update: { status: 'ACTIVE' },
+          create: {
+            storeId: button.store_id,
+            customerId,
+            status: 'ACTIVE',
+          },
+        });
+      }
+
+      // 5. Update button ownership and active status
+      const updatedButton = await tx.ioTButton.update({
+        where: { buttonId: button.button_id },
+        data: {
+          customerId,
+          buttonName: dto.buttonName || dto.customName || button.button_name,
+          status: 'ACTIVE',
+          installedAt: button.installed_at || new Date(),
+        },
+      });
+
+      // 6. Mark pairing token USED if bound
+      if (session.token_hash) {
+        await tx.pairingToken.updateMany({
+          where: { tokenHash: session.token_hash, status: 'ACTIVE' },
+          data: { status: 'USED' },
+        });
+      }
+
+      // 7. Mark session CLAIMED atomically
+      await tx.$executeRawUnsafe(
+        `UPDATE provisioning_sessions
+         SET status = 'CLAIMED', claimed_by = $2, updated_at = NOW()
+         WHERE session_id = $1;`,
+        sessionId,
+        customerId,
+      );
+
+      return {
+        success: true,
+        message: 'Kích hoạt và ghép nối nút bấm thành công!',
+        data: {
+          buttonId: updatedButton.buttonId.toString(),
+          deviceId: updatedButton.deviceId,
+          buttonCode: updatedButton.buttonCode,
+          status: updatedButton.status,
+        },
+      };
+    });
   }
 
   async cancelSession(sessionId: string) {

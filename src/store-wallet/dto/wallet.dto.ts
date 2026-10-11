@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsNumberString } from 'class-validator';
 
 export class UpdateBankAccountDto {
   @IsString()
@@ -12,4 +12,10 @@ export class UpdateBankAccountDto {
   @IsString()
   @IsNotEmpty()
   bankAccountHolder: string;
+}
+
+export class StoreQueryDto {
+  @IsOptional()
+  @IsNumberString({}, { message: 'storeId query parameter must be a numeric string' })
+  storeId?: string;
 }

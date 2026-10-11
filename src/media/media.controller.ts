@@ -23,7 +23,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { MediaService } from './media.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { ProductsRepository } from '../products/products.repository';
 
 @ApiTags('Media & Cloud Storage')
 @ApiBearerAuth('JWT-auth')
@@ -32,7 +32,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class MediaController {
   constructor(
     private readonly mediaService: MediaService,
-    private readonly prisma: PrismaService,
+    private readonly productsRepo: ProductsRepository,
   ) {}
 
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
@@ -137,9 +137,7 @@ export class MediaController {
     if (publicId.startsWith('smart-order/') || publicId.startsWith('smart-button/')) {
       throw new ForbiddenException('Không thể xóa tài nguyên hệ thống dùng chung');
     }
-    const refCount = await this.prisma.productImage.count({
-      where: { cloudinaryPublicId: publicId },
-    });
+    const refCount = await this.productsRepo.countImageReferences(publicId);
     if (refCount > 0) {
       throw new BadRequestException({
         success: false,

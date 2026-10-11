@@ -1,5 +1,7 @@
 import {
   Injectable,
+  HttpException,
+  HttpStatus,
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
@@ -113,24 +115,37 @@ export class PaymentsService {
         paymentMethod: 'QR',
         status: 'PENDING',
       });
-    } catch (createErr: any) {
+        } catch (createErr: any) {
       if (createErr.code === 'P2002' || createErr.message?.includes('uq_payment_active_per_order')) {
-        const recheck = await this.paymentsRepo.findTransactionsByOrderId(rawOrderId);
-        const activeTx = recheck?.find((tx: any) => tx.status === 'PENDING' && tx.paymentLinkId);
-        if (activeTx) {
-          return {
-            success: true,
-            message: 'Đơn hàng đã có liên kết thanh toán đang chờ xử lý',
-            data: {
-              paymentTransactionId: activeTx.paymentTransactionId.toString(),
-              orderCode: Number(activeTx.transactionCode),
-              checkoutUrl: `https://pay.payos.vn/web/${activeTx.paymentLinkId}`,
-              paymentLinkId: activeTx.paymentLinkId,
-              amount: Number(activeTx.amount),
-              status: 'PENDING',
-            },
-          };
+        // Bounded retry loop (wait up to 2 seconds for winner to finish calling PayOS and persisting link)
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const recheck = await this.paymentsRepo.findTransactionsByOrderId(rawOrderId);
+          const activeTx = recheck?.find((tx: any) => tx.status === 'PENDING' && tx.paymentLinkId);
+          if (activeTx) {
+            return {
+              success: true,
+              message: 'Đơn hàng đã có liên kết thanh toán đang chờ xử lý',
+              data: {
+                paymentTransactionId: activeTx.paymentTransactionId.toString(),
+                orderCode: Number(activeTx.transactionCode),
+                checkoutUrl: (activeTx as any).checkoutUrl || `https://pay.payos.vn/web/${activeTx.paymentLinkId}`,
+                paymentLinkId: activeTx.paymentLinkId,
+                amount: Number(activeTx.amount),
+                status: 'PENDING',
+              },
+            };
+          }
         }
+        throw new HttpException(
+          {
+            success: true,
+            statusCode: 202,
+            code: 'PAYMENT_LINK_CREATING',
+            message: 'Liên kết thanh toán đang được khởi tạo, vui lòng thử lại sau giây lát',
+          },
+          HttpStatus.ACCEPTED,
+        );
       }
       throw createErr;
     }

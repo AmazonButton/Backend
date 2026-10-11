@@ -218,7 +218,7 @@ export class DevicesController {
   @Patch(':id/status')
   async toggleStatus(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
     const data = await this.devicesService.toggleStatus(id, body.status, req.user);
-    return { success: true, message: `Trạng thái đã chuyển sang ${status}`, data };
+    return { success: true, message: `Trạng thái đã chuyển sang ${body.status}`, data };
   }
 
   /**
