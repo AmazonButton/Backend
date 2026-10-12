@@ -16,7 +16,7 @@ async function testStoreSubscriptions() {
   let failed = 0;
   const testRunId = Date.now();
 
-  // Test entities to track for strict, non-silent zero-residue cleanup
+  // Test entities to track for strict, non-silent zero-residue cleanup by exact IDs
   let testUser: any = null;
   let testStore: any = null;
   let testWallet: any = null;
@@ -31,7 +31,7 @@ async function testStoreSubscriptions() {
       data: {
         username: `test_sub_owner_${testRunId}`,
         email: `test_sub_owner_${testRunId}@example.com`,
-        passwordHash: '$2b$10$' + 'e'.repeat(53), // >= 60 chars bcrypt check constraint
+        passwordHash: '$2b$12$' + 'e'.repeat(53), // bcrypt cost 12
         fullName: `Test Sub Owner ${testRunId}`,
         phone: `090${String(testRunId).slice(-7)}`,
         status: 'ACTIVE',
@@ -50,13 +50,13 @@ async function testStoreSubscriptions() {
     });
     console.log(`  [SETUP] Created isolated test store: ${testStore.name} (ID: ${testStore.storeId})`);
 
-    // 2. Setup isolated Test Wallet with 1,000,000 initial balance
+    // 2. Setup isolated Test Wallet with 3,000,000 initial balance to support multiple purchases
     testWallet = await walletService.getOrCreateStoreWallet(testStore.storeId);
     await prisma.storeWallet.update({
       where: { walletId: testWallet.walletId },
-      data: { balance: 1000000 },
+      data: { balance: 3000000 },
     });
-    console.log(`  [SETUP] Created isolated wallet (ID: ${testWallet.walletId}) with balance 1,000,000`);
+    console.log(`  [SETUP] Created isolated wallet (ID: ${testWallet.walletId}) with balance 3,000,000`);
 
     // 3. Create two test subscription plans
     planA = await prisma.subscriptionPlan.create({
@@ -93,23 +93,14 @@ async function testStoreSubscriptions() {
       failed++;
     }
 
-    // Capture the wallet transaction created by this step
-    const tx1 = await prisma.walletTransaction.findFirst({
-      where: { walletId: testWallet.walletId },
-      orderBy: { transactionId: 'desc' },
-    });
-    if (tx1) {
-      trackedTransactionIds.push(tx1.transactionId);
-    }
-
-    // Verify balance was deducted exactly once (1,000,000 - 200,000 = 800,000)
+    // Verify balance was deducted exactly once (3,000,000 - 200,000 = 2,800,000)
     const walletAfterSub1 = await prisma.storeWallet.findUnique({
       where: { walletId: testWallet.walletId },
     });
-    if (Number(walletAfterSub1?.balance) === 800000) {
-      console.log('  [PASS] Wallet balance correctly deducted to 800,000');
+    if (Number(walletAfterSub1?.balance) === 2800000) {
+      console.log('  [PASS] Wallet balance correctly deducted to 2,800,000');
     } else {
-      console.error(`  [FAIL] Wallet balance incorrect: expected 800000, got ${walletAfterSub1?.balance}`);
+      console.error(`  [FAIL] Wallet balance incorrect: expected 2800000, got ${walletAfterSub1?.balance}`);
       failed++;
     }
 
@@ -121,7 +112,7 @@ async function testStoreSubscriptions() {
     if (
       sub1Retry &&
       sub1Retry.subscriptionId.toString() === sub1.subscriptionId.toString() &&
-      Number(walletAfterRetry?.balance) === 800000
+      Number(walletAfterRetry?.balance) === 2800000
     ) {
       console.log('  [PASS] Idempotent retry returned original subscription without double deduction');
     } else {
@@ -129,7 +120,7 @@ async function testStoreSubscriptions() {
       failed++;
     }
 
-    // 6. Test Idempotency Key Reuse with DIFFERENT Payload (Item 6) -> MUST throw ConflictException (409)
+    // 6. Test Idempotency Key Reuse with DIFFERENT Payload -> MUST throw ConflictException (409)
     let caughtConflict = false;
     try {
       await subService.subscribeWithWallet(testStore.storeId, planB.planId, idempotencyKey);
@@ -138,8 +129,6 @@ async function testStoreSubscriptions() {
         caughtConflict = true;
       } else if (err.status === 409 || err.message?.includes('IDEMPOTENCY_KEY_REUSED')) {
         caughtConflict = true;
-      } else {
-        console.error('  [DEBUG] Unexpected error during payload mismatch:', err);
       }
     }
 
@@ -150,7 +139,55 @@ async function testStoreSubscriptions() {
       failed++;
     }
 
-    // 7. Verify getCurrentSubscription
+    // 7. Test Concurrency with real Promise.all using the exact same idempotency key
+    const idempConcurrentKey = `idemp_concurrent_${testRunId}`;
+    const [concurrentA, concurrentB] = await Promise.all([
+      subService.subscribeWithWallet(testStore.storeId, planA.planId, idempConcurrentKey),
+      subService.subscribeWithWallet(testStore.storeId, planA.planId, idempConcurrentKey),
+    ]);
+    if (
+      concurrentA &&
+      concurrentB &&
+      concurrentA.subscriptionId.toString() === concurrentB.subscriptionId.toString()
+    ) {
+      trackedSubscriptionIds.push(BigInt(concurrentA.subscriptionId));
+      console.log('  [PASS] Real Promise.all concurrency: exactly 1 subscription created and returned to both callers');
+    } else {
+      console.error('  [FAIL] Concurrency test failed to return identical subscription');
+      failed++;
+    }
+
+    // 8. Test Multiple Subscriptions: Retry keyA MUST return subscription A even after subscription B is created
+    const keyOriginal = `key_original_${testRunId}`;
+    const subOriginal = await subService.subscribeWithWallet(testStore.storeId, planA.planId, keyOriginal);
+    trackedSubscriptionIds.push(BigInt(subOriginal.subscriptionId));
+
+    const keyOther = `key_other_${testRunId}`;
+    const subOther = await subService.subscribeWithWallet(testStore.storeId, planA.planId, keyOther);
+    trackedSubscriptionIds.push(BigInt(subOther.subscriptionId));
+
+    if (subOriginal.subscriptionId.toString() !== subOther.subscriptionId.toString()) {
+      console.log('  [PASS] Distinct keys created distinct subscriptions');
+    } else {
+      console.error('  [FAIL] Distinct keys returned same subscription');
+      failed++;
+    }
+
+    // Retry keyOriginal: must return subOriginal, NOT subOther (even though subOther is newer!)
+    const retryOriginal = await subService.subscribeWithWallet(testStore.storeId, planA.planId, keyOriginal);
+    if (
+      retryOriginal.subscriptionId.toString() === subOriginal.subscriptionId.toString() &&
+      retryOriginal.subscriptionId.toString() !== subOther.subscriptionId.toString()
+    ) {
+      console.log('  [PASS] Retrying original key strictly returns subscription A, NOT latest subscription B (Exact Idempotency Table)');
+    } else {
+      console.error(
+        `  [FAIL] Retrying original key returned wrong subscription! Expected ${subOriginal.subscriptionId}, got ${retryOriginal.subscriptionId}`
+      );
+      failed++;
+    }
+
+    // 9. Verify getCurrentSubscription
     const current = await subService.getCurrentSubscription(testStore.storeId);
     if (current && current.plan?.planCode === planA.planCode && current.daysRemaining >= 29) {
       console.log('  [PASS] getCurrentSubscription returned active plan and days remaining');
@@ -159,7 +196,7 @@ async function testStoreSubscriptions() {
       failed++;
     }
 
-    // 8. Verify validateStoreCanListProducts
+    // 10. Verify validateStoreCanListProducts
     const canList = await subService.validateStoreCanListProducts(testStore.storeId);
     if (canList === true) {
       console.log('  [PASS] validateStoreCanListProducts allowed listing within limits');
@@ -173,15 +210,23 @@ async function testStoreSubscriptions() {
   } finally {
     console.log('  --- STRICT TARGETED TEARDOWN (NO SILENT CATCH) ---');
     try {
-      // 1. Delete tracked wallet transactions
-      if (trackedTransactionIds.length > 0) {
-        const deletedTxs = await prisma.walletTransaction.deleteMany({
-          where: { transactionId: { in: trackedTransactionIds } },
+      // Clean up idempotency keys for this test store
+      if (testStore?.storeId) {
+        await prisma.subscriptionIdempotencyKey.deleteMany({
+          where: { storeId: testStore.storeId },
         });
-        console.log(`  [TEARDOWN] Deleted ${deletedTxs.count} tracked test wallet transaction(s).`);
+        console.log(`  [TEARDOWN] Purged idempotency keys for test store ID: ${testStore.storeId}.`);
       }
 
-      // 2. Delete tracked subscriptions
+      // Delete wallet transactions for this test store
+      if (testWallet?.walletId) {
+        await prisma.walletTransaction.deleteMany({
+          where: { walletId: testWallet.walletId },
+        });
+        console.log(`  [TEARDOWN] Deleted wallet transactions for wallet ID: ${testWallet.walletId}.`);
+      }
+
+      // Delete tracked subscriptions
       if (trackedSubscriptionIds.length > 0) {
         const deletedSubs = await prisma.storeSubscription.deleteMany({
           where: { subscriptionId: { in: trackedSubscriptionIds } },
@@ -189,7 +234,7 @@ async function testStoreSubscriptions() {
         console.log(`  [TEARDOWN] Deleted ${deletedSubs.count} tracked test store subscription(s).`);
       }
 
-      // 3. Delete test plans
+      // Delete test plans
       if (planA?.planId || planB?.planId) {
         const planIds = [planA?.planId, planB?.planId].filter(Boolean);
         const deletedPlans = await prisma.subscriptionPlan.deleteMany({
@@ -198,7 +243,7 @@ async function testStoreSubscriptions() {
         console.log(`  [TEARDOWN] Deleted ${deletedPlans.count} test subscription plan(s).`);
       }
 
-      // 4. Delete test wallet
+      // Delete test wallet
       if (testWallet?.walletId) {
         await prisma.storeWallet.delete({
           where: { walletId: testWallet.walletId },
@@ -206,7 +251,7 @@ async function testStoreSubscriptions() {
         console.log(`  [TEARDOWN] Deleted test wallet ID: ${testWallet.walletId}.`);
       }
 
-      // 5. Delete test store
+      // Delete test store
       if (testStore?.storeId) {
         await prisma.store.delete({
           where: { storeId: testStore.storeId },
@@ -214,7 +259,7 @@ async function testStoreSubscriptions() {
         console.log(`  [TEARDOWN] Deleted test store ID: ${testStore.storeId}.`);
       }
 
-      // 6. Delete test user
+      // Delete test user
       if (testUser?.userId) {
         await prisma.user.delete({
           where: { userId: testUser.userId },
@@ -231,14 +276,12 @@ async function testStoreSubscriptions() {
   }
 
   if (failed > 0) {
-    console.error(`Store subscriptions test failed with ${failed} failure(s).`);
+    console.error(`\n❌ Test completed with ${failed} failure(s).`);
     process.exit(1);
   } else {
-    console.log('ALL STORE SUBSCRIPTIONS ISOLATION TESTS PASSED 100%!');
+    console.log('\n✅ All store subscription tests passed successfully!');
+    process.exit(0);
   }
 }
 
-testStoreSubscriptions().catch((err) => {
-  console.error('Test run error:', err);
-  process.exit(1);
-});
+testStoreSubscriptions();

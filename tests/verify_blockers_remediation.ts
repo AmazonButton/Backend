@@ -13,30 +13,45 @@ async function run() {
   console.log('===============================================================\n');
 
   let passed = 0;
-  const total = 7;
+  const total = 8;
   const testRunId = Date.now();
+
+  // Strict tracked entity IDs for zero residue cleanup (no prefix-based wildcards)
+  const trackedProductIds: bigint[] = [];
+  const trackedOrderIds: bigint[] = [];
+  const trackedButtonIds: bigint[] = [];
+  const trackedSessionIds: bigint[] = [];
+  const trackedPaymentTxIds: bigint[] = [];
+  const trackedTemplateIds: bigint[] = [];
 
   try {
     // -------------------------------------------------------------------------
-    // TEST 1: Blocker 2 - Prisma schema IotIdempotencyKey & Migration Status
+    // TEST 1: Blocker 2 - Prisma schema IotIdempotencyKey & Squashed Baseline Migration
     // -------------------------------------------------------------------------
-    console.log('👉 [1/7] Testing Blocker 2: Prisma Schema & No P2022 on IotIdempotencyKey...');
+    console.log('👉 [1/8] Testing Blocker 2: Prisma Schema & Squashed Baseline Migration...');
     await prisma.iotIdempotencyKey.findFirst({ take: 1 });
     console.log('  ✅ [PASS] prisma.iotIdempotencyKey.findFirst() executed without P2022 error!');
 
     const migrations: any[] = await prisma.$queryRawUnsafe(
       `SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY finished_at ASC;`
     );
-    console.log(`  ✅ [PASS] Verified ${migrations.length} applied migrations in database.`);
-    if (migrations.length < 8) {
-      throw new Error(`Expected at least 8 migrations, found ${migrations.length}`);
+    console.log(`  ✅ [PASS] Verified ${migrations.length} applied migration(s) in database.`);
+    if (migrations.length < 1) {
+      throw new Error(`Expected at least 1 migration, found ${migrations.length}`);
     }
+    const baselineMigration = migrations.find((m) =>
+      m.migration_name.includes('20261012000000_init_baseline'),
+    );
+    if (!baselineMigration) {
+      throw new Error('FAIL: Squashed baseline migration 20261012000000_init_baseline is not recorded as applied!');
+    }
+    console.log('  ✅ [PASS] Clean squashed baseline migration 20261012000000_init_baseline is active & up-to-date!');
     passed++;
 
     // -------------------------------------------------------------------------
     // TEST 2: Blocker 4 - Device Nonce TTL & Atomic Anti-Replay
     // -------------------------------------------------------------------------
-    console.log('\n👉 [2/7] Testing Blocker 4: Device Nonce TTL & Atomic Anti-Replay...');
+    console.log('\n👉 [2/8] Testing Blocker 4: Device Nonce TTL & Atomic Anti-Replay...');
     const testDeviceId = 'SOB-TEST-NONCE-' + testRunId;
     const testNonce = 'nonce-test-' + testRunId;
     const devicesRepo = new DevicesRepository(prisma as unknown as PrismaService);
@@ -56,7 +71,7 @@ async function run() {
       await prisma.$executeRawUnsafe(
         `UPDATE device_nonces SET expires_at = NOW() - INTERVAL '10 seconds' WHERE device_id = $1 AND nonce = $2;`,
         testDeviceId,
-        testNonce
+        testNonce,
       );
 
       const expiredReconsume = await devicesRepo.consumeDeviceNonce(testDeviceId, testNonce);
@@ -68,21 +83,21 @@ async function run() {
     } finally {
       await prisma.$executeRawUnsafe(
         `DELETE FROM device_nonces WHERE device_id = $1;`,
-        testDeviceId
+        testDeviceId,
       );
     }
 
     // -------------------------------------------------------------------------
     // TEST 3: Blocker 3 - DB Status Constraint & Devices toggleStatus
     // -------------------------------------------------------------------------
-    console.log('\n👉 [3/7] Testing Blocker 3: Unified Statuses & DB Check Constraint...');
+    console.log('\n👉 [3/8] Testing Blocker 3: Unified Statuses & DB Check Constraint...');
     const validStatuses = ['ACTIVE', 'INACTIVE', 'LOCKED', 'SUSPENDED', 'UNASSIGNED', 'MAINTENANCE'];
 
     await prisma.$transaction(async (tx) => {
       for (const st of validStatuses) {
         await tx.$executeRawUnsafe(
           `UPDATE iot_button SET status = $1 WHERE button_id = (SELECT button_id FROM iot_button LIMIT 1);`,
-          st
+          st,
         );
       }
       throw new Error('ROLLBACK_INTENTIONAL');
@@ -93,7 +108,7 @@ async function run() {
     let invalidRejected = false;
     try {
       await prisma.$executeRawUnsafe(
-        `UPDATE iot_button SET status = 'INVALID_FOO_BAR' WHERE button_id = (SELECT button_id FROM iot_button LIMIT 1);`
+        `UPDATE iot_button SET status = 'INVALID_FOO_BAR' WHERE button_id = (SELECT button_id FROM iot_button LIMIT 1);`,
       );
     } catch {
       invalidRejected = true;
@@ -107,7 +122,7 @@ async function run() {
     // -------------------------------------------------------------------------
     // TEST 3B: Test 3B - Anti-Double Inventory & Dual-Order Reservation Isolation
     // -------------------------------------------------------------------------
-    console.log('\n👉 [4/7] Testing Test 3B: Dual-Order Inventory Reservation Isolation & Single Deduction...');
+    console.log('\n👉 [4/8] Testing Test 3B: Dual-Order Inventory Reservation Isolation & Single Deduction...');
     const activeStore = await prisma.store.findFirst({ where: { status: 'ACTIVE' } });
     if (!activeStore) throw new Error('FAIL: No active store available for inventory test');
     const activeCustomer = await prisma.customerProfile.findFirst();
@@ -126,6 +141,7 @@ async function run() {
         status: 'ACTIVE',
       },
     });
+    trackedProductIds.push(testInvProduct.productId);
 
     await prisma.inventory.upsert({
       where: { productId: testInvProduct.productId },
@@ -168,6 +184,8 @@ async function run() {
         },
       },
     });
+    trackedOrderIds.push(order1.orderId);
+
     await prisma.inventory.update({
       where: { productId: testInvProduct.productId },
       data: { reservedQuantity: { increment: 2 } },
@@ -199,6 +217,8 @@ async function run() {
         },
       },
     });
+    trackedOrderIds.push(order2.orderId);
+
     await prisma.inventory.update({
       where: { productId: testInvProduct.productId },
       data: { reservedQuantity: { increment: 3 } },
@@ -241,13 +261,13 @@ async function run() {
       await prisma.order.deleteMany({ where: { orderId: { in: [order1.orderId, order2.orderId] } } });
       await prisma.inventory.deleteMany({ where: { productId: testInvProduct.productId } });
       await prisma.product.deleteMany({ where: { productId: testInvProduct.productId } });
-      console.log(`  🧹 [CLEANUP] Test 3B orders and inventory entities cleaned up (Zero residue).`);
+      console.log(`  🧹 [CLEANUP] Test 3B orders and inventory entities cleaned up by exact IDs (Zero residue).`);
     }
 
     // -------------------------------------------------------------------------
     // TEST 4: Blocker 1 - Provisioning Atomic Transaction & confirmPairing
     // -------------------------------------------------------------------------
-    console.log('\n👉 [5/7] Testing Blocker 1: Atomic confirmPairing & Session Claiming...');
+    console.log('\n👉 [5/8] Testing Blocker 1: Atomic confirmPairing & Session Claiming...');
     const testSessionToken = 'PROV-TEST-' + testRunId;
     const dummyButton = await prisma.ioTButton.findFirst();
     if (!dummyButton) throw new Error('FAIL: No button found for session test');
@@ -261,6 +281,7 @@ async function run() {
         expiresAt: new Date(Date.now() + 600000),
       },
     });
+    trackedSessionIds.push(createdSession.id);
 
     try {
       const provRepo = new ProvisioningRepository(prisma as unknown as PrismaService);
@@ -281,7 +302,7 @@ async function run() {
             buttonName: 'Test Atomic Button',
             productId: '99999999999',
           },
-          { customerProfileId: '1' }
+          { customerProfileId: '1' },
         );
       } catch {
         caughtExpected = true;
@@ -308,7 +329,7 @@ async function run() {
     // -------------------------------------------------------------------------
     // TEST 5: Test 5 - Direct DB Verification for Unclaim & Factory Reset
     // -------------------------------------------------------------------------
-    console.log('\n👉 [6/7] Testing Test 5: Unclaim & Factory Reset Direct Database State Verification...');
+    console.log('\n👉 [6/8] Testing Test 5: Unclaim & Factory Reset Direct Database State Verification...');
     const provRepo = new ProvisioningRepository(prisma as unknown as PrismaService);
 
     const testBtn = await prisma.ioTButton.create({
@@ -321,6 +342,7 @@ async function run() {
         status: 'ACTIVE',
       },
     });
+    trackedButtonIds.push(testBtn.buttonId);
 
     const activeProduct = await prisma.product.findFirst({ where: { storeId: activeStore.storeId } });
     if (activeProduct) {
@@ -397,13 +419,13 @@ async function run() {
     } finally {
       await prisma.buttonProduct.deleteMany({ where: { buttonId: testBtn.buttonId } });
       await prisma.ioTButton.delete({ where: { buttonId: testBtn.buttonId } });
-      console.log(`  🧹 [CLEANUP] Test 5 device cleaned up (Zero residue).`);
+      console.log(`  🧹 [CLEANUP] Test 5 device cleaned up by exact ID (Zero residue).`);
     }
 
     // -------------------------------------------------------------------------
     // TEST 6: Blocker 5 - PayOS URL Preservation & Direct Field Retention
     // -------------------------------------------------------------------------
-    console.log('\n👉 [7/7] Testing Blocker 5: PayOS Direct URL Fields & Concurrency Safe Handling...');
+    console.log('\n👉 [7/8] Testing Blocker 5: PayOS Direct URL Fields & Concurrency Safe Handling...');
     const testOrder = await prisma.order.findFirst({ select: { orderId: true } });
     if (!testOrder) {
       throw new Error('FAIL: No order found to test payment transaction schema');
@@ -421,6 +443,7 @@ async function run() {
         status: 'CREATING',
       },
     });
+    trackedPaymentTxIds.push(txRecord.paymentTransactionId);
 
     try {
       if (txRecord.checkoutUrl !== 'https://pay.payos.vn/web/test-uuid-safe-url') {
@@ -437,6 +460,112 @@ async function run() {
       });
     }
 
+    // -------------------------------------------------------------------------
+    // TEST 7: P1 Device Template Full Config Persistence & Direct DB Read-back
+    // -------------------------------------------------------------------------
+    console.log('\n👉 [8/8] Testing P1 Issue: Device Template Full Config Persistence & Direct DB Read-Back...');
+    const testTemplate = await prisma.deviceTemplate.create({
+      data: {
+        code: `TMPL_${testRunId}`,
+        name: `Water Dispenser Template ${testRunId}`,
+        description: 'Auto water ordering single-press, emergency support double-press',
+        category: 'WATER',
+        singlePressAction: 'ORDER_WATER_19L',
+        doublePressAction: 'SUPPORT_DISPATCH',
+        defaultQuantity: 5,
+        cancelWindowSeconds: 120,
+      },
+    });
+    trackedTemplateIds.push(testTemplate.templateId);
+
+    const testTmplDevice = await prisma.ioTButton.create({
+      data: {
+        deviceId: `SOB-TEST-TMPL-${testRunId}`,
+        buttonCode: `BTN_TMPL_${testRunId}`,
+        storeId: activeStore.storeId,
+        customerId: activeCustomer.customerId,
+        hmacSecret: 'sec_template_0123456789abcdef01234',
+        status: 'ACTIVE',
+      },
+    });
+    trackedButtonIds.push(testTmplDevice.buttonId);
+
+    if (activeProduct) {
+      await prisma.buttonProduct.create({
+        data: {
+          buttonId: testTmplDevice.buttonId,
+          productId: activeProduct.productId,
+          quantity: 1,
+        },
+      });
+    }
+
+    try {
+      // Execute atomic template deployment
+      await devicesRepo.deployTemplateAtomicTx(testTmplDevice.buttonId, {
+        templateId: testTemplate.templateId,
+        deployedTemplateId: testTemplate.templateId,
+        singlePressAction: testTemplate.singlePressAction,
+        doublePressAction: testTemplate.doublePressAction,
+        defaultQuantity: testTemplate.defaultQuantity,
+        cancelWindowSeconds: testTemplate.cancelWindowSeconds,
+        doubleClickWindowMs: 350,
+      });
+
+      // Direct PostgreSQL read-back (proves data is NOT just transient in HTTP response)
+      const directDbButton = await prisma.ioTButton.findUnique({
+        where: { buttonId: testTmplDevice.buttonId },
+        include: {
+          deployedTemplate: true,
+          buttonProducts: true,
+        },
+      });
+
+      console.log('  Direct DB read-back after template deploy:', {
+        singlePressAction: directDbButton?.singlePressAction,
+        doublePressAction: directDbButton?.doublePressAction,
+        cancelWindowSeconds: directDbButton?.cancelWindowSeconds,
+        clickBehavior: directDbButton?.clickBehavior,
+        doubleClickWindowMs: directDbButton?.doubleClickWindowMs,
+        deployedTemplateId: directDbButton?.deployedTemplateId?.toString(),
+        deployedTemplateName: directDbButton?.deployedTemplate?.name,
+        buttonProductQty: directDbButton?.buttonProducts?.[0]?.quantity,
+      });
+
+      if (
+        directDbButton?.singlePressAction !== 'ORDER_WATER_19L' ||
+        directDbButton?.doublePressAction !== 'SUPPORT_DISPATCH' ||
+        directDbButton?.cancelWindowSeconds !== 120 ||
+        directDbButton?.clickBehavior !== 'DOUBLE' ||
+        directDbButton?.doubleClickWindowMs !== 350 ||
+        directDbButton?.deployedTemplateId?.toString() !== testTemplate.templateId.toString() ||
+        directDbButton?.buttonProducts?.[0]?.quantity !== 5
+      ) {
+        throw new Error('FAIL: Template configuration was NOT fully persisted to PostgreSQL!');
+      }
+
+      // Repository read-back (findById) to verify service / API layer mapping
+      const repoReadBack = await devicesRepo.findById(testTmplDevice.buttonId);
+      if (
+        !repoReadBack ||
+        repoReadBack.singlePressAction !== 'ORDER_WATER_19L' ||
+        repoReadBack.doublePressAction !== 'SUPPORT_DISPATCH' ||
+        repoReadBack.cancelWindowSeconds !== 120 ||
+        !repoReadBack.deployedTemplate ||
+        repoReadBack.deployedTemplate.templateId.toString() !== testTemplate.templateId.toString()
+      ) {
+        throw new Error('FAIL: devicesRepo.findById did not return complete persisted template config!');
+      }
+
+      console.log('  ✅ [PASS] Full template config strictly persisted in PostgreSQL & verified on direct read-back!');
+      passed++;
+    } finally {
+      await prisma.buttonProduct.deleteMany({ where: { buttonId: testTmplDevice.buttonId } });
+      await prisma.ioTButton.delete({ where: { buttonId: testTmplDevice.buttonId } });
+      await prisma.deviceTemplate.delete({ where: { templateId: testTemplate.templateId } });
+      console.log(`  🧹 [CLEANUP] Test 7 template and device cleaned up by exact IDs (Zero residue).`);
+    }
+
     console.log('\n===============================================================');
     console.log(`🎉 ALL ${passed}/${total} VERIFICATION CHECKS PASSED WITH ZERO RESIDUE!`);
     console.log('===============================================================\n');
@@ -444,7 +573,29 @@ async function run() {
     console.error('\n❌ VERIFICATION TEST FAILED:', error);
     process.exit(1);
   } finally {
-    await prisma.product.deleteMany({ where: { productCode: { startsWith: 'PRD_INV_' } } });
+    // Exact targeted cleanup by IDs (zero residue, no prefix-based delete)
+    if (trackedProductIds.length > 0) {
+      await prisma.inventory.deleteMany({ where: { productId: { in: trackedProductIds } } });
+      await prisma.product.deleteMany({ where: { productId: { in: trackedProductIds } } });
+    }
+    if (trackedOrderIds.length > 0) {
+      await prisma.orderItem.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
+      await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
+      await prisma.order.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
+    }
+    if (trackedButtonIds.length > 0) {
+      await prisma.buttonProduct.deleteMany({ where: { buttonId: { in: trackedButtonIds } } });
+      await prisma.ioTButton.deleteMany({ where: { buttonId: { in: trackedButtonIds } } });
+    }
+    if (trackedSessionIds.length > 0) {
+      await prisma.provisioningSession.deleteMany({ where: { id: { in: trackedSessionIds } } });
+    }
+    if (trackedPaymentTxIds.length > 0) {
+      await prisma.paymentTransaction.deleteMany({ where: { paymentTransactionId: { in: trackedPaymentTxIds } } });
+    }
+    if (trackedTemplateIds.length > 0) {
+      await prisma.deviceTemplate.deleteMany({ where: { templateId: { in: trackedTemplateIds } } });
+    }
     await prisma.$disconnect();
   }
 }

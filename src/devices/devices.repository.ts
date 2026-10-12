@@ -17,6 +17,7 @@ export class DevicesRepository {
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -30,6 +31,7 @@ export class DevicesRepository {
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
       },
     });
   }
@@ -42,6 +44,7 @@ export class DevicesRepository {
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
       },
     });
   }
@@ -61,6 +64,7 @@ export class DevicesRepository {
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
       },
     });
   }
@@ -73,6 +77,7 @@ export class DevicesRepository {
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
       },
     });
   }
@@ -86,6 +91,7 @@ export class DevicesRepository {
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
       },
     });
   }
@@ -115,6 +121,7 @@ export class DevicesRepository {
           store: true,
           customer: { include: { user: true } },
           buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
         },
       });
     });
@@ -221,6 +228,7 @@ export class DevicesRepository {
           customer: { include: { user: true } },
           address: true,
           buttonProducts: { include: { product: true } },
+        deployedTemplate: true,
         },
       });
 
@@ -282,6 +290,8 @@ export class DevicesRepository {
     defaultQuantity?: number | null;
     cancelWindowSeconds?: number | null;
     doubleClickWindowMs?: number | null;
+    templateId?: bigint | null;
+    deployedTemplateId?: bigint | null;
   }) {
     return this.prisma.$transaction(async (tx) => {
       // 1. Lock button row for update
@@ -301,9 +311,17 @@ export class DevicesRepository {
         ? template.doubleClickWindowMs
         : (template.doublePressAction ? 300 : undefined);
 
+      const targetTemplateId = template.deployedTemplateId ?? template.templateId;
+
       const updateData: any = {
         clickBehavior,
+        singlePressAction: template.singlePressAction !== undefined ? template.singlePressAction : undefined,
+        doublePressAction: template.doublePressAction !== undefined ? template.doublePressAction : undefined,
+        cancelWindowSeconds: template.cancelWindowSeconds !== undefined ? template.cancelWindowSeconds : undefined,
       };
+      if (targetTemplateId !== undefined) {
+        updateData.deployedTemplateId = targetTemplateId;
+      }
       if (doubleClickWindowMs !== undefined) {
         updateData.doubleClickWindowMs = doubleClickWindowMs;
       }
@@ -316,6 +334,7 @@ export class DevicesRepository {
           customer: { include: { user: true } },
           address: true,
           buttonProducts: { include: { product: true } },
+          deployedTemplate: true,
         },
       });
 

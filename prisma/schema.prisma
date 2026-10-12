@@ -70,6 +70,7 @@ model Store {
   deviceTemplates DeviceTemplate[]
   wallet          StoreWallet?
   subscriptions   StoreSubscription[]
+  subscriptionIdempotencyKeys SubscriptionIdempotencyKey[]
 
   @@map("store")
 }
@@ -249,6 +250,11 @@ model IoTButton {
   clickBehavior       String?         @default("SINGLE") @map("click_behavior")
   doubleClickWindowMs Int?            @default(300) @map("double_click_window_ms")
   holdDurationMs      Int?            @default(1500) @map("hold_duration_ms")
+  singlePressAction   String?         @default("CREATE_ORDER") @map("single_press_action") @db.VarChar(50)
+  doublePressAction   String?         @default("CANCEL_ORDER") @map("double_press_action") @db.VarChar(50)
+  cancelWindowSeconds Int?            @default(60) @map("cancel_window_seconds")
+  deployedTemplateId  BigInt?         @map("deployed_template_id")
+  deployedTemplate    DeviceTemplate? @relation(fields: [deployedTemplateId], references: [templateId], onDelete: SetNull)
   installedAt DateTime?       @map("installed_at")
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @default(now()) @updatedAt @map("updated_at")
@@ -392,6 +398,8 @@ model DeviceTemplate {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
 
+  deployedButtons IoTButton[]
+
   @@map("device_templates")
 }
 
@@ -428,6 +436,8 @@ model StoreSubscription {
   paymentMethod  String           @default("PAYOS") @map("payment_method")
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @default(now()) @updatedAt @map("updated_at")
+
+  idempotencyKeys SubscriptionIdempotencyKey[]
 
   @@map("store_subscriptions")
 }
@@ -634,4 +644,21 @@ model ProvisioningSession {
 
   @@index([sessionId])
   @@map("provisioning_sessions")
+}
+
+model SubscriptionIdempotencyKey {
+  id             BigInt            @id @default(autoincrement()) @map("id")
+  storeId        BigInt            @map("store_id")
+  store          Store             @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
+  idempotencyKey String            @map("idempotency_key") @db.VarChar(128)
+  requestHash    String            @map("request_hash") @db.VarChar(64)
+  subscriptionId BigInt            @map("subscription_id")
+  subscription   StoreSubscription @relation(fields: [subscriptionId], references: [subscriptionId], onDelete: Cascade)
+  status         String            @default("COMPLETED") @db.VarChar(20)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([storeId, idempotencyKey], map: "uq_sub_idemp_store_key")
+  @@index([storeId], map: "idx_sub_idemp_store")
+  @@map("subscription_idempotency_keys")
 }

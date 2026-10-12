@@ -209,7 +209,10 @@ export class DeviceTemplatesService {
     }
 
     const clickBehavior = template.doublePressAction ? 'DOUBLE' : 'SINGLE';
+    const templateBigIntId = template.templateId ? BigInt(template.templateId) : (template.id && !isNaN(Number(template.id)) ? BigInt(template.id) : null);
     await this.devicesRepo.deployTemplateAtomicTx(button.buttonId, {
+      templateId: templateBigIntId,
+      deployedTemplateId: templateBigIntId,
       singlePressAction: template.singlePressAction,
       doublePressAction: template.doublePressAction,
       defaultQuantity: template.defaultQuantity,

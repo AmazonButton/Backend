@@ -53,40 +53,39 @@ export class StoreSubscriptionsRepository {
       const walletRow = walletRows[0];
 
       // 2. Strict Idempotency check AFTER acquiring row-level lock on wallet
-      // Detects key reuse with mismatched payloads (storeId, planId) and throws HTTP 409 ConflictException
+      // Uses dedicated subscription_idempotency_keys table to guarantee returning the EXACT subscription
       if (params.idempotencyKey) {
         const cleanKey = params.idempotencyKey.trim();
-        const payloadHash = crypto.createHash('sha256').update(`${params.storeId}:${params.planId}`).digest('hex').slice(0, 16);
-        const expectedRef = `SUB-IDEMP-${cleanKey}:${payloadHash}`;
+        const requestHash = crypto
+          .createHash('sha256')
+          .update(`${params.storeId}:${params.planId}`)
+          .digest('hex');
 
-        const existingTx = await tx.walletTransaction.findFirst({
+        const idempRecord = await tx.subscriptionIdempotencyKey.findUnique({
           where: {
-            walletId: params.walletId,
-            type: 'SUBSCRIPTION_PAYMENT',
-            OR: [
-              { referenceId: expectedRef },
-              { referenceId: { startsWith: `SUB-IDEMP-${cleanKey}:` } },
-              { referenceId: `SUB-IDEMP-${cleanKey}` },
-            ],
+            storeId_idempotencyKey: {
+              storeId: params.storeId,
+              idempotencyKey: cleanKey,
+            },
           },
-          orderBy: { createdAt: 'desc' },
         });
 
-        if (existingTx) {
-          // If existing transaction was created with a different payload hash -> 409 Conflict
-          if (existingTx.referenceId && existingTx.referenceId.startsWith(`SUB-IDEMP-${cleanKey}:`) && existingTx.referenceId !== expectedRef) {
-            throw new ConflictException('IDEMPOTENCY_KEY_REUSED: Khóa idempotency đã được sử dụng với payload khác');
+        if (idempRecord) {
+          // Detect key reuse with mismatched payloads (storeId, planId) -> 409 Conflict
+          if (idempRecord.requestHash !== requestHash) {
+            throw new ConflictException(
+              'IDEMPOTENCY_KEY_REUSED: Khóa idempotency đã được sử dụng với payload khác',
+            );
           }
 
-          // Check if subscription matches current plan
-          const latestSub = await tx.storeSubscription.findFirst({
-            where: { storeId: params.storeId, planId: params.planId },
+          // Return the EXACT subscription recorded for this key (never deduce via latest)
+          const exactSub = await tx.storeSubscription.findUnique({
+            where: { subscriptionId: idempRecord.subscriptionId },
             include: { plan: true },
-            orderBy: { createdAt: 'desc' },
           });
-          if (latestSub) return latestSub;
-
-          throw new ConflictException('IDEMPOTENCY_KEY_REUSED: Khóa idempotency đã được sử dụng với payload khác');
+          if (exactSub) {
+            return exactSub;
+          }
         }
       }
 
@@ -145,7 +144,26 @@ export class StoreSubscriptionsRepository {
         include: { plan: true },
       });
 
-      // 7. Create wallet_transaction
+      // 7. Record exact idempotency key in dedicated table
+      if (params.idempotencyKey) {
+        const cleanKey = params.idempotencyKey.trim();
+        const requestHash = crypto
+          .createHash('sha256')
+          .update(`${params.storeId}:${params.planId}`)
+          .digest('hex');
+
+        await tx.subscriptionIdempotencyKey.create({
+          data: {
+            storeId: params.storeId,
+            idempotencyKey: cleanKey,
+            requestHash,
+            subscriptionId: subscription.subscriptionId,
+            status: 'COMPLETED',
+          },
+        });
+      }
+
+      // 8. Create wallet_transaction
       const payloadHash = crypto.createHash('sha256').update(`${params.storeId}:${params.planId}`).digest('hex').slice(0, 16);
       const referenceId = params.idempotencyKey
         ? `SUB-IDEMP-${params.idempotencyKey.trim()}:${payloadHash}`
