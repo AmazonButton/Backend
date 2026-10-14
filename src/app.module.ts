@@ -1,3 +1,5 @@
+import { DriversModule } from './drivers/drivers.module';
+import { DriverShiftsModule } from './driver-shifts/driver-shifts.module';
 import { StoresModule } from './stores/stores.module';
 import { StoreSubscriptionsModule } from './store-subscriptions/store-subscriptions.module';
 import { StoreWalletModule } from './store-wallet/store-wallet.module';
@@ -37,6 +39,8 @@ import { AppController } from './app.controller';
     MediaModule,
     PaymentsModule,
     StoresModule,
+    DriversModule,
+    DriverShiftsModule,
   ],
   controllers: [AppController],
 })

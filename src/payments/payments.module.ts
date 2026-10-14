@@ -1,3 +1,4 @@
+import { WebSocketModule } from '../websocket/websocket.module';
 import { Module } from '@nestjs/common';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
@@ -6,7 +7,7 @@ import { PayOSPayoutService } from './payos-payout.service';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, WebSocketModule],
   controllers: [PaymentsController],
   providers: [PaymentsService, PaymentsRepository, PayOSPayoutService],
   exports: [PaymentsService, PaymentsRepository, PayOSPayoutService],

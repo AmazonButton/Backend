@@ -35,7 +35,7 @@ export class MediaController {
     private readonly productsRepo: ProductsRepository,
   ) {}
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Get('signature')
   @ApiOperation({
     summary: 'Tạo chữ ký số Cloudinary (Presigned Signature) để Frontend React upload trực tiếp',
@@ -45,6 +45,9 @@ export class MediaController {
   getUploadSignature(@Query('folder') folder?: string, @Request() req?: any) {
     const user = req?.user;
     let targetFolder = folder || 'smart-order';
+    if (user && user.role === 'STAFF_DELIVERY' && user.storeId) {
+      targetFolder = `stores/${user.storeId}/pod`;
+    }
     if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
       const allowedPrefix = `stores/${user.storeId}/`;
       if (folder) {
@@ -65,7 +68,7 @@ export class MediaController {
     };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('upload')
   @ApiOperation({
     summary: 'Tải ảnh lên Cloudinary qua Server (Hỗ trợ kiểm tra Magic Bytes chống mã độc)',
@@ -151,4 +154,41 @@ export class MediaController {
       message: success ? 'Xóa tài nguyên trên Cloudinary thành công' : 'Không thể xóa tài nguyên hoặc tệp không tồn tại',
     };
   }
+
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Post('upload-pod')
+  @ApiOperation({
+    summary: 'Tải ảnh bằng chứng giao hàng (POD) lên Cloudinary (Giới hạn 1.5MB, thư mục stores/{storeId}/pod)',
+  })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: Math.floor(1.5 * 1024 * 1024) }, // Max 1.5MB per PRD requirement
+    }),
+  )
+  async uploadPodImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('orderId') orderId?: string,
+    @Request() req?: any,
+  ) {
+    const user = req?.user;
+    if (!file) {
+      throw new BadRequestException('Vui lòng chọn tệp hình ảnh để tải lên');
+    }
+    if (!user || !user.storeId) {
+      throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng để lưu trữ POD');
+    }
+    const targetFolder = `stores/${user.storeId}/pod`;
+    const result = await this.mediaService.uploadImageBuffer(file, targetFolder);
+    return {
+      success: true,
+      message: 'Tải tệp hình ảnh POD lên Cloudinary thành công',
+      data: {
+        ...result,
+        orderId: orderId || null,
+        podFolder: targetFolder,
+      },
+    };
+  }
+
 }

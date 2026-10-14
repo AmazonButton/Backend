@@ -14,6 +14,7 @@ async function main() {
     { roleCode: 'STAFF_ORDER', roleName: 'Order Management Staff', description: 'Nhân viên xử lý và giao đơn hàng' },
     { roleCode: 'STAFF_INVENTORY', roleName: 'Inventory Staff', description: 'Nhân viên quản lý kho và kiểm kê' },
     { roleCode: 'STAFF_BUTTON', roleName: 'Button Tech Staff', description: 'Nhân viên kỹ thuật phần cứng nút bấm' },
+    { roleCode: 'STAFF_DELIVERY', roleName: 'Delivery Driver Staff', description: 'Nhân viên giao hàng của cửa hàng' },
     { roleCode: 'CUSTOMER', roleName: 'Customer', description: 'Khách hàng toàn cầu' },
   ];
 

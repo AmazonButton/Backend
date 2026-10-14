@@ -12,6 +12,9 @@ import { EventsGateway } from '../websocket/events.gateway';
 import { toOrderResponseDto } from './dto/order-response.dto';
 
 import { ALLOWED_ORDER_TRANSITIONS } from './dto/update-order-status.dto';
+import { DeliverOrderDto } from './dto/deliver-order.dto';
+import { DeliveryFailureDto } from './dto/delivery-failure.dto';
+import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
 
 @Injectable()
 export class OrdersService {
@@ -158,7 +161,7 @@ export class OrdersService {
       if (!user.customerProfileId || button.customerId?.toString() !== user.customerProfileId.toString()) {
         throw new ForbiddenException('Bạn không sở hữu nút bấm này');
       }
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user?.role)) {
+    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON', 'STAFF_DELIVERY'].includes(user?.role)) {
       if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Nút bấm không thuộc quyền quản lý của cửa hàng bạn');
       }
@@ -218,7 +221,7 @@ export class OrdersService {
         throw new ForbiddenException('Tài khoản khách hàng thiếu hồ sơ định danh (customerProfileId)');
       }
       whereClause.customerId = BigInt(user.customerProfileId);
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON'].includes(user.role)) {
+    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON', 'STAFF_DELIVERY'].includes(user.role)) {
       if (!user.storeId) {
         throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
       }
@@ -354,6 +357,110 @@ export class OrdersService {
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
     this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
 
+    if (newStatus === 'READY_FOR_DELIVERY') {
+      const readyPayload = {
+        orderId: formattedOrder.orderId,
+        orderCode: formattedOrder.orderCode,
+        storeId: formattedOrder.storeId,
+        customerName: formattedOrder.customer?.fullName || 'Khách hàng',
+        addressDetail: formattedOrder.shippingAddress || '',
+        totalAmount: formattedOrder.totalAmount,
+        itemCount: formattedOrder.items?.length || 0,
+        shippingLatitude: formattedOrder.shippingLatitude,
+        shippingLongitude: formattedOrder.shippingLongitude,
+      };
+      this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_READY_FOR_DELIVERY', readyPayload);
+    }
+
     return formattedOrder;
   }
+
+
+  async claimOrder(orderId: string | number | bigint, user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ tài xế hoặc quản lý cửa hàng mới có quyền nhận đơn hàng');
+    }
+    if (!user.storeId && !['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng liên kết (storeId)');
+    }
+
+    const targetOrderId = BigInt(orderId);
+    const order = await this.ordersRepo.findOrderById(targetOrderId);
+    if (!order) {
+      throw new NotFoundException('Đơn hàng không tồn tại');
+    }
+
+    const storeId = user.storeId ? BigInt(user.storeId) : order.storeId;
+    const driverId = BigInt(user.userId || user.id);
+
+    const updated = await this.ordersRepo.claimOrderAtomicTx(targetOrderId, storeId, driverId);
+    const formatted = toOrderResponseDto(updated);
+
+    // Emit socket events
+    const payload = { order: formatted, storeId: storeId.toString(), driverId: driverId.toString() };
+    this.eventsGateway.emitToStore(storeId.toString(), 'ORDER_CLAIMED', payload);
+    this.eventsGateway.emitToStore(storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
+
+    return formatted;
+  }
+
+  async completeDelivery(orderId: string | number | bigint, dto: DeliverOrderDto, user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Không có quyền hoàn tất đơn giao hàng');
+    }
+
+    const targetOrderId = BigInt(orderId);
+    const updated = await this.ordersRepo.completeDeliveryAtomicTx(targetOrderId, user, dto);
+    const formatted = toOrderResponseDto(updated);
+
+    const payload = { order: formatted, storeId: updated.storeId.toString(), driverId: user.userId || user.id };
+    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
+    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_DELIVERED', payload);
+    this.eventsGateway.emitToCustomer(updated.customerId.toString(), 'ORDER_STATUS_CHANGED', payload);
+
+    return formatted;
+  }
+
+  async failDelivery(orderId: string | number | bigint, dto: DeliveryFailureDto, user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Không có quyền báo giao hàng thất bại');
+    }
+
+    const targetOrderId = BigInt(orderId);
+    const updated = await this.ordersRepo.failDeliveryAtomicTx(targetOrderId, user, dto);
+    const formatted = toOrderResponseDto(updated);
+
+    const payload = {
+      order: formatted,
+      reasonCode: dto.failureReasonCode,
+      note: dto.failureNote,
+      evidenceImageUrl: dto.evidenceImageUrl,
+      storeId: updated.storeId.toString(),
+      driverId: user.userId || user.id,
+    };
+    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_DELIVERY_FAILED', payload);
+    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
+
+    return formatted;
+  }
+
+  async getDriverOrders(user: any, query: DriverOrdersQueryDto) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    if (!user.storeId) {
+      throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng liên kết (storeId)');
+    }
+    const driverId = BigInt(user.userId || user.id);
+    const storeId = BigInt(user.storeId);
+
+    const result = await this.ordersRepo.findDriverOrders(driverId, storeId, query);
+    return {
+      orders: result.orders.map((o: any) => toOrderResponseDto(o)),
+      pagination: result.pagination,
+      summary: result.summary,
+    };
+  }
+
 }

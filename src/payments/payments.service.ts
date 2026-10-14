@@ -1,3 +1,4 @@
+import { EventsGateway } from '../websocket/events.gateway';
 import {
   Injectable,
   HttpException,
@@ -11,14 +12,18 @@ import {
 import { PaymentsRepository } from './payments.repository';
 import { CreatePaymentLinkDto, PayosWebhookDto } from './dto/payment.dto';
 import { signPaymentRequest, verifyWebhookSignature } from './payos.helper';
+import { Optional, Inject } from '@nestjs/common';
 
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
-  constructor(private readonly paymentsRepo: PaymentsRepository) {}
+  constructor(
+    private readonly paymentsRepo: PaymentsRepository,
+    @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
+  ) {}
 
-  async createPayosPaymentLink(dto: CreatePaymentLinkDto, userId?: bigint) {
+  async createPayosPaymentLink(dto: CreatePaymentLinkDto, userOrUserId?: any) {
     const rawOrderId = BigInt(dto.orderId);
     const order = await this.paymentsRepo.findOrderById(rawOrderId);
 
@@ -30,11 +35,34 @@ export class PaymentsService {
       });
     }
 
+    const userId = typeof userOrUserId === 'object' && userOrUserId?.userId ? BigInt(userOrUserId.userId) : (typeof userOrUserId === 'bigint' ? userOrUserId : undefined);
+    const userRole = typeof userOrUserId === 'object' ? userOrUserId?.role : undefined;
+    const userStoreId = typeof userOrUserId === 'object' ? userOrUserId?.storeId : undefined;
+
     // Ownership verification (Anti-BOLA/IDOR)
     if (userId) {
       const isCustomerOwner = (order as any).customer && (order as any).customer.userId === userId;
       const isStoreOwner = (order as any).store && (order as any).store.ownerUserId === userId;
-      if (!isCustomerOwner && !isStoreOwner) {
+      const isStoreStaff = userStoreId && order.storeId.toString() === userStoreId.toString();
+      const isAssignedDriver = userRole === 'STAFF_DELIVERY' && isStoreStaff && (order as any).assignedDriverId != null && (order as any).assignedDriverId.toString() === userId.toString();
+      const isAdmin = userRole === 'SUPER_ADMIN' || userRole === 'SYSTEM_ADMIN';
+
+      if (userRole === 'STAFF_DELIVERY') {
+        if (!isAssignedDriver) {
+          throw new ForbiddenException({
+            success: false,
+            code: 'ORDER_ACCESS_DENIED',
+            message: 'Tài xế chỉ có thể tạo liên kết thanh toán cho đơn hàng được chỉ định thuộc cửa hàng của mình',
+          });
+        }
+        if (order.orderStatus !== 'SHIPPING') {
+          throw new BadRequestException({
+            success: false,
+            code: 'ORDER_NOT_SHIPPING',
+            message: 'Tài xế chỉ có thể tạo liên kết thanh toán khi đơn hàng đang trong quá trình giao (SHIPPING)',
+          });
+        }
+      } else if (!isCustomerOwner && !isStoreOwner && !isStoreStaff && !isAdmin) {
         throw new ForbiddenException({
           success: false,
           code: 'ORDER_ACCESS_DENIED',
@@ -312,6 +340,17 @@ export class PaymentsService {
         transaction.paymentTransactionId,
       );
       this.logger.log(`[PayOS Webhook] Payment confirmed and marked as PAID (Escrow hold) for Order #${transaction.orderId} (Transaction #${transaction.paymentTransactionId})`);
+
+      if (this.eventsGateway && transaction.order) {
+        const storeId = transaction.order.storeId ? transaction.order.storeId.toString() : '';
+        const orderId = transaction.orderId ? transaction.orderId.toString() : '';
+        this.eventsGateway.emitToStore(storeId, 'ORDER_PAYMENT_CONFIRMED', {
+          orderId,
+          orderCode: orderCodeStr,
+          amount: Number(transaction.amount),
+          paymentTransactionId: transaction.paymentTransactionId.toString(),
+        });
+      }
       return { success: true, message: 'Payment confirmed successfully' };
     } else {
       await this.paymentsRepo.updateTransactionStatus(transaction.paymentTransactionId, 'FAILED');

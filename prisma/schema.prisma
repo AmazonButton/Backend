@@ -42,6 +42,10 @@ model User {
   refreshTokens        RefreshToken[]
   approvedWithdrawals  StoreWithdrawal[]     @relation("ApprovedWithdrawals")
   authOtps             AuthOtp[]
+  assignedOrders       Order[]               @relation("AssignedOrders")
+  driverDuty           DriverDuty?
+  driverShifts         DriverShift[]         @relation("DriverShifts")
+  confirmedShifts      DriverShift[]         @relation("ConfirmedShifts")
 
   @@map("users")
 }
@@ -71,6 +75,8 @@ model Store {
   wallet          StoreWallet?
   subscriptions   StoreSubscription[]
   subscriptionIdempotencyKeys SubscriptionIdempotencyKey[]
+  driverDuties         DriverDuty[]
+  driverShifts         DriverShift[]
 
   @@map("store")
 }
@@ -120,6 +126,8 @@ model CustomerAddress {
   ward          String?
   district      String?
   province      String?
+  latitude      Decimal?        @map("latitude") @db.Decimal(10, 7)
+  longitude     Decimal?        @map("longitude") @db.Decimal(10, 7)
   isDefault     Boolean         @default(false) @map("is_default")
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at")
@@ -311,6 +319,15 @@ model Order {
   createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   iotRequestId          String?         @map("iot_request_id") @db.VarChar(128)
+  assignedDriverId      BigInt?         @map("assigned_driver_id")
+  assignedDriver        User?           @relation("AssignedOrders", fields: [assignedDriverId], references: [userId], onDelete: SetNull)
+  podImageUrl           String?         @map("pod_image_url") @db.VarChar(1000)
+  deliveredAt           DateTime?       @map("delivered_at") @db.Timestamptz(6)
+  failureReasonCode     String?         @map("failure_reason_code") @db.VarChar(50)
+  failureNote           String?         @map("failure_note")
+  evidenceImageUrl      String?         @map("evidence_image_url") @db.VarChar(1000)
+  shippingLatitude      Decimal?        @map("shipping_latitude") @db.Decimal(10, 7)
+  shippingLongitude     Decimal?        @map("shipping_longitude") @db.Decimal(10, 7)
 
   items               OrderItem[]
   statusHistories     OrderStatusHistory[]
@@ -661,4 +678,44 @@ model SubscriptionIdempotencyKey {
   @@unique([storeId, idempotencyKey], map: "uq_sub_idemp_store_key")
   @@index([storeId], map: "idx_sub_idemp_store")
   @@map("subscription_idempotency_keys")
+}
+
+model DriverDuty {
+  driverDutyId BigInt    @id @default(autoincrement()) @map("driver_duty_id")
+  driverId     BigInt    @unique @map("driver_id")
+  storeId      BigInt    @map("store_id")
+  status       String    @default("OFFLINE") @map("status") @db.VarChar(20)
+  lastSeenAt   DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  driver User  @relation(fields: [driverId], references: [userId], onDelete: Cascade)
+  store  Store @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
+
+  @@map("driver_duties")
+}
+
+model DriverShift {
+  shiftId              BigInt    @id @default(autoincrement()) @map("shift_id")
+  storeId              BigInt    @map("store_id")
+  driverId             BigInt    @map("driver_id")
+  status               String    @default("OPEN") @map("status") @db.VarChar(30)
+  startedAt            DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt              DateTime? @map("ended_at") @db.Timestamptz(6)
+  handedOverAt         DateTime? @map("handed_over_at") @db.Timestamptz(6)
+  confirmedByUserId    BigInt?   @map("confirmed_by_user_id")
+  handoverCode         String?   @map("handover_code") @db.VarChar(50)
+  totalOrdersDelivered Int       @default(0) @map("total_orders_delivered")
+  totalOrdersFailed    Int       @default(0) @map("total_orders_failed")
+  totalCodCollected    Decimal   @default(0) @map("total_cod_collected") @db.Decimal(15, 2)
+  totalVietqrCollected Decimal   @default(0) @map("total_vietqr_collected") @db.Decimal(15, 2)
+  handoverNote         String?   @map("handover_note")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  store           Store @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  driver          User  @relation("DriverShifts", fields: [driverId], references: [userId], onDelete: Restrict)
+  confirmedByUser User? @relation("ConfirmedShifts", fields: [confirmedByUserId], references: [userId], onDelete: SetNull)
+
+  @@map("driver_shifts")
 }

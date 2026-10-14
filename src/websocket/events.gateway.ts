@@ -35,7 +35,8 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const authHeader =
         client.handshake.headers?.authorization ||
-        client.handshake.auth?.token;
+        client.handshake.auth?.token ||
+        (client.handshake.query?.token as string);
 
       let token = '';
       if (typeof authHeader === 'string') {
@@ -105,6 +106,18 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         customerId: payload.customerProfileId ? payload.customerProfileId.toString() : null,
       };
 
+      // Auto-join personal rooms
+      client.join(`user:${payload.userId}`);
+      client.join(`driver:${payload.userId}`);
+      if (payload.storeId) {
+        client.join(`store_${payload.storeId}`);
+        client.join(`store:${payload.storeId}`);
+      }
+      if (payload.customerProfileId) {
+        client.join(`customer_${payload.customerProfileId}`);
+        client.join(`customer:${payload.customerProfileId}`);
+      }
+
       this.logger.log(`⚡ [WS] Authenticated socket connected: ${client.id} (User: ${payload.userId}, Role: ${payload.role})`);
     } catch (err: any) {
       this.logger.warn(`⚠️ [WS] Authentication failed for socket ${client.id}: ${err.message}`);
@@ -129,7 +142,8 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     if (isSuperAdmin || isStoreStaff) {
       client.join(`store_${storeId}`);
-      this.logger.log(`🔌 Socket ${client.id} joined store_${storeId}`);
+      client.join(`store:${storeId}`);
+      this.logger.log(`🔌 Socket ${client.id} joined store_${storeId} and store:${storeId}`);
     } else {
       this.logger.warn(`⛔ [WS] Socket ${client.id} denied access to store_${storeId}`);
       client.emit('error', { code: 'FORBIDDEN', message: 'Bạn không có quyền truy cập kênh của cửa hàng này' });
@@ -158,8 +172,15 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   emitToStore(storeId: string, event: string, payload: any) {
     if (this.server) {
-      this.server.to(`store_${storeId}`).emit(event, payload);
+      this.server.to(`store_${storeId}`).to(`store:${storeId}`).emit(event, payload);
       this.logger.log(`📢 [WS -> Store ${storeId}] ${event}`);
+    }
+  }
+
+  emitToDriver(driverId: string, event: string, payload: any) {
+    if (this.server) {
+      this.server.to(`driver:${driverId}`).to(`user:${driverId}`).emit(event, payload);
+      this.logger.log(`📢 [WS -> Driver ${driverId}] ${event}`);
     }
   }
 

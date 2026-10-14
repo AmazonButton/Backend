@@ -1,5 +1,8 @@
 import { ALLOWED_ORDER_TRANSITIONS, OrderStatusType } from './dto/update-order-status.dto';
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { DeliverOrderDto } from './dto/deliver-order.dto';
+import { DeliveryFailureDto } from './dto/delivery-failure.dto';
+import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
+import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -84,6 +87,8 @@ export class OrdersRepository {
           shippingRecipientName: recipientName,
           shippingPhone: phone,
           shippingAddress,
+          shippingLatitude: address?.latitude || null,
+          shippingLongitude: address?.longitude || null,
           orderNote: 'Đơn hàng tự động từ nút bấm IoT',
           iotRequestId: iotRequestId || null,
         },
@@ -479,6 +484,287 @@ export class OrdersRepository {
         },
       },
     });
+  }
+
+
+
+  async claimOrderAtomicTx(orderId: bigint, storeId: bigint, driverId: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.order.findUnique({
+        where: { orderId },
+        select: { orderId: true, storeId: true, orderStatus: true, assignedDriverId: true },
+      });
+
+      if (!existing) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+
+      if (existing.storeId.toString() !== storeId.toString()) {
+        throw new ForbiddenException('Đơn hàng không thuộc quyền quản lý của cửa hàng bạn');
+      }
+
+      if (existing.orderStatus !== 'READY_FOR_DELIVERY' || existing.assignedDriverId != null) {
+        throw new ConflictException({
+          success: false,
+          code: 'ORDER_ALREADY_CLAIMED',
+          message: 'Đơn hàng đã được tài xế khác nhận hoặc không ở trạng thái sẵn sàng giao (READY_FOR_DELIVERY)',
+        });
+      }
+
+      const updatedCount = await tx.$executeRawUnsafe(
+        `UPDATE orders
+         SET order_status = 'SHIPPING',
+             assigned_driver_id = $1,
+             updated_at = NOW()
+         WHERE order_id = $2
+           AND store_id = $3
+           AND order_status = 'READY_FOR_DELIVERY'
+           AND assigned_driver_id IS NULL`,
+        driverId,
+        orderId,
+        storeId,
+      );
+
+      if (updatedCount === 0) {
+        throw new ConflictException({
+          success: false,
+          code: 'ORDER_ALREADY_CLAIMED',
+          message: 'Đơn hàng đã được tài xế khác tiếp nhận trước đó',
+        });
+      }
+
+      if (driverId) {
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('app.current_user_id', $1, true)`,
+          driverId.toString(),
+        );
+      }
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
+  async completeDeliveryAtomicTx(orderId: bigint, driverUser: any, dto: DeliverOrderDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+
+      if (driverUser.storeId && order.store_id.toString() !== driverUser.storeId.toString()) {
+        throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
+      }
+
+      if (driverUser.role === 'STAFF_DELIVERY') {
+        if (!order.assigned_driver_id || order.assigned_driver_id.toString() !== driverUser.userId.toString()) {
+          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+        }
+      }
+
+      if (order.order_status !== 'SHIPPING') {
+        throw new BadRequestException(`Chỉ có thể hoàn tất giao hàng từ trạng thái SHIPPING (hiện tại: ${order.order_status})`);
+      }
+
+      const storePodPrefix = `stores/${order.store_id}/pod`;
+      if (!dto.podImageUrl || !dto.podImageUrl.includes(storePodPrefix)) {
+        throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải thuộc thư mục lưu trữ hợp lệ của cửa hàng (${storePodPrefix})`);
+      }
+
+      if (dto.paymentMethod === 'COD') {
+        const orderTotal = Number(order.total_amount);
+        if (dto.collectedAmount != null && Math.abs(Number(dto.collectedAmount) - orderTotal) > 0.01) {
+          throw new BadRequestException(`Số tiền thu (${dto.collectedAmount}) không khớp với tổng tiền đơn hàng (${orderTotal})`);
+        }
+      } else if (['VIETQR', 'PAYOS'].includes(dto.paymentMethod)) {
+        if (order.payment_status !== 'PAID') {
+          const paidTx = await tx.paymentTransaction.findFirst({
+            where: { orderId: BigInt(orderId), status: 'PAID' },
+          });
+          if (!paidTx) {
+            throw new BadRequestException('Đơn hàng thanh toán chuyển khoản VietQR/PayOS chưa được thanh toán thành công');
+          }
+        }
+      }
+
+      const deliveredAtDate = dto.deliveredAt ? new Date(dto.deliveredAt) : new Date();
+
+      await tx.order.update({
+        where: { orderId },
+        data: {
+          orderStatus: 'DELIVERED',
+          paymentStatus: 'PAID',
+          paymentMethod: dto.paymentMethod,
+          podImageUrl: dto.podImageUrl,
+          deliveredAt: deliveredAtDate,
+        },
+      });
+
+      const driverId = order.assigned_driver_id;
+      if (driverId) {
+        const codAmount = dto.paymentMethod === 'COD' ? Number(order.total_amount) : 0;
+        const vietqrAmount = dto.paymentMethod !== 'COD' ? Number(order.total_amount) : 0;
+        await tx.$executeRawUnsafe(
+          `UPDATE driver_shifts
+           SET total_orders_delivered = total_orders_delivered + 1,
+               total_cod_collected = total_cod_collected + $1,
+               total_vietqr_collected = total_vietqr_collected + $2,
+               updated_at = NOW()
+           WHERE driver_id = $3 AND status = 'OPEN'`,
+          codAmount,
+          vietqrAmount,
+          driverId,
+        );
+      }
+
+      if (driverUser && driverUser.userId) {
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('app.current_user_id', $1, true)`,
+          driverUser.userId.toString(),
+        );
+      }
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
+  async failDeliveryAtomicTx(orderId: bigint, driverUser: any, dto: DeliveryFailureDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+
+      if (driverUser.storeId && order.store_id.toString() !== driverUser.storeId.toString()) {
+        throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
+      }
+
+      if (driverUser.role === 'STAFF_DELIVERY') {
+        if (!order.assigned_driver_id || order.assigned_driver_id.toString() !== driverUser.userId.toString()) {
+          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+        }
+      }
+
+      if (order.order_status !== 'SHIPPING') {
+        throw new BadRequestException(`Chỉ có thể báo giao hàng thất bại từ trạng thái SHIPPING (hiện tại: ${order.order_status})`);
+      }
+
+      if (!dto.evidenceImageUrl) {
+        throw new BadRequestException('Bắt buộc phải có ảnh bằng chứng giao hàng thất bại');
+      }
+
+      await tx.order.update({
+        where: { orderId },
+        data: {
+          orderStatus: 'DELIVERY_FAILED',
+          failureReasonCode: dto.failureReasonCode,
+          failureNote: dto.failureNote || null,
+          evidenceImageUrl: dto.evidenceImageUrl,
+        },
+      });
+
+      const driverId = order.assigned_driver_id;
+      if (driverId) {
+        await tx.$executeRawUnsafe(
+          `UPDATE driver_shifts
+           SET total_orders_failed = total_orders_failed + 1,
+               updated_at = NOW()
+           WHERE driver_id = $1 AND status = 'OPEN'`,
+          driverId,
+        );
+      }
+
+      if (driverUser && driverUser.userId) {
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('app.current_user_id', $1, true)`,
+          driverUser.userId.toString(),
+        );
+      }
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
+  async findDriverOrders(driverId: bigint, storeId: bigint, query: DriverOrdersQueryDto) {
+    const where: any = {
+      assignedDriverId: driverId,
+      storeId: storeId,
+    };
+
+    if (query.status) {
+      where.orderStatus = query.status;
+    }
+
+    // Date range filtering
+    const now = new Date();
+    if (query.dateRange === 'today') {
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      where.createdAt = { gte: startOfDay };
+    } else if (query.dateRange === 'yesterday') {
+      const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const endOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, -1);
+      where.createdAt = { gte: startOfYesterday, lte: endOfYesterday };
+    } else if (query.dateRange === 'last7days') {
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      where.createdAt = { gte: sevenDaysAgo };
+    } else if (query.fromDate || query.toDate) {
+      where.createdAt = {};
+      if (query.fromDate) where.createdAt.gte = new Date(query.fromDate);
+      if (query.toDate) where.createdAt.lte = new Date(query.toDate);
+    }
+
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+    const page = Math.max(Number(query.page) || 1, 1);
+    const skip = (page - 1) * limit;
+
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          items: { include: { product: true } },
+          customer: { include: { user: true } },
+          store: true,
+        },
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    // Aggregate driver stats
+    const deliveredCount = await this.prisma.order.count({
+      where: { ...where, orderStatus: 'DELIVERED' },
+    });
+    const failedCount = await this.prisma.order.count({
+      where: { ...where, orderStatus: 'DELIVERY_FAILED' },
+    });
+    const codSumRaw = await this.prisma.order.aggregate({
+      where: { ...where, orderStatus: 'DELIVERED', paymentMethod: 'COD' },
+      _sum: { totalAmount: true },
+    });
+
+    return {
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+      summary: {
+        totalDelivered: deliveredCount,
+        totalFailed: failedCount,
+        totalCodCollected: Number(codSumRaw._sum.totalAmount || 0),
+      },
+    };
   }
 
 }

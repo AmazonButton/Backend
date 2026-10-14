@@ -23,6 +23,14 @@ export interface OrderResponseDto {
   netAmount?: number;
   shippingAddress?: string | null;
   deliveryAddress?: string | null;
+  shippingLatitude?: number | null;
+  shippingLongitude?: number | null;
+  assignedDriverId?: string | null;
+  podImageUrl?: string | null;
+  deliveredAt?: Date | string | null;
+  failureReasonCode?: string | null;
+  failureNote?: string | null;
+  evidenceImageUrl?: string | null;
   notes?: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -94,7 +102,15 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
     netAmount: raw.netAmount != null ? Number(raw.netAmount) : undefined,
     shippingAddress: raw.shippingAddress || raw.deliveryAddress || null,
     deliveryAddress: raw.deliveryAddress || raw.shippingAddress || null,
-    notes: raw.notes || null,
+    shippingLatitude: raw.shippingLatitude != null ? Number(raw.shippingLatitude) : (raw.shipping_latitude != null ? Number(raw.shipping_latitude) : null),
+    shippingLongitude: raw.shippingLongitude != null ? Number(raw.shippingLongitude) : (raw.shipping_longitude != null ? Number(raw.shipping_longitude) : null),
+    assignedDriverId: raw.assignedDriverId ? raw.assignedDriverId.toString() : (raw.assigned_driver_id ? raw.assigned_driver_id.toString() : null),
+    podImageUrl: raw.podImageUrl || raw.pod_image_url || null,
+    deliveredAt: raw.deliveredAt || raw.delivered_at || null,
+    failureReasonCode: raw.failureReasonCode || raw.failure_reason_code || null,
+    failureNote: raw.failureNote || raw.failure_note || null,
+    evidenceImageUrl: raw.evidenceImageUrl || raw.evidence_image_url || null,
+    notes: raw.notes || raw.orderNote || null,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
