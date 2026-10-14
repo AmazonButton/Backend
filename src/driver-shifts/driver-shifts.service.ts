@@ -27,17 +27,39 @@ export class DriverShiftsService {
       return this.formatShiftWithLiveStats(existing);
     }
 
-    const newShift = await this.prisma.driverShift.create({
-      data: {
-        driverId,
-        storeId,
-        status: 'OPEN',
-        startedAt: new Date(),
-        handoverCode: `HO-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
-      },
-    });
+    try {
+      const newShift = await this.prisma.driverShift.create({
+        data: {
+          driverId,
+          storeId,
+          status: 'OPEN',
+          startedAt: new Date(),
+          handoverCode: `HO-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+        },
+      });
 
-    return this.formatShiftWithLiveStats(newShift);
+      return this.formatShiftWithLiveStats(newShift);
+    } catch (err: any) {
+      // Concurrency race condition protection (caught by uq_driver_open_shift unique index)
+      const isUniqueConflict =
+        err?.code === 'P2002' ||
+        err?.code === '23505' ||
+        err?.message?.includes('uq_driver_open_shift');
+
+      if (isUniqueConflict) {
+        const concurrentShift = await this.prisma.driverShift.findFirst({
+          where: {
+            driverId,
+            status: 'OPEN',
+          },
+          orderBy: { startedAt: 'desc' },
+        });
+        if (concurrentShift) {
+          return this.formatShiftWithLiveStats(concurrentShift);
+        }
+      }
+      throw err;
+    }
   }
 
   async getCurrentShift(user: any) {

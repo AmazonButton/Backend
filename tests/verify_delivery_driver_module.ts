@@ -9,7 +9,9 @@ import { CryptoService } from '../src/security/crypto.service';
 import { EventsGateway } from '../src/websocket/events.gateway';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { sortObjDataByKey, convertObjToQueryStr } from '../src/payments/payos.helper';
 import bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 
 const prisma = new PrismaClient();
 
@@ -29,6 +31,10 @@ async function run() {
   const trackedShiftIds: bigint[] = [];
   const trackedDutyIds: bigint[] = [];
   const trackedStaffIds: bigint[] = [];
+  const trackedProductIds: bigint[] = [];
+
+  // WebSocket spy
+  let lastDriverEvent: { driverId: string; event: string; payload: any } | null = null;
 
   // Mock / Real instances
   const prismaService = prisma as unknown as PrismaService;
@@ -37,7 +43,9 @@ async function run() {
   const mockEventsGateway = {
     emitToStore: (storeId: string, event: string, payload: any) => {},
     emitToCustomer: (customerId: string, event: string, payload: any) => {},
-    emitToDriver: (driverId: string, event: string, payload: any) => {},
+    emitToDriver: (driverId: string, event: string, payload: any) => {
+      lastDriverEvent = { driverId, event, payload };
+    },
     emitGlobal: () => {},
     emitDeviceEvent: () => {},
   } as unknown as EventsGateway;
@@ -54,6 +62,17 @@ async function run() {
     // SETUP FIXTURES: Store A, Store B, Driver A1, Driver A2, Driver B1, Customer
     // -------------------------------------------------------------------------
     const pwdHash = await bcrypt.hash('DriverTest123!', 10);
+
+    // Ensure sequences & identity generators are in sync with current max IDs
+    try {
+      const prodMax = await prisma.$queryRawUnsafe<any[]>('SELECT MAX(product_id) as max_id FROM product');
+      const nextProdId = Number(prodMax[0]?.max_id || 0) + 100;
+      await prisma.$executeRawUnsafe(`ALTER TABLE product ALTER COLUMN product_id RESTART WITH ${nextProdId}`);
+
+      const invMax = await prisma.$queryRawUnsafe<any[]>('SELECT MAX(inventory_id) as max_id FROM inventory');
+      const nextInvId = Number(invMax[0]?.max_id || 0) + 100;
+      await prisma.$executeRawUnsafe(`ALTER TABLE inventory ALTER COLUMN inventory_id RESTART WITH ${nextInvId}`);
+    } catch (e) {}
 
     // 1. Owner User
     const ownerUser = await prisma.user.create({
@@ -198,6 +217,18 @@ async function run() {
       },
     });
 
+    const driverA1Session = {
+      userId: driverA1User.userId.toString(),
+      role: 'STAFF_DELIVERY',
+      storeId: storeA.storeId.toString(),
+    };
+
+    const driverA2Session = {
+      userId: driverA2User.userId.toString(),
+      role: 'STAFF_DELIVERY',
+      storeId: storeA.storeId.toString(),
+    };
+
     // =========================================================================
     // TEST 1: Role STAFF_DELIVERY in DB and Authorization Check
     // =========================================================================
@@ -255,12 +286,6 @@ async function run() {
     });
     trackedOrderIds.push(orderStoreB.orderId);
 
-    const driverA1Session = {
-      userId: driverA1User.userId.toString(),
-      role: 'STAFF_DELIVERY',
-      storeId: storeA.storeId.toString(),
-    };
-
     const driverOrders = await ordersService.list(driverA1Session);
     const visibleOrderIds = driverOrders.map((o: any) => o.orderId);
     if (visibleOrderIds.includes(order1.orderId.toString()) && !visibleOrderIds.includes(orderStoreB.orderId.toString())) {
@@ -274,19 +299,11 @@ async function run() {
     // TEST 3: Atomic Order Claim Mechanism (2 Drivers Race Condition: 200 vs 409)
     // =========================================================================
     console.log('👉 [TEST 3] Concurrency claimOrder (2 drivers claim simultaneously)');
-    const driverA2Session = {
-      userId: driverA2User.userId.toString(),
-      role: 'STAFF_DELIVERY',
-      storeId: storeA.storeId.toString(),
-    };
-
     const [claimRes1, claimRes2] = await Promise.allSettled([
       ordersService.claimOrder(order1.orderId, driverA1Session),
       ordersService.claimOrder(order1.orderId, driverA2Session),
     ]);
 
-    console.log('claimRes1:', claimRes1);
-    console.log('claimRes2:', claimRes2);
     const successes = [claimRes1, claimRes2].filter((r) => r.status === 'fulfilled');
     const failures = [claimRes1, claimRes2].filter((r) => r.status === 'rejected');
 
@@ -303,48 +320,147 @@ async function run() {
     }
 
     // =========================================================================
-    // TEST 4: Driver Shift Lifecycle & Live Aggregation
+    // TEST 4: Driver Shift Lifecycle & Live Aggregation + Concurrency Protection
     // =========================================================================
-    console.log('👉 [TEST 4] Driver Shift Start & Live Calculations');
-    const startShiftRes = await shiftsService.startShift(driverA1Session);
+    console.log('👉 [TEST 4] Driver Shift Start & Concurrency Protection (Promise.all)');
+    // Concurrently start shift to verify unique partial index uq_driver_open_shift prevents duplicates
+    const [shiftA, shiftB] = await Promise.all([
+      shiftsService.startShift(driverA1Session),
+      shiftsService.startShift(driverA1Session),
+    ]);
+
+    if (shiftA.shiftId !== shiftB.shiftId) {
+      throw new Error(`Expected same shift ID from concurrent startShift, got ${shiftA.shiftId} and ${shiftB.shiftId}`);
+    }
+
+    const startShiftRes = shiftA;
     trackedShiftIds.push(BigInt(startShiftRes.shiftId));
 
     if (startShiftRes.status === 'OPEN' && startShiftRes.driverId === driverA1User.userId.toString()) {
-      console.log('  ✔ [PASS] Driver shift started with status OPEN');
+      console.log('  ✔ [PASS] Driver shift started with status OPEN; concurrent startShift safely idempotent');
       passed++;
     } else {
       throw new Error('Start shift failed');
     }
 
     // =========================================================================
-    // TEST 5: Complete Delivery with POD Validation and Payment Checking
+    // TEST 5: Complete Delivery with POD Validation & Strict COD Enforcement
     // =========================================================================
-    console.log('👉 [TEST 5] Delivery Completion with POD & COD matching');
-    // First test invalid POD path
-    let podRejected = false;
+    console.log('👉 [TEST 5] Delivery Completion (Decoupled, Strict POD & Strict COD checks)');
+
+    // Create a dedicated order for delivery test to avoid non-deterministic race winner from Test 3
+    const orderDeliverTest = await prisma.order.create({
+      data: {
+        orderCode: `ORD_T5_${testRunId}`,
+        storeId: storeA.storeId,
+        customerId: customerProfileId,
+        buttonId: button.buttonId,
+        orderStatus: 'READY_FOR_DELIVERY',
+        paymentStatus: 'UNPAID',
+        paymentMethod: 'COD',
+        subtotalAmount: 150000,
+        shippingFee: 0,
+        discountAmount: 0,
+        totalAmount: 150000,
+        shippingRecipientName: 'Customer Deliver Test',
+        shippingPhone: '090111222',
+        shippingAddress: '123 Nguyen Hue',
+        shippingLatitude: 10.776889,
+        shippingLongitude: 106.700806,
+      },
+    });
+    trackedOrderIds.push(orderDeliverTest.orderId);
+
+    // Driver A1 claims orderDeliverTest
+    await ordersService.claimOrder(orderDeliverTest.orderId, driverA1Session);
+
+    // 5a. Test spoofed POD domain (e.g. query param bypass attempt)
+    let spoofedPodRejected = false;
     try {
       await ordersService.completeDelivery(
-        order1.orderId,
+        orderDeliverTest.orderId,
         {
           status: 'DELIVERED',
           paymentMethod: 'COD',
           collectedAmount: 150000,
-          podImageUrl: 'https://cloudinary.com/other_store/image.jpg', // Invalid folder!
+          podImageUrl: `https://evil.example.com/test?path=stores/${storeA.storeId}/pod/photo.jpg`,
         },
         driverA1Session,
       );
     } catch (e: any) {
-      podRejected = true;
+      if (e.status === 400) spoofedPodRejected = true;
+    }
+    if (!spoofedPodRejected) {
+      throw new Error('Expected spoofed POD URL on non-Cloudinary host to be rejected');
     }
 
-    if (!podRejected) {
+    // 5b. Test invalid POD folder (belongs to another store)
+    let otherStorePodRejected = false;
+    try {
+      await ordersService.completeDelivery(
+        orderDeliverTest.orderId,
+        {
+          status: 'DELIVERED',
+          paymentMethod: 'COD',
+          collectedAmount: 150000,
+          podImageUrl: 'https://res.cloudinary.com/sob/image/upload/v1234/stores/999999/pod/image.jpg',
+        },
+        driverA1Session,
+      );
+    } catch (e: any) {
+      if (e.status === 400) otherStorePodRejected = true;
+    }
+    if (!otherStorePodRejected) {
       throw new Error('Expected POD outside stores/{storeId}/pod to be rejected');
     }
 
-    // Valid POD delivery
-    const validPodUrl = `https://res.cloudinary.com/sob/image/upload/v1234/stores/${storeA.storeId}/pod/evidence_ord1.jpg`;
+    // 5c. Test COD missing collectedAmount
+    let missingCollectedAmountRejected = false;
+    try {
+      await ordersService.completeDelivery(
+        orderDeliverTest.orderId,
+        {
+          status: 'DELIVERED',
+          paymentMethod: 'COD',
+          podImageUrl: `https://res.cloudinary.com/sob/image/upload/v1234/stores/${storeA.storeId}/pod/evidence_ord5.jpg`,
+        } as any,
+        driverA1Session,
+      );
+    } catch (e: any) {
+      if (e.status === 400 && e.message?.includes('collectedAmount')) {
+        missingCollectedAmountRejected = true;
+      }
+    }
+    if (!missingCollectedAmountRejected) {
+      throw new Error('Expected COD order without collectedAmount to be rejected');
+    }
+
+    // 5d. Test COD mismatched collectedAmount
+    let mismatchedAmountRejected = false;
+    try {
+      await ordersService.completeDelivery(
+        orderDeliverTest.orderId,
+        {
+          status: 'DELIVERED',
+          paymentMethod: 'COD',
+          collectedAmount: 100000, // order total is 150000
+          podImageUrl: `https://res.cloudinary.com/sob/image/upload/v1234/stores/${storeA.storeId}/pod/evidence_ord5.jpg`,
+        },
+        driverA1Session,
+      );
+    } catch (e: any) {
+      if (e.status === 400 && e.message?.includes('không khớp')) {
+        mismatchedAmountRejected = true;
+      }
+    }
+    if (!mismatchedAmountRejected) {
+      throw new Error('Expected mismatched collectedAmount to be rejected');
+    }
+
+    // 5e. Valid POD delivery
+    const validPodUrl = `https://res.cloudinary.com/sob/image/upload/v1234/stores/${storeA.storeId}/pod/evidence_ord5.jpg`;
     const deliveredOrder = await ordersService.completeDelivery(
-      order1.orderId,
+      orderDeliverTest.orderId,
       {
         status: 'DELIVERED',
         paymentMethod: 'COD',
@@ -356,10 +472,53 @@ async function run() {
     );
 
     if (deliveredOrder.orderStatus === 'DELIVERED' && deliveredOrder.paymentStatus === 'PAID' && deliveredOrder.podImageUrl === validPodUrl) {
-      console.log('  ✔ [PASS] Order marked DELIVERED and PAID with validated POD URL');
+      console.log('  ✔ [PASS] Order marked DELIVERED and PAID with strictly validated POD URL & exact COD match');
       passed++;
     } else {
       throw new Error('Complete delivery failed');
+    }
+
+    // 5f. Verify POD URL cannot be reused on another order
+    const orderReuseCheck = await prisma.order.create({
+      data: {
+        orderCode: `ORD_REUSE_${testRunId}`,
+        storeId: storeA.storeId,
+        customerId: customerProfileId,
+        buttonId: button.buttonId,
+        orderStatus: 'READY_FOR_DELIVERY',
+        paymentStatus: 'UNPAID',
+        paymentMethod: 'COD',
+        subtotalAmount: 150000,
+        shippingFee: 0,
+        discountAmount: 0,
+        totalAmount: 150000,
+        shippingRecipientName: 'Customer Reuse',
+        shippingPhone: '090111222',
+        shippingAddress: '123 Nguyen Hue',
+      },
+    });
+    trackedOrderIds.push(orderReuseCheck.orderId);
+    await ordersService.claimOrder(orderReuseCheck.orderId, driverA1Session);
+
+    let podReuseRejected = false;
+    try {
+      await ordersService.completeDelivery(
+        orderReuseCheck.orderId,
+        {
+          status: 'DELIVERED',
+          paymentMethod: 'COD',
+          collectedAmount: 150000,
+          podImageUrl: validPodUrl, // Already used for orderDeliverTest!
+        },
+        driverA1Session,
+      );
+    } catch (e: any) {
+      if (e.status === 400 && e.message?.includes('tái sử dụng')) {
+        podReuseRejected = true;
+      }
+    }
+    if (!podReuseRejected) {
+      throw new Error('Expected POD image reuse across orders to be rejected');
     }
 
     // =========================================================================
@@ -375,10 +534,30 @@ async function run() {
     }
 
     // =========================================================================
-    // TEST 7: Delivery Failure with Business Reason Codes & Evidence Image
+    // TEST 7: Delivery Failure Handling & Reserved Inventory Release
     // =========================================================================
-    console.log('👉 [TEST 7] Delivery Failure Handling (SHIPPING -> DELIVERY_FAILED)');
-    // Create another order for failure testing
+    console.log('👉 [TEST 7] Delivery Failure Handling & Inventory Release');
+
+    // Create a product for failure inventory-release test (inventory auto-created by DB trigger)
+    const testProduct = await prisma.product.create({
+      data: {
+        storeId: storeA.storeId,
+        productCode: `PROD_FAIL_${testRunId}`,
+        productName: 'Fail Test Drinking Water 19L',
+        basePrice: 50000,
+      },
+    });
+    // Set initial inventory stock
+    await prisma.inventory.update({
+      where: { productId: testProduct.productId },
+      data: {
+        quantityOnHand: 20,
+        reservedQuantity: 5,
+      },
+    });
+    trackedProductIds.push(testProduct.productId);
+
+    // Create order with orderItem reserving 2 units
     const orderFail = await prisma.order.create({
       data: {
         orderCode: `ORD_FAIL_${testRunId}`,
@@ -388,13 +567,23 @@ async function run() {
         orderStatus: 'READY_FOR_DELIVERY',
         paymentStatus: 'UNPAID',
         paymentMethod: 'COD',
-        subtotalAmount: 85000,
+        subtotalAmount: 100000,
         shippingFee: 0,
         discountAmount: 0,
-        totalAmount: 85000,
+        totalAmount: 100000,
         shippingRecipientName: 'Customer C',
         shippingPhone: '090555666',
         shippingAddress: '789 Dien Bien Phu',
+        items: {
+          create: {
+            productId: testProduct.productId,
+            productNameSnapshot: 'Fail Test Drinking Water 19L',
+            unitPriceSnapshot: 50000,
+            quantity: 2,
+            itemSubtotal: 100000,
+            finalUnitPrice: 50000,
+          },
+        },
       },
     });
     trackedOrderIds.push(orderFail.orderId);
@@ -413,11 +602,20 @@ async function run() {
       driverA1Session,
     );
 
-    if (failedOrder.orderStatus === 'DELIVERY_FAILED' && failedOrder.failureReasonCode === 'CUSTOMER_UNREACHABLE') {
-      console.log('  ✔ [PASS] Delivery failure registered with business code CUSTOMER_UNREACHABLE and evidence image');
+    // Check inventory reserved_quantity released from 5 to 3
+    const invAfterFail = await prisma.inventory.findUniqueOrThrow({
+      where: { productId: testProduct.productId },
+    });
+
+    if (
+      failedOrder.orderStatus === 'DELIVERY_FAILED' &&
+      failedOrder.failureReasonCode === 'CUSTOMER_UNREACHABLE' &&
+      invAfterFail.reservedQuantity === 3
+    ) {
+      console.log(`  ✔ [PASS] Delivery failure handled with reason code and reserved inventory cleanly released (5 -> ${invAfterFail.reservedQuantity})`);
       passed++;
     } else {
-      throw new Error('Delivery failure handling failed');
+      throw new Error(`Delivery failure handling or inventory release failed. Expected reserved_quantity=3, got ${invAfterFail.reservedQuantity}`);
     }
 
     // =========================================================================
@@ -461,9 +659,9 @@ async function run() {
     }
 
     // =========================================================================
-    // TEST 10: Driver VietQR Payment Link Permission
+    // TEST 10: Driver VietQR Payment Link Permission & Direct Driver WebSocket Emit
     // =========================================================================
-    console.log('👉 [TEST 10] Driver PayOS Link Creation Authorization');
+    console.log('👉 [TEST 10] Driver PayOS Link Auth & Direct Driver WS Notification');
     // Order in SHIPPING assigned to Driver A1
     const orderVietqr = await prisma.order.create({
       data: {
@@ -507,11 +705,66 @@ async function run() {
       }
     }
 
-    if (forbiddenCaught) {
-      console.log('  ✔ [PASS] Driver B1 from Store B forbidden from creating PayOS link for Store A order (BOLA safe)');
+    if (!forbiddenCaught) {
+      throw new Error('BOLA check failed: unassigned driver was able to create payment link');
+    }
+
+    // Verify Direct Driver Notification on PayOS Webhook
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim() || 'test_payos_checksum_key_1234567890';
+    process.env.PAYOS_CHECKSUM_KEY = checksumKey;
+
+    const testTxCode = `TX_${Date.now().toString().slice(-8)}`;
+    const tx = await prisma.paymentTransaction.create({
+      data: {
+        order: { connect: { orderId: orderVietqr.orderId } },
+        provider: 'PAYOS',
+        transactionCode: testTxCode,
+        amount: 120000,
+        status: 'PENDING',
+        paymentMethod: 'PAYOS',
+        paymentLinkId: `plink_${testRunId}`,
+      },
+    });
+
+    const webhookData = {
+      orderCode: Number(testTxCode.replace(/\D/g, '')) || 123456,
+      amount: 120000,
+      currency: 'VND',
+      paymentLinkId: `plink_${testRunId}`,
+      code: '00',
+    };
+
+    // Update transaction to match numerical orderCode
+    await prisma.paymentTransaction.update({
+      where: { paymentTransactionId: tx.paymentTransactionId },
+      data: { transactionCode: webhookData.orderCode.toString() },
+    });
+
+    const sortedData = sortObjDataByKey(webhookData);
+    const queryString = convertObjToQueryStr(sortedData);
+    const validSignature = crypto
+      .createHmac('sha256', checksumKey)
+      .update(queryString)
+      .digest('hex');
+
+    lastDriverEvent = null;
+    const webhookRes = await paymentsService.handlePayosWebhook({
+      code: '00',
+      desc: 'Success',
+      data: webhookData as any,
+      signature: validSignature,
+    });
+
+    if (
+      webhookRes.success &&
+      lastDriverEvent &&
+      lastDriverEvent.driverId === driverA1User.userId.toString() &&
+      lastDriverEvent.event === 'ORDER_PAYMENT_CONFIRMED'
+    ) {
+      console.log('  ✔ [PASS] Driver B1 BOLA forbidden & PayOS webhook confirmed payment directly emitted to driver WebSocket room');
       passed++;
     } else {
-      throw new Error('BOLA check failed: unassigned driver was able to create payment link');
+      throw new Error(`Direct driver payment confirmation emit failed. webhookRes: ${JSON.stringify(webhookRes)}, lastDriverEvent: ${JSON.stringify(lastDriverEvent)}`);
     }
 
     // =========================================================================
@@ -558,6 +811,11 @@ async function run() {
       await prisma.order.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
     }
 
+    if (trackedProductIds.length > 0) {
+      await prisma.inventory.deleteMany({ where: { productId: { in: trackedProductIds } } });
+      await prisma.product.deleteMany({ where: { productId: { in: trackedProductIds } } });
+    }
+
     await prisma.ioTButton.deleteMany({ where: { storeId: { in: trackedStoreIds } } });
     await prisma.storeCustomer.deleteMany({ where: { customer: { userId: { in: trackedUserIds } } } });
     await prisma.customerAddress.deleteMany({ where: { customer: { userId: { in: trackedUserIds } } } });
@@ -575,7 +833,7 @@ async function run() {
       await prisma.user.deleteMany({ where: { userId: { in: trackedUserIds } } });
     }
 
-    console.log('✔ [ZERO RESIDUE CONFIRMED] All test users, stores, orders, shifts, and duties cleanly wiped.');
+    console.log('✔ [ZERO RESIDUE CONFIRMED] All test users, stores, orders, products, shifts, and duties cleanly wiped.');
     await prisma.$disconnect();
   }
 

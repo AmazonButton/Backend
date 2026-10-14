@@ -569,14 +569,42 @@ export class OrdersRepository {
         throw new BadRequestException(`Chỉ có thể hoàn tất giao hàng từ trạng thái SHIPPING (hiện tại: ${order.order_status})`);
       }
 
-      const storePodPrefix = `stores/${order.store_id}/pod`;
-      if (!dto.podImageUrl || !dto.podImageUrl.includes(storePodPrefix)) {
-        throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải thuộc thư mục lưu trữ hợp lệ của cửa hàng (${storePodPrefix})`);
+      let isValidPodUrl = false;
+      try {
+        const parsed = new URL(dto.podImageUrl);
+        const isCloudinaryDomain = parsed.hostname.endsWith('cloudinary.com');
+        const uploadIdx = parsed.pathname.indexOf('/image/upload/');
+        if (isCloudinaryDomain && uploadIdx !== -1) {
+          const pathAfterUpload = parsed.pathname.slice(uploadIdx + '/image/upload/'.length);
+          const pathNoVersion = pathAfterUpload.replace(/^v\d+\//, '');
+          if (pathNoVersion.startsWith(`stores/${order.store_id}/pod/`)) {
+            isValidPodUrl = true;
+          }
+        }
+      } catch (e) {
+        isValidPodUrl = false;
+      }
+
+      if (!isValidPodUrl) {
+        throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải là URL Cloudinary hợp lệ thuộc thư mục stores/${order.store_id}/pod/`);
+      }
+
+      const existingWithPod = await tx.order.findFirst({
+        where: {
+          podImageUrl: dto.podImageUrl,
+          orderId: { not: orderId },
+        },
+      });
+      if (existingWithPod) {
+        throw new BadRequestException('Ảnh xác thực giao hàng (POD) này đã được sử dụng cho đơn hàng khác, không thể tái sử dụng');
       }
 
       if (dto.paymentMethod === 'COD') {
         const orderTotal = Number(order.total_amount);
-        if (dto.collectedAmount != null && Math.abs(Number(dto.collectedAmount) - orderTotal) > 0.01) {
+        if (dto.collectedAmount == null) {
+          throw new BadRequestException('Đơn hàng thanh toán COD bắt buộc phải có số tiền đã thu (collectedAmount)');
+        }
+        if (Math.abs(Number(dto.collectedAmount) - orderTotal) > 0.01) {
           throw new BadRequestException(`Số tiền thu (${dto.collectedAmount}) không khớp với tổng tiền đơn hàng (${orderTotal})`);
         }
       } else if (['VIETQR', 'PAYOS'].includes(dto.paymentMethod)) {
@@ -658,6 +686,30 @@ export class OrdersRepository {
 
       if (!dto.evidenceImageUrl) {
         throw new BadRequestException('Bắt buộc phải có ảnh bằng chứng giao hàng thất bại');
+      }
+
+      // Release reserved inventory back
+      const items = await tx.orderItem.findMany({ where: { orderId } });
+      for (const item of items) {
+        await tx.$executeRawUnsafe(
+          `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
+          item.productId,
+        );
+        const invRows = await tx.$queryRawUnsafe<any[]>(
+          `SELECT reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+          item.productId,
+        );
+        const inv = invRows[0];
+        if (inv && Number(inv.reserved_quantity) >= Number(item.quantity)) {
+          await tx.$executeRawUnsafe(
+            `UPDATE inventory
+             SET reserved_quantity = reserved_quantity - $1,
+                 updated_at = NOW()
+             WHERE product_id = $2`,
+            item.quantity,
+            item.productId,
+          );
+        }
       }
 
       await tx.order.update({

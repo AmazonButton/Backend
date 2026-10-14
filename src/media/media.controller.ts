@@ -1,3 +1,4 @@
+import { PrismaService } from '../prisma/prisma.service';
 import {
   Controller,
   Get,
@@ -8,6 +9,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  NotFoundException,
   ForbiddenException,
   Request,
 } from '@nestjs/common';
@@ -33,6 +35,7 @@ export class MediaController {
   constructor(
     private readonly mediaService: MediaService,
     private readonly productsRepo: ProductsRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
@@ -178,6 +181,29 @@ export class MediaController {
     if (!user || !user.storeId) {
       throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng để lưu trữ POD');
     }
+    if (orderId) {
+      if (!/^\d+$/.test(orderId)) {
+        throw new BadRequestException('Mã đơn hàng không hợp lệ');
+      }
+      const order = await this.prisma.order.findUnique({
+        where: { orderId: BigInt(orderId) },
+      });
+      if (!order) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      if (order.storeId.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang làm việc');
+      }
+      if (user.role === 'STAFF_DELIVERY') {
+        if (!order.assignedDriverId || order.assignedDriverId.toString() !== user.userId.toString()) {
+          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+        }
+        if (order.orderStatus !== 'SHIPPING') {
+          throw new BadRequestException(`Chỉ có thể tải ảnh POD khi đơn hàng đang ở trạng thái SHIPPING (hiện tại: ${order.orderStatus})`);
+        }
+      }
+    }
+
     const targetFolder = `stores/${user.storeId}/pod`;
     const result = await this.mediaService.uploadImageBuffer(file, targetFolder);
     return {

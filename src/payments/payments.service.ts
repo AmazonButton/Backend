@@ -344,12 +344,21 @@ export class PaymentsService {
       if (this.eventsGateway && transaction.order) {
         const storeId = transaction.order.storeId ? transaction.order.storeId.toString() : '';
         const orderId = transaction.orderId ? transaction.orderId.toString() : '';
-        this.eventsGateway.emitToStore(storeId, 'ORDER_PAYMENT_CONFIRMED', {
+        const eventPayload = {
           orderId,
           orderCode: orderCodeStr,
           amount: Number(transaction.amount),
           paymentTransactionId: transaction.paymentTransactionId.toString(),
-        });
+        };
+        this.eventsGateway.emitToStore(storeId, 'ORDER_PAYMENT_CONFIRMED', eventPayload);
+        const assignedDriverId = (transaction.order as any)?.assignedDriverId;
+        if (assignedDriverId) {
+          this.eventsGateway.emitToDriver(
+            assignedDriverId.toString(),
+            'ORDER_PAYMENT_CONFIRMED',
+            eventPayload,
+          );
+        }
       }
       return { success: true, message: 'Payment confirmed successfully' };
     } else {
