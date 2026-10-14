@@ -394,6 +394,26 @@ async function run() {
       throw new Error('Expected spoofed POD URL on non-Cloudinary host to be rejected');
     }
 
+    // 5a-2. Test suffix matching security bypass (evilcloudinary.com must be rejected)
+    let evilCloudinaryRejected = false;
+    try {
+      await ordersService.completeDelivery(
+        orderDeliverTest.orderId,
+        {
+          status: 'DELIVERED',
+          paymentMethod: 'COD',
+          collectedAmount: 150000,
+          podImageUrl: `https://evilcloudinary.com/image/upload/v1234/stores/${storeA.storeId}/pod/photo.jpg`,
+        },
+        driverA1Session,
+      );
+    } catch (e: any) {
+      if (e.status === 400) evilCloudinaryRejected = true;
+    }
+    if (!evilCloudinaryRejected) {
+      throw new Error('Expected evilcloudinary.com suffix match bypass to be rejected');
+    }
+
     // 5b. Test invalid POD folder (belongs to another store)
     let otherStorePodRejected = false;
     try {

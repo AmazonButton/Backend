@@ -572,7 +572,7 @@ export class OrdersRepository {
       let isValidPodUrl = false;
       try {
         const parsed = new URL(dto.podImageUrl);
-        const isCloudinaryDomain = parsed.hostname.endsWith('cloudinary.com');
+        const isCloudinaryDomain = parsed.hostname === 'cloudinary.com' || parsed.hostname.endsWith('.cloudinary.com');
         const uploadIdx = parsed.pathname.indexOf('/image/upload/');
         if (isCloudinaryDomain && uploadIdx !== -1) {
           const pathAfterUpload = parsed.pathname.slice(uploadIdx + '/image/upload/'.length);
