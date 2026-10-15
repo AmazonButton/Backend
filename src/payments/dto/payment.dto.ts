@@ -86,3 +86,9 @@ export class PayosWebhookDto {
   @IsNotEmpty()
   signature: string;
 }
+
+export class CancelPaymentLinkDto {
+  @IsOptional()
+  @IsString()
+  cancellationReason?: string;
+}

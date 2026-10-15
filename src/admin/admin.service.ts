@@ -1,12 +1,16 @@
+import { PrismaService } from '../prisma/prisma.service';
+import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
 import { Injectable, NotFoundException, BadRequestException, Optional, Inject } from '@nestjs/common';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { AdminRepository } from './admin.repository';
 
 @Injectable()
 export class AdminService {
-  constructor(
+    constructor(
     @Inject(AdminRepository)
     private readonly adminRepo: AdminRepository,
+    @Optional()
+    private readonly prisma?: PrismaService,
     @Optional()
     private readonly payosPayoutService?: PayOSPayoutService,
   ) {}
@@ -268,11 +272,24 @@ export class AdminService {
 
   async executePayOSPayout(withdrawalId: string | number | bigint, adminUser?: any) {
     const rawWithdrawalId = BigInt(withdrawalId);
+
+    // Atomic race-condition prevention: conditionally transition PENDING -> PROCESSING
+    const count = this.prisma ? await this.prisma.$executeRaw`
+      UPDATE store_withdrawals 
+      SET status = 'PROCESSING', updated_at = NOW() 
+      WHERE withdrawal_id = ${rawWithdrawalId} AND status = 'PENDING'
+    ` : 1;
+
+    if (count === 0) {
+      const current = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+      if (!current) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+      throw new BadRequestException(
+        `Yêu cầu rút tiền đang ở trạng thái ${current.status}, không thể xuất lệnh chi hộ hoặc đang được xử lý đồng thời`
+      );
+    }
+
     const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
     if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
-    if (withdrawal.status !== 'PENDING') {
-      throw new BadRequestException('Yêu cầu đang ở trạng thái ' + withdrawal.status + ', không thể xuất lệnh chi hộ');
-    }
 
     if (!this.payosPayoutService) {
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
@@ -320,21 +337,21 @@ export class AdminService {
         return { withdrawal, message: 'Chưa có thông tin provider reference id' };
   }
 
-  async createBatchPayout(params: any) {
+  async createBatchPayout(params: CreatePayosBatchPayoutDto) {
     if (!this.payosPayoutService) {
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }
     return this.payosPayoutService.createBatchPayout(params);
   }
 
-  async estimatePayoutCredit(params: any) {
+  async estimatePayoutCredit(params: EstimatePayoutCreditDto) {
     if (!this.payosPayoutService) {
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }
     return this.payosPayoutService.estimateCredit(params);
   }
 
-  async listPayosPayouts(query?: any) {
+  async listPayosPayouts(query?: ListPayosPayoutsQueryDto) {
     if (!this.payosPayoutService) {
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }

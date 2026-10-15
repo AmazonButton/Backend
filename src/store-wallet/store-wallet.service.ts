@@ -248,20 +248,31 @@ export class StoreWalletService {
    */
   async triggerPayosPayout(withdrawalId: string | number | bigint) {
     const rawId = BigInt(withdrawalId);
+
+    // Atomic race-condition prevention: conditionally transition PENDING -> PROCESSING
+    const count = await this.prisma.$executeRaw`
+      UPDATE store_withdrawals 
+      SET status = 'PROCESSING', updated_at = NOW() 
+      WHERE withdrawal_id = ${rawId} AND status = 'PENDING'
+    `;
+
+    if (count === 0) {
+      const current = await this.prisma.storeWithdrawal.findUnique({ where: { withdrawalId: rawId } });
+      if (!current) throw new NotFoundException('Không tìm thấy yêu cầu rút tiền');
+      throw new BadRequestException(
+        `Yêu cầu rút tiền #${current.withdrawalCode} đang ở trạng thái ${current.status}, không thể gửi Payout hoặc đang được xử lý đồng thời`
+      );
+    }
+
     const withdrawal = await this.prisma.storeWithdrawal.findUnique({
       where: { withdrawalId: rawId },
     });
-
     if (!withdrawal) {
-      throw new NotFoundException('Kh�ng t�m th?y y�u c?u r�t ti?n');
-    }
-
-    if (withdrawal.status !== 'PENDING') {
-      throw new BadRequestException(`Y�u c?u dang ? tr?ng th�i ${withdrawal.status}, kh�ng th? g?i Payout`);
+      throw new NotFoundException('Không tìm thấy yêu cầu rút tiền');
     }
 
     if (!this.payosPayoutService) {
-      throw new BadRequestException('D?ch v? PayOS Payout chua du?c k�ch ho?t trong h? th?ng');
+      throw new BadRequestException('Dịch vụ PayOS Payout chưa được kích hoạt trong hệ thống');
     }
 
     try {
@@ -286,20 +297,20 @@ export class StoreWalletService {
     } catch (err: any) {
       this.logger.error(`PayOS Payout failed for withdrawal #${withdrawal.withdrawalCode}: ${err.message}`);
 
-      // Ghi nh?n FAILED
+      // Ghi nhận FAILED
       await this.prisma.storeWithdrawal.update({
         where: { withdrawalId: rawId },
         data: {
           status: 'FAILED',
-          failureReason: err.message || 'L?i g?i c?ng PayOS Payout',
+          failureReason: err.message || 'Lỗi gọi cổng PayOS Payout',
           processedAt: new Date(),
         },
       });
 
-      // DB Transaction 2: Auto-Refund s? du v? v� (Section 25)
+      // DB Transaction 2: Auto-Refund số dư về ví (Section 25)
       await this.refundFailedWithdrawal(rawId, err.message || 'PayOS Payout API Error');
 
-      throw new BadRequestException(`T?o chi ti?n PayOS th?t b?i: ${err.message || 'L?i c?ng PayOS'}`);
+      throw new BadRequestException(`Tạo chi tiền PayOS thất bại: ${err.message || 'Lỗi cổng PayOS'}`);
     }
   }
 

@@ -211,6 +211,7 @@ export class PaymentsService {
           checkoutUrl: mockCheckoutUrl,
           qrCode: mockQrCode,
           paymentLinkId: mockPaymentLinkId,
+          currency: 'VND',
           status: 'PENDING',
         },
       };
@@ -277,13 +278,13 @@ export class PaymentsService {
         });
       }
 
-      if (result.data?.currency && result.data.currency !== 'VND') {
-        this.logger.error(`PayOS currency mismatch: expected VND, got ${result.data?.currency}`);
+      if (!result.data?.currency || typeof result.data.currency !== 'string' || result.data.currency !== 'VND') {
+        this.logger.error(`PayOS currency invalid or missing: expected VND, got ${result.data?.currency}`);
         await this.paymentsRepo.updateTransactionStatus(transaction.paymentTransactionId, 'FAILED');
         throw new BadRequestException({
           success: false,
           code: 'PAYOS_RESPONSE_MISMATCH',
-          message: 'Đơn vị tiền tệ trong phản hồi từ PayOS không phải VND',
+          message: 'Đơn vị tiền tệ trong phản hồi từ PayOS không hợp lệ hoặc không phải VND',
         });
       }
 
@@ -476,7 +477,7 @@ export class PaymentsService {
         desc: 'success',
         data: {
           id: `link_${orderCodeOrId}`,
-          orderCode: Number(orderCodeOrId),
+          orderCode: isNaN(Number(orderCodeOrId)) ? orderCodeOrId : Number(orderCodeOrId),
           amount: 200000,
           amountPaid: 200000,
           amountRemaining: 0,
@@ -515,7 +516,7 @@ export class PaymentsService {
         desc: 'success',
         data: {
           id: `link_${orderCodeOrId}`,
-          orderCode: Number(orderCodeOrId),
+          orderCode: isNaN(Number(orderCodeOrId)) ? orderCodeOrId : Number(orderCodeOrId),
           status: 'CANCELLED',
           cancellationReason: cancellationReason || 'User requested cancel',
         },

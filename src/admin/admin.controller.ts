@@ -3,6 +3,7 @@ import { AdminService } from './admin.service';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
 import { CreateRentalPackageDto, UpdateRentalPackageDto } from './dto/rental-packages.dto';
+import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -151,20 +152,20 @@ export class AdminController {
   }
 
   @Post('payos/payouts/batch')
-  async createBatchPayout(@Body() body: any) {
-    const data = await this.adminService.createBatchPayout(body);
-    return { success: true, message: 'Đã gửi lệnh chi theo lô PayOS!', data };
+  async createBatchPayout(@Body() body: CreatePayosBatchPayoutDto) {
+    const res = await this.adminService.createBatchPayout(body);
+    return { success: true, message: 'Đã gửi lệnh chi theo lô PayOS!', data: res?.data || res };
   }
 
   @Post('payos/payouts/estimate-credit')
-  async estimatePayoutCredit(@Body() body: any) {
-    const data = await this.adminService.estimatePayoutCredit(body);
-    return { success: true, data };
+  async estimatePayoutCredit(@Body() body: EstimatePayoutCreditDto) {
+    const res = await this.adminService.estimatePayoutCredit(body);
+    return { success: true, data: res?.data || res };
   }
 
   @Get('payos/payouts')
-  async listPayosPayouts(@Query() query: any) {
-    const data = await this.adminService.listPayosPayouts(query);
-    return { success: true, data };
+  async listPayosPayouts(@Query() query: ListPayosPayoutsQueryDto) {
+    const res = await this.adminService.listPayosPayouts(query);
+    return { success: true, data: res?.data || res };
   }
 }

@@ -9,7 +9,7 @@ import {
   HttpCode,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
-import { CreatePaymentLinkDto, PayosWebhookDto } from './dto/payment.dto';
+import { CreatePaymentLinkDto, PayosWebhookDto, CancelPaymentLinkDto } from './dto/payment.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('payments')
@@ -27,6 +27,20 @@ export class PaymentsController {
   @Post('payos/webhook')
   handleWebhook(@Body() body: PayosWebhookDto) {
     return this.paymentsService.handlePayosWebhook(body);
+  }
+
+    @UseGuards(JwtAuthGuard)
+  @Get('payos/payment-requests/:id')
+  async getPaymentLinkInfo(@Param('id') id: string) {
+    const res = await this.paymentsService.getPaymentLinkInformation(id);
+    return { success: true, data: res?.data || res };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('payos/payment-requests/:id/cancel')
+  async cancelPaymentLink(@Param('id') id: string, @Body() body?: CancelPaymentLinkDto) {
+    const res = await this.paymentsService.cancelPaymentLink(id, body?.cancellationReason);
+    return { success: true, message: 'Đã hủy link thanh toán thành công', data: res?.data || res };
   }
 
   @UseGuards(JwtAuthGuard)
