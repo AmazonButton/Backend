@@ -771,6 +771,7 @@ async function run() {
     const webhookRes = await paymentsService.handlePayosWebhook({
       code: '00',
       desc: 'Success',
+      success: true,
       data: webhookData as any,
       signature: validSignature,
     });

@@ -7,6 +7,7 @@ import {
 import {
   signPayoutRequest,
   PayosPayoutRequestParams,
+  PayosBatchPayoutRequestParams,
 } from './payos.helper';
 
 export interface PayOSCreatePayoutResult {
@@ -164,15 +165,43 @@ export class PayOSPayoutService {
     }
   }
 
-  async getPayouts(params?: { referenceId?: string; approvalState?: string; limit?: number; offset?: number }): Promise<any> {
+  async getPayouts(params?: {
+    referenceId?: string;
+    approvalState?: string;
+    category?: string;
+    fromDate?: string;
+    toDate?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<any> {
     const { clientId, apiKey } = this.getCredentials();
     if (!clientId || !apiKey) {
       throw new InternalServerErrorException('PayOS credentials missing');
     }
 
+    if (process.env.PAYOS_MOCK_PAYOUT === 'true' || clientId === 'mock_client_id') {
+      return {
+        code: '00',
+        desc: 'success',
+        data: {
+          payouts: [],
+          pagination: {
+            total: 0,
+            limit: params?.limit || 10,
+            offset: params?.offset || 0,
+            count: 0,
+            hasMore: false,
+          },
+        },
+      };
+    }
+
     const query = new URLSearchParams();
     if (params?.referenceId) query.append('referenceId', params.referenceId);
     if (params?.approvalState) query.append('approvalState', params.approvalState);
+    if (params?.category) query.append('category', params.category);
+    if (params?.fromDate) query.append('fromDate', params.fromDate);
+    if (params?.toDate) query.append('toDate', params.toDate);
     if (params?.limit) query.append('limit', params.limit.toString());
     if (params?.offset) query.append('offset', params.offset.toString());
 
@@ -187,7 +216,88 @@ export class PayOSPayoutService {
       return await response.json();
     } catch (err: any) {
       this.logger.error(`PayOS getPayouts error: ${err.message}`);
-      throw new InternalServerErrorException(`Kh�ng th? tra c?u danh s�ch payout: ${err.message}`);
+      throw new InternalServerErrorException(`Không thể tra cứu danh sách payout: ${err.message}`);
+    }
+  }
+
+  async createBatchPayout(params: PayosBatchPayoutRequestParams): Promise<any> {
+    const { clientId, apiKey, checksumKey } = this.getCredentials();
+    if (!clientId || !apiKey || !checksumKey) {
+      throw new InternalServerErrorException('Chưa cấu hình đầy đủ credentials cho PayOS Payout');
+    }
+
+    const signature = signPayoutRequest(params, checksumKey);
+
+    if (process.env.PAYOS_MOCK_PAYOUT === 'true' || clientId === 'mock_client_id') {
+      return {
+        code: '00',
+        desc: 'success',
+        data: {
+          id: `batch_${Date.now()}`,
+          referenceId: params.referenceId,
+          approvalState: 'PROCESSING',
+          transactions: params.payouts.map((p, idx) => ({
+            id: `batch_txn_${Date.now()}_${idx}`,
+            referenceId: p.referenceId,
+            amount: p.amount,
+            description: p.description,
+            toBin: p.toBin,
+            toAccountNumber: p.toAccountNumber,
+            state: 'PROCESSING',
+          })),
+        },
+      };
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/payouts/batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-client-id': clientId,
+          'x-api-key': apiKey,
+          'x-idempotency-key': params.referenceId,
+          'x-signature': signature,
+        },
+        body: JSON.stringify(params),
+      });
+      return await response.json();
+    } catch (err: any) {
+      this.logger.error(`PayOS createBatchPayout error: ${err.message}`);
+      throw new InternalServerErrorException(`Lỗi kết nối tới PayOS Batch Payout API: ${err.message}`);
+    }
+  }
+
+  async estimateCredit(params: PayosBatchPayoutRequestParams): Promise<any> {
+    const { clientId, apiKey } = this.getCredentials();
+    if (!clientId || !apiKey) {
+      throw new InternalServerErrorException('PayOS credentials missing');
+    }
+
+    if (process.env.PAYOS_MOCK_PAYOUT === 'true' || clientId === 'mock_client_id') {
+      return {
+        code: '00',
+        desc: 'success',
+        data: {
+          estimateCredit: 5000,
+        },
+      };
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/payouts/estimate-credit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-client-id': clientId,
+          'x-api-key': apiKey,
+        },
+        body: JSON.stringify(params),
+      });
+      return await response.json();
+    } catch (err: any) {
+      this.logger.error(`PayOS estimateCredit error: ${err.message}`);
+      throw new InternalServerErrorException(`Lỗi kết nối tới PayOS Estimate Credit API: ${err.message}`);
     }
   }
 

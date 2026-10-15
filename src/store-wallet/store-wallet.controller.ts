@@ -48,7 +48,11 @@ export class StoreWalletController {
   @Post('withdrawals')
   async requestWithdrawal(@Request() req: any, @Body() body: RequestWithdrawalDto, @Query() query?: StoreQueryDto) {
     const storeId = this.extractStoreId(req, query);
-    const data = await this.walletService.requestWithdrawal(storeId, body);
+    const idempotencyKey =
+      (req.headers?.['idempotency-key'] as string) ||
+      (req.headers?.['x-idempotency-key'] as string) ||
+      undefined;
+    const data = await this.walletService.requestWithdrawal(storeId, body, idempotencyKey);
     return { success: true, message: 'Gửi yêu cầu rút tiền thành công!', data };
   }
 

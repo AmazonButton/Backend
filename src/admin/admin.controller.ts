@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Param, Body, UseGuards, Request, Inject } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, UseGuards, Request, Inject, Query } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
@@ -144,9 +144,27 @@ export class AdminController {
     return { success: true, message: '�� g?i l?nh chi ti?n PayOS th�nh c�ng!', data };
   }
 
-  @Post('withdrawals/:id/sync-payout')
+    @Post('withdrawals/:id/sync-payout')
   async syncPayoutStatus(@Param('id') id: string) {
     const data = await this.adminService.syncPayoutStatus(id);
-    return { success: true, message: '�� d?ng b? tr?ng th�i chi ti?n PayOS!', data };
+    return { success: true, message: 'Đã đồng bộ trạng thái chi tiền PayOS!', data };
+  }
+
+  @Post('payos/payouts/batch')
+  async createBatchPayout(@Body() body: any) {
+    const data = await this.adminService.createBatchPayout(body);
+    return { success: true, message: 'Đã gửi lệnh chi theo lô PayOS!', data };
+  }
+
+  @Post('payos/payouts/estimate-credit')
+  async estimatePayoutCredit(@Body() body: any) {
+    const data = await this.adminService.estimatePayoutCredit(body);
+    return { success: true, data };
+  }
+
+  @Get('payos/payouts')
+  async listPayosPayouts(@Query() query: any) {
+    const data = await this.adminService.listPayosPayouts(query);
+    return { success: true, data };
   }
 }

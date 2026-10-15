@@ -77,9 +77,8 @@ export class PayosWebhookDto {
   @IsNotEmpty()
   desc: string;
 
-  @IsOptional()
-  @IsBoolean()
-  success?: boolean;
+  @IsBoolean({ message: 'Trường success bắt buộc phải là boolean' })
+  success: boolean;
 
   @IsNotEmpty()
   data: any;

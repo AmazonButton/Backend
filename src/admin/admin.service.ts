@@ -317,6 +317,27 @@ export class AdminService {
       return { withdrawal, listData };
     }
 
-    return { withdrawal, message: 'Chưa có thông tin provider reference id' };
+        return { withdrawal, message: 'Chưa có thông tin provider reference id' };
+  }
+
+  async createBatchPayout(params: any) {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+    return this.payosPayoutService.createBatchPayout(params);
+  }
+
+  async estimatePayoutCredit(params: any) {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+    return this.payosPayoutService.estimateCredit(params);
+  }
+
+  async listPayosPayouts(query?: any) {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+    return this.payosPayoutService.getPayouts(query);
   }
 }

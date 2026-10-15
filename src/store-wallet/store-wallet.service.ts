@@ -126,12 +126,24 @@ export class StoreWalletService {
   async requestWithdrawal(
     storeId: string | number | bigint,
     dto: RequestWithdrawalDto & { autoPayout?: boolean },
-    options?: { autoPayout?: boolean },
+    idempotencyKeyOrOptions?: string | { autoPayout?: boolean },
   ) {
     const rawStoreId = BigInt(storeId);
+    const idempotencyKey = typeof idempotencyKeyOrOptions === 'string' ? idempotencyKeyOrOptions : undefined;
+    const options = typeof idempotencyKeyOrOptions === 'object' ? idempotencyKeyOrOptions : undefined;
     const amount = Number(dto.amount);
     if (!amount || amount < 50000) {
-      throw new BadRequestException('S? ti?n r�t t?i thi?u l� 50,000 VND');
+      throw new BadRequestException('Số tiền rút tối thiểu là 50,000 VND');
+    }
+
+    // Check if idempotencyKey was already processed for this store
+    if (idempotencyKey) {
+      const existing = await this.prisma.storeWithdrawal.findFirst({
+        where: { storeId: rawStoreId, idempotencyKey },
+      });
+      if (existing) {
+        return existing;
+      }
     }
 
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
@@ -139,57 +151,89 @@ export class StoreWalletService {
     const netAmount = amount - fee;
     const withdrawalCode = `WDR-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    // Phase 1: DB Transaction - Reserve balance & Snapshot bank info
-    const withdrawal = await this.prisma.$transaction(async (tx) => {
-      const current = await tx.storeWallet.findUnique({
-        where: { walletId: wallet.walletId },
-      });
-      if (!current) throw new NotFoundException('V� kh�ng t?n t?i');
+    // Phase 1: DB Transaction - Lock balance with FOR UPDATE & snapshot bank info
+    let withdrawal;
+    try {
+      withdrawal = await this.prisma.$transaction(async (tx) => {
+        // Double check idempotency in tx
+        if (idempotencyKey) {
+          const existingInTx = await tx.storeWithdrawal.findFirst({
+            where: { storeId: rawStoreId, idempotencyKey },
+          });
+          if (existingInTx) return existingInTx;
+        }
 
-      const currentBalance = Number(current.balance);
-      if (currentBalance < amount) {
-        throw new BadRequestException(
-          `S? du kh�ng d?. S? du kh? d?ng hi?n t?i: ${currentBalance.toLocaleString()} VND`,
-        );
+        // Lock wallet row exclusively with SELECT ... FOR UPDATE (Anti-Race Condition)
+        const [lockedWallet] = await tx.$queryRaw<Array<{
+          wallet_id: bigint;
+          balance: any;
+          bank_name: string | null;
+          bank_account_number: string | null;
+          bank_account_holder: string | null;
+        }>>`
+          SELECT wallet_id, balance, bank_name, bank_account_number, bank_account_holder
+          FROM store_wallets
+          WHERE wallet_id = ${wallet.walletId}
+          FOR UPDATE
+        `;
+
+        if (!lockedWallet) throw new NotFoundException('Ví không tồn tại');
+
+        const currentBalance = Number(lockedWallet.balance);
+        if (currentBalance < amount) {
+          throw new BadRequestException(
+            `Số dư không đủ. Số dư khả dụng hiện tại: ${currentBalance.toLocaleString()} VND`,
+          );
+        }
+
+        const balanceAfter = currentBalance - amount;
+        await tx.storeWallet.update({
+          where: { walletId: wallet.walletId },
+          data: { balance: balanceAfter },
+        });
+
+        const newWithdrawal = await tx.storeWithdrawal.create({
+          data: {
+            withdrawalCode,
+            walletId: wallet.walletId,
+            storeId: rawStoreId,
+            idempotencyKey: idempotencyKey || null,
+            amount,
+            fee,
+            netAmount,
+            bankCode: dto.bankCode || '970422',
+            bankName: dto.bankName || lockedWallet.bank_name || 'MBBANK',
+            bankAccountNumber: dto.bankAccountNumber || lockedWallet.bank_account_number || '970422123456789',
+            bankAccountHolder: dto.bankAccountHolder || lockedWallet.bank_account_holder || 'STORE OWNER',
+            status: 'PENDING',
+            provider: 'PAYOS',
+            providerReferenceId: withdrawalCode,
+          },
+        });
+
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.walletId,
+            amount: -amount,
+            type: 'WITHDRAWAL_DEBIT',
+            balanceBefore: currentBalance,
+            balanceAfter,
+            referenceId: withdrawalCode,
+            description: `Yêu cầu rút tiền về ${dto.bankName || lockedWallet.bank_name || 'Ngân hàng'} - ${dto.bankAccountNumber || lockedWallet.bank_account_number || ''}`,
+          },
+        });
+
+        return newWithdrawal;
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002' && idempotencyKey) {
+        const existing = await this.prisma.storeWithdrawal.findFirst({
+          where: { storeId: rawStoreId, idempotencyKey },
+        });
+        if (existing) return existing;
       }
-
-      const balanceAfter = currentBalance - amount;
-      await tx.storeWallet.update({
-        where: { walletId: wallet.walletId },
-        data: { balance: balanceAfter },
-      });
-
-      const newWithdrawal = await tx.storeWithdrawal.create({
-        data: {
-          withdrawalCode,
-          walletId: wallet.walletId,
-          amount,
-          fee,
-          netAmount,
-          bankCode: dto.bankCode || '970422', // default MBBank BIN n?u chua truy?n
-          bankName: dto.bankName || current.bankName || 'MBBANK',
-          bankAccountNumber: dto.bankAccountNumber || current.bankAccountNumber || '970422123456789',
-          bankAccountHolder: dto.bankAccountHolder || current.bankAccountHolder || 'STORE OWNER',
-          status: 'PENDING',
-          provider: 'PAYOS',
-          providerReferenceId: withdrawalCode,
-        },
-      });
-
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.walletId,
-          amount: -amount,
-          type: 'WITHDRAWAL_DEBIT',
-          balanceBefore: currentBalance,
-          balanceAfter,
-          referenceId: withdrawalCode,
-          description: `Y�u c?u r�t ti?n v? ${dto.bankName} - ${dto.bankAccountNumber}`,
-        },
-      });
-
-      return newWithdrawal;
-    });
+      throw err;
+    }
 
     const shouldAutoPayout = dto.autoPayout ?? options?.autoPayout ?? false;
     if (shouldAutoPayout && this.payosPayoutService) {
@@ -200,7 +244,7 @@ export class StoreWalletService {
   }
 
   /**
-   * G?i PayOS Payout API cho Withdrawal (Section 18, 21, 25)
+   * Gọi PayOS Payout API cho Withdrawal (Section 18, 21, 25)
    */
   async triggerPayosPayout(withdrawalId: string | number | bigint) {
     const rawId = BigInt(withdrawalId);
@@ -265,34 +309,74 @@ export class StoreWalletService {
   async refundFailedWithdrawal(withdrawalId: string | number | bigint, reason: string) {
     const rawId = BigInt(withdrawalId);
     return this.prisma.$transaction(async (tx) => {
-      const withdrawal = await tx.storeWithdrawal.findUnique({
-        where: { withdrawalId: rawId },
-      });
-      if (!withdrawal) throw new NotFoundException('Y�u c?u r�t ti?n kh�ng t?n t?i');
+      // 1. Lock withdrawal row exclusively with SELECT ... FOR UPDATE (Anti-Double Refund)
+      const [lockedWithdrawal] = await tx.$queryRaw<Array<{
+        withdrawal_id: bigint;
+        status: string;
+        amount: any;
+        wallet_id: bigint;
+        withdrawal_code: string;
+      }>>`
+        SELECT withdrawal_id, status, amount, wallet_id, withdrawal_code
+        FROM store_withdrawals
+        WHERE withdrawal_id = ${rawId}
+        FOR UPDATE
+      `;
 
-      const wallet = await tx.storeWallet.findUnique({
-        where: { walletId: withdrawal.walletId },
-      });
-      if (!wallet) throw new NotFoundException('V� kh�ng t?n t?i');
+      if (!lockedWithdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
 
-      const refundAmount = Number(withdrawal.amount);
-      const balanceBefore = Number(wallet.balance);
+      // 2. Only refund if status is PENDING or PROCESSING (Prevent double-refund if already FAILED/SUCCEEDED)
+      if (!['PENDING', 'PROCESSING'].includes(lockedWithdrawal.status)) {
+        return tx.storeWithdrawal.findUnique({
+          where: { withdrawalId: rawId },
+        });
+      }
+
+      // 3. Unique ledger check: verify WITHDRAWAL_REFUND has not already been created for this withdrawal code
+      const existingRefundTx = await tx.walletTransaction.findFirst({
+        where: {
+          walletId: lockedWithdrawal.wallet_id,
+          type: 'WITHDRAWAL_REFUND',
+          referenceId: lockedWithdrawal.withdrawal_code,
+        },
+      });
+      if (existingRefundTx) {
+        return tx.storeWithdrawal.findUnique({
+          where: { withdrawalId: rawId },
+        });
+      }
+
+      // 4. Lock wallet row with FOR UPDATE
+      const [lockedWallet] = await tx.$queryRaw<Array<{
+        wallet_id: bigint;
+        balance: any;
+      }>>`
+        SELECT wallet_id, balance
+        FROM store_wallets
+        WHERE wallet_id = ${lockedWithdrawal.wallet_id}
+        FOR UPDATE
+      `;
+
+      if (!lockedWallet) throw new NotFoundException('Ví không tồn tại');
+
+      const refundAmount = Number(lockedWithdrawal.amount);
+      const balanceBefore = Number(lockedWallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
 
       await tx.storeWallet.update({
-        where: { walletId: wallet.walletId },
+        where: { walletId: lockedWithdrawal.wallet_id },
         data: { balance: balanceAfter },
       });
 
       await tx.walletTransaction.create({
         data: {
-          walletId: wallet.walletId,
+          walletId: lockedWithdrawal.wallet_id,
           amount: refundAmount,
           type: 'WITHDRAWAL_REFUND',
           balanceBefore,
           balanceAfter,
-          referenceId: withdrawal.withdrawalCode,
-          description: `Ho�n ti?n y�u c?u r�t #${withdrawal.withdrawalCode}: ${reason}`,
+          referenceId: lockedWithdrawal.withdrawal_code,
+          description: `Hoàn tiền yêu cầu rút #${lockedWithdrawal.withdrawal_code}: ${reason}`,
         },
       });
 
