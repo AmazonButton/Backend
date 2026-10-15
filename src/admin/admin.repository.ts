@@ -281,4 +281,84 @@ export class AdminRepository {
       });
     });
   }
+
+  async claimPendingWithdrawal(withdrawalId: bigint): Promise<boolean> {
+    const count = await this.prisma.$executeRaw`
+      UPDATE store_withdrawals 
+      SET status = 'PROCESSING', updated_at = NOW() 
+      WHERE withdrawal_id = ${withdrawalId} AND status = 'PENDING'
+    `;
+    return count > 0;
+  }
+
+  async refundFailedWithdrawalTransaction(withdrawalId: bigint, reason: string): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Lock withdrawal row exclusively
+      const [lockedWithdrawal] = await tx.$queryRaw<Array<{
+        withdrawal_id: bigint;
+        status: string;
+        amount: any;
+        wallet_id: bigint;
+        withdrawal_code: string;
+      }>>`
+        SELECT withdrawal_id, status, amount, wallet_id, withdrawal_code
+        FROM store_withdrawals
+        WHERE withdrawal_id = ${withdrawalId}
+        FOR UPDATE
+      `;
+
+      if (!lockedWithdrawal) return null;
+
+      // 2. Anti-double refund: check if WITHDRAWAL_REFUND ledger tx already recorded
+      const existingRefundTx = await tx.walletTransaction.findFirst({
+        where: {
+          walletId: lockedWithdrawal.wallet_id,
+          type: 'WITHDRAWAL_REFUND',
+          referenceId: lockedWithdrawal.withdrawal_code,
+        },
+      });
+
+      if (existingRefundTx) {
+        return tx.storeWithdrawal.findUnique({ where: { withdrawalId } });
+      }
+
+      // Lock wallet row
+      const [wallet] = await tx.$queryRaw<Array<{ wallet_id: bigint; balance: any }>>`
+        SELECT wallet_id, balance FROM store_wallets WHERE wallet_id = ${lockedWithdrawal.wallet_id} FOR UPDATE
+      `;
+
+      if (!wallet) return null;
+
+      const refundAmount = Number(lockedWithdrawal.amount);
+      const balanceBefore = Number(wallet.balance);
+      const balanceAfter = balanceBefore + refundAmount;
+
+      await tx.storeWallet.update({
+        where: { walletId: wallet.wallet_id },
+        data: { balance: balanceAfter },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.wallet_id,
+          amount: refundAmount,
+          type: 'WITHDRAWAL_REFUND',
+          balanceBefore,
+          balanceAfter,
+          referenceId: lockedWithdrawal.withdrawal_code,
+          description: `Hoàn tiền PayOS Payout thất bại #${lockedWithdrawal.withdrawal_code}: ${reason}`,
+        },
+      });
+
+      return tx.storeWithdrawal.update({
+        where: { withdrawalId },
+        data: {
+          status: 'FAILED',
+          failureReason: reason,
+          processedAt: new Date(),
+        },
+      });
+    });
+  }
+
 }

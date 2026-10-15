@@ -23,7 +23,7 @@ import {
 
 async function testPayOSThuChiProduction() {
   console.log('========================================================================');
-  console.log('🚀 PAYOS THU - CHI: PRODUCTION CONCURRENCY & API SPECIFICATION SUITE');
+  console.log('🚀 PAYOS THU - CHI: PRODUCTION INTEGRITY & SPECIFICATION SUITE (MOCK PROVIDER MODE)');
   console.log('========================================================================\n');
 
   process.env.PAYOS_CLIENT_ID = 'mock_client_id';
@@ -43,7 +43,7 @@ async function testPayOSThuChiProduction() {
   const walletService = new StoreWalletService(prisma, payosPayoutService);
 
   const adminRepo = new AdminRepository(prisma);
-  const adminService = new AdminService(adminRepo, prisma, payosPayoutService);
+  const adminService = new AdminService(adminRepo, payosPayoutService);
   const adminController = new AdminController(adminService);
 
   let failed = 0;
@@ -485,6 +485,64 @@ async function testPayOSThuChiProduction() {
       console.log('  ✘ [FAIL] 7.5 GET payout-balance controller failed');
       failed++;
     }
+
+    // 7.6 Admin executePayOSPayout error handling & auto-refund
+    await prisma.storeWallet.update({
+      where: { walletId: wallet.walletId },
+      data: { balance: 200000 },
+    });
+
+    const adminFailWithdrawal = await walletService.requestWithdrawal(store.storeId, {
+      amount: 50000,
+      bankCode: '970422',
+      bankName: 'MBBank',
+      bankAccountNumber: '0987654321',
+      bankAccountHolder: 'ADMIN FAIL REFUND TEST',
+      fee: 0,
+      autoPayout: false,
+    });
+    createdWithdrawalCodes.push(adminFailWithdrawal.withdrawalCode);
+
+    const balBeforeAdminFail = Number((await walletService.getOrCreateStoreWallet(store.storeId)).balance);
+
+    // Simulate PayOS error by temporarily overriding createPayout
+    const originalCreatePayout = payosPayoutService.createPayout;
+    payosPayoutService.createPayout = async () => {
+      throw new Error('PayOS gateway simulated network error 502 Bad Gateway');
+    };
+
+    let adminCaughtError = false;
+    try {
+      await adminService.executePayOSPayout(adminFailWithdrawal.withdrawalId);
+    } catch (err: any) {
+      adminCaughtError = true;
+    } finally {
+      payosPayoutService.createPayout = originalCreatePayout;
+    }
+
+    const failedWithdrawalRecord = await prisma.storeWithdrawal.findUnique({
+      where: { withdrawalId: adminFailWithdrawal.withdrawalId },
+    });
+    const balAfterAdminFail = Number((await walletService.getOrCreateStoreWallet(store.storeId)).balance);
+    const adminRefundTx = await prisma.walletTransaction.findFirst({
+      where: {
+        walletId: wallet.walletId,
+        type: 'WITHDRAWAL_REFUND',
+        referenceId: adminFailWithdrawal.withdrawalCode,
+      },
+    });
+
+    if (
+      adminCaughtError &&
+      failedWithdrawalRecord?.status === 'FAILED' &&
+      balAfterAdminFail === balBeforeAdminFail + 50000 &&
+      adminRefundTx
+    ) {
+      console.log('  ✔ [PASS] 7.6 Admin executePayOSPayout properly handled PayOS error, updated FAILED & auto-refunded');
+    } else {
+      console.log('  ✘ [FAIL] 7.6 Admin executePayOSPayout failure refund failed');
+      failed++;
+    }
   } catch (error: any) {
     console.error('  ✘ [FATAL EXCEPTION]:', error);
     failed++;
@@ -520,7 +578,7 @@ async function testPayOSThuChiProduction() {
     console.error(`❌ PayOS Production Test Suite finished with ${failed} failures.`);
     process.exit(1);
   } else {
-    console.log('🎉 ALL PAYOS THU - CHI TESTS PASSED (100% PRODUCTION READY)!');
+    console.log('🎉 ALL PAYOS THU - CHI PRODUCTION INTEGRITY TESTS PASSED (MOCK PROVIDER MODE)!');
     console.log('========================================================================\n');
   }
 }

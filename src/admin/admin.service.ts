@@ -1,4 +1,3 @@
-import { PrismaService } from '../prisma/prisma.service';
 import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
 import { Injectable, NotFoundException, BadRequestException, Optional, Inject } from '@nestjs/common';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
@@ -6,11 +5,9 @@ import { AdminRepository } from './admin.repository';
 
 @Injectable()
 export class AdminService {
-    constructor(
+      constructor(
     @Inject(AdminRepository)
     private readonly adminRepo: AdminRepository,
-    @Optional()
-    private readonly prisma?: PrismaService,
     @Optional()
     private readonly payosPayoutService?: PayOSPayoutService,
   ) {}
@@ -273,14 +270,9 @@ export class AdminService {
   async executePayOSPayout(withdrawalId: string | number | bigint, adminUser?: any) {
     const rawWithdrawalId = BigInt(withdrawalId);
 
-    // Atomic race-condition prevention: conditionally transition PENDING -> PROCESSING
-    const count = this.prisma ? await this.prisma.$executeRaw`
-      UPDATE store_withdrawals 
-      SET status = 'PROCESSING', updated_at = NOW() 
-      WHERE withdrawal_id = ${rawWithdrawalId} AND status = 'PENDING'
-    ` : 1;
-
-    if (count === 0) {
+    // Atomic race-condition prevention via Pure Repository
+    const claimed = await this.adminRepo.claimPendingWithdrawal(rawWithdrawalId);
+    if (!claimed) {
       const current = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
       if (!current) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
       throw new BadRequestException(
@@ -292,25 +284,40 @@ export class AdminService {
     if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
 
     if (!this.payosPayoutService) {
+      await this.adminRepo.refundFailedWithdrawalTransaction(rawWithdrawalId, 'PayOSPayoutService chưa sẵn sàng');
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }
 
+    // Provider reference must be stable and idempotent (NO Date.now() suffix!)
+    const providerReferenceId = withdrawal.providerReferenceId || withdrawal.withdrawalCode;
+
     const payoutPayload = {
-      referenceId: 'WITHDRAW_' + (withdrawal.withdrawalCode || withdrawal.withdrawalId) + '_' + Date.now(),
+      referenceId: providerReferenceId,
       amount: Number(withdrawal.amount),
-      description: 'Chi ho SOB ' + withdrawal.withdrawalCode,
-      toBin: (withdrawal.wallet as any)?.bankBin || '970422',
-      toAccountNumber: (withdrawal.wallet as any)?.bankAccount || '000000000',
+      description: ('Chi ho SOB ' + withdrawal.withdrawalCode).slice(0, 25),
+      toBin: (withdrawal.wallet as any)?.bankBin || withdrawal.bankCode || '970422',
+      toAccountNumber: (withdrawal.wallet as any)?.bankAccount || withdrawal.bankAccountNumber || '000000000',
     };
 
-    const payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
+    try {
+      const payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
+      const providerPayoutId = payoutResult?.data?.id || `payout_${providerReferenceId}`;
 
-    return this.adminRepo.updateWithdrawal(rawWithdrawalId, {
-      status: 'PROCESSING',
-      providerReferenceId: payoutPayload.referenceId,
-      approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
-      processedAt: new Date(),
-    });
+      return await this.adminRepo.updateWithdrawal(rawWithdrawalId, {
+        status: 'PROCESSING',
+        providerReferenceId,
+        providerPayoutId,
+        approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
+        processedAt: new Date(),
+      });
+    } catch (err: any) {
+      // Auto-refund and mark FAILED on PayOS failure, network error, or exception
+      await this.adminRepo.refundFailedWithdrawalTransaction(
+        rawWithdrawalId,
+        err.message || 'Lỗi kết nối hoặc xử lý từ PayOS'
+      );
+      throw new BadRequestException(`Xuất lệnh chi hộ PayOS thất bại: ${err.message || 'Lỗi cổng PayOS'}`);
+    }
   }
 
   async payoutViaPayOS(withdrawalId: string | number | bigint, adminUser?: any) {
