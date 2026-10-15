@@ -309,7 +309,12 @@ export class AdminRepository {
 
       if (!lockedWithdrawal) return null;
 
-      // 2. Anti-double refund: check if WITHDRAWAL_REFUND ledger tx already recorded
+      // 2. Strict status check: only refund if status is PENDING or PROCESSING (prevent redundant refund on FAILED/SUCCEEDED/REJECTED)
+      if (!['PENDING', 'PROCESSING'].includes(lockedWithdrawal.status)) {
+        return tx.storeWithdrawal.findUnique({ where: { withdrawalId } });
+      }
+
+      // 3. Anti-double refund: check if WITHDRAWAL_REFUND ledger tx already recorded
       const existingRefundTx = await tx.walletTransaction.findFirst({
         where: {
           walletId: lockedWithdrawal.wallet_id,
