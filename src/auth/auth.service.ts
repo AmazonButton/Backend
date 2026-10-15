@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
   Inject,
   HttpException,
   HttpStatus,
@@ -757,4 +758,78 @@ export class AuthService {
       },
     };
   }
+
+  async updateProfile(
+    userId: string,
+    data: {
+      fullName?: string;
+      phone?: string;
+      deliveryAddress?: string;
+      storeName?: string;
+      storeAddress?: string;
+      storePhone?: string;
+    },
+  ) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(data.fullName ? { fullName: data.fullName.trim() } : {}),
+        ...(data.phone ? { phone: data.phone.trim() } : {}),
+      },
+    });
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { customerProfile: true, store: true },
+    });
+
+    if (user?.customerProfile && (data.deliveryAddress || data.storeAddress)) {
+      await this.prisma.customerProfile.update({
+        where: { id: user.customerProfile.id },
+        data: { deliveryAddress: (data.deliveryAddress || data.storeAddress)!.trim() },
+      });
+    }
+
+    if (user?.store) {
+      await this.prisma.store.update({
+        where: { id: user.store.id },
+        data: {
+          ...(data.storeName ? { name: data.storeName.trim() } : {}),
+          ...(data.storeAddress || data.deliveryAddress
+            ? { address: (data.storeAddress || data.deliveryAddress)!.trim() }
+            : {}),
+          ...(data.storePhone || data.phone
+            ? { phone: (data.storePhone || data.phone)!.trim() }
+            : {}),
+          ...(data.fullName ? { ownerName: data.fullName.trim() } : {}),
+        },
+      });
+    }
+
+    return this.getMe(userId);
+  }
+
+  async changePassword(
+    userId: string,
+    body: { currentPassword: string; newPassword: string },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException({ success: false, message: 'Không tìm thấy tài khoản người dùng' });
+    }
+    const isMatch = await bcrypt.compare(body.currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new BadRequestException({ success: false, message: 'Mật khẩu hiện tại không chính xác' });
+    }
+    if (!body.newPassword || body.newPassword.length < 6) {
+      throw new BadRequestException({ success: false, message: 'Mật khẩu mới phải có ít nhất 6 ký tự' });
+    }
+    const newHash = await bcrypt.hash(body.newPassword, 10);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash },
+    });
+    return { success: true, message: 'Đổi mật khẩu thành công!' };
+  }
 }
+

@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Body,
   Query,
   UseGuards,
@@ -67,6 +68,28 @@ export class AuthController {
   @Get('me')
   getMe(@Request() req: any) {
     return this.authService.getMe(req.user.id || req.user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('profile')
+  updateProfilePut(@Request() req: any, @Body() body: any) {
+    const userId = req.user?.id || req.user?.userId;
+    return this.authService.updateProfile(userId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('profile')
+  updateProfilePost(@Request() req: any, @Body() body: any) {
+    const userId = req.user?.id || req.user?.userId;
+    return this.authService.updateProfile(userId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  @Post('change-password')
+  changePassword(@Request() req: any, @Body() body: any) {
+    const userId = req.user?.id || req.user?.userId;
+    return this.authService.changePassword(userId, body);
   }
 
   @UseGuards(AuthRateLimitGuard)
