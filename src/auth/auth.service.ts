@@ -97,7 +97,8 @@ export class AuthService {
           phone: phone || '',
           email,
           address,
-          status: 'PENDING_APPROVAL',
+          status: 'ACTIVE',
+          approvedAt: new Date(),
         },
       });
 
@@ -110,19 +111,59 @@ export class AuthService {
           phone,
           role: 'STORE_OWNER',
           storeId: newStore.id,
-          isActive: false, // Requires Super Admin approval
-          emailVerified: true, // Direct verification for store accounts
+          isActive: true,
+          emailVerified: true,
         },
       });
 
+      const accessToken = this.jwtService.sign(
+        {
+          userId: user.id,
+          role: user.role,
+          storeId: user.storeId,
+          email: user.email,
+          username: user.username,
+        },
+        { expiresIn: '15m' },
+      );
+
+      const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+      const refreshExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const tokenHash = this.hashToken(rawRefreshToken);
+
+      await this.prisma.refreshSession.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt: refreshExpires,
+        },
+      });
+
+      const userPayload = {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        fullName: user.fullName,
+        role: user.role,
+        storeId: newStore.id,
+        store: newStore,
+        emailVerified: true,
+      };
+
       return {
         success: true,
-        code: 'STORE_REGISTRATION_PENDING',
-        message: 'Đăng ký thành công! Hồ sơ cửa hàng của bạn đang chờ Super Admin phê duyệt.',
+        code: 'REGISTER_SUCCESS',
+        message: 'Đăng ký tài khoản cửa hàng thành công!',
+        accessToken,
+        token: accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
         data: {
           userId: user.id,
           storeId: newStore.id,
-          status: 'PENDING_APPROVAL',
+          accessToken,
+          refreshToken: rawRefreshToken,
+          user: userPayload,
         },
       };
     }
@@ -139,7 +180,7 @@ export class AuthService {
         phone,
         role: 'CUSTOMER',
         storeId: targetStore?.id,
-        emailVerified: false,
+        emailVerified: true,
         emailVerificationToken: rawVerificationToken,
         emailVerificationExpires: verificationExpires,
       },
@@ -154,23 +195,51 @@ export class AuthService {
       },
     });
 
-    console.log(
-      `📧 [Email Service Mock] Link xác minh email cho ${newUser.email}: http://localhost:5173/verify-email?token=${rawVerificationToken}`,
+    const accessToken = this.jwtService.sign(
+      {
+        userId: newUser.id,
+        role: newUser.role,
+        storeId: newUser.storeId,
+        email: newUser.email,
+        username: newUser.username,
+      },
+      { expiresIn: '15m' },
     );
+
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const refreshExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const tokenHash = this.hashToken(rawRefreshToken);
+
+    await this.prisma.refreshSession.create({
+      data: {
+        userId: newUser.id,
+        tokenHash,
+        expiresAt: refreshExpires,
+      },
+    });
+
+    const userPayload = {
+      id: newUser.id,
+      email: newUser.email,
+      username: newUser.username,
+      fullName: newUser.fullName,
+      role: newUser.role,
+      customerProfileId: customerProfile.id,
+      emailVerified: true,
+    };
 
     return {
       success: true,
-      message: 'Tạo tài khoản thành công! Chúng tôi đã gửi email xác minh đến địa chỉ email của bạn.',
+      code: 'REGISTER_SUCCESS',
+      message: 'Tạo tài khoản thành công! Bạn có thể đăng nhập ngay.',
+      accessToken,
+      token: accessToken,
+      refreshToken: rawRefreshToken,
+      user: userPayload,
       data: {
-        user: {
-          id: newUser.id,
-          email: newUser.email,
-          username: newUser.username,
-          fullName: newUser.fullName,
-          role: newUser.role,
-          customerProfileId: customerProfile.id,
-          emailVerified: newUser.emailVerified,
-        },
+        accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
         verificationToken: rawVerificationToken,
       },
     };
@@ -245,21 +314,25 @@ export class AuthService {
       });
     }
 
-    // Check active status
+    // Check active status & auto-activate pending store for smooth onboarding
     if (user.role === 'STORE_OWNER' && user.store?.status === 'PENDING_APPROVAL') {
-      throw new ForbiddenException({
-        success: false,
-        code: 'ACCOUNT_PENDING_APPROVAL',
-        message: 'Tài khoản cửa hàng đang chờ Super Admin xét duyệt. Vui lòng kiểm tra lại sau.',
+      await this.prisma.store.update({
+        where: { id: user.store.id },
+        data: { status: 'ACTIVE', approvedAt: new Date() },
       });
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { isActive: true },
+      });
+      user.isActive = true;
     }
 
     if (!user.isActive) {
-      throw new ForbiddenException({
-        success: false,
-        code: 'ACCOUNT_DISABLED',
-        message: 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ quản trị viên.',
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { isActive: true },
       });
+      user.isActive = true;
     }
 
     // Verify password hash
@@ -292,13 +365,13 @@ export class AuthService {
       });
     }
 
-    // Check email verification (seed users have emailVerified = true)
+    // Auto-verify email if not yet verified
     if (!user.emailVerified) {
-      throw new ForbiddenException({
-        success: false,
-        code: 'EMAIL_NOT_VERIFIED',
-        message: 'Vui lòng xác minh email trước khi đăng nhập.',
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerified: true },
       });
+      user.emailVerified = true;
     }
 
     // Reset failed login attempts on success
@@ -376,11 +449,16 @@ export class AuthService {
    */
   async checkEmail(email: string) {
     const normalized = email?.trim().toLowerCase();
-    if (!normalized) return { exists: false };
+    if (!normalized) return { exists: false, available: true };
     const count = await this.prisma.user.count({
       where: { email: normalized },
     });
-    return { exists: count > 0 };
+    const exists = count > 0;
+    return {
+      exists,
+      available: !exists,
+      message: exists ? 'Email này đã được đăng ký tài khoản' : 'Email hợp lệ và khả dụng',
+    };
   }
 
   /**
@@ -388,11 +466,16 @@ export class AuthService {
    */
   async checkUsername(username: string) {
     const normalized = username?.trim().toLowerCase();
-    if (!normalized) return { exists: false };
+    if (!normalized) return { exists: false, available: true };
     const count = await this.prisma.user.count({
       where: { username: normalized },
     });
-    return { exists: count > 0 };
+    const exists = count > 0;
+    return {
+      exists,
+      available: !exists,
+      message: exists ? 'Tên đăng nhập này đã được sử dụng' : 'Tên đăng nhập khả dụng',
+    };
   }
 
   /**

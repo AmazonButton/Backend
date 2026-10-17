@@ -41,7 +41,7 @@ export class AppController {
   }
 
   @HttpCode(200)
-  @Post('event')
+  @Post(['event', 'test-button-event'])
   async handleSimpleEvent(@Body() body: any) {
     const rawEvent = body.event || body.eventType || 'success';
     const event = (rawEvent === 'WAKEUP') ? 'SINGLE_PRESS' : rawEvent;
