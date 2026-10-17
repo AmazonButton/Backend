@@ -19,6 +19,7 @@ if (cleanupTimer && typeof cleanupTimer.unref === 'function') {
 export class IotService {
   private readonly logger = new Logger(IotService.name);
   public readonly deviceCooldowns = new Map<string, number>();
+  public readonly inFlightRequests = new Set<string>();
   public readonly debounceCooldownMs = 2500;
 
   constructor(
@@ -40,8 +41,34 @@ export class IotService {
       throw new BadRequestException('Thiết bị không xác định hợp lệ (Thiếu buttonId/deviceId)');
     }
     const deviceId = BigInt(rawDeviceId);
+    const reqKey = `${rawDeviceId}:${requestId}`;
 
-    // 1. Hardware switch debounce / anti-jamming check FIRST (before idempotency lock)
+    // 0. Early Idempotency Check (Network Re-transmission & In-Flight Concurrency)
+    if (processedRequests.has(reqKey) || processedRequests.has(requestId)) {
+      const cached = processedRequests.get(reqKey) || processedRequests.get(requestId);
+      return {
+        success: true,
+        isDuplicate: true,
+        message: 'Yêu cầu trùng lặp đã được ngăn chặn (Idempotency Key)',
+        data: {
+          orderId: cached?.orderId ? cached.orderId.toString() : undefined,
+          isDuplicate: true,
+        },
+      };
+    }
+
+    if (this.inFlightRequests.has(reqKey)) {
+      return {
+        success: true,
+        isDuplicate: true,
+        message: 'Yêu cầu đang được xử lý bởi một tiến trình khác (In-Flight Concurrency)',
+        data: {
+          isDuplicate: true,
+        },
+      };
+    }
+
+    // 1. Hardware switch debounce / anti-jamming check (for NEW distinct presses)
     const now = Date.now();
     const lastPressTime = this.deviceCooldowns.get(device.deviceId || rawDeviceId.toString()) || 0;
     if (now - lastPressTime < this.debounceCooldownMs) {
@@ -56,6 +83,7 @@ export class IotService {
       };
     }
     this.deviceCooldowns.set(device.deviceId || rawDeviceId.toString(), now);
+    this.inFlightRequests.add(reqKey);
 
     // 2. Handle Heartbeat (No order creation, no idempotency lock needed)
     if (eventType === 'HEARTBEAT') {
@@ -194,6 +222,7 @@ export class IotService {
       }
 
       processedRequests.set(requestId, orderResult);
+      processedRequests.set(reqKey, orderResult);
 
       return {
         success: true,
@@ -216,6 +245,8 @@ export class IotService {
         this.logger.error(`Failed to update key status to FAILED: ${updateErr.message}`);
       }
       throw orderErr;
+    } finally {
+      this.inFlightRequests.delete(reqKey);
     }
   }
 

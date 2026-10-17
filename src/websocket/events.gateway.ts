@@ -172,14 +172,16 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   emitToStore(storeId: string, event: string, payload: any) {
     if (this.server) {
-      this.server.to(`store_${storeId}`).to(`store:${storeId}`).emit(event, payload);
+      this.server.to(`store_${storeId}`).emit(event, payload);
+      this.server.to(`store:${storeId}`).emit(event, payload);
       this.logger.log(`📢 [WS -> Store ${storeId}] ${event}`);
     }
   }
 
   emitToDriver(driverId: string, event: string, payload: any) {
     if (this.server) {
-      this.server.to(`driver:${driverId}`).to(`user:${driverId}`).emit(event, payload);
+      this.server.to(`driver:${driverId}`).emit(event, payload);
+      this.server.to(`user:${driverId}`).emit(event, payload);
       this.logger.log(`📢 [WS -> Driver ${driverId}] ${event}`);
     }
   }

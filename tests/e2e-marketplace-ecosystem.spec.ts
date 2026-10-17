@@ -135,6 +135,12 @@ async function testFullMarketplaceE2E() {
       Number(rentalContract.totalRentAmount) === expectedRentTotal && rentalContract.status === 'PENDING_PAYMENT'
     );
 
+    // Simulate payment completion: PENDING_PAYMENT -> PAID
+    await prisma.buttonRental.update({
+      where: { rentalId: rentalContract.rentalId },
+      data: { status: 'PAID' },
+    });
+
     const activatedRental = await rentalsService.activateRental(rentalContract.rentalId);
     assert('Customer rental contract activated upon payment confirmation', activatedRental.status === 'ACTIVE');
 

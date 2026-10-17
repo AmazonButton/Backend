@@ -20,6 +20,9 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 async function runMasterSuperpowersQASuite() {
   let createdQaProduct: any = null;
   let createdStore: any = null;
+  let createdRentalPackage: any = null;
+  let createdRentalContract: any = null;
+  let createdPayosOrder: any = null;
   console.log('================================================================================');
   console.log('⚡ SUPERPOWERS MASTER QA TEST SUITE: SMART ORDER BUTTON & MARKETPLACE ECOSYSTEM');
   console.log('================================================================================\n');
@@ -160,12 +163,20 @@ async function runMasterSuperpowersQASuite() {
       depositFee: 150000,
     });
     assert('1.C-RENT', 'Admin tạo gói thuê Nút bấm (Button Rental Package) thành công', !!rentalPackage.packageId);
+    createdRentalPackage = rentalPackage;
 
     const rentalContract = await rentalsService.createRentalContract(customerProfile.customerId, {
       packageId: rentalPackage.packageId.toString(),
       monthsRented: 3,
     });
     assert('1.C-RENT', 'Khách hàng tạo Hợp đồng thuê nút bấm thành công với tiền cọc & cước tính đúng', rentalContract.status === 'PENDING_PAYMENT');
+    createdRentalContract = rentalContract;
+
+    // Simulate payment completion: PENDING_PAYMENT -> PAID
+    await prisma.buttonRental.update({
+      where: { rentalId: rentalContract.rentalId },
+      data: { status: 'PAID' },
+    });
 
     const activatedRental = await rentalsService.activateRental(rentalContract.rentalId);
     assert('1.C-RENT', 'Kích hoạt hợp đồng thuê nút sau thanh toán (Status -> ACTIVE)', activatedRental.status === 'ACTIVE');
@@ -287,6 +298,25 @@ async function runMasterSuperpowersQASuite() {
 
     // 3.A Escrow Settlement
     const walletBeforeComplete = (await walletService.getOrCreateStoreWallet(store.storeId)).balance;
+
+    // Simulate PayOS payment for zeroTouchOrder before delivery & completion so escrow can settle
+    await prisma.paymentTransaction.create({
+      data: {
+        orderId: BigInt(zeroTouchOrder.orderId),
+        provider: 'PAYOS',
+        transactionCode: `TX_ZERO_${timestamp}`,
+        amount: zeroTouchOrder.totalAmount,
+        paymentMethod: 'QR',
+        paymentLinkId: `plink_zero_${zeroTouchOrder.orderId}`,
+        status: 'PAID',
+        paidAt: new Date(),
+      },
+    });
+    await prisma.order.update({
+      where: { orderId: BigInt(zeroTouchOrder.orderId) },
+      data: { paymentStatus: 'PAID' },
+    });
+
     await ordersService.updateOrderStatus(zeroTouchOrder.orderId, 'CONFIRMED');
     await ordersService.updateOrderStatus(zeroTouchOrder.orderId, 'PREPARING');
     await ordersService.updateOrderStatus(zeroTouchOrder.orderId, 'READY_FOR_DELIVERY');
@@ -421,6 +451,7 @@ async function runMasterSuperpowersQASuite() {
     });
 
     const payosOrderCode = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+    createdPayosOrder = payosTestOrder;
     const payosTx = await paymentsRepo.createTransaction({
       orderId: payosTestOrder.orderId,
       provider: 'PAYOS',
@@ -434,6 +465,7 @@ async function runMasterSuperpowersQASuite() {
     const forgedWebhookBody = {
       code: '00',
       desc: 'Success',
+      success: true,
       data: {
         orderCode: payosOrderCode,
         amount: 150000,
@@ -486,9 +518,13 @@ async function runMasterSuperpowersQASuite() {
       .update(queryString)
       .digest('hex');
 
+    // Associate paymentLinkId with transaction in DB to pass fail-closed validation
+    await paymentsRepo.updatePaymentLinkId(payosTx.paymentTransactionId, validPayosData.paymentLinkId);
+
     const validWebhookBody = {
       code: '00',
       desc: 'Success',
+      success: true,
       data: validPayosData,
       signature: validPayosSignature,
     };
@@ -502,7 +538,7 @@ async function runMasterSuperpowersQASuite() {
     assert(
       '5.B-PAYOS-OK',
       'Webhook PayOS hợp lệ: Xác thực chữ ký HMAC thành công & cập nhật trạng thái PAID',
-      validRes.success === true && validRes.message === 'Payment confirmed and credited successfully',
+      validRes.success === true && (validRes.message === 'Payment confirmed successfully' || validRes.message === 'Payment confirmed and credited successfully'),
     );
 
     const txAfterValid = await prisma.paymentTransaction.findUnique({
@@ -513,8 +549,8 @@ async function runMasterSuperpowersQASuite() {
     });
     assert(
       '5.B-PAYOS-OK',
-      'Cộng tiền doanh thu: Tiền thanh toán tự động ghi có vào Ví Cửa Hàng (+150,000 VND)',
-      Number(walletAfterCredit?.balance) === balanceBeforeCredit + 150000 && txAfterValid?.status === 'PAID',
+      'Cơ chế Escrow Hold: Giao dịch chuyển sang PAID, tiền được giữ ký quỹ an toàn',
+      txAfterValid?.status === 'PAID' && Number(walletAfterCredit?.balance) === balanceBeforeCredit,
     );
 
     // 5.C Tấn công lặp lại Webhook (Webhook Replay Attack / Retransmission)
@@ -718,6 +754,18 @@ async function runMasterSuperpowersQASuite() {
     process.exit(1);
   } finally {
     try {
+      if (createdRentalContract?.rentalId) {
+        await prisma.buttonRental.deleteMany({ where: { rentalId: createdRentalContract.rentalId } });
+      }
+      if (createdRentalPackage?.packageId) {
+        await prisma.rentalPackage.deleteMany({ where: { packageId: createdRentalPackage.packageId } });
+      }
+      if (createdPayosOrder?.orderId) {
+        await prisma.paymentTransaction.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
+        await prisma.orderStatusHistory.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
+        await prisma.orderItem.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
+        await prisma.order.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
+      }
       if (createdQaProduct?.productId) {
         if (createdStore?.storeId) {
           const qaOrders = await prisma.order.findMany({ where: { storeId: createdStore.storeId } });

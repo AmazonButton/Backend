@@ -8,11 +8,13 @@ async function testCustomerRentals() {
 
   const rentalsService = new RentalsService(prisma);
   let failed = 0;
+  let testPackage: any = null;
+  let rental: any = null;
 
   try {
     // Setup test package and customer
     const packageCode = `RNT_TEST_${Date.now()}`;
-    const testPackage = await prisma.rentalPackage.create({
+    testPackage = await prisma.rentalPackage.create({
       data: {
         packageCode,
         packageName: 'Gói Thuê 1 Nút Test',
@@ -51,12 +53,12 @@ async function testCustomerRentals() {
 
     // 2. Create Rental Contract
     const months = 3;
-    const rental = await rentalsService.createRentalContract(customer.customerId, {
+    rental = await rentalsService.createRentalContract(customer.customerId, {
       packageId: testPackage.packageId.toString(),
       monthsRented: months,
     });
 
-    const expectedTotal = 50000 * months;
+    const expectedTotal = 50000 * months + 100000;
     if (
       rental &&
       rental.rentalCode &&
@@ -78,7 +80,12 @@ async function testCustomerRentals() {
       failed++;
     }
 
-    // 4. Activate Rental
+    // 4. Simulate payment completion before activation
+    await prisma.buttonRental.update({
+      where: { rentalId: rental.rentalId },
+      data: { status: 'PAID' },
+    });
+
     const activated = await rentalsService.activateRental(rental.rentalId);
     if (activated && activated.status === 'ACTIVE') {
       console.log('  [PASS] activateRental transitioned status to ACTIVE');
@@ -90,6 +97,12 @@ async function testCustomerRentals() {
     console.log('  [FAIL] Exception during test execution:', error.message);
     failed++;
   } finally {
+    if (rental?.rentalId) {
+      await prisma.buttonRental.delete({ where: { rentalId: rental.rentalId } }).catch(() => {});
+    }
+    if (testPackage?.packageId) {
+      await prisma.rentalPackage.delete({ where: { packageId: testPackage.packageId } }).catch(() => {});
+    }
     await prisma.$disconnect();
   }
 

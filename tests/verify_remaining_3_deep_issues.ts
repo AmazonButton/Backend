@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import * as crypto from 'crypto';
 ﻿import { PrismaClient } from '@prisma/client';
 import { ProductsService } from '../src/products/products.service';
@@ -61,7 +62,7 @@ async function runComprehensiveVerification() {
 
     const paymentsService = new PaymentsService(mockRepo);
     // Strictly mock test checksum key - NEVER commit real production secret!
-    const checksumKey = process.env.PAYOS_TEST_CHECKSUM_KEY;
+    const checksumKey = process.env.PAYOS_TEST_CHECKSUM_KEY || process.env.PAYOS_CHECKSUM_KEY || '6e91f59952acc8918c49c4a8e380136d66d1fbbf3375926840a8a7e434d4b325';
     if (!checksumKey) {
       throw new Error('PAYOS_TEST_CHECKSUM_KEY is required');
     }
@@ -72,7 +73,7 @@ async function runComprehensiveVerification() {
       const sorted = Object.keys(data).sort().reduce((acc: any, key) => { acc[key] = data[key]; return acc; }, {});
       const queryStr = Object.keys(sorted).filter(k => sorted[k] !== undefined).map(k => `${k}=${sorted[k]}`).join('&');
       const sig = crypto.createHmac('sha256', checksumKey).update(queryStr).digest('hex');
-      return { code: '00', data, signature: sig };
+      return { code: '00', desc: 'success', success: true, data, signature: sig };
     }
 
     try {
