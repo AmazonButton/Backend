@@ -746,12 +746,10 @@ async function runMasterSuperpowersQASuite() {
     console.log('--------------------------------------------------------------------------------\n');
 
     if (failedTests > 0) {
-      process.exit(1);
+      throw new Error(`QA Suite finished with ${failedTests} failed assertions.`);
     }
-    process.exit(0);
   } catch (err: any) {
-    console.error('Fatal error during Superpowers QA Suite:', err);
-    process.exit(1);
+    console.error('Fatal error during Superpowers QA Suite:', err.message || err);
   } finally {
     try {
       if (createdRentalContract?.rentalId) {
@@ -766,11 +764,21 @@ async function runMasterSuperpowersQASuite() {
         await prisma.orderItem.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
         await prisma.order.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
       }
+      if (createdStore?.storeId) {
+        // Clean up withdrawals and wallet transactions strictly for this test store
+        await prisma.walletTransaction.deleteMany({
+          where: { wallet: { storeId: createdStore.storeId } },
+        });
+        await prisma.storeWithdrawal.deleteMany({
+          where: { storeId: createdStore.storeId },
+        });
+      }
       if (createdQaProduct?.productId) {
         if (createdStore?.storeId) {
           const qaOrders = await prisma.order.findMany({ where: { storeId: createdStore.storeId } });
           const qaOrderIds = qaOrders.map((o: any) => o.orderId);
           if (qaOrderIds.length > 0) {
+            await prisma.iotIdempotencyKey.deleteMany({ where: { orderId: { in: qaOrderIds } } });
             await prisma.paymentTransaction.deleteMany({ where: { orderId: { in: qaOrderIds } } });
             await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: qaOrderIds } } });
             await prisma.orderItem.deleteMany({ where: { orderId: { in: qaOrderIds } } });
@@ -787,6 +795,11 @@ async function runMasterSuperpowersQASuite() {
     }
     await prisma.$disconnect();
   }
+
+  if (failedTests > 0) {
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 runMasterSuperpowersQASuite();

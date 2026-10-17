@@ -12,6 +12,10 @@ async function testStoreWithdrawal() {
   const adminRepo = new AdminRepository(prisma);
   const adminService = new AdminService(adminRepo);
   let failed = 0;
+  let withdrawal: any = null;
+  let secondReq: any = null;
+  let walletRef: any = null;
+  let originalBalance: any = null;
 
   try {
     // 1. Setup a test store with funds
@@ -19,6 +23,9 @@ async function testStoreWithdrawal() {
     if (!store) throw new Error('No store found');
 
     const wallet = await walletService.getOrCreateStoreWallet(store.storeId);
+    walletRef = wallet;
+    originalBalance = wallet.balance;
+
     // Ensure store has at least 1,000,000 VND
     await prisma.storeWallet.update({
       where: { walletId: wallet.walletId },
@@ -34,7 +41,7 @@ async function testStoreWithdrawal() {
       bankAccountHolder: 'CHU CUA HANG TEST',
     };
 
-    const withdrawal = await (walletService as any).requestWithdrawal(store.storeId, reqDto);
+    withdrawal = await (walletService as any).requestWithdrawal(store.storeId, reqDto);
     if (
       withdrawal &&
       Number(withdrawal.amount) === withdrawAmount &&
@@ -81,7 +88,7 @@ async function testStoreWithdrawal() {
     }
 
     // 4. Second Withdrawal & Admin Transfer Approval
-    const secondReq = await (walletService as any).requestWithdrawal(store.storeId, {
+    secondReq = await (walletService as any).requestWithdrawal(store.storeId, {
       ...reqDto,
       amount: 250000,
     });
@@ -104,6 +111,50 @@ async function testStoreWithdrawal() {
     console.log('  [FAIL] Exception during test execution:', error.message);
     failed++;
   } finally {
+    try {
+      if (withdrawal?.withdrawalId) {
+        await prisma.walletTransaction.deleteMany({
+          where: {
+            referenceId: {
+              in: [
+                withdrawal.withdrawalCode,
+                withdrawal.withdrawalId.toString(),
+                `WITHDRAWAL:${withdrawal.withdrawalId}`,
+                `REFUND:WITHDRAWAL:${withdrawal.withdrawalId}`,
+              ],
+            },
+          },
+        });
+        await prisma.storeWithdrawal.delete({
+          where: { withdrawalId: withdrawal.withdrawalId },
+        });
+      }
+      if (secondReq?.withdrawalId) {
+        await prisma.walletTransaction.deleteMany({
+          where: {
+            referenceId: {
+              in: [
+                secondReq.withdrawalCode,
+                secondReq.withdrawalId.toString(),
+                `WITHDRAWAL:${secondReq.withdrawalId}`,
+                `REFUND:WITHDRAWAL:${secondReq.withdrawalId}`,
+              ],
+            },
+          },
+        });
+        await prisma.storeWithdrawal.delete({
+          where: { withdrawalId: secondReq.withdrawalId },
+        });
+      }
+      if (walletRef && originalBalance !== null) {
+        await prisma.storeWallet.update({
+          where: { walletId: walletRef.walletId },
+          data: { balance: originalBalance },
+        });
+      }
+    } catch (cleanupErr: any) {
+      console.warn('Cleanup warning:', cleanupErr.message);
+    }
     await prisma.$disconnect();
   }
 
