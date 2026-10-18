@@ -20,42 +20,52 @@ export class NotificationsService {
   async registerFcmToken(userId: bigint | number, dto: RegisterFcmTokenDto) {
     const targetUserId = BigInt(userId);
     const trimmedToken = dto.token.trim();
+    const normalizedDeviceType = dto.deviceType ? dto.deviceType.trim().toUpperCase() : null;
 
-    const existing = await this.prisma.userFcmToken.findUnique({
-      where: { token: trimmedToken },
-    });
-
-    if (existing) {
-      const updated = await this.prisma.userFcmToken.update({
-        where: { id: existing.id },
-        data: {
+    // Nguyen tu hoa (Atomic Upsert) de loai bo triet de Race Condition
+    // Neu co 2 request dong thoi cung mot token, Prisma Upsert hoac P2002 retry se xu ly an toan tuyet doi.
+    try {
+      const record = await this.prisma.userFcmToken.upsert({
+        where: { token: trimmedToken },
+        update: {
           userId: targetUserId,
-          deviceType: dto.deviceType || existing.deviceType,
+          ...(normalizedDeviceType ? { deviceType: normalizedDeviceType } : {}),
           isActive: true,
           updatedAt: new Date(),
         },
+        create: {
+          userId: targetUserId,
+          token: trimmedToken,
+          deviceType: normalizedDeviceType,
+          isActive: true,
+        },
       });
+
       return {
         success: true,
-        message: 'FCM token updated and activated successfully',
-        tokenId: updated.id.toString(),
+        message: 'FCM token registered successfully',
+        tokenId: record.id.toString(),
       };
+    } catch (err: any) {
+      // P2002: Unique constraint failed on token do collision dong thoi
+      if (err.code === 'P2002') {
+        const fallback = await this.prisma.userFcmToken.update({
+          where: { token: trimmedToken },
+          data: {
+            userId: targetUserId,
+            ...(normalizedDeviceType ? { deviceType: normalizedDeviceType } : {}),
+            isActive: true,
+            updatedAt: new Date(),
+          },
+        });
+        return {
+          success: true,
+          message: 'FCM token registered successfully (concurrency resolved)',
+          tokenId: fallback.id.toString(),
+        };
+      }
+      throw err;
     }
-
-    const created = await this.prisma.userFcmToken.create({
-      data: {
-        userId: targetUserId,
-        token: trimmedToken,
-        deviceType: dto.deviceType || null,
-        isActive: true,
-      },
-    });
-
-    return {
-      success: true,
-      message: 'FCM token registered successfully',
-      tokenId: created.id.toString(),
-    };
   }
 
   /**

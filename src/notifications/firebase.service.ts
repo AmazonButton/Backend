@@ -20,18 +20,19 @@ export class FirebaseService implements OnModuleInit {
   }
 
   private initializeFirebase() {
-    try {
-      const configuredPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './secrets/firebase-service-account.json';
-      const resolvedPath = path.isAbsolute(configuredPath)
-        ? configuredPath
-        : path.resolve(process.cwd(), configuredPath);
+    const configuredPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './secrets/firebase-service-account.json';
+    const resolvedPath = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath);
 
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    try {
       if (fs.existsSync(resolvedPath)) {
         const fileContent = fs.readFileSync(resolvedPath, 'utf8').trim();
         if (fileContent.startsWith('{') && fileContent.includes('private_key')) {
           const serviceAccount = JSON.parse(fileContent);
-          
-          // Avoid re-initialization error if already created
+
           const appName = 'SOB_FIREBASE_APP';
           const existingApp = admin.apps.find((app) => app?.name === appName);
           if (existingApp) {
@@ -49,11 +50,21 @@ export class FirebaseService implements OnModuleInit {
         }
       }
 
+      // Production Guard: Khong cho phep am tham chuyen sang Mock Mode o moi truong Production
+      if (isProduction) {
+        const fatalMsg = `[FirebaseAdmin FATAL] Service account credentials not found or invalid at "${resolvedPath}" in PRODUCTION environment! Failing fast.`;
+        this.logger.error(fatalMsg);
+        throw new Error(fatalMsg);
+      }
+
       this.logger.warn(
-        `[FirebaseAdmin] Service account file not found or invalid at ${resolvedPath}. FCM Push Notifications will operate in graceful fallback / simulation mode.`,
+        `[FirebaseAdmin] Service account file not found or invalid at ${resolvedPath}. Running in NODE_ENV=${process.env.NODE_ENV || 'development'}. FCM will operate in graceful simulation/mock mode.`,
       );
       this.isMockMode = true;
     } catch (err: any) {
+      if (isProduction) {
+        throw err;
+      }
       this.logger.error(`[FirebaseAdmin] Error initializing Firebase Admin: ${err.message}`, err.stack);
       this.isMockMode = true;
     }
@@ -61,6 +72,10 @@ export class FirebaseService implements OnModuleInit {
 
   get isInitialized(): boolean {
     return this.firebaseApp !== null && !this.isMockMode;
+  }
+
+  get isMock(): boolean {
+    return this.isMockMode;
   }
 
   /**
