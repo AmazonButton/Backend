@@ -115,16 +115,19 @@ export class ProductsService {
       throw new NotFoundException('San pham khong ton tai');
     }
 
-    // Tenant Isolation: STORE_OWNER chi duoc xem san pham cua cua hang minh
-    // CUSTOMER va SYSTEM_ADMIN / SUPER_ADMIN xem toan bo catalog
-    if (
-      user &&
-      user.role === 'STORE_OWNER' &&
-      user.storeId &&
-      product.storeId &&
-      product.storeId.toString() !== user.storeId.toString()
-    ) {
-      throw new ForbiddenException('Ban khong co quyen truy cap san pham cua cua hang khac');
+    // Tenant Isolation (Fail-Closed):
+    // STORE_OWNER va STAFF_INVENTORY chi duoc xem san pham cua cua hang minh.
+    // Thieu storeId -> 403 Forbidden.
+    // Khac storeId -> 403 Forbidden.
+    // CUSTOMER va SYSTEM_ADMIN / SUPER_ADMIN duoc phep xem toan bo catalog cong khai.
+    const isStoreScopedRole = user && (user.role === 'STORE_OWNER' || user.role === 'STAFF_INVENTORY');
+    if (isStoreScopedRole) {
+      if (!user.storeId) {
+        throw new ForbiddenException('Tai khoan quan ly hoac nhan vien chua duoc lien ket voi bat ky cua hang nao');
+      }
+      if (product.storeId && product.storeId.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException('Ban khong co quyen truy cap san pham cua cua hang khac');
+      }
     }
 
     return this.formatProduct(product);

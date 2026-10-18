@@ -31,9 +31,12 @@ async function runProductsHttpTestSuite() {
   let customerUser: any = null;
   let storeOwner1: any = null;
   let storeOwner2: any = null;
+  let storeOwnerNoStore: any = null;
+  let staffInventoryStore1: any = null;
   let testStore1: any = null;
   let testStore2: any = null;
   let testProductStore1: any = null;
+  let testProductStore2: any = null;
 
   try {
     // -------------------------------------------------------------------------
@@ -112,6 +115,40 @@ async function runProductsHttpTestSuite() {
       },
     });
 
+    // Owner without any store linked (Fail-closed check)
+    storeOwnerNoStore = await prisma.user.create({
+      data: {
+        username: `ownernostore_${ts}`,
+        email: `ownernostore_${ts}@example.com`,
+        fullName: 'Chu Cua Hang Chua Gan Store',
+        passwordHash: hash,
+        status: 'ACTIVE',
+      },
+    });
+
+    // Staff Inventory linked to Store 1 in DB
+    staffInventoryStore1 = await prisma.user.create({
+      data: {
+        username: `staff1_${ts}`,
+        email: `staff1_${ts}@example.com`,
+        fullName: 'Nhan Vien Kho Store 1',
+        passwordHash: hash,
+        status: 'ACTIVE',
+      },
+    });
+
+    const staffRole = await prisma.role.findUnique({ where: { roleCode: 'STAFF_INVENTORY' } });
+    if (staffRole) {
+      await prisma.storeStaff.create({
+        data: {
+          storeId: testStore1.storeId,
+          userId: staffInventoryStore1.userId,
+          roleId: staffRole.roleId,
+          status: 'ACTIVE',
+        },
+      });
+    }
+
     // Product of Store 1
     testProductStore1 = await prisma.product.create({
       data: {
@@ -142,6 +179,17 @@ async function runProductsHttpTestSuite() {
       },
     });
 
+    // Product of Store 2
+    testProductStore2 = await prisma.product.create({
+      data: {
+        storeId: testStore2.storeId,
+        productCode: `P-TEST-ST2-${ts}`,
+        productName: `Binh Nuoc Tinh Khiet Store 2 ${ts}`,
+        basePrice: 60000,
+        status: 'ACTIVE',
+      },
+    });
+
     const jwtSecret = process.env.JWT_SECRET || 'sob_jwt_secret_dev_2026';
     const jwtCustomer = jwt.sign(
       { userId: customerUser.userId.toString(), email: customerUser.email, username: customerUser.username, role: 'CUSTOMER' },
@@ -155,6 +203,16 @@ async function runProductsHttpTestSuite() {
     );
     const jwtOwner2 = jwt.sign(
       { userId: storeOwner2.userId.toString(), email: storeOwner2.email, username: storeOwner2.username, role: 'STORE_OWNER', storeId: testStore2.storeId.toString() },
+      jwtSecret,
+      { expiresIn: '1h' },
+    );
+    const jwtOwnerNoStore = jwt.sign(
+      { userId: storeOwnerNoStore.userId.toString(), email: storeOwnerNoStore.email, username: storeOwnerNoStore.username, role: 'STORE_OWNER' },
+      jwtSecret,
+      { expiresIn: '1h' },
+    );
+    const jwtStaff1 = jwt.sign(
+      { userId: staffInventoryStore1.userId.toString(), email: staffInventoryStore1.email, username: staffInventoryStore1.username, role: 'STAFF_INVENTORY', storeId: testStore1.storeId.toString() },
       jwtSecret,
       { expiresIn: '1h' },
     );
@@ -234,9 +292,9 @@ async function runProductsHttpTestSuite() {
     );
 
     // -------------------------------------------------------------------------
-    // TEST 6: TENANT ISOLATION (CHÍNH SÁCH BẢO MẬT STORE OWNER & CUSTOMER)
+    // TEST 6: CHÍNH SÁCH TENANT ISOLATION (STORE_OWNER, STAFF_INVENTORY & FAIL-CLOSED)
     // -------------------------------------------------------------------------
-    console.log('\n[SECTION 6] KIỂM THỬ CHÍNH SÁCH TENANT (BOLA / IDOR RESTRICTION)');
+    console.log('\n[SECTION 6] KIỂM THỬ CHÍNH SÁCH TENANT (BOLA / IDOR RESTRICTION & FAIL-CLOSED)');
     // 6.1: Store Owner 1 xem sản phẩm của chính Store 1 -> 200 OK
     const resOwner1Self = await fetch(`${baseUrl}/products/${testProductStore1.productId}`, {
       headers: { Authorization: `Bearer ${jwtOwner1}` },
@@ -252,7 +310,31 @@ async function runProductsHttpTestSuite() {
       'Store Owner 2 truy cập sản phẩm của Store 1 bị chặn với 403 Forbidden (Chống BOLA/IDOR)',
     );
 
-    // 6.3: Customer xem sản phẩm của Store 1 -> 200 OK (Catalog công khai cho người mua hàng)
+    // 6.3: Store Owner không có storeId -> 403 Forbidden (Fail-Closed)
+    const resOwnerNoStore = await fetch(`${baseUrl}/products/${testProductStore1.productId}`, {
+      headers: { Authorization: `Bearer ${jwtOwnerNoStore}` },
+    });
+    assert(
+      resOwnerNoStore.status === 403,
+      'Store Owner thiếu storeId bị chặn với 403 Forbidden (Fail-Closed bảo mật)',
+    );
+
+    // 6.4: Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 1 -> 200 OK
+    const resStaff1Self = await fetch(`${baseUrl}/products/${testProductStore1.productId}`, {
+      headers: { Authorization: `Bearer ${jwtStaff1}` },
+    });
+    assert(resStaff1Self.status === 200, 'Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 1: 200 OK');
+
+    // 6.5: Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 2 -> 403 Forbidden
+    const resStaff1Other = await fetch(`${baseUrl}/products/${testProductStore2.productId}`, {
+      headers: { Authorization: `Bearer ${jwtStaff1}` },
+    });
+    assert(
+      resStaff1Other.status === 403,
+      'Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 2 bị chặn với 403 Forbidden',
+    );
+
+    // 6.6: Customer xem sản phẩm của Store 1 -> 200 OK (Catalog công khai cho người mua hàng)
     const resCustomerCatalog = await fetch(`${baseUrl}/products/${testProductStore1.productId}`, {
       headers: { Authorization: `Bearer ${jwtCustomer}` },
     });
@@ -271,10 +353,15 @@ async function runProductsHttpTestSuite() {
         await prisma.productImage.deleteMany({ where: { productId: testProductStore1.productId } });
         await prisma.product.deleteMany({ where: { productId: testProductStore1.productId } });
       }
+      if (testProductStore2?.productId) {
+        await prisma.product.deleteMany({ where: { productId: testProductStore2.productId } });
+      }
       if (testStore1?.storeId) {
+        await prisma.storeStaff.deleteMany({ where: { storeId: testStore1.storeId } });
         await prisma.store.deleteMany({ where: { storeId: testStore1.storeId } });
       }
       if (testStore2?.storeId) {
+        await prisma.storeStaff.deleteMany({ where: { storeId: testStore2.storeId } });
         await prisma.store.deleteMany({ where: { storeId: testStore2.storeId } });
       }
       if (storeOwner1?.userId) {
@@ -282,6 +369,12 @@ async function runProductsHttpTestSuite() {
       }
       if (storeOwner2?.userId) {
         await prisma.user.deleteMany({ where: { userId: storeOwner2.userId } });
+      }
+      if (storeOwnerNoStore?.userId) {
+        await prisma.user.deleteMany({ where: { userId: storeOwnerNoStore.userId } });
+      }
+      if (staffInventoryStore1?.userId) {
+        await prisma.user.deleteMany({ where: { userId: staffInventoryStore1.userId } });
       }
       if (customerUser?.userId) {
         await prisma.user.deleteMany({ where: { userId: customerUser.userId } });

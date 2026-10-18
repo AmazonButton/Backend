@@ -60,7 +60,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         }
       }
 
-      let role = 'CUSTOMER';
+      let role = payload.role || 'CUSTOMER';
       let storeId = payload.storeId || null;
       let customerProfileId = user.customerProfile?.customerId?.toString() || payload.customerProfileId || null;
 
