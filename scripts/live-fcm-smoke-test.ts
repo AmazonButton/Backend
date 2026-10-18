@@ -40,7 +40,7 @@ async function main() {
   if (!targetToken) {
     console.log('\n[INFO] Khong co FCM Token nao duoc truyen vao tu dong lenh.');
     console.log('Cach dung de test thuc te voi thiet bi Android:');
-    console.log('  npx ts-node scripts/live-fcm-smoke-test.ts <FCM_REGISTRATION_TOKEN>\n');
+    console.log('  npx tsx scripts/live-fcm-smoke-test.ts <FCM_REGISTRATION_TOKEN>\n');
     process.exit(0);
   }
 

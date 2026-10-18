@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FirebaseService, SendPushResult } from './firebase.service';
 import { RegisterFcmTokenDto } from './dto/register-fcm-token.dto';
@@ -8,8 +8,8 @@ export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly firebaseService: FirebaseService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(FirebaseService) private readonly firebaseService: FirebaseService,
   ) {}
 
   /**

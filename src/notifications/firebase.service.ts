@@ -81,6 +81,7 @@ export class FirebaseService implements OnModuleInit {
   /**
    * Gui multicast push notification toi danh sach tokens.
    * Tu dong phan loai token thanh cong va token loi/khong hop le de he thong tu dong don dep.
+   * Hardened: Tu dong phan chia thanh cac batch toi da 500 token theo chuan Firebase Admin Multicast.
    */
   async sendMulticast(
     tokens: string[],
@@ -97,78 +98,79 @@ export class FirebaseService implements OnModuleInit {
       return { successTokens: [], invalidTokens: [], failureCount: 0 };
     }
 
-    // Neu dang chay trong che do fallback / mock
-    if (!this.firebaseApp || this.isMockMode) {
-      this.logger.debug(
-        `[FirebaseAdmin Mock] Simulated push to ${uniqueTokens.length} tokens: Title="${title}", Body="${body}"`,
-      );
-      const invalidTokens: string[] = [];
-      const successTokens: string[] = [];
-
-      for (const token of uniqueTokens) {
-        if (token.startsWith('expired_') || token.startsWith('invalid_') || token.includes('NOT_REGISTERED')) {
-          invalidTokens.push(token);
-        } else {
-          successTokens.push(token);
-        }
-      }
-
-      return {
-        successTokens,
-        invalidTokens,
-        failureCount: invalidTokens.length,
-      };
+    // Chia batch toi da 500 token (Gioi han ky thuat cua FCM Multicast)
+    const BATCH_SIZE = 500;
+    const batches: string[][] = [];
+    for (let i = 0; i < uniqueTokens.length; i += BATCH_SIZE) {
+      batches.push(uniqueTokens.slice(i, i + BATCH_SIZE));
     }
 
-    try {
-      const messaging = this.firebaseApp.messaging();
-      const message: admin.messaging.MulticastMessage = {
-        tokens: uniqueTokens,
-        notification: {
-          title,
-          body,
-        },
-        data: data || {},
-      };
+    const aggregatedSuccess: string[] = [];
+    const aggregatedInvalid: string[] = [];
+    let aggregatedFailureCount = 0;
 
-      const response = await messaging.sendEachForMulticast(message);
-      const successTokens: string[] = [];
-      const invalidTokens: string[] = [];
-
-      const invalidErrorCodes = [
-        'messaging/invalid-registration-token',
-        'messaging/registration-token-not-registered',
-        'messaging/invalid-argument',
-      ];
-
-      response.responses.forEach((resp, idx) => {
-        const token = uniqueTokens[idx];
-        if (resp.success) {
-          successTokens.push(token);
-        } else {
-          const errorCode = resp.error?.code || '';
-          if (invalidErrorCodes.includes(errorCode)) {
-            invalidTokens.push(token);
+    for (const batch of batches) {
+      if (!this.firebaseApp || this.isMockMode) {
+        this.logger.debug(
+          `[FirebaseAdmin Mock] Simulated push to batch of ${batch.length} tokens: Title="${title}", Body="${body}"`,
+        );
+        for (const token of batch) {
+          if (token.startsWith('expired_') || token.startsWith('invalid_') || token.includes('NOT_REGISTERED')) {
+            aggregatedInvalid.push(token);
+            aggregatedFailureCount++;
+          } else {
+            aggregatedSuccess.push(token);
           }
         }
-      });
+      } else {
+        try {
+          const messaging = this.firebaseApp.messaging();
+          const message: admin.messaging.MulticastMessage = {
+            tokens: batch,
+            notification: {
+              title,
+              body,
+            },
+            data: data || {},
+          };
 
-      this.logger.log(
-        `[FirebaseAdmin] Multicast sent. Total: ${uniqueTokens.length}, Success: ${successTokens.length}, Invalid: ${invalidTokens.length}`,
-      );
+          const response = await messaging.sendEachForMulticast(message);
+          const invalidErrorCodes = [
+            'messaging/invalid-registration-token',
+            'messaging/registration-token-not-registered',
+            'messaging/invalid-argument',
+          ];
 
-      return {
-        successTokens,
-        invalidTokens,
-        failureCount: response.failureCount,
-      };
-    } catch (err: any) {
-      this.logger.error(`[FirebaseAdmin] Exception during sendEachForMulticast: ${err.message}`, err.stack);
-      return {
-        successTokens: [],
-        invalidTokens: [],
-        failureCount: uniqueTokens.length,
-      };
+          response.responses.forEach((resp, idx) => {
+            const token = batch[idx];
+            if (resp.success) {
+              aggregatedSuccess.push(token);
+            } else {
+              const errorCode = resp.error?.code || '';
+              if (invalidErrorCodes.includes(errorCode)) {
+                aggregatedInvalid.push(token);
+              }
+            }
+          });
+
+          aggregatedFailureCount += response.failureCount;
+        } catch (err: any) {
+          this.logger.error(`[FirebaseAdmin] Exception during sendEachForMulticast batch: ${err.message}`, err.stack);
+          aggregatedFailureCount += batch.length;
+        }
+      }
     }
+
+    if (this.firebaseApp && !this.isMockMode) {
+      this.logger.log(
+        `[FirebaseAdmin] Batched Multicast sent. Total: ${uniqueTokens.length}, Batches: ${batches.length}, Success: ${aggregatedSuccess.length}, Invalid: ${aggregatedInvalid.length}`,
+      );
+    }
+
+    return {
+      successTokens: aggregatedSuccess,
+      invalidTokens: aggregatedInvalid,
+      failureCount: aggregatedFailureCount,
+    };
   }
 }
