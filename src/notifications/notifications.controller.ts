@@ -6,7 +6,7 @@ import { RegisterFcmTokenDto } from './dto/register-fcm-token.dto';
 import { UnregisterFcmTokenDto } from './dto/unregister-fcm-token.dto';
 
 @ApiTags('Notifications')
-@Controller('api/v1/notifications')
+@Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 

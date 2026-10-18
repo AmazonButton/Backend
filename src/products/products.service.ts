@@ -1,6 +1,6 @@
 import { MediaService } from '../media/media.service';
 ﻿import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
-import { Injectable, BadRequestException, ForbiddenException, Inject, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Inject, Logger } from '@nestjs/common';
 import { ProductsRepository, ProductImageInput } from './products.repository';
 
 @Injectable()
@@ -103,6 +103,15 @@ export class ProductsService {
           }
         : undefined,
     };
+  }
+
+  async getById(id: string | number | bigint) {
+    const productId = BigInt(id);
+    const product = await this.productsRepo.findById(productId);
+    if (!product) {
+      throw new NotFoundException('San pham khong ton tai');
+    }
+    return this.formatProduct(product);
   }
 
   async create(user: any, body: any) {

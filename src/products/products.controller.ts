@@ -47,6 +47,16 @@ export class ProductsController {
     };
   }
 
+  @Get(':id')
+  @ApiOperation({ summary: 'Xem chi tiet san pham va danh sach anh' })
+  async getById(@Param('id') id: string) {
+    const data = await this.productsService.getById(id);
+    return {
+      success: true,
+      data,
+    };
+  }
+
   @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post()
   @ApiOperation({ summary: 'Tạo sản phẩm mới (STORE_OWNER hoặc SYSTEM_ADMIN)' })
