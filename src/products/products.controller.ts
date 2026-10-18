@@ -10,6 +10,8 @@ import {
   UseGuards,
   Request,
   Inject,
+  ParseIntPipe,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
@@ -49,8 +51,11 @@ export class ProductsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Xem chi tiet san pham va danh sach anh' })
-  async getById(@Param('id') id: string) {
-    const data = await this.productsService.getById(id);
+  async getById(
+    @Param('id', new ParseIntPipe({ errorHttpStatusCode: HttpStatus.BAD_REQUEST })) id: number,
+    @Request() req: any,
+  ) {
+    const data = await this.productsService.getById(id, req.user);
     return {
       success: true,
       data,

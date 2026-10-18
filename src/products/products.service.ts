@@ -105,12 +105,28 @@ export class ProductsService {
     };
   }
 
-  async getById(id: string | number | bigint) {
+  async getById(id: string | number | bigint, user?: any) {
+    if (typeof id === 'string' && !/^\d+$/.test(id.trim())) {
+      throw new BadRequestException('ID san pham khong hop le');
+    }
     const productId = BigInt(id);
     const product = await this.productsRepo.findById(productId);
     if (!product) {
       throw new NotFoundException('San pham khong ton tai');
     }
+
+    // Tenant Isolation: STORE_OWNER chi duoc xem san pham cua cua hang minh
+    // CUSTOMER va SYSTEM_ADMIN / SUPER_ADMIN xem toan bo catalog
+    if (
+      user &&
+      user.role === 'STORE_OWNER' &&
+      user.storeId &&
+      product.storeId &&
+      product.storeId.toString() !== user.storeId.toString()
+    ) {
+      throw new ForbiddenException('Ban khong co quyen truy cap san pham cua cua hang khac');
+    }
+
     return this.formatProduct(product);
   }
 
