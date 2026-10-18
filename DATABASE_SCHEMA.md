@@ -64,6 +64,7 @@ erDiagram
     USERS ||--o{ STORE_STAFF : "làm việc tại"
     USERS ||--o| CUSTOMER_PROFILE : "hồ sơ khách"
     USERS ||--o{ REFRESH_TOKENS : "phiên đăng nhập"
+    USERS ||--o{ USER_FCM_TOKENS : "thiết bị push"
     CUSTOMER_PROFILE ||--o{ CUSTOMER_ADDRESS : "sổ địa chỉ"
     CUSTOMER_PROFILE ||--o{ STORE_CUSTOMER : "liên kết"
     STORE ||--o{ STORE_CUSTOMER : "khách hàng thân thiết"
@@ -152,6 +153,18 @@ erDiagram
 | `expires_at` | `TIMESTAMPTZ` | `NOT NULL` | Thời điểm token hết hạn (7 ngày) |
 | `is_revoked` | `BOOLEAN` | `DEFAULT FALSE` | `TRUE` khi đã thu hồi (logout hoặc đã đổi token mới) |
 | `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cấp |
+
+#### Bảng `user_fcm_tokens`
+*Lưu trữ danh sách FCM Registration Token của người dùng trên các thiết bị di động / web để phục vụ gửi thông báo đẩy (Push Notification).*
+| Cột | Kiểu Dữ Liệu | Ràng buộc | Ý nghĩa / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `id` | `BIGSERIAL` | `PK` | Khóa chính |
+| `user_id` | `BIGINT` | `FK -> users(user_id) ON DELETE CASCADE` | Người dùng sở hữu thiết bị |
+| `token` | `VARCHAR(500)` | `NOT NULL, UNIQUE` | FCM Device Registration Token |
+| `device_type` | `VARCHAR(50)` | `NULL` | Loại thiết bị (`android`, `ios`, `web`) |
+| `is_active` | `BOOLEAN` | `DEFAULT TRUE` | `TRUE` khi token còn hiệu lực, `FALSE` khi logout |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm đăng ký token |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT NOW()` | Thời điểm cập nhật trạng thái |
 
 #### Bảng `store_staff`
 *Phân công nhân sự vào từng cửa hàng kèm theo vai trò chi tiết.*

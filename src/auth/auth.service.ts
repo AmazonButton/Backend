@@ -610,7 +610,7 @@ export class AuthService {
   /**
    * 6. Logout (Token Revocation & Invalidation)
    */
-  async logout(userId?: string, refreshToken?: string, accessToken?: string) {
+  async logout(userId?: string, refreshToken?: string, accessToken?: string, fcmToken?: string) {
     if (accessToken) {
       await TokenBlacklist.revokeTokenAsync(accessToken, 7 * 86400, userId ? BigInt(userId) : undefined);
       try {
@@ -630,6 +630,7 @@ export class AuthService {
     }
     if (userId) {
       await this.authRepo.revokeAllUserRefreshTokens(BigInt(userId));
+      await this.authRepo.deactivateUserFcmTokens(BigInt(userId), fcmToken);
       TokenBlacklist.revokeUser(userId.toString());
     }
     return {

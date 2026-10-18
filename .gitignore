@@ -15,3 +15,7 @@ logs/
 .revoked_tokens.json
 
 *.bkp
+
+# Firebase Service Account
+secrets/
+firebase-service-account.json

@@ -5,7 +5,10 @@ import {
   NotFoundException,
   ForbiddenException,
   Inject,
+  Optional,
+  Logger,
 } from '@nestjs/common';
+import { NotificationsService } from '../notifications/notifications.service';
 import { OrdersRepository } from './orders.repository';
 import { CryptoService } from '../security/crypto.service';
 import { EventsGateway } from '../websocket/events.gateway';
@@ -18,11 +21,14 @@ import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @Inject(OrdersRepository) private readonly ordersRepo: OrdersRepository,
     @Inject(CryptoService) private readonly crypto: CryptoService,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
     @Inject(StoreWalletService) private readonly storeWalletService: StoreWalletService,
+    @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
   ) {}
 
   /**
@@ -133,6 +139,15 @@ export class OrdersService {
     // Emit Realtime WebSockets to authorized rooms ONLY (no emitGlobal)
     this.eventsGateway.emitToStore(button.storeId.toString(), 'ORDER_CREATED', orderPayload);
     this.eventsGateway.emitToCustomer(button.customerId.toString(), 'ORDER_CREATED', orderPayload);
+
+    // Send FCM Push Notification
+    if (this.notificationsService) {
+      const customerUserId = button.customer?.userId || (button.customer as any)?.user?.userId;
+      const storeOwnerUserId = button.store?.ownerUserId;
+      this.notificationsService.sendOrderCreated(formattedOrder, customerUserId, storeOwnerUserId).catch((err) => {
+        this.logger.warn(`Failed to send order created push notification: ${err.message}`);
+      });
+    }
 
     return {
       order: formattedOrder,
@@ -356,6 +371,14 @@ export class OrdersService {
     const statusPayload = { order: formattedOrder, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
     this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
+
+    // Send FCM Push Notification
+    if (this.notificationsService) {
+      const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
+      this.notificationsService.sendOrderStatusChanged(formattedOrder, customerUserId, newStatus).catch((err) => {
+        this.logger.warn(`Failed to send order status changed push notification: ${err.message}`);
+      });
+    }
 
     if (newStatus === 'READY_FOR_DELIVERY') {
       const readyPayload = {

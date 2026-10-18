@@ -71,11 +71,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(200)
   @Post('logout')
-  async logout(@Request() req: any, @Body() body: { refreshToken?: string }) {
+  async logout(@Request() req: any, @Body() body: { refreshToken?: string; fcmToken?: string }) {
     const authHeader = req.headers['authorization']?.toString();
     const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : undefined;
     const userId = req.user?.id || req.user?.userId;
-    return this.authService.logout(userId, body?.refreshToken, accessToken);
+    return this.authService.logout(userId, body?.refreshToken, accessToken, body?.fcmToken);
   }
 
   @UseGuards(JwtAuthGuard)

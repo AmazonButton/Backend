@@ -567,4 +567,29 @@ export class AuthRepository {
     });
   }
 
+  async deactivateUserFcmTokens(userId: bigint, token?: string) {
+    if (token && token.trim().length > 0) {
+      return (this.prisma as any).userFcmToken.updateMany({
+        where: {
+          userId,
+          token: token.trim(),
+        },
+        data: {
+          isActive: false,
+          updatedAt: new Date(),
+        },
+      });
+    }
+    return (this.prisma as any).userFcmToken.updateMany({
+      where: {
+        userId,
+        isActive: true,
+      },
+      data: {
+        isActive: false,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
 }
