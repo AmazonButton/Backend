@@ -25,6 +25,8 @@ model User {
   passwordHash               String    @map("password_hash")
   fullName                   String    @map("full_name")
   phone                      String?
+  phoneVerifiedAt            DateTime? @map("phone_verified_at") @db.Timestamptz(6)
+  firebaseUid                String?   @unique @map("firebase_uid") @db.VarChar(128)
   status                     String    @default("ACTIVE")
   passwordResetToken         String?   @map("password_reset_token")
   passwordResetExpiresAt     DateTime? @map("password_reset_expires_at")

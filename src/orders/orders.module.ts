@@ -1,14 +1,16 @@
-﻿import { Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import { OrdersRepository } from './orders.repository';
+import { OrdersLifecycleWorker } from './orders-lifecycle.worker';
 import { StoreWalletModule } from '../store-wallet/store-wallet.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { WebSocketModule } from '../websocket/websocket.module';
 
 @Module({
-  imports: [StoreWalletModule, NotificationsModule],
+  imports: [StoreWalletModule, NotificationsModule, WebSocketModule],
   controllers: [OrdersController],
-  providers: [OrdersService, OrdersRepository],
-  exports: [OrdersService, OrdersRepository],
+  providers: [OrdersService, OrdersRepository, OrdersLifecycleWorker],
+  exports: [OrdersService, OrdersRepository, OrdersLifecycleWorker],
 })
 export class OrdersModule {}

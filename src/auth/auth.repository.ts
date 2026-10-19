@@ -592,4 +592,26 @@ export class AuthRepository {
     });
   }
 
+  async findByFirebaseUid(firebaseUid: string) {
+    return this.prisma.user.findUnique({
+      where: { firebaseUid },
+    });
+  }
+
+  async updatePhoneVerification(
+    userId: bigint,
+    phoneNumber: string,
+    firebaseUid: string,
+    verifiedAt: Date,
+  ) {
+    return this.prisma.user.update({
+      where: { userId },
+      data: {
+        phone: phoneNumber,
+        firebaseUid,
+        phoneVerifiedAt: verifiedAt,
+      },
+    });
+  }
 }
+

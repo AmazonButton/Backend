@@ -5,6 +5,7 @@ import { StoreSubscriptionsModule } from './store-subscriptions/store-subscripti
 import { StoreWalletModule } from './store-wallet/store-wallet.module';
 import { RentalsModule } from './rentals/rentals.module';
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { WebSocketModule } from './websocket/websocket.module';
 import { SecurityModule } from './security/security.module';
@@ -23,6 +24,7 @@ import { AppController } from './app.controller';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     StoreSubscriptionsModule,
     StoreWalletModule,
     RentalsModule,

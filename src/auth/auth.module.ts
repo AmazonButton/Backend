@@ -7,6 +7,8 @@ import { JwtStrategy } from './jwt.strategy';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
 import { AuthRepository } from './auth.repository';
 import { MailModule } from '../mail/mail.module';
+import { FirebaseModule } from './firebase.module';
+import { FirebasePhoneService } from './firebase-phone.service';
 
 @Module({
   imports: [
@@ -16,9 +18,21 @@ import { MailModule } from '../mail/mail.module';
       signOptions: { expiresIn: '15m' },
     }),
     MailModule,
+    FirebaseModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, AuthRepository, JwtStrategy, AuthRateLimitGuard],
-  exports: [AuthService, AuthRepository, AuthRateLimitGuard],
+  providers: [
+    AuthService,
+    AuthRepository,
+    JwtStrategy,
+    AuthRateLimitGuard,
+    FirebasePhoneService,
+  ],
+  exports: [
+    AuthService,
+    AuthRepository,
+    AuthRateLimitGuard,
+    FirebasePhoneService,
+  ],
 })
 export class AuthModule {}

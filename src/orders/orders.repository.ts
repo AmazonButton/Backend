@@ -191,7 +191,11 @@ export class OrdersRepository {
 
       // Idempotent: already at target status
       if (order.order_status === newStatus) {
-        return this.findOrderByIdTx(tx, orderId);
+        const existing = await this.findOrderByIdTx(tx, orderId);
+        if (existing) {
+          (existing as any)._statusChanged = false;
+        }
+        return existing;
       }
 
       // Check transition validity
@@ -215,7 +219,11 @@ export class OrdersRepository {
       });
 
       // Lịch sử trạng thái được tự động ghi nhận bởi DB trigger trg_sync_inventory_on_order_status_change
-      return this.findOrderByIdTx(tx, orderId);
+      const updated = await this.findOrderByIdTx(tx, orderId);
+      if (updated) {
+        (updated as any)._statusChanged = true;
+      }
+      return updated;
     });
   }
 
@@ -288,16 +296,23 @@ export class OrdersRepository {
         if (Number(inv.quantity_on_hand) < Number(item.quantity)) {
           throw new BadRequestException(`Số lượng tồn kho thực tế không đủ cho sản phẩm ${item.productId}`);
         }
-        if (Number(inv.reserved_quantity) < Number(item.quantity)) {
-          throw new BadRequestException(`Số lượng giữ chỗ (reserved) không hợp lệ cho sản phẩm ${item.productId}`);
+        const currentReserved = Number(inv.reserved_quantity);
+        const deductReserved = Math.min(currentReserved, Number(item.quantity));
+
+        if (currentReserved < Number(item.quantity)) {
+          console.warn(
+            `[OrdersRepository.completeOrderAtomicTx] Data discrepancy for product ${item.productId}: reserved_quantity (${currentReserved}) < item quantity (${item.quantity}). Clamping reserved deduction to ${deductReserved}.`,
+          );
         }
+
         await tx.$executeRawUnsafe(
           `UPDATE inventory
-           SET quantity_on_hand = quantity_on_hand - $1,
-               reserved_quantity = reserved_quantity - $1,
+           SET quantity_on_hand = GREATEST(0, quantity_on_hand - $1),
+               reserved_quantity = GREATEST(0, reserved_quantity - $2),
                updated_at = NOW()
-           WHERE product_id = $2`,
+           WHERE product_id = $3`,
           item.quantity,
+          deductReserved,
           item.productId,
         );
       }
@@ -423,17 +438,25 @@ export class OrdersRepository {
           item.productId,
         );
         const inv = invRows[0];
-        if (inv && Number(inv.reserved_quantity) < Number(item.quantity)) {
-          throw new BadRequestException(`Số lượng giữ chỗ (reserved) không đủ để hoàn lại cho sản phẩm ${item.productId}`);
+        const currentReserved = inv ? Number(inv.reserved_quantity) : 0;
+        const releaseQty = Math.min(currentReserved, Number(item.quantity));
+
+        if (currentReserved < Number(item.quantity)) {
+          console.warn(
+            `[OrdersRepository.cancelOrderAtomicTx] Data discrepancy for product ${item.productId}: reserved_quantity (${currentReserved}) < item quantity (${item.quantity}). Clamping release to ${releaseQty}.`,
+          );
         }
-        await tx.$executeRawUnsafe(
-          `UPDATE inventory
-           SET reserved_quantity = reserved_quantity - $1,
-               updated_at = NOW()
-           WHERE product_id = $2`,
-          item.quantity,
-          item.productId,
-        );
+
+        if (releaseQty > 0 || currentReserved > 0) {
+          await tx.$executeRawUnsafe(
+            `UPDATE inventory
+             SET reserved_quantity = GREATEST(0, reserved_quantity - $1),
+                 updated_at = NOW()
+             WHERE product_id = $2`,
+            releaseQty,
+            item.productId,
+          );
+        }
       }
 
       if (userId) {
@@ -700,13 +723,15 @@ export class OrdersRepository {
           item.productId,
         );
         const inv = invRows[0];
-        if (inv && Number(inv.reserved_quantity) >= Number(item.quantity)) {
+        const currentReserved = inv ? Number(inv.reserved_quantity) : 0;
+        const releaseQty = Math.min(currentReserved, Number(item.quantity));
+        if (releaseQty > 0 || currentReserved > 0) {
           await tx.$executeRawUnsafe(
             `UPDATE inventory
-             SET reserved_quantity = reserved_quantity - $1,
+             SET reserved_quantity = GREATEST(0, reserved_quantity - $1),
                  updated_at = NOW()
              WHERE product_id = $2`,
-            item.quantity,
+            releaseQty,
             item.productId,
           );
         }

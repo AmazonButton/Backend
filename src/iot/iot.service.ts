@@ -115,6 +115,17 @@ export class IotService {
       });
 
       if (pendingOrder) {
+        const cancelWindowSeconds = Number(device.cancelWindowSeconds || 60);
+        const elapsedSeconds = (Date.now() - new Date(pendingOrder.createdAt).getTime()) / 1000;
+        if (elapsedSeconds > cancelWindowSeconds) {
+          return {
+            success: false,
+            action: 'CANCEL_ORDER',
+            code: 'CANCEL_WINDOW_EXPIRED',
+            message: `Đã hết thời gian cho phép hủy đơn hàng (${cancelWindowSeconds} giây kể từ khi đặt đơn).`,
+          };
+        }
+
         const cancelled = await this.ordersService.cancelOrder(
           pendingOrder.orderId,
           'Khách bấm nút vật lý để hủy đơn',

@@ -293,6 +293,27 @@ export class OrdersService {
       return toOrderResponseDto(order);
     }
 
+    // Cancellation window validation (BRD-ORD-CANCEL)
+    const cancelWindowSeconds = Number((order as any).button?.cancelWindowSeconds || 60);
+    const elapsedSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
+
+    const isPrivilegedStaff =
+      user && ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER'].includes(user.role);
+
+    // If caller is CUSTOMER or unprivileged, enforce strict 60s window and PENDING status
+    if (!isPrivilegedStaff) {
+      if (order.orderStatus !== 'PENDING') {
+        throw new BadRequestException(
+          `Khách hàng chỉ có thể hủy đơn hàng khi đơn ở trạng thái PENDING. Trạng thái hiện tại: ${order.orderStatus}`,
+        );
+      }
+      if (elapsedSeconds > cancelWindowSeconds) {
+        throw new BadRequestException(
+          `Đã hết thời gian cho phép hủy đơn hàng (${cancelWindowSeconds} giây kể từ khi đặt đơn). Cửa sổ hủy đã kết thúc.`,
+        );
+      }
+    }
+
     if (!['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING'].includes(order.orderStatus)) {
       throw new BadRequestException('Đơn hàng đã được xử lý giao hàng hoặc hoàn tất, không thể hủy');
     }

@@ -218,30 +218,52 @@ async function main() {
     },
   });
 
-  // Inventory for Products
-  await prisma.inventory.upsert({
-    where: { productId: prodWater.productId },
-    update: { quantityOnHand: 150, reservedQuantity: 0 },
-    create: {
-      storeId: store1.storeId,
-      productId: prodWater.productId,
-      quantityOnHand: 150,
-      reservedQuantity: 0,
-      minStockAlert: 10,
-    },
-  });
+      // Inventory for Products - Preserve active reserved quantities
+    const activeWaterReserved = await prisma.orderItem.aggregate({
+      _sum: { quantity: true },
+      where: {
+        productId: prodWater.productId,
+        order: {
+          orderStatus: { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING', 'READY_FOR_DELIVERY', 'SHIPPING'] },
+        },
+      },
+    });
+    const reservedWaterQty = activeWaterReserved._sum.quantity || 0;
 
-  await prisma.inventory.upsert({
-    where: { productId: prodGas.productId },
-    update: { quantityOnHand: 80, reservedQuantity: 0 },
-    create: {
-      storeId: store1.storeId,
-      productId: prodGas.productId,
-      quantityOnHand: 80,
-      reservedQuantity: 0,
-      minStockAlert: 5,
-    },
-  });
+    await prisma.inventory.upsert({
+      where: { productId: prodWater.productId },
+      update: { quantityOnHand: 150, reservedQuantity: reservedWaterQty },
+      create: {
+        storeId: store1.storeId,
+        productId: prodWater.productId,
+        quantityOnHand: 150,
+        reservedQuantity: reservedWaterQty,
+        minStockAlert: 10,
+      },
+    });
+
+    const activeGasReserved = await prisma.orderItem.aggregate({
+      _sum: { quantity: true },
+      where: {
+        productId: prodGas.productId,
+        order: {
+          orderStatus: { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING', 'READY_FOR_DELIVERY', 'SHIPPING'] },
+        },
+      },
+    });
+    const reservedGasQty = activeGasReserved._sum.quantity || 0;
+
+    await prisma.inventory.upsert({
+      where: { productId: prodGas.productId },
+      update: { quantityOnHand: 80, reservedQuantity: reservedGasQty },
+      create: {
+        storeId: store1.storeId,
+        productId: prodGas.productId,
+        quantityOnHand: 80,
+        reservedQuantity: reservedGasQty,
+        minStockAlert: 5,
+      },
+    });
 
   console.log('🔘 Creating IoT Buttons (Fixed Store & Multi-Product Configuration)...');
   // Button 1: BTN-8829-WTR (used in automated test suite)
@@ -321,6 +343,26 @@ async function main() {
       status: 'ACTIVE',
     },
   });
+
+  console.log('🔄 Reconciling inventory reserved quantities with active orders...');
+  await prisma.$executeRawUnsafe(`
+    UPDATE inventory inv
+    SET reserved_quantity = LEAST(
+      inv.quantity_on_hand,
+      COALESCE(
+        (
+          SELECT SUM(oi.quantity)::integer
+          FROM order_item oi
+          JOIN orders o ON oi.order_id = o.order_id
+          WHERE oi.product_id = inv.product_id
+            AND o.order_status IN ('PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING', 'READY_FOR_DELIVERY', 'SHIPPING')
+        ),
+        0
+      )
+    ),
+    updated_at = NOW();
+  `);
+  console.log('✅ Inventory reserved quantities fully reconciled.');
 
   console.log('\n======================================================');
   console.log('✅ DATABASE SEED COMPLETED SUCCESSFULLY!');

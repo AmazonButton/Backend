@@ -22,10 +22,15 @@ import {
   RefreshTokenDto,
   GoogleLoginDto,
 } from './dto/auth.dto';
+import { VerifyFirebasePhoneDto } from './dto/verify-firebase-phone.dto';
+import { FirebasePhoneService } from './firebase-phone.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
+  constructor(
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(FirebasePhoneService) private readonly firebasePhoneService: FirebasePhoneService,
+  ) {}
 
   @UseGuards(AuthRateLimitGuard)
   @Post('register')
@@ -123,4 +128,25 @@ export class AuthController {
   resendVerification(@Body() body: ResendVerificationDto) {
     return this.authService.resendVerification(body);
   }
+
+  @UseGuards(JwtAuthGuard, AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('phone/verify')
+  async verifyPhone(
+    @Request() req: any,
+    @Body() dto: VerifyFirebasePhoneDto,
+  ) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    const userId = BigInt(rawUserId);
+    const result = await this.firebasePhoneService.verifyPhoneToken(
+      dto.firebaseIdToken,
+      userId,
+    );
+    return {
+      success: true,
+      message: 'Xác thực số điện thoại thành công qua Firebase.',
+      data: result,
+    };
+  }
 }
+
