@@ -143,11 +143,13 @@ async function runFirebasePhoneAuthTestSuite() {
     assert(expiredRejected, 'Rejects expired/tampered Firebase token with 401 Unauthorized');
 
     // 4b. Provider is not 'phone' (e.g. google.com or password) -> 401
+    const testProjectId = process.env.FIREBASE_PROJECT_ID || 'iot-button-e59d7';
     const mockAuthNonPhoneProvider: any = {
       verifyIdToken: async () => ({
         uid: `fb_uid_google_${ts}`,
         email: 'user@gmail.com',
-        firebase: { sign_in_provider: 'google.com' },
+        firebase: { sign_in_provider: 'google.com', project_id: testProjectId },
+        aud: testProjectId,
       }),
     };
     const phoneServiceNonPhone = new FirebasePhoneService(mockAuthNonPhoneProvider, authRepo);
@@ -163,7 +165,8 @@ async function runFirebasePhoneAuthTestSuite() {
     const mockAuthNoPhone: any = {
       verifyIdToken: async () => ({
         uid: `fb_uid_nophone_${ts}`,
-        firebase: { sign_in_provider: 'phone' },
+        firebase: { sign_in_provider: 'phone', project_id: testProjectId },
+        aud: testProjectId,
       }),
     };
     const phoneServiceNoPhone = new FirebasePhoneService(mockAuthNoPhone, authRepo);
@@ -189,7 +192,8 @@ async function runFirebasePhoneAuthTestSuite() {
       verifyIdToken: async () => ({
         uid: `fb_uid_user1_${ts}`, // Already bound to User 1
         phone_number: '+84901234567',
-        firebase: { sign_in_provider: 'phone' },
+        firebase: { sign_in_provider: 'phone', project_id: testProjectId },
+        aud: testProjectId,
       }),
     };
     const phoneServiceDup = new FirebasePhoneService(mockAuthDuplicateUid, authRepo);
@@ -219,6 +223,24 @@ async function runFirebasePhoneAuthTestSuite() {
     }
     assert(raceConflictCaught, 'Catches Prisma P2002 race-condition unique constraint violation and converts to 409 Conflict');
 
+    // 4g. Project ID mismatch -> 401 Unauthorized
+    const mockAuthWrongProject: any = {
+      verifyIdToken: async () => ({
+        uid: `fb_uid_wrong_proj_${ts}`,
+        phone_number: '+84901234567',
+        firebase: { sign_in_provider: 'phone', project_id: 'malicious-or-wrong-project' },
+        aud: 'malicious-or-wrong-project',
+      }),
+    };
+    const phoneServiceWrongProj = new FirebasePhoneService(mockAuthWrongProject, authRepo);
+    let wrongProjectRejected = false;
+    try {
+      await phoneServiceWrongProj.verifyPhoneToken(validTokenStr, user1.userId);
+    } catch (e: any) {
+      wrongProjectRejected = e instanceof UnauthorizedException && e.message === 'Firebase token project mismatch';
+    }
+    assert(wrongProjectRejected, 'Rejects token with mismatched Project ID with 401 Unauthorized');
+
     // -------------------------------------------------------------------------
     // 5. PHONE NUMBER CHANGE RE-VERIFICATION
     // -------------------------------------------------------------------------
@@ -228,7 +250,8 @@ async function runFirebasePhoneAuthTestSuite() {
       verifyIdToken: async () => ({
         uid: `fb_uid_user1_new_${ts}`,
         phone_number: '+84988889999',
-        firebase: { sign_in_provider: 'phone' },
+        firebase: { sign_in_provider: 'phone', project_id: testProjectId },
+        aud: testProjectId,
       }),
     };
     const phoneServiceNewPhone = new FirebasePhoneService(mockAuthNewPhone, authRepo);
@@ -248,7 +271,8 @@ async function runFirebasePhoneAuthTestSuite() {
       verifyIdToken: async () => ({
         uid: `fb_uid_user2_${ts}`,
         phone_number: '+84933334444',
-        firebase: { sign_in_provider: 'phone' },
+        firebase: { sign_in_provider: 'phone', project_id: testProjectId },
+        aud: testProjectId,
       }),
     };
     const phoneServiceUser2 = new FirebasePhoneService(mockAuthUser2, authRepo);

@@ -28,13 +28,41 @@ export class FirebaseService implements OnModuleInit {
     const isProduction = process.env.NODE_ENV === 'production';
 
     try {
+      // 1. Prioritize Pure Environment Variables (12-Factor Cloud Standard)
+      const projectId = process.env.FIREBASE_PROJECT_ID;
+      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+      const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
+      const privateKey = rawPrivateKey ? rawPrivateKey.replace(/\\n/g, '\n') : undefined;
+
+      if (projectId && clientEmail && privateKey) {
+        const appName = 'SOB_FIREBASE_APP';
+        const existingApp = admin.apps.find((app) => app?.name === appName) || admin.apps[0];
+        if (existingApp) {
+          this.firebaseApp = existingApp;
+        } else {
+          this.firebaseApp = admin.initializeApp(
+            {
+              credential: admin.credential.cert({
+                projectId,
+                clientEmail,
+                privateKey,
+              }),
+            },
+            appName,
+          );
+        }
+        this.logger.log(`[FirebaseAdmin] Successfully initialized Firebase Admin SDK from environment variables for project: ${projectId}`);
+        return;
+      }
+
+      // 2. Fallback: Service Account JSON file path if configured
       if (fs.existsSync(resolvedPath)) {
         const fileContent = fs.readFileSync(resolvedPath, 'utf8').trim();
         if (fileContent.startsWith('{') && fileContent.includes('private_key')) {
           const serviceAccount = JSON.parse(fileContent);
 
           const appName = 'SOB_FIREBASE_APP';
-          const existingApp = admin.apps.find((app) => app?.name === appName);
+          const existingApp = admin.apps.find((app) => app?.name === appName) || admin.apps[0];
           if (existingApp) {
             this.firebaseApp = existingApp;
           } else {
