@@ -129,7 +129,7 @@ async function testFullMarketplaceE2E() {
       packageId: rentalPkg.packageId.toString(),
       monthsRented: rentalMonths,
     });
-    const expectedRentTotal = 120000 * rentalMonths;
+    const expectedRentTotal = 120000 * rentalMonths + Number(rentalPkg.depositFee || 0);
     assert(
       'Customer rental contract created with accurate total rent',
       Number(rentalContract.totalRentAmount) === expectedRentTotal && rentalContract.status === 'PENDING_PAYMENT'

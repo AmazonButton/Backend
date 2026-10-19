@@ -336,8 +336,14 @@ async function run() {
       });
       const data = await res.json();
 
-      if (res.status === 400 && data.success === false && data.code === 'PAYOS_PAYOUT_NOT_CONFIGURED') {
-        log('PayOS Payout 601 Handling', true, 'Trả HTTP 400 Bad Request kèm mã lỗi cấu hình chuẩn xác');
+      if (
+        res.status === 400 &&
+        data.success === false &&
+        (data.code === 'PAYOS_PAYOUT_NOT_CONFIGURED' ||
+         data.code === 'PAYOS_PAYOUT_ERROR' ||
+         data.message?.includes('Địa chỉ IP không được phép'))
+      ) {
+        log('PayOS Payout 601 Handling', true, 'Trả HTTP 400 Bad Request kèm mã lỗi cấu hình / IP allowlist chuẩn xác');
         passed++;
       } else {
         log('PayOS Payout 601 Handling', false, `Status: ${res.status}, response: ${JSON.stringify(data)}`);

@@ -86,7 +86,9 @@ async function runE2ELifecycleTest() {
     const data = await res.json();
     const products = data.data || [];
     selectedProduct = products[0]; // e.g. Lavie 20L
-    logStep(3, 'Store Product Catalog Lookup', true, `${selectedProduct.name} (SKU: ${selectedProduct.sku}, Price: ${selectedProduct.price} VND)`);
+    const prodName = selectedProduct.name || selectedProduct.productName || 'Sản phẩm';
+    const prodPrice = selectedProduct.price || selectedProduct.basePrice || 0;
+    logStep(3, 'Store Product Catalog Lookup', true, `${prodName} (SKU: ${selectedProduct.sku}, Price: ${prodPrice} VND)`);
     passed++;
   } catch (e: any) {
     logStep(3, 'Store Product Catalog Lookup', false, e.message);
@@ -97,6 +99,7 @@ async function runE2ELifecycleTest() {
   // STEP 4: DYNAMIC PRODUCT MAPPING (WITHOUT FIRMWARE UPDATE)
   // -------------------------------------------------------------
   try {
+    const prodId = selectedProduct.id || selectedProduct.productId;
     const res = await fetch(`${BASE_URL}/devices/${newDevice.deviceId}/assign-product`, {
       method: 'POST',
       headers: {
@@ -104,13 +107,13 @@ async function runE2ELifecycleTest() {
         Authorization: `Bearer ${storeToken}`,
       },
       body: JSON.stringify({
-        productId: selectedProduct.id,
+        productId: prodId,
         customName: 'Nút Nước Lavie Bếp Ăn E2E',
       }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {
-      logStep(4, 'Dynamic Product Mapping Assigned', true, `Mapped to: ${selectedProduct.name}`);
+      logStep(4, 'Dynamic Product Mapping Assigned', true, `Mapped to: ${selectedProduct.name || selectedProduct.productName}`);
       passed++;
     } else {
       throw new Error(data.message);
@@ -233,12 +236,17 @@ async function runE2ELifecycleTest() {
   // STEP 9: CUSTOMER CLAIMS DEVICE (DEVICE BECOMES ACTIVE)
   // -------------------------------------------------------------
   try {
-    const res = await fetch(`${BASE_URL}/devices/${newDevice.deviceId}/claim`, {
+    const prodId = selectedProduct.id || selectedProduct.productId;
+    const res = await fetch(`${BASE_URL}/provisioning/sessions/${pairingSession.sessionId}/confirmation`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${customerToken}`,
       },
+      body: JSON.stringify({
+        buttonName: 'Nút Nước Lavie Bếp Ăn E2E',
+        productId: prodId,
+      }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {

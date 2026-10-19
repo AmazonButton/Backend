@@ -17,6 +17,16 @@ async function runFcmNotificationsTestSuite() {
 
   const firebaseService = new FirebaseService();
   firebaseService.onModuleInit();
+  // Isolate integration test: Mock sendMulticast so test tokens don't call live Google servers with invalid strings
+  firebaseService.sendMulticast = async (tokens: string[]) => {
+    const invalidTokens = tokens.filter((t) => t.includes('expired') || t.includes('invalid'));
+    const successTokens = tokens.filter((t) => !t.includes('expired') && !t.includes('invalid'));
+    return {
+      successTokens,
+      invalidTokens,
+      failureCount: invalidTokens.length,
+    };
+  };
   const notificationsService = new NotificationsService(prisma as any, firebaseService);
 
   const authRepo = new AuthRepository(prisma as any);
@@ -272,6 +282,15 @@ async function runFcmNotificationsTestSuite() {
     // 7. Production Fail-Fast Guard
     // -------------------------------------------------------------------------
     const originalEnv = process.env.NODE_ENV;
+    const savedProjectId = process.env.FIREBASE_PROJECT_ID;
+    const savedClientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const savedPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
+    const savedPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+    delete process.env.FIREBASE_PROJECT_ID;
+    delete process.env.FIREBASE_CLIENT_EMAIL;
+    delete process.env.FIREBASE_PRIVATE_KEY;
+    process.env.FIREBASE_SERVICE_ACCOUNT_PATH = './secrets/non-existent-file-for-fail-fast-test.json';
+
     let productionThrew = false;
     try {
       process.env.NODE_ENV = 'production';
@@ -281,6 +300,14 @@ async function runFcmNotificationsTestSuite() {
       productionThrew = err.message.includes('[FirebaseAdmin FATAL]');
     } finally {
       process.env.NODE_ENV = originalEnv;
+      if (savedProjectId) process.env.FIREBASE_PROJECT_ID = savedProjectId;
+      if (savedClientEmail) process.env.FIREBASE_CLIENT_EMAIL = savedClientEmail;
+      if (savedPrivateKey) process.env.FIREBASE_PRIVATE_KEY = savedPrivateKey;
+      if (savedPath) {
+        process.env.FIREBASE_SERVICE_ACCOUNT_PATH = savedPath;
+      } else {
+        delete process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+      }
     }
     assert(
       productionThrew,

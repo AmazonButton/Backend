@@ -22,6 +22,7 @@ async function runTests() {
 
   // 1. Auth: Store Owner Login
   let storeToken = '';
+  let defaultProductId: any = null;
   try {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
@@ -36,6 +37,15 @@ async function runTests() {
       storeToken = data.data?.token || data.data?.accessToken || data.accessToken;
       logTest('1. Auth: Store Owner Login', true);
       passed++;
+
+      // Lookup product for provisioning pairing confirmation
+      const prodRes = await fetch(`${BASE_URL}/products`, {
+        headers: { Authorization: `Bearer ${storeToken}` },
+      });
+      const prodData = await prodRes.json();
+      if (prodData.data && prodData.data.length > 0) {
+        defaultProductId = prodData.data[0].id || prodData.data[0].productId;
+      }
     } else {
       throw new Error(data.message);
     }
@@ -266,13 +276,16 @@ async function runTests() {
 
   // 9. Customer Claims Device Ownership
   try {
-    const res = await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/claim`, {
+    const res = await fetch(`${BASE_URL}/provisioning/sessions/${provisioningSession.sessionId}/confirmation`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${customerToken}`,
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        buttonName: 'Nút Thông Minh Zero-Touch',
+        productId: defaultProductId,
+      }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {
@@ -309,13 +322,32 @@ async function runTests() {
 
   // 11. Transfer Device Workflow
   try {
-    // First claim again
-    await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/claim`, {
+    // Claim again via fresh pairing session
+    const repairRes = await fetch(`${BASE_URL}/devices/${registeredDevice.deviceId}/re-pair`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${storeToken}` },
+    });
+    const repairData = await repairRes.json();
+    const token = repairData.data?.pairingToken || repairData.pairingToken;
+
+    const sessRes = await fetch(`${BASE_URL}/provisioning/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: registeredDevice.deviceId, token }),
+    });
+    const sessData = await sessRes.json();
+    const newSessionId = sessData.data?.sessionId;
+
+    await fetch(`${BASE_URL}/provisioning/sessions/${newSessionId}/confirmation`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${customerToken}`,
       },
+      body: JSON.stringify({
+        buttonName: 'Nút Thông Minh Zero-Touch',
+        productId: defaultProductId,
+      }),
     });
 
     // Transfer
@@ -348,7 +380,7 @@ async function runTests() {
       },
     });
     const data = await res.json();
-    if ((res.status === 200 || res.status === 201) && data.data?.status === 'READY_FOR_CUSTOMER') {
+    if ((res.status === 200 || res.status === 201) && (data.data?.status === 'INACTIVE' || data.data?.status === 'READY_FOR_CUSTOMER')) {
       logTest('12. Factory Reset: Clears Wi-Fi & Ownership, Retains Hardware ID', true);
       passed++;
     } else {

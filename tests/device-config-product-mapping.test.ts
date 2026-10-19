@@ -297,7 +297,6 @@ async function runTests() {
       body: JSON.stringify({
         name: 'WATER PROFILE 20L',
         category: 'Nước uống',
-        defaultProductId: waterProduct.id,
         singlePressAction: 'CREATE_ORDER',
         doublePressAction: 'CANCEL_ORDER',
         defaultQuantity: 1,
@@ -305,6 +304,9 @@ async function runTests() {
       }),
     });
     const createData = await createRes.json();
+    if (!createData.data) {
+      throw new Error(`Failed to create template: ${createData.message || JSON.stringify(createData)}`);
+    }
     const templateId = createData.data.id;
 
     // Deploy Template to autoDevice
@@ -315,7 +317,7 @@ async function runTests() {
         Authorization: `Bearer ${storeToken}`,
       },
       body: JSON.stringify({
-        deviceIds: [autoDevice.deviceId],
+        deviceId: autoDevice.deviceId,
       }),
     });
     const deployData = await deployRes.json();

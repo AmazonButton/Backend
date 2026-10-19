@@ -107,6 +107,10 @@ export class ChangeWifiDto {
 export class ConfirmPairingDto {
   @IsOptional()
   @IsString()
+  deviceId?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(100)
   buttonName?: string;
 
