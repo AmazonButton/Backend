@@ -38,9 +38,9 @@ export class OrdersController {
   @Roles('CUSTOMER')
   @Post('quick-reorder')
   async quickReorder(@Request() req: any, @Body('deviceId') deviceId: string) {
-    // Look up device
-    const device = await this.ordersService['prisma'].device.findUnique({
-      where: { deviceId },
+    // Look up device by deviceId or id
+    const device = await this.ordersService['prisma'].device.findFirst({
+      where: { OR: [{ deviceId }, { id: deviceId }] },
       include: { configuration: true },
     });
 

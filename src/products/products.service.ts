@@ -12,6 +12,20 @@ export class ProductsService {
     });
   }
 
+  async storefrontCatalog(search?: string, category?: string) {
+    return this.prisma.product.findMany({
+      where: {
+        isActive: true,
+        status: 'ACTIVE',
+        store: { status: 'ACTIVE' },
+        ...(category ? { category } : {}),
+        ...(search ? { OR: [{ name: { contains: search } }, { brand: { contains: search } }, { category: { contains: search } }] } : {}),
+      },
+      include: { store: { select: { id: true, name: true, address: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async create(user: any, body: any) {
     const { name, brand, sku, category, unit, price, stock, imageUrl } = body;
 

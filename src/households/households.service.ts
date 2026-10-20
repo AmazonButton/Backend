@@ -1,12 +1,14 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class HouseholdsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+  ) {}
 
   async getUserHouseholds(userId: string) {
-    const members = await this.prisma.householdMember.findMany({
+    let members = await this.prisma.householdMember.findMany({
       where: { userId },
       include: {
         household: {
@@ -41,6 +43,81 @@ export class HouseholdsService {
       },
       orderBy: { joinedAt: 'asc' },
     });
+
+    // Auto-provision a default Household if none exists yet for this user
+    if (members.length === 0) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { customerProfile: true },
+      });
+
+      if (user) {
+        const householdName = user.customerProfile?.apartment 
+          ? `Căn hộ ${user.customerProfile.apartment}` 
+          : `Gia đình ${user.fullName || 'của tôi'}`;
+
+        const newHousehold = await this.prisma.household.create({
+          data: {
+            name: householdName,
+            address: user.customerProfile?.deliveryAddress || 'TP. Hồ Chí Minh',
+            apartment: user.customerProfile?.apartment || 'Căn hộ gia đình',
+            phone: user.phone || user.customerProfile?.phone,
+            shoppingList: { create: {} },
+            members: {
+              create: {
+                userId: user.id,
+                role: 'OWNER',
+                nickname: 'Chủ hộ',
+              },
+            },
+          },
+          include: {
+            members: {
+              include: {
+                user: {
+                  select: { id: true, fullName: true, email: true, phone: true, role: true },
+                },
+              },
+            },
+            devices: {
+              include: {
+                configuration: {
+                  include: { product: true },
+                },
+              },
+            },
+            reminders: {
+              where: { status: 'PENDING' },
+              include: { product: true },
+            },
+            shoppingList: {
+              include: {
+                items: {
+                  include: { product: true },
+                },
+              },
+            },
+          },
+        });
+
+        // Link any orphan customer devices to this household
+        if (user.customerProfile?.id) {
+          await this.prisma.device.updateMany({
+            where: { customerId: user.customerProfile.id, householdId: null },
+            data: { householdId: newHousehold.id },
+          });
+        }
+
+        return [{
+          membership: {
+            role: 'OWNER',
+            nickname: 'Chủ hộ',
+            joinedAt: new Date(),
+          },
+          ...newHousehold,
+        }];
+      }
+    }
 
     return members.map((m) => ({
       membership: {

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConsumptionService } from '../consumption/consumption.service';
 
@@ -20,8 +20,8 @@ export interface PredictionInsight {
 @Injectable()
 export class PredictionService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly consumptionService: ConsumptionService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ConsumptionService) private readonly consumptionService: ConsumptionService,
   ) {}
 
   async calculateHouseholdPredictions(householdId: string): Promise<PredictionInsight[]> {

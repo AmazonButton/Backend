@@ -15,6 +15,8 @@ import { PredictionModule } from './prediction/prediction.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { ShoppingListModule } from './shopping-list/shopping-list.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
+import { PaymentsModule } from './payments/payments.module';
+import { WalletModule } from './wallet/wallet.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -35,6 +37,8 @@ import { AppController } from './app.controller';
     RemindersModule,
     ShoppingListModule,
     ServiceRequestsModule,
+    PaymentsModule,
+    WalletModule,
   ],
   controllers: [AppController],
 })

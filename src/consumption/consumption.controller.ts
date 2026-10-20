@@ -1,11 +1,13 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards, Inject } from '@nestjs/common';
 import { ConsumptionService } from './consumption.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('consumption')
 @UseGuards(JwtAuthGuard)
 export class ConsumptionController {
-  constructor(private readonly consumptionService: ConsumptionService) {}
+  constructor(
+    @Inject(ConsumptionService) private readonly consumptionService: ConsumptionService,
+  ) {}
 
   @Get('household/:householdId')
   async getHouseholdConsumption(

@@ -64,6 +64,7 @@ model Store {
   deviceTemplates DeviceTemplate[]
   customers       CustomerProfile[]
   orders          Order[]
+  wallet          StoreWallet?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 }
@@ -248,11 +249,15 @@ model Order {
   orderNumber        String           @unique // e.g. "ORD-20260902-0041"
   storeId            String
   store              Store            @relation(fields: [storeId], references: [id])
-  customerId         String
-  customer           CustomerProfile  @relation(fields: [customerId], references: [id])
+  customerId         String?
+  customer           CustomerProfile? @relation(fields: [customerId], references: [id])
   deviceId           String?
   device             Device?          @relation(fields: [deviceId], references: [id])
   status             String           @default("PENDING") // PENDING, CONFIRMED, PREPARING, OUT_FOR_DELIVERY, COMPLETED, CANCELLED, REJECTED
+  paymentMethod      String?
+  paymentStatus      String           @default("UNPAID")
+  paidAt             DateTime?
+  payosOrderCode     Int?             @unique
   totalAmount        Float
   deliveryAddress    String
   customerPhone      String
@@ -275,6 +280,55 @@ model OrderItem {
   quantity    Int
   unitPrice   Float
   totalPrice  Float
+}
+
+model StoreWallet {
+  id                String                   @id @default(uuid())
+  storeId           String                   @unique
+  store             Store                    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  balance           Int                      @default(0)
+  pendingBalance    Int                      @default(0)
+  bankName          String?
+  bankBin           String?
+  accountNumber     String?
+  accountHolderName String?
+  transactions      StoreWalletTransaction[]
+  withdrawals       StoreWalletWithdrawal[]
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+}
+
+model StoreWalletTransaction {
+  id          String      @id @default(uuid())
+  walletId    String
+  wallet      StoreWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount      Int
+  type        String
+  status      String      @default("SUCCESS")
+  description String?
+  referenceId String?     @unique
+  createdAt   DateTime    @default(now())
+
+  @@index([walletId, createdAt])
+}
+
+model StoreWalletWithdrawal {
+  id                String      @id @default(uuid())
+  walletId          String
+  wallet            StoreWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount            Int
+  status            String      @default("PENDING")
+  bankName          String
+  bankBin           String
+  accountNumber     String
+  accountHolderName String
+  note              String?
+  referenceId       String      @unique
+  payoutId          String?
+  createdAt         DateTime    @default(now())
+  processedAt       DateTime?
+
+  @@index([walletId, createdAt])
 }
 
 model IdempotencyRecord {

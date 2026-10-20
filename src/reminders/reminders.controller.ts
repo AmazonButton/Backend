@@ -1,11 +1,13 @@
-import { Controller, Get, Post, Put, Param, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, UseGuards, Request, Inject } from '@nestjs/common';
 import { RemindersService } from './reminders.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('reminders')
 @UseGuards(JwtAuthGuard)
 export class RemindersController {
-  constructor(private readonly remindersService: RemindersService) {}
+  constructor(
+    @Inject(RemindersService) private readonly remindersService: RemindersService,
+  ) {}
 
   @Get('household/:householdId')
   async getHouseholdReminders(@Param('householdId') householdId: string) {

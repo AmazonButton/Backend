@@ -88,7 +88,7 @@ export class OrdersService {
       }
     }
 
-    // Debounce check: If an order from this device occurred in the last 30s
+    // Debounce check: If an order with the same product from this device occurred in the last 30s
     const recentOrder = await this.prisma.order.findFirst({
       where: {
         deviceId: device.id,
@@ -99,11 +99,14 @@ export class OrdersService {
     });
 
     if (recentOrder) {
-      return {
-        order: recentOrder,
-        isDuplicate: true,
-        cancelWindowSeconds: config.cancelWindowSeconds,
-      };
+      const sameProduct = recentOrder.items?.some((it: any) => it.productId === product.id);
+      if (sameProduct) {
+        return {
+          order: recentOrder,
+          isDuplicate: true,
+          cancelWindowSeconds: config.cancelWindowSeconds,
+        };
+      }
     }
 
     // ─── Stock Check & Partial Fill ────────────────────────────────────────────
@@ -196,6 +199,20 @@ export class OrdersService {
       return newOrder;
     });
 
+    // Record consumption for statistical replenishment predictions
+    if (device.householdId) {
+      await this.prisma.consumptionRecord.create({
+        data: {
+          householdId: device.householdId,
+          productId: product.id,
+          deviceId: device.id,
+          quantity: actualQuantity,
+          orderId: result.id,
+          recordedAt: new Date(),
+        },
+      }).catch((e) => console.log('Notice recording order consumption:', e.message));
+    }
+
     const orderPayload = {
       order: result,
       deviceName: config.customName,
@@ -259,11 +276,10 @@ export class OrdersService {
     }
 
     if (order.status !== 'PENDING') {
-      throw new BadRequestException('Đơn hàng đã được cửa hàng tiếp nhận, không thể hủy');
+      throw new BadRequestException('Đơn hàng đã được cửa hàng tiếp nhận hoặc xử lý, không thể hủy');
     }
-
-    if (order.cancelExpiresAt && new Date() > order.cancelExpiresAt) {
-      throw new BadRequestException('Đã quá thời gian cho phép hủy đơn');
+    if (['PAID', 'REFUND_PENDING'].includes(order.paymentStatus)) {
+      throw new BadRequestException('Đơn đã thanh toán; cần xử lý hoàn tiền trước khi hủy');
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -287,7 +303,7 @@ export class OrdersService {
 
     const cancelPayload = { order: updated, reason, storeId: order.storeId, customerId: order.customerId };
     this.eventsGateway.emitToStore(order.storeId, 'ORDER_CANCELLED', cancelPayload);
-    this.eventsGateway.emitToCustomer(order.customerId, 'ORDER_CANCELLED', cancelPayload);
+    if (order.customerId) this.eventsGateway.emitToCustomer(order.customerId, 'ORDER_CANCELLED', cancelPayload);
     this.eventsGateway.emitGlobal('ORDER_CANCELLED', cancelPayload);
 
     return updated;
@@ -318,14 +334,19 @@ export class OrdersService {
 
       return tx.order.update({
         where: { id: orderId },
-        data: { status: newStatus },
+        data: {
+          status: newStatus,
+          ...(newStatus === 'COMPLETED' && order.paymentMethod === 'CASH_ON_DELIVERY'
+            ? { paymentStatus: 'PAID', paidAt: new Date() }
+            : {}),
+        },
         include: { items: true },
       });
     });
 
     const statusPayload = { order: updated, storeId: order.storeId, customerId: order.customerId };
     this.eventsGateway.emitToStore(order.storeId, 'ORDER_STATUS_CHANGED', statusPayload);
-    this.eventsGateway.emitToCustomer(order.customerId, 'ORDER_STATUS_CHANGED', statusPayload);
+    if (order.customerId) this.eventsGateway.emitToCustomer(order.customerId, 'ORDER_STATUS_CHANGED', statusPayload);
     this.eventsGateway.emitGlobal('ORDER_STATUS_CHANGED', statusPayload);
 
     return updated;

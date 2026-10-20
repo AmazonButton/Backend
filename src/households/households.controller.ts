@@ -1,11 +1,13 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request, Inject } from '@nestjs/common';
 import { HouseholdsService } from './households.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('households')
 @UseGuards(JwtAuthGuard)
 export class HouseholdsController {
-  constructor(private readonly householdsService: HouseholdsService) {}
+  constructor(
+    @Inject(HouseholdsService) private readonly householdsService: HouseholdsService,
+  ) {}
 
   @Get()
   async getMyHouseholds(@Request() req: any) {

@@ -22,6 +22,14 @@ async function bootstrap() {
     allowedHeaders: 'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature',
   });
 
+  // Support both /api and /api/v1 transparently
+  app.use((req: any, _res: any, next: any) => {
+    if (req.url && req.url.startsWith('/api/v1/')) {
+      req.url = req.url.replace('/api/v1/', '/api/');
+    }
+    next();
+  });
+
   app.setGlobalPrefix('api');
 
   const port = process.env.PORT || 5000;
@@ -36,3 +44,4 @@ async function bootstrap() {
 }
 
 bootstrap();
+// Server reloaded with real PayOS API credentials
