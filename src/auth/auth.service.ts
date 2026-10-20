@@ -124,7 +124,7 @@ export class AuthService {
           email: user.email,
           username: user.username,
         },
-        { expiresIn: '15m' },
+        { expiresIn: (process.env.JWT_EXPIRES_IN as any) || '7d' },
       );
 
       const rawRefreshToken = crypto.randomBytes(40).toString('hex');
@@ -203,7 +203,7 @@ export class AuthService {
         email: newUser.email,
         username: newUser.username,
       },
-      { expiresIn: '15m' },
+      { expiresIn: (process.env.JWT_EXPIRES_IN as any) || '7d' },
     );
 
     const rawRefreshToken = crypto.randomBytes(40).toString('hex');
@@ -384,7 +384,7 @@ export class AuthService {
       },
     });
 
-    // Generate short-lived Access Token (15 mins)
+    // Generate secure Access Token (7 days as configured in .env)
     const accessToken = this.jwtService.sign(
       {
         userId: user.id,
@@ -393,7 +393,7 @@ export class AuthService {
         email: user.email,
         username: user.username,
       },
-      { expiresIn: '15m' },
+      { expiresIn: (process.env.JWT_EXPIRES_IN as any) || '7d' },
     );
 
     // Generate long-lived cryptographically secure Refresh Token (7 days / 30 days)
@@ -432,12 +432,12 @@ export class AuthService {
       accessToken,
       token: accessToken, // Backward compatibility for mobile & existing tests
       refreshToken: rawRefreshToken,
-      expiresIn: 900,
+      expiresIn: 604800,
       data: {
         token: accessToken,
         accessToken,
         refreshToken: rawRefreshToken,
-        expiresIn: 900,
+        expiresIn: 604800,
         user: userPayload,
       },
       user: userPayload,
@@ -540,7 +540,7 @@ export class AuthService {
       },
     });
 
-    // Generate new Access Token
+    // Generate new Access Token (7 days)
     const newAccessToken = this.jwtService.sign(
       {
         userId: session.user.id,
@@ -549,7 +549,7 @@ export class AuthService {
         email: session.user.email,
         username: session.user.username,
       },
-      { expiresIn: '15m' },
+      { expiresIn: (process.env.JWT_EXPIRES_IN as any) || '7d' },
     );
 
     const userPayload = {
@@ -568,13 +568,13 @@ export class AuthService {
       accessToken: newAccessToken,
       token: newAccessToken,
       refreshToken: newRawRefreshToken,
-      expiresIn: 900,
+      expiresIn: 604800,
       user: userPayload,
       data: {
         accessToken: newAccessToken,
         token: newAccessToken,
         refreshToken: newRawRefreshToken,
-        expiresIn: 900,
+        expiresIn: 604800,
         user: userPayload,
       },
     };

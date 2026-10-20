@@ -11,7 +11,7 @@ import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'smart_button_prod_super_secret_jwt_key_2026_9948',
-      signOptions: { expiresIn: '15m' },
+      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN as any) || '7d' },
     }),
   ],
   controllers: [AuthController],
