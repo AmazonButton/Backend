@@ -1,3 +1,4 @@
+import { MIN_ORDER_TOTAL_VND } from './orders.constants';
 import { ALLOWED_ORDER_TRANSITIONS, OrderStatusType } from './dto/update-order-status.dto';
 import { DeliverOrderDto } from './dto/deliver-order.dto';
 import { DeliveryFailureDto } from './dto/delivery-failure.dto';
@@ -59,7 +60,79 @@ export class OrdersRepository {
 
   async createOrderFallbackTx(button: any, paymentMethod: string, shippingFee: number, iotRequestId?: string): Promise<bigint> {
     return this.prisma.$transaction(async (tx) => {
+      // 0. Idempotency Check (Safe Hit)
+      if (iotRequestId) {
+        const existingOrder = await tx.order.findFirst({
+          where: {
+            buttonId: button.buttonId,
+            iotRequestId,
+          },
+        });
+        if (existingOrder) {
+          return existingOrder.orderId;
+        }
+      }
+
+      // 1. Pre-calculate subtotal & discounts from current database products
       let subtotal = 0;
+      let totalDiscount = 0;
+      const productMap = new Map<bigint, any>();
+
+      for (const bp of button.buttonProducts) {
+        const product = await tx.product.findUnique({
+          where: { productId: bp.productId },
+        });
+        if (!product || product.status !== 'ACTIVE') {
+          throw new BadRequestException(`Sản phẩm ${product?.productName || bp.productId} không còn kinh doanh`);
+        }
+        productMap.set(bp.productId, product);
+
+        // Check active discount
+        const now = new Date();
+        const discount = await (tx as any).productDiscount?.findFirst?.({
+          where: {
+            productId: bp.productId,
+            status: 'ACTIVE',
+            startAt: { lte: now },
+            endAt: { gte: now },
+          },
+        });
+
+        const basePrice = Number(product.basePrice);
+        let unitDiscount = 0;
+        if (discount) {
+          if (discount.discountPercent != null) {
+            unitDiscount = Math.round((basePrice * Number(discount.discountPercent) / 100) * 100) / 100;
+          } else if (discount.discountAmount != null) {
+            unitDiscount = Math.min(basePrice, Number(discount.discountAmount));
+          }
+        }
+
+        subtotal += basePrice * bp.quantity;
+        totalDiscount += unitDiscount * bp.quantity;
+      }
+
+      const total = subtotal - totalDiscount + shippingFee;
+
+      // 2. Minimum order total constraint: totalAmount >= 2000 VND
+      if (total < MIN_ORDER_TOTAL_VND) {
+        throw new BadRequestException({
+          errorCode: 'ORDER_TOTAL_BELOW_MINIMUM',
+          message: 'Giá trị đơn hàng tối thiểu là 2.000 VND',
+        });
+      }
+
+      // 3. Verify available inventory before making any changes
+      for (const bp of button.buttonProducts) {
+        const inv = await tx.inventory.findUnique({
+          where: { productId: bp.productId },
+        });
+        if (!inv || (inv.quantityOnHand - inv.reservedQuantity) < bp.quantity) {
+          throw new BadRequestException('Không đủ tồn kho khả dụng cho sản phẩm trong nút bấm');
+        }
+      }
+
+      // 4. Create order directly with correct subtotal, discount, and total
       const orderCode = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
       const address = await tx.customerAddress.findFirst({
@@ -68,8 +141,16 @@ export class OrdersRepository {
       const shippingAddress = address
         ? `${address.addressDetail}${address.ward ? ', ' + address.ward : ''}${address.district ? ', ' + address.district : ''}${address.province ? ', ' + address.province : ''}`
         : 'Địa chỉ mặc định của khách hàng';
-      const recipientName = address?.recipientName || button.customer.user.fullName;
-      const phone = address?.phone || button.customer.user.phone || '';
+      const recipientName = address?.recipientName || button.customer?.user?.fullName || 'Khách hàng';
+      const phone = address?.phone || button.customer?.user?.phone || '';
+
+      const store = await tx.store.findUnique({
+        where: { storeId: button.storeId },
+        select: { commissionRate: true },
+      });
+      const commissionRate = store?.commissionRate ? Number(store.commissionRate) : 8.0;
+      const commissionAmount = Math.round((total * commissionRate / 100) * 100) / 100;
+      const netAmount = Math.max(0, total - commissionAmount);
 
       const createdOrder = await tx.order.create({
         data: {
@@ -81,9 +162,12 @@ export class OrdersRepository {
           paymentStatus: 'UNPAID',
           paymentMethod,
           shippingFee,
-          subtotalAmount: 0,
-          discountAmount: 0,
-          totalAmount: shippingFee,
+          subtotalAmount: subtotal,
+          discountAmount: totalDiscount,
+          totalAmount: total,
+          commissionRate,
+          commissionAmount,
+          netAmount,
           shippingRecipientName: recipientName,
           shippingPhone: phone,
           shippingAddress,
@@ -94,19 +178,44 @@ export class OrdersRepository {
         },
       });
 
+      // 5. Create order items and update inventory
       for (const bp of button.buttonProducts) {
-        const lineSubtotal = Number(bp.product.basePrice) * bp.quantity;
-        subtotal += lineSubtotal;
+        const product = productMap.get(bp.productId)!;
+        const basePrice = Number(product.basePrice);
+
+        const now = new Date();
+        const discount = await (tx as any).productDiscount?.findFirst?.({
+          where: {
+            productId: bp.productId,
+            status: 'ACTIVE',
+            startAt: { lte: now },
+            endAt: { gte: now },
+          },
+        });
+
+        let unitDiscount = 0;
+        let discountPercent = 0;
+        if (discount) {
+          if (discount.discountPercent != null) {
+            discountPercent = Number(discount.discountPercent);
+            unitDiscount = Math.round((basePrice * discountPercent / 100) * 100) / 100;
+          } else if (discount.discountAmount != null) {
+            unitDiscount = Math.min(basePrice, Number(discount.discountAmount));
+          }
+        }
+
+        const finalUnitPrice = basePrice - unitDiscount;
+        const lineSubtotal = finalUnitPrice * bp.quantity;
 
         await tx.orderItem.create({
           data: {
             orderId: createdOrder.orderId,
             productId: bp.productId,
-            productNameSnapshot: bp.product.productName,
-            unitPriceSnapshot: bp.product.basePrice,
-            discountPercentSnapshot: 0,
-            discountAmountSnapshot: 0,
-            finalUnitPrice: bp.product.basePrice,
+            productNameSnapshot: product.productName,
+            unitPriceSnapshot: product.basePrice,
+            discountPercentSnapshot: discountPercent,
+            discountAmountSnapshot: unitDiscount,
+            finalUnitPrice,
             quantity: bp.quantity,
             itemSubtotal: lineSubtotal,
           },
@@ -121,23 +230,11 @@ export class OrdersRepository {
         });
       }
 
-      const total = subtotal + shippingFee;
-      const store = await tx.store.findUnique({
-        where: { storeId: button.storeId },
-        select: { commissionRate: true },
-      });
-      const commissionRate = store?.commissionRate ? Number(store.commissionRate) : 8.0;
-      const commissionAmount = Math.round((total * commissionRate / 100) * 100) / 100;
-      const netAmount = Math.max(0, total - commissionAmount);
-
-      await tx.order.update({
-        where: { orderId: createdOrder.orderId },
+      await tx.orderStatusHistory.create({
         data: {
-          subtotalAmount: subtotal,
-          totalAmount: total,
-          commissionRate,
-          commissionAmount,
-          netAmount,
+          orderId: createdOrder.orderId,
+          newStatus: 'PENDING',
+          reason: 'Khách hàng nhấn nút tạo đơn thành công (Fallback Tx)',
         },
       });
 
@@ -505,6 +602,7 @@ export class OrdersRepository {
             customer: { include: { user: true } },
           },
         },
+        store: true,
       },
     });
   }

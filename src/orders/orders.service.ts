@@ -1,4 +1,6 @@
 import { StoreWalletService } from '../store-wallet/store-wallet.service';
+import { MIN_ORDER_TOTAL_VND } from './orders.constants';
+export { MIN_ORDER_TOTAL_VND } from './orders.constants';
 import {
   Injectable,
   BadRequestException,
@@ -65,6 +67,40 @@ export class OrdersService {
       throw new BadRequestException('Nút bấm chưa được cấu hình sản phẩm đặt hàng');
     }
 
+    // 0. Idempotency Check (Safe Hit): Tra cứu đơn hàng cũ nếu trùng requestId
+    if (requestId) {
+      const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
+      if (existingOrder) {
+        return {
+          order: toOrderResponseDto(existingOrder),
+          isDuplicate: true,
+          message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
+        };
+      }
+    }
+
+    // 1. Kiểm tra sớm tổng tiền ước tính nếu có giá sản phẩm (Fast-Fail)
+    if (button.buttonProducts && button.buttonProducts.length > 0) {
+      let knownSubtotal = 0;
+      let allPricesAvailable = true;
+      for (const bp of button.buttonProducts) {
+        if (bp.product && bp.product.basePrice !== undefined && bp.product.basePrice !== null) {
+          knownSubtotal += Number(bp.product.basePrice) * bp.quantity;
+        } else {
+          allPricesAvailable = false;
+        }
+      }
+      if (allPricesAvailable) {
+        const estimatedTotal = knownSubtotal + shippingFee;
+        if (estimatedTotal < MIN_ORDER_TOTAL_VND) {
+          throw new BadRequestException({
+            errorCode: 'ORDER_TOTAL_BELOW_MINIMUM',
+            message: 'Giá trị đơn hàng tối thiểu là 2.000 VND',
+          });
+        }
+      }
+    }
+
     let newOrderId: any = null;
 
     // 1. Cố gắng thực thi qua Stored Procedure PostgreSQL (Atomic với iot_request_id)
@@ -77,6 +113,19 @@ export class OrdersService {
         requestId,
       );
     } catch (procErr: any) {
+      // Bắt lỗi ràng buộc giá trị đơn hàng tối thiểu từ Stored Procedure (P0010)
+      const isBelowMinimum =
+        procErr?.code === 'P0010' ||
+        procErr?.meta?.code === 'P0010' ||
+        procErr?.message?.includes('P0010') ||
+        procErr?.message?.includes('Giá trị đơn hàng tối thiểu');
+      if (isBelowMinimum) {
+        throw new BadRequestException({
+          errorCode: 'ORDER_TOTAL_BELOW_MINIMUM',
+          message: 'Giá trị đơn hàng tối thiểu là 2.000 VND',
+        });
+      }
+
       // Bắt vi phạm Unique Constraint (button_id, iot_request_id) -> Idempotency Safe Hit
       const isUniqueConflict =
         procErr?.code === '23505' ||
@@ -101,6 +150,9 @@ export class OrdersService {
         try {
           newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee, requestId);
         } catch (fallbackErr: any) {
+          if (fallbackErr instanceof BadRequestException) {
+            throw fallbackErr;
+          }
           if ((fallbackErr?.code === 'P2002' || fallbackErr?.message?.includes('uq_orders_button_request')) && requestId) {
             const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
             if (existingOrder) {

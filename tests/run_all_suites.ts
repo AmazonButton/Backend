@@ -53,6 +53,21 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'api.test.ts')],
   },
+  {
+    name: '10. User Avatar URL & Profile Management Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'user-avatar-profile.spec.ts')],
+  },
+  {
+    name: '11. Order Minimum Value (>= 2,000 VND) Constraint Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'order-minimum-value.spec.ts')],
+  },
+  {
+    name: '12. Didit eKYC Identity Verification Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'identity-verification-didit.spec.ts')],
+  },
 ];
 
 async function main() {

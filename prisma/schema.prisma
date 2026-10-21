@@ -27,6 +27,8 @@ model User {
   phone                      String?
   phoneVerifiedAt            DateTime? @map("phone_verified_at") @db.Timestamptz(6)
   firebaseUid                String?   @unique @map("firebase_uid") @db.VarChar(128)
+  avatarUrl                  String?   @map("avatar_url") @db.VarChar(512)
+  kycStatus                  String    @default("UNVERIFIED") @map("kyc_status") @db.VarChar(32)
   status                     String    @default("ACTIVE")
   passwordResetToken         String?   @map("password_reset_token")
   passwordResetExpiresAt     DateTime? @map("password_reset_expires_at")
@@ -36,19 +38,21 @@ model User {
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  ownedStores          Store[]               @relation("StoreOwner")
-  storeStaffs          StoreStaff[]
-  customerProfile      CustomerProfile?
-  priceHistories       ProductPriceHistory[]
-  orderStatusHistories OrderStatusHistory[]
-  refreshTokens        RefreshToken[]
-  approvedWithdrawals  StoreWithdrawal[]     @relation("ApprovedWithdrawals")
-  authOtps             AuthOtp[]
-  assignedOrders       Order[]               @relation("AssignedOrders")
-  driverDuty           DriverDuty?
-  driverShifts         DriverShift[]         @relation("DriverShifts")
-  confirmedShifts      DriverShift[]         @relation("ConfirmedShifts")
-  fcmTokens            UserFcmToken[]
+  ownedStores                  Store[]                       @relation("StoreOwner")
+  storeStaffs                  StoreStaff[]
+  customerProfile              CustomerProfile?
+  priceHistories               ProductPriceHistory[]
+  orderStatusHistories         OrderStatusHistory[]
+  refreshTokens                RefreshToken[]
+  approvedWithdrawals          StoreWithdrawal[]             @relation("ApprovedWithdrawals")
+  authOtps                     AuthOtp[]
+  assignedOrders               Order[]                       @relation("AssignedOrders")
+  driverDuty                   DriverDuty?
+  driverShifts                 DriverShift[]                 @relation("DriverShifts")
+  confirmedShifts              DriverShift[]                 @relation("ConfirmedShifts")
+  fcmTokens                    UserFcmToken[]
+  identityVerificationSessions IdentityVerificationSession[]
+
 
   @@map("users")
 }
@@ -741,3 +745,43 @@ model DriverShift {
 
   @@map("driver_shifts")
 }
+
+model IdentityVerificationSession {
+  id              BigInt    @id @default(autoincrement()) @map("id")
+  userId          BigInt    @map("user_id")
+  diditSessionId  String    @unique @map("didit_session_id") @db.VarChar(128)
+  workflowId      String    @map("workflow_id") @db.VarChar(128)
+  vendorData      String    @map("vendor_data") @db.VarChar(128)
+  status          String    @default("PENDING") @map("status") @db.VarChar(32) // PENDING, IN_REVIEW, APPROVED, DECLINED, EXPIRED, ABANDONED, DELETED
+  verificationUrl String    @map("verification_url") @db.VarChar(1024)
+  metadata        Json?     @map("metadata")
+  expiresAt       DateTime? @map("expires_at") @db.Timestamptz(6)
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          User                @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  webhookEvents DiditWebhookEvent[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("identity_verification_sessions")
+}
+
+model DiditWebhookEvent {
+  id             BigInt    @id @default(autoincrement()) @map("id")
+  eventId        String?   @unique @map("event_id") @db.VarChar(128)
+  diditSessionId String?   @map("didit_session_id") @db.VarChar(128)
+  eventType      String    @map("event_type") @db.VarChar(64) // status.updated, data.updated
+  status         String    @map("status") @db.VarChar(32)
+  payloadHash    String    @unique @map("payload_hash") @db.VarChar(64)
+  receivedAt     DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt    DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  session IdentityVerificationSession? @relation(fields: [diditSessionId], references: [diditSessionId], onDelete: SetNull)
+
+  @@index([diditSessionId])
+  @@map("didit_webhook_events")
+}
+

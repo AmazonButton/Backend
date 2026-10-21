@@ -12,6 +12,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Request,
+  Inject,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -33,9 +34,9 @@ import { ProductsRepository } from '../products/products.repository';
 @Controller('media')
 export class MediaController {
   constructor(
-    private readonly mediaService: MediaService,
-    private readonly productsRepo: ProductsRepository,
-    private readonly prisma: PrismaService,
+    @Inject(MediaService) private readonly mediaService: MediaService,
+    @Inject(ProductsRepository) private readonly productsRepo: ProductsRepository,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')

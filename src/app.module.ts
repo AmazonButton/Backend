@@ -1,3 +1,4 @@
+import { IdentityVerificationsModule } from './identity-verifications/identity-verifications.module';
 import { DriversModule } from './drivers/drivers.module';
 import { DriverShiftsModule } from './driver-shifts/driver-shifts.module';
 import { StoresModule } from './stores/stores.module';
@@ -45,6 +46,7 @@ import { AppController } from './app.controller';
     StoresModule,
     DriversModule,
     DriverShiftsModule,
+    IdentityVerificationsModule,
   ],
   controllers: [AppController],
 })

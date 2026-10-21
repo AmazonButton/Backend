@@ -19,3 +19,4 @@ logs/
 # Firebase Service Account
 secrets/
 firebase-service-account.json
+*.err

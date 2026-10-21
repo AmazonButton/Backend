@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Body,
   Query,
   UseGuards,
@@ -21,6 +22,7 @@ import {
   ResendVerificationDto,
   RefreshTokenDto,
   GoogleLoginDto,
+  UpdateProfileDto,
 } from './dto/auth.dto';
 import { VerifyFirebasePhoneDto } from './dto/verify-firebase-phone.dto';
 import { FirebasePhoneService } from './firebase-phone.service';
@@ -87,6 +89,20 @@ export class AuthController {
   @Get('me')
   getMe(@Request() req: any) {
     return this.authService.getMe(req.user.id || req.user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('me')
+  updateMe(@Request() req: any, @Body() body: UpdateProfileDto) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    return this.authService.updateProfile(rawUserId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  updateProfile(@Request() req: any, @Body() body: UpdateProfileDto) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    return this.authService.updateProfile(rawUserId, body);
   }
 
   @UseGuards(AuthRateLimitGuard)

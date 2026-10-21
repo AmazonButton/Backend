@@ -6,6 +6,14 @@ All AI agent actions, code generation, refactoring, and reviews MUST strictly ad
 Full Specifications & Standards:
 - [NODEJS_BACKEND_SECURITY_RULES.md](file:///f:/Learning/SEM9-FPTu/backend/Rules/NODEJS_BACKEND_SECURITY_RULES.md): Security-by-Design and 25 core security rules.
 - [BACKEND_API_DEVELOPMENT_RULES.md](file:///f:/Learning/SEM9-FPTu/backend/Rules/BACKEND_API_DEVELOPMENT_RULES.md): REST API design, response envelopes, DTOs, and coding conventions.
+- [SESSION_HANDOFF.md](file:///f:/Learning/SEM9-FPTu/backend/SESSION_HANDOFF.md): Current project status and verified handoff context.
+- [docs/AGENT_CONTEXT_POLICY.md](file:///f:/Learning/SEM9-FPTu/backend/docs/AGENT_CONTEXT_POLICY.md): Mandatory context update and verification policy for agents.
+
+## 0. Agent Context & Handoff (Mandatory)
+- Before starting work, read `SESSION_HANDOFF.md` and the task-relevant BRD/Rules/skill documents.
+- After any code, migration, configuration, or test change, update `SESSION_HANDOFF.md` using the policy in `docs/AGENT_CONTEXT_POLICY.md`.
+- Record only verified commands/results; do not claim tests passed without current evidence.
+- Never write secrets, private keys, tokens, passwords, or real personal data into context files.
 
 ---
 
@@ -43,4 +51,3 @@ Consult and run the following skills located in `Skills/` and `.agents/skills/`:
 - [`secure-file-upload-and-storage`](file:///f:/Learning/SEM9-FPTu/backend/Skills/secure-file-upload-and-storage/SKILL.md): Handle multipart uploads safely with magic bytes, SVG sanitization, and S3 Presigned URLs.
 - [`advanced-auth-and-webhooks`](file:///f:/Learning/SEM9-FPTu/backend/Skills/advanced-auth-and-webhooks/SKILL.md): Implement anti-enumeration forgot/reset password flow and timing-safe webhook HMAC verification.
 - [`backend-security-audit`](file:///f:/Learning/SEM9-FPTu/backend/Skills/backend-security-audit/SKILL.md): Audit backend code against the 42-point security checklist and OWASP standards.
-

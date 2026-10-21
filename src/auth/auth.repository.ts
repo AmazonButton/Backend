@@ -73,6 +73,7 @@ export class AuthRepository {
     email: string;
     passwordHash: string;
     fullName: string;
+    avatarUrl?: string | null;
     phone?: string | null;
     status: string;
     authId?: string | null;
@@ -613,5 +614,29 @@ export class AuthRepository {
       },
     });
   }
+
+  async updateProfile(
+    userId: bigint,
+    data: {
+      fullName?: string;
+      avatarUrl?: string;
+      phone?: string;
+    },
+  ) {
+    return this.prisma.user.update({
+      where: { userId },
+      data: {
+        ...(data.fullName !== undefined ? { fullName: data.fullName } : {}),
+        ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
+        ...(data.phone !== undefined ? { phone: data.phone } : {}),
+      },
+      include: {
+        customerProfile: { include: { addresses: true } },
+        ownedStores: true,
+        storeStaffs: { include: { role: true, store: true } },
+      },
+    });
+  }
 }
+
 

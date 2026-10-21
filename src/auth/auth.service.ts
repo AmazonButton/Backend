@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  NotFoundException,
   Inject,
   Logger,
   HttpException,
@@ -21,6 +22,7 @@ import {
   ResetPasswordDto,
   VerifyEmailDto,
   ResendVerificationDto,
+  UpdateProfileDto,
 } from './dto/auth.dto';
 
 @Injectable()
@@ -265,6 +267,13 @@ export class AuthService {
     const authId = supabaseUser.id; // Supabase auth UUID
     const metadata = supabaseUser.user_metadata || {};
     const fullName = metadata.full_name || metadata.name || email.split('@')[0];
+    const rawAvatarUrl = metadata.avatar_url || metadata.picture || metadata.avatarUrl || null;
+    const avatarUrl =
+      typeof rawAvatarUrl === 'string' &&
+      (rawAvatarUrl.startsWith('http://') || rawAvatarUrl.startsWith('https://')) &&
+      rawAvatarUrl.length <= 512
+        ? rawAvatarUrl
+        : null;
 
     // Check if user already exists by authId or email
     let user = await this.authRepo.findByAuthId(authId);
@@ -273,6 +282,9 @@ export class AuthService {
       if (user) {
         // Link authId to existing user
         await this.authRepo.updateAuthId(user.userId, authId);
+        if (!user.avatarUrl && avatarUrl) {
+          user = (await this.authRepo.updateProfile(user.userId, { avatarUrl })) as any;
+        }
       } else {
         // Create new User and CustomerProfile
         const randomPassword = crypto.randomBytes(24).toString('hex');
@@ -285,6 +297,7 @@ export class AuthService {
             email,
             passwordHash,
             fullName,
+            avatarUrl,
             phone: metadata.phone || null,
             status: 'ACTIVE',
             authId,
@@ -303,6 +316,11 @@ export class AuthService {
           ownedStores: [],
           storeStaffs: [],
         } as any;
+      }
+    } else {
+      // If user exists by authId, backfill avatarUrl if not yet set
+      if (!user.avatarUrl && avatarUrl) {
+        user = (await this.authRepo.updateProfile(user.userId, { avatarUrl })) as any;
       }
     }
 
@@ -355,6 +373,7 @@ export class AuthService {
       email: user.email,
       username: user.username,
       fullName: user.fullName,
+      avatarUrl: user.avatarUrl || null,
       role,
       storeId,
       customerProfileId,
@@ -467,6 +486,7 @@ export class AuthService {
       email: user.email,
       username: user.username,
       fullName: user.fullName,
+      avatarUrl: user.avatarUrl || null,
       role,
       storeId,
       customerProfileId,
@@ -825,6 +845,7 @@ export class AuthService {
         username: user.username,
         fullName: user.fullName,
         phone: user.phone,
+        avatarUrl: user.avatarUrl || null,
         role,
         status: user.status,
         storeId,
@@ -833,6 +854,52 @@ export class AuthService {
         ownedStores: user.ownedStores,
         storeStaffs: user.storeStaffs,
         createdAt: user.createdAt,
+      },
+    };
+  }
+
+  async updateProfile(userId: string | number | bigint, dto: UpdateProfileDto) {
+    const rawUserId = BigInt(userId);
+    const user = await this.authRepo.findById(rawUserId);
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy thông tin người dùng');
+    }
+
+    const updated = await this.authRepo.updateProfile(rawUserId, {
+      fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
+      avatarUrl: dto.avatarUrl !== undefined ? dto.avatarUrl.trim() : undefined,
+      phone: dto.phone !== undefined ? dto.phone.trim() : undefined,
+    });
+
+    let role = 'CUSTOMER';
+    let storeId: string | null = null;
+    if (updated.email === 'admin@smartorder.local' || updated.username === 'admin') {
+      role = 'SUPER_ADMIN';
+    } else if (updated.ownedStores && updated.ownedStores.length > 0) {
+      role = 'STORE_OWNER';
+      storeId = updated.ownedStores[0].storeId.toString();
+    } else if (updated.storeStaffs && updated.storeStaffs.length > 0) {
+      role = updated.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+      storeId = updated.storeStaffs[0].storeId.toString();
+    }
+
+    return {
+      success: true,
+      message: 'Cập nhật thông tin hồ sơ thành công',
+      data: {
+        id: updated.userId.toString(),
+        userId: updated.userId.toString(),
+        email: updated.email,
+        username: updated.username,
+        fullName: updated.fullName,
+        phone: updated.phone,
+        avatarUrl: updated.avatarUrl || null,
+        role,
+        status: updated.status,
+        storeId,
+        customerProfileId: updated.customerProfile?.customerId?.toString() || null,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
       },
     };
   }

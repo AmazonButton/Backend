@@ -20,13 +20,20 @@ async function bootstrap() {
     }
   }
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Enable shutdown hooks for graceful termination
   app.enableShutdownHooks();
 
-  // Express body size limit (prevent DoS via massive payloads) - 10kb project standard
-  app.use(express.json({ limit: '10kb' }));
+  // Express body size limit with rawBody retention for webhooks - 10kb project standard
+  app.use(
+    express.json({
+      limit: '10kb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(express.urlencoded({ limit: '10kb', extended: true }));
 
   // Global exception filter for uniform error envelopes & security error masking
@@ -84,45 +91,49 @@ async function bootstrap() {
     exclude: ['health', 'healthz', 'readyz', 'api/v1/health'],
   });
 
-  // Setup Swagger Documentation
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Smart Order Button Platform API')
-    .setDescription(
-      'Nền tảng Nút Bấm Đặt Hàng Thông Minh Đa Cửa Hàng (Multi-Store IoT Button Platform - BRD V2.1).\n\n' +
-      'Bao gồm đầy đủ các module: Auth & IAM, IoT Edge Gate (HMAC-SHA256), Devices & Zero-Touch Provisioning, Products & Inventory, Orders, Admin Management & Analytics.',
-    )
-    .setVersion('2.1.0')
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        name: 'JWT',
-        description: 'Nhập JWT Token nhận được từ /api/v1/auth/login',
-        in: 'header',
-      },
-      'JWT-auth',
-    )
-    .addApiKey(
-      {
-        type: 'apiKey',
-        name: 'x-signature',
-        in: 'header',
-        description: 'Chữ ký HMAC-SHA256 của nút bấm IoT',
-      },
-      'HMAC-Signature',
-    )
-    .build();
+  // Setup Swagger Documentation (wrapped in try/catch to gracefully handle environments without emitDecoratorMetadata like tsx/esbuild)
+  try {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Smart Order Button Platform API')
+      .setDescription(
+        'Nền tảng Nút Bấm Đặt Hàng Thông Minh Đa Cửa Hàng (Multi-Store IoT Button Platform - BRD V2.1).\n\n' +
+        'Bao gồm đầy đủ các module: Auth & IAM, IoT Edge Gate (HMAC-SHA256), Devices & Zero-Touch Provisioning, Products & Inventory, Orders, Admin Management & Analytics.',
+      )
+      .setVersion('2.1.0')
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          name: 'JWT',
+          description: 'Nhập JWT Token nhận được từ /api/v1/auth/login',
+          in: 'header',
+        },
+        'JWT-auth',
+      )
+      .addApiKey(
+        {
+          type: 'apiKey',
+          name: 'x-signature',
+          in: 'header',
+          description: 'Chữ ký HMAC-SHA256 của nút bấm IoT',
+        },
+        'HMAC-Signature',
+      )
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document, {
-    customSiteTitle: 'Smart Order Button API Documentation (Swagger)',
-    swaggerOptions: {
-      persistAuthorization: true,
-      filter: true,
-      displayRequestDuration: true,
-    },
-  });
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document, {
+      customSiteTitle: 'Smart Order Button API Documentation (Swagger)',
+      swaggerOptions: {
+        persistAuthorization: true,
+        filter: true,
+        displayRequestDuration: true,
+      },
+    });
+  } catch (err: any) {
+    console.warn(`⚠️ [Swagger] Không thể tạo tài liệu Swagger trong môi trường dev tsx do thiếu reflect metadata (${err?.message || err}). Chạy 'npm start' hoặc 'npm run build' để kích hoạt Swagger đầy đủ.`);
+  }
 
   const port = process.env.PORT || 5000;
   await app.listen(port, '0.0.0.0');

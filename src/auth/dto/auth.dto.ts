@@ -115,3 +115,5 @@ export class GoogleLoginDto {
   @IsString()
   token: string;
 }
+
+export * from './update-profile.dto';
