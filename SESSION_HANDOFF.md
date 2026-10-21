@@ -134,9 +134,10 @@ When starting a new conversation, prompt the agent with:
 - Git History & Branch State (Crucial for Agent Continuity):
   - `origin/main` was reset back to clean commit `73c1b4a` (`fix(tests): synchronize stale test contracts, fcm isolation, and master test runner`).
   - 5 previously faulty remote commits were stripped (`cc91427`, `fcc7db8`, `b15cd7e`, `c8bfd21`, `5f734a6`) and backed up to branch `backup/remote-agent-commits-20261021`.
-  - Local `main` is up to date with `origin/main` (`git fetch origin` synced).
-  - Working tree changes are fully preserved locally and ready to be staged/committed.
+  - PUSHED TO ORIGIN MAIN: Commit `155102f` (`feat(kyc,orders,auth): implement hardened Didit eKYC, order minimum total, avatar URL, and agent context policies`) pushed cleanly to `origin/main`.
+  - Local `main` is completely in sync with `origin/main`.
+  - Zero secrets or `.env` files committed.
 - Next Steps:
-  - Commit verified changes: `git add .` -> `git commit -m "feat(kyc): implement hardened Didit eKYC verification and webhook processing"` -> `git push origin main`.
+  - Proceed with mobile app integration using endpoint `/api/v1/identity-verifications/sessions`.
 
 
