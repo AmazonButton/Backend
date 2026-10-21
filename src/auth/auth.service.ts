@@ -20,6 +20,7 @@ import {
   ResetPasswordDto,
   VerifyEmailDto,
   ResendVerificationDto,
+  GoogleAuthDto,
 } from './dto/auth.dto';
 
 @Injectable()
@@ -241,6 +242,251 @@ export class AuthService {
         refreshToken: rawRefreshToken,
         user: userPayload,
         verificationToken: rawVerificationToken,
+      },
+    };
+  }
+
+  /**
+   * Google Authentication & Registration
+   * Automatically handles new user registration or existing user login with Google
+   */
+  async googleAuth(body: GoogleAuthDto, ip?: string, userAgent?: string) {
+    let email = body.email?.trim().toLowerCase();
+    let fullName = body.fullName?.trim();
+    let googleId = body.googleId;
+    let avatarUrl = body.avatarUrl;
+
+    // Optional idToken decoding if token is supplied
+    if (body.idToken) {
+      try {
+        const decoded = this.jwtService.decode(body.idToken) as any;
+        if (decoded && typeof decoded === 'object') {
+          if (decoded.email) email = decoded.email.trim().toLowerCase();
+          if (decoded.name) fullName = fullName || decoded.name;
+          if (decoded.sub) googleId = googleId || decoded.sub;
+          if (decoded.picture) avatarUrl = avatarUrl || decoded.picture;
+        }
+      } catch (e) {
+        // Fall back to provided fields
+      }
+    }
+
+    if (!email) {
+      throw new BadRequestException({
+        success: false,
+        code: 'MISSING_EMAIL',
+        message: 'Không tìm thấy địa chỉ email từ tài khoản Google.',
+      });
+    }
+
+    // Check if user already exists
+    let user = await this.prisma.user.findUnique({
+      where: { email },
+      include: {
+        store: true,
+        customerProfile: true,
+      },
+    });
+
+    let isNewUser = false;
+
+    if (user) {
+      // Existing user: check if locked
+      if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+        const remainingMinutes = Math.ceil(
+          (new Date(user.lockedUntil).getTime() - Date.now()) / (60 * 1000),
+        );
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCOUNT_LOCKED',
+          message: `Tài khoản tạm bị khóa do quá số lần thử đăng nhập. Thử lại sau ${remainingMinutes} phút.`,
+        });
+      }
+
+      // Ensure active and verified
+      const updates: any = {
+        lastLoginAt: new Date(),
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      };
+
+      if (!user.isActive) {
+        updates.isActive = true;
+      }
+      if (!user.emailVerified) {
+        updates.emailVerified = true;
+      }
+
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: updates,
+        include: {
+          store: true,
+          customerProfile: true,
+        },
+      });
+
+      // If user is CUSTOMER but missing CustomerProfile, create one
+      if (user.role === 'CUSTOMER' && !user.customerProfile) {
+        const activeStore = await this.prisma.store.findFirst({ where: { status: 'ACTIVE' } });
+        const newProfile = await this.prisma.customerProfile.create({
+          data: {
+            userId: user.id,
+            storeId: activeStore?.id || '',
+            deliveryAddress: body.address || 'Chưa thiết lập địa chỉ giao hàng',
+            phone: user.phone || body.phone || '',
+          },
+        });
+        user.customerProfile = newProfile;
+      }
+    } else {
+      // New user registering with Google
+      isNewUser = true;
+      const targetRole = body.role === 'STORE_OWNER' ? 'STORE_OWNER' : 'CUSTOMER';
+      const resolvedName = fullName || email.split('@')[0];
+
+      // Generate unique username
+      let baseUsername = (body.username || email.split('@')[0] || 'user')
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '');
+      if (baseUsername.length < 3) baseUsername = `${baseUsername}_gg`;
+      let candidateUsername = baseUsername.slice(0, 25);
+      let suffix = 1;
+      while (await this.prisma.user.findUnique({ where: { username: candidateUsername } })) {
+        candidateUsername = `${baseUsername.slice(0, 20)}_${suffix}`;
+        suffix++;
+      }
+      const finalUsername = candidateUsername;
+
+      // Random secure password hash (since passwordHash is required in schema)
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+      if (targetRole === 'STORE_OWNER') {
+        const storeName = body.storeName?.trim() || `Cửa hàng ${resolvedName}`;
+        const storeCode = `STORE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+        const newStore = await this.prisma.store.create({
+          data: {
+            name: storeName,
+            code: storeCode,
+            ownerName: resolvedName,
+            phone: body.phone || '',
+            email,
+            address: body.address || 'Chưa cập nhật địa chỉ kinh doanh',
+            status: 'ACTIVE',
+            approvedAt: new Date(),
+          },
+        });
+
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            username: finalUsername,
+            passwordHash,
+            fullName: resolvedName,
+            phone: body.phone || null,
+            role: 'STORE_OWNER',
+            storeId: newStore.id,
+            isActive: true,
+            emailVerified: true,
+            lastLoginAt: new Date(),
+          },
+          include: {
+            store: true,
+            customerProfile: true,
+          },
+        });
+      } else {
+        const targetStore = await this.prisma.store.findFirst({ where: { status: 'ACTIVE' } });
+
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            username: finalUsername,
+            passwordHash,
+            fullName: resolvedName,
+            phone: body.phone || null,
+            role: 'CUSTOMER',
+            storeId: targetStore?.id || null,
+            isActive: true,
+            emailVerified: true,
+            lastLoginAt: new Date(),
+          },
+          include: {
+            store: true,
+            customerProfile: true,
+          },
+        });
+
+        const customerProfile = await this.prisma.customerProfile.create({
+          data: {
+            userId: user.id,
+            storeId: targetStore?.id || '',
+            deliveryAddress: body.address || 'Chưa thiết lập địa chỉ giao hàng',
+            phone: body.phone || '',
+          },
+        });
+        user.customerProfile = customerProfile;
+      }
+    }
+
+    // Issue JWT Access Token (7d as configured in .env)
+    const accessToken = this.jwtService.sign(
+      {
+        userId: user.id,
+        role: user.role,
+        storeId: user.storeId,
+        email: user.email,
+        username: user.username,
+      },
+      { expiresIn: (process.env.JWT_EXPIRES_IN as any) || '7d' },
+    );
+
+    // Issue Refresh Token (30d)
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const refreshExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const tokenHash = this.hashToken(rawRefreshToken);
+
+    await this.prisma.refreshSession.create({
+      data: {
+        userId: user.id,
+        tokenHash,
+        expiresAt: refreshExpires,
+        ipAddress: ip || null,
+        userAgent: userAgent || null,
+      },
+    });
+
+    const userPayload = {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      fullName: user.fullName,
+      role: user.role,
+      storeId: user.storeId,
+      store: user.store,
+      customerProfileId: user.customerProfile?.id,
+      emailVerified: true,
+    };
+
+    return {
+      success: true,
+      isNewUser,
+      code: isNewUser ? 'REGISTER_SUCCESS' : 'LOGIN_SUCCESS',
+      message: isNewUser
+        ? 'Đăng ký tài khoản với Google thành công!'
+        : 'Đăng nhập Google thành công!',
+      accessToken,
+      token: accessToken,
+      refreshToken: rawRefreshToken,
+      user: userPayload,
+      data: {
+        userId: user.id,
+        storeId: user.storeId,
+        accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
       },
     };
   }

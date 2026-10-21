@@ -102,3 +102,46 @@ export class RefreshTokenDto {
   @IsString()
   refreshToken: string;
 }
+
+export class GoogleAuthDto {
+  @IsOptional()
+  @IsString()
+  idToken?: string;
+
+  @IsNotEmpty({ message: 'Vui lòng cung cấp email Google' })
+  @IsEmail({}, { message: 'Định dạng email Google không hợp lệ' })
+  email: string;
+
+  @IsOptional()
+  @IsString()
+  fullName?: string;
+
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  avatarUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  googleId?: string;
+
+  @IsOptional()
+  @IsString()
+  role?: string;
+
+  @IsOptional()
+  @IsString()
+  storeName?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+}
+

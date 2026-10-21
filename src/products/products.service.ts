@@ -59,9 +59,22 @@ export class ProductsService {
         ...(stock !== undefined ? { stock: parseInt(stock, 10) } : {}),
         ...(unit ? { unit } : {}),
         ...(category ? { category } : {}),
-        ...(imageUrl ? { imageUrl } : {}),
+        ...(imageUrl !== undefined ? { imageUrl: imageUrl || null } : {}),
         ...(isActive !== undefined ? { isActive } : {}),
       },
     });
+  }
+
+  async delete(id: string) {
+    try {
+      return await this.prisma.product.delete({
+        where: { id },
+      });
+    } catch {
+      return await this.prisma.product.update({
+        where: { id },
+        data: { isActive: false, status: 'INACTIVE' },
+      });
+    }
   }
 }

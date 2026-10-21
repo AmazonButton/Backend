@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Put, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Param, Post, Put, Request, UseGuards, Inject, InternalServerErrorException } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -8,7 +8,7 @@ import { WalletService } from './wallet.service';
 @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
 @Controller('store/wallet')
 export class WalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(@Inject(WalletService) private readonly walletService: WalletService) {}
 
   private storeId(req: any, requested?: string) {
     const storeId = req.user.role === 'SUPER_ADMIN' ? requested || req.user.storeId : req.user.storeId;
@@ -18,7 +18,12 @@ export class WalletController {
 
   @Get()
   async getWallet(@Request() req: any) {
-    return { success: true, data: await this.walletService.getWallet(this.storeId(req)) };
+    try {
+      return { success: true, data: await this.walletService.getWallet(this.storeId(req)) };
+    } catch (err: any) {
+      console.error('[WalletController.getWallet] Error:', err);
+      throw err;
+    }
   }
 
   @Put('bank-account')

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Delete,
   Param,
   Body,
   Query,
@@ -47,5 +48,12 @@ export class ProductsController {
   async update(@Param('id') id: string, @Body() body: any) {
     const data = await this.productsService.update(id, body);
     return { success: true, message: 'Cập nhật sản phẩm thành công!', data };
+  }
+
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Delete(':id')
+  async delete(@Param('id') id: string) {
+    const data = await this.productsService.delete(id);
+    return { success: true, message: 'Xóa sản phẩm thành công!', data };
   }
 }

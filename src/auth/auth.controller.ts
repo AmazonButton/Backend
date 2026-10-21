@@ -21,6 +21,7 @@ import {
   VerifyEmailDto,
   ResendVerificationDto,
   RefreshTokenDto,
+  GoogleAuthDto,
 } from './dto/auth.dto';
 
 @Controller('auth')
@@ -31,6 +32,18 @@ export class AuthController {
   @Post('register')
   register(@Body() body: RegisterDto) {
     return this.authService.register(body);
+  }
+
+  @UseGuards(AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('google')
+  googleAuth(@Body() body: GoogleAuthDto, @Request() req: any) {
+    const ip =
+      req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
+      req.ip ||
+      req.connection?.remoteAddress;
+    const userAgent = req.headers['user-agent']?.toString();
+    return this.authService.googleAuth(body, ip, userAgent);
   }
 
   @UseGuards(AuthRateLimitGuard)
