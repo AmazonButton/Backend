@@ -116,7 +116,7 @@ async function runUserAvatarTestSuite() {
     };
     const jwtSecret = process.env.JWT_SECRET || 'super_secret_jwt_key_test';
     const jwtService = new JwtService({ secret: jwtSecret });
-    const authService = new AuthService(mockMailService, authRepo, jwtService);
+    const authService = new AuthService(mockMailService, authRepo, jwtService, {} as any);
 
     // 3a. getMe returns avatarUrl: null initially
     const meInitial = await authService.getMe(createdUser.userId);

@@ -70,8 +70,8 @@ export class AuthRepository {
 
   async createUser(data: {
     username: string;
-    email: string;
-    passwordHash: string;
+    email?: string | null;
+    passwordHash?: string | null;
     fullName: string;
     avatarUrl?: string | null;
     phone?: string | null;
@@ -635,6 +635,71 @@ export class AuthRepository {
         ownedStores: true,
         storeStaffs: { include: { role: true, store: true } },
       },
+    });
+  }
+
+  async findByPhone(phone: string) {
+    return this.prisma.user.findFirst({
+      where: { phone },
+      include: {
+        customerProfile: { include: { addresses: true } },
+        ownedStores: true,
+        storeStaffs: { include: { role: true, store: true } },
+      },
+    });
+  }
+
+  async findUserByFirebaseUidWithRelations(firebaseUid: string) {
+    return this.prisma.user.findUnique({
+      where: { firebaseUid },
+      include: {
+        customerProfile: { include: { addresses: true } },
+        ownedStores: true,
+        storeStaffs: { include: { role: true, store: true } },
+      },
+    });
+  }
+
+  async registerByPhoneTx(params: {
+    userData: {
+      username: string;
+      fullName: string;
+      email?: string | null;
+      phone: string;
+      phoneVerifiedAt: Date;
+      firebaseUid: string;
+      status: string;
+      passwordHash?: string | null;
+    };
+    customerProfileData: {
+      phone: string;
+    };
+    refreshTokenData: {
+      tokenHash: string;
+      expiresAt: Date;
+    };
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: params.userData,
+      });
+
+      const customerProfile = await tx.customerProfile.create({
+        data: {
+          ...params.customerProfileData,
+          userId: newUser.userId,
+        },
+      });
+
+      const refreshTokenRecord = await tx.refreshToken.create({
+        data: {
+          userId: newUser.userId,
+          tokenHash: params.refreshTokenData.tokenHash,
+          expiresAt: params.refreshTokenData.expiresAt,
+        },
+      });
+
+      return { newUser, customerProfile, refreshTokenRecord };
     });
   }
 }

@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 11/11 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`).
+> **Status:** All 12/12 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`).
 
 ---
 
@@ -140,4 +140,29 @@ When starting a new conversation, prompt the agent with:
 - Next Steps:
   - Proceed with mobile app integration using endpoint `/api/v1/identity-verifications/sessions`.
 
-
+### [2026-10-21] Firebase Phone-First Registration & Authentication Hardening
+- Status: COMPLETED (Integration Tests 45/45 PASS, Master Suite 12/12 PASS)
+- Features & Hardening Implemented:
+  1. Database Migration:
+     - Migration `prisma/migrations/20261021230000_make_user_email_password_nullable_phone_unique`.
+     - Relaxed `email` and `password_hash` to nullable columns for phone-first registration.
+     - Enforced unique index `uq_users_phone` on `users(phone)`.
+  2. Contract & DTOs:
+     - `RegisterByPhoneDto` (`src/auth/dto/register-by-phone.dto.ts`): validates `firebaseIdToken`, `fullName`, optional `email`, and restricts role whitelist strictly to `CUSTOMER` (rejects `ADMIN`, `STORE_OWNER`).
+     - `LoginByPhoneDto` (`src/auth/dto/login-by-phone.dto.ts`): validates `firebaseIdToken` for logging into existing phone accounts.
+  3. Reusable Firebase Token Verification:
+     - Refactored `FirebasePhoneService.verifyFirebasePhoneToken(firebaseIdToken)` to independently verify signature, revocation, phone provider, phone number claim, and project ID without requiring `userId`.
+     - Reused across both `/auth/phone/verify` (account linking) and `/auth/register-by-phone` (user creation) and `/auth/login-by-phone` (user authentication).
+  4. Atomic Transaction & Concurrency Invariants:
+     - Implemented `AuthRepository.registerByPhoneTx()` wrapping `users`, `customer_profile`, and `refresh_tokens` creation in an atomic transaction.
+     - Intercepts duplicate conflicts (`P2002`) on `phone`, `firebase_uid`, or `email` and safely translates to HTTP 409 Conflict without leaking database internals.
+     - Verified with concurrent parallel requests: exactly 1 wins and creates the account, while conflicting requests receive 409 Conflict.
+  5. Public Endpoints & Rate Limiting:
+     - `POST /api/v1/auth/register-by-phone` protected with `AuthRateLimitGuard`.
+     - `POST /api/v1/auth/login-by-phone` protected with `AuthRateLimitGuard`.
+     - Standard uniform response envelope with zero leaks of passwordHash, refreshTokenHash, or raw Firebase secrets.
+- Verification Evidence:
+  - `npx tsx tests/firebase-phone-auth.spec.ts` — PASS (45/45 assertions pass)
+  - `npm run test:all` — PASS (12/12 suites pass, 255.8s)
+  - `npx tsc --noEmit` — PASS (0 errors)
+  - `npm run build` — PASS (0 errors)

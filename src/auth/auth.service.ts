@@ -24,6 +24,9 @@ import {
   ResendVerificationDto,
   UpdateProfileDto,
 } from './dto/auth.dto';
+import { RegisterByPhoneDto } from './dto/register-by-phone.dto';
+import { LoginByPhoneDto } from './dto/login-by-phone.dto';
+import { FirebasePhoneService } from './firebase-phone.service';
 
 @Injectable()
 export class AuthService {
@@ -50,6 +53,7 @@ export class AuthService {
     @Inject(MailService) private readonly mailService: MailService,
     @Inject(AuthRepository) private readonly authRepo: AuthRepository,
     @Inject(JwtService) private readonly jwtService: JwtService,
+    @Inject(FirebasePhoneService) private readonly firebasePhoneService: FirebasePhoneService,
   ) {}
 
   /**
@@ -426,6 +430,14 @@ export class AuthService {
         success: false,
         code: 'ACCOUNT_DISABLED',
         message: 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ quản trị viên.',
+      });
+    }
+
+    if (!user.passwordHash) {
+      throw new UnauthorizedException({
+        success: false,
+        code: 'INVALID_CREDENTIALS',
+        message: 'Tài khoản này chưa thiết lập mật khẩu. Vui lòng đăng nhập bằng số điện thoại.',
       });
     }
 
@@ -901,6 +913,241 @@ export class AuthService {
         createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
       },
+    };
+  }
+
+  /**
+   * Register new customer by verified Firebase phone number
+   */
+  async registerByPhone(dto: RegisterByPhoneDto) {
+    const { firebaseIdToken, fullName, email } = dto;
+
+    if (!firebaseIdToken || typeof firebaseIdToken !== 'string' || !firebaseIdToken.trim()) {
+      throw new BadRequestException('Firebase ID token is required');
+    }
+
+    if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+      throw new BadRequestException('Họ và tên không được để trống');
+    }
+
+    // Security Invariant: Only allow CUSTOMER registration
+    const role = 'CUSTOMER';
+
+    // Verify token with Firebase Admin
+    const verified = await this.firebasePhoneService.verifyFirebasePhoneToken(firebaseIdToken);
+    const { firebaseUid, phoneNumber, verifiedAt } = verified;
+
+    // Check if Firebase UID is already registered
+    const existingByUid = await this.authRepo.findByFirebaseUid(firebaseUid);
+    if (existingByUid) {
+      throw new ConflictException('Số điện thoại này đã được đăng ký tài khoản');
+    }
+
+    // Check if phone number is already registered
+    const existingByPhone = await this.authRepo.findByPhone(phoneNumber);
+    if (existingByPhone) {
+      throw new ConflictException('Số điện thoại này đã được đăng ký tài khoản');
+    }
+
+    // Check if email is provided and already taken
+    const cleanEmail = email ? email.trim().toLowerCase() : null;
+    if (cleanEmail) {
+      const existingByEmail = await this.authRepo.findByEmail(cleanEmail);
+      if (existingByEmail) {
+        throw new ConflictException('Email này đã được sử dụng bởi một tài khoản khác');
+      }
+    }
+
+    // Generate unique username
+    const cleanPhoneDigits = phoneNumber.replace(/[^0-9]/g, '');
+    const randomHex = crypto.randomBytes(3).toString('hex');
+    const username = `phone_${cleanPhoneDigits}_${randomHex}`.slice(0, 30);
+
+    // Refresh token generation
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+    const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    let newUser: any;
+    let customerProfile: any;
+
+    try {
+      const result = await this.authRepo.registerByPhoneTx({
+        userData: {
+          username,
+          fullName: fullName.trim(),
+          email: cleanEmail,
+          phone: phoneNumber,
+          phoneVerifiedAt: verifiedAt,
+          firebaseUid,
+          status: 'ACTIVE',
+          passwordHash: null,
+        },
+        customerProfileData: {
+          phone: phoneNumber,
+        },
+        refreshTokenData: {
+          tokenHash: refreshTokenHash,
+          expiresAt: refreshExpiresAt,
+        },
+      });
+      newUser = result.newUser;
+      customerProfile = result.customerProfile;
+    } catch (error: any) {
+      if (
+        error?.code === 'P2002' ||
+        error?.message?.includes('uq_users_phone') ||
+        error?.message?.includes('uq_users_firebase_uid') ||
+        error?.message?.includes('users_email_key') ||
+        error?.message?.includes('users_username_key') ||
+        error?.message?.includes('Unique constraint failed')
+      ) {
+        throw new ConflictException('Số điện thoại hoặc thông tin tài khoản đã tồn tại trong hệ thống');
+      }
+      this.logger.error(`registerByPhoneTx error: ${error?.message}`);
+      throw new BadRequestException('Không thể hoàn tất đăng ký tài khoản');
+    }
+
+    const customerProfileId = customerProfile.customerId.toString();
+
+    // Sign JWT access token
+    const accessToken = this.jwtService.sign(
+      {
+        userId: newUser.userId.toString(),
+        email: newUser.email,
+        username: newUser.username,
+        role,
+        storeId: null,
+        customerProfileId,
+        tokenType: 'ACCESS',
+      },
+      { expiresIn: '15m' },
+    );
+
+    const userPayload = {
+      userId: newUser.userId.toString(),
+      fullName: newUser.fullName,
+      phone: newUser.phone,
+      phoneVerified: true,
+      role: 'CUSTOMER',
+      ...(newUser.email ? { email: newUser.email } : {}),
+      customerProfileId,
+    };
+
+    return {
+      success: true,
+      message: 'Đăng ký bằng số điện thoại thành công',
+      accessToken,
+      token: accessToken,
+      refreshToken: rawRefreshToken,
+      data: {
+        accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
+      },
+      user: userPayload,
+    };
+  }
+
+  /**
+   * Login with verified Firebase phone number
+   */
+  async loginByPhone(dto: LoginByPhoneDto, ip?: string, userAgent?: string) {
+    const { firebaseIdToken } = dto;
+    if (!firebaseIdToken || typeof firebaseIdToken !== 'string' || !firebaseIdToken.trim()) {
+      throw new BadRequestException('Firebase ID token is required');
+    }
+
+    const verified = await this.firebasePhoneService.verifyFirebasePhoneToken(firebaseIdToken);
+    const { firebaseUid, phoneNumber } = verified;
+
+    let user: any = await this.authRepo.findUserByFirebaseUidWithRelations(firebaseUid);
+    if (!user) {
+      user = await this.authRepo.findByPhone(phoneNumber);
+      if (user && !user.firebaseUid) {
+        // Link firebaseUid to existing user
+        await this.authRepo.updatePhoneVerification(user.userId, phoneNumber, firebaseUid, new Date());
+      }
+    }
+
+    if (!user) {
+      throw new UnauthorizedException('Tài khoản chưa được đăng ký trong hệ thống, vui lòng đăng ký trước.');
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new UnauthorizedException({
+        success: false,
+        code: 'ACCOUNT_DISABLED',
+        message: 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ quản trị viên.',
+      });
+    }
+
+    // Determine primary role & storeId
+    let role = 'CUSTOMER';
+    let storeId: string | null = null;
+    const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
+
+    const isSuperAdmin = user.storeStaffs?.some(
+      (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
+    );
+
+    if (isSuperAdmin) {
+      role = 'SUPER_ADMIN';
+    } else if (user.ownedStores && user.ownedStores.length > 0) {
+      role = 'STORE_OWNER';
+      storeId = user.ownedStores[0].storeId.toString();
+    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
+      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+      storeId = user.storeStaffs[0].storeId.toString();
+    }
+
+    // Sign JWT access token
+    const accessToken = this.jwtService.sign(
+      {
+        userId: user.userId.toString(),
+        email: user.email,
+        username: user.username,
+        role,
+        storeId,
+        customerProfileId,
+        tokenType: 'ACCESS',
+      },
+      { expiresIn: '15m' },
+    );
+
+    // Rotated refresh token
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+    const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await this.authRepo.createRefreshToken(user.userId, refreshTokenHash, refreshExpiresAt);
+
+    const userPayload = {
+      id: user.userId.toString(),
+      userId: user.userId.toString(),
+      email: user.email,
+      username: user.username,
+      fullName: user.fullName,
+      avatarUrl: user.avatarUrl || null,
+      role,
+      storeId,
+      customerProfileId,
+      phone: user.phone,
+      phoneVerified: true,
+    };
+
+    return {
+      success: true,
+      message: 'Đăng nhập bằng số điện thoại thành công',
+      accessToken,
+      token: accessToken,
+      refreshToken: rawRefreshToken,
+      data: {
+        token: accessToken,
+        accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
+      },
+      user: userPayload,
     };
   }
 }

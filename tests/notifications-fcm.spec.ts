@@ -34,6 +34,7 @@ async function runFcmNotificationsTestSuite() {
     { sendOtpEmail: async () => true } as any,
     authRepo,
     { decode: () => null } as any,
+    {} as any,
   );
 
   let passed = 0;

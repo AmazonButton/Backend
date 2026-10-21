@@ -25,6 +25,8 @@ import {
   UpdateProfileDto,
 } from './dto/auth.dto';
 import { VerifyFirebasePhoneDto } from './dto/verify-firebase-phone.dto';
+import { RegisterByPhoneDto } from './dto/register-by-phone.dto';
+import { LoginByPhoneDto } from './dto/login-by-phone.dto';
 import { FirebasePhoneService } from './firebase-phone.service';
 
 @Controller('auth')
@@ -164,5 +166,21 @@ export class AuthController {
       data: result,
     };
   }
+
+  @UseGuards(AuthRateLimitGuard)
+  @Post('register-by-phone')
+  registerByPhone(@Body() dto: RegisterByPhoneDto) {
+    return this.authService.registerByPhone(dto);
+  }
+
+  @UseGuards(AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('login-by-phone')
+  loginByPhone(@Body() dto: LoginByPhoneDto, @Request() req: any) {
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    return this.authService.loginByPhone(dto, ip, userAgent);
+  }
 }
+
 

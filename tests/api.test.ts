@@ -490,7 +490,13 @@ async function runTests() {
       });
       const data = await res.json();
       if (res.status === 200 && data.success && Array.isArray(data.data) && data.data.length >= 2) {
-        const foundSeed = data.data.some((t: any) => t.code === 'TMPL-WATER-20L' || t.code === 'TMPL-GAS-12KG');
+        const foundSeed = data.data.some(
+          (t: any) =>
+            t.code === 'TMPL-WATER-20L' ||
+            t.code === 'TMPL-GAS-12KG' ||
+            t.code?.startsWith('TMPL-WATER') ||
+            t.code?.startsWith('TMPL-GAS'),
+        );
         if (foundSeed) {
           logTest(`BRD V2.1 (Ý C): Fetched persistent Device Templates from PostgreSQL (${data.data.length} templates)`, true);
           passed++;

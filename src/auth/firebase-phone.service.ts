@@ -27,7 +27,7 @@ export class FirebasePhoneService {
     private readonly authRepo: AuthRepository,
   ) {}
 
-  async verifyPhoneToken(firebaseIdToken: string, userId: bigint): Promise<PhoneVerificationResult> {
+  async verifyFirebasePhoneToken(firebaseIdToken: string): Promise<PhoneVerificationResult> {
     if (!firebaseIdToken || typeof firebaseIdToken !== 'string' || !firebaseIdToken.trim()) {
       throw new BadRequestException('Firebase ID token is required');
     }
@@ -68,8 +68,18 @@ export class FirebasePhoneService {
     const firebaseUid = decodedToken.uid;
     const verifiedAt = new Date();
 
+    return {
+      phoneNumber,
+      firebaseUid,
+      verifiedAt,
+    };
+  }
+
+  async verifyPhoneToken(firebaseIdToken: string, userId: bigint): Promise<PhoneVerificationResult> {
+    const verified = await this.verifyFirebasePhoneToken(firebaseIdToken);
+
     // Check if this Firebase UID is already linked to another account
-    const existingUserWithUid = await this.authRepo.findByFirebaseUid(firebaseUid);
+    const existingUserWithUid = await this.authRepo.findByFirebaseUid(verified.firebaseUid);
     if (existingUserWithUid && existingUserWithUid.userId !== userId) {
       throw new ConflictException('Số điện thoại này đã được liên kết với một tài khoản khác');
     }
@@ -78,14 +88,15 @@ export class FirebasePhoneService {
     try {
       await this.authRepo.updatePhoneVerification(
         userId,
-        phoneNumber,
-        firebaseUid,
-        verifiedAt,
+        verified.phoneNumber,
+        verified.firebaseUid,
+        verified.verifiedAt,
       );
     } catch (error: any) {
       if (
         error?.code === 'P2002' ||
         error?.message?.includes('uq_users_firebase_uid') ||
+        error?.message?.includes('uq_users_phone') ||
         error?.message?.includes('Unique constraint failed')
       ) {
         throw new ConflictException(
@@ -95,10 +106,7 @@ export class FirebasePhoneService {
       throw error;
     }
 
-    return {
-      phoneNumber,
-      firebaseUid,
-      verifiedAt,
-    };
+    return verified;
   }
 }
+
