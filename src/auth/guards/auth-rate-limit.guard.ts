@@ -17,11 +17,12 @@ export class AuthRateLimitGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
-    const ip =
-      request.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
-      request.ip ||
-      request.connection?.remoteAddress ||
-      '127.0.0.1';
+    let ip = request.ip || request.socket?.remoteAddress || '127.0.0.1';
+    if (process.env.TRUST_PROXY === 'true' && request.headers['x-forwarded-for']) {
+      const raw = request.headers['x-forwarded-for'];
+      const first = Array.isArray(raw) ? raw[0] : raw.split(',')[0];
+      if (first) ip = first.trim();
+    }
 
     const path = request.route?.path || request.url;
     const now = Date.now();
@@ -37,7 +38,7 @@ export class AuthRateLimitGuard implements CanActivate {
       maxRequests = 10;
       windowMs = 60 * 1000;
     } else if (path.includes('forgot-password') || path.includes('reset-password')) {
-      maxRequests = 6;
+      maxRequests = 30;
       windowMs = 15 * 60 * 1000; // 15 minutes
     } else if (path.includes('check-email') || path.includes('check-username')) {
       maxRequests = 100;

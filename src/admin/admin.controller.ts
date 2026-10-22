@@ -1,5 +1,9 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Request, Inject } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, UseGuards, Request, Inject, Query } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { UpdateUserRoleDto } from './dto/update-user-role.dto';
+import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
+import { CreateRentalPackageDto, UpdateRentalPackageDto } from './dto/rental-packages.dto';
+import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -59,8 +63,109 @@ export class AdminController {
   }
 
   @Post('users/:id/role')
-  async updateUserRole(@Param('id') id: string, @Body('role') role: string) {
-    const data = await this.adminService.updateUserRole(id, role);
+  async updateUserRole(@Param('id') id: string, @Body() body: UpdateUserRoleDto) {
+    const data = await this.adminService.updateUserRole(id, body.role);
     return { success: true, message: 'Đã cập nhật vai trò phân quyền', data };
+  }
+
+  // Plans
+  @Post('plans')
+  async createPlan(@Body() body: CreateSubscriptionPlanDto) {
+    const data = await this.adminService.createSubscriptionPlan(body);
+    return { success: true, message: 'Tạo gói cước thành công!', data };
+  }
+
+  @Get('plans')
+  async listPlans() {
+    const data = await this.adminService.listSubscriptionPlans();
+    return { success: true, data };
+  }
+
+  @Put('plans/:id')
+  async updatePlan(@Param('id') id: string, @Body() body: UpdateSubscriptionPlanDto) {
+    const data = await this.adminService.updateSubscriptionPlan(id, body);
+    return { success: true, message: 'Cập nhật gói cước thành công!', data };
+  }
+
+  // Rental Packages
+  @Post('rentals/packages')
+  async createRentalPackage(@Body() body: CreateRentalPackageDto) {
+    const data = await this.adminService.createRentalPackage(body);
+    return { success: true, message: 'Tạo gói thuê nút IoT thành công!', data };
+  }
+
+  @Get('rentals/packages')
+  async listRentalPackages() {
+    const data = await this.adminService.listRentalPackages();
+    return { success: true, data };
+  }
+
+  @Put('rentals/packages/:id')
+  async updateRentalPackage(@Param('id') id: string, @Body() body: UpdateRentalPackageDto) {
+    const data = await this.adminService.updateRentalPackage(id, body);
+    return { success: true, message: 'Cập nhật gói thuê nút thành công!', data };
+  }
+
+  // Withdrawals
+  @Get('withdrawals')
+  async listAllWithdrawals() {
+    const data = await this.adminService.listAllWithdrawals();
+    return { success: true, data };
+  }
+
+  @Post('withdrawals/:id/transfer')
+  async confirmTransfer(
+    @Param('id') id: string,
+    @Body('transferEvidenceUrl') transferEvidenceUrl: string,
+    @Request() req: any
+  ) {
+    const data = await this.adminService.confirmWithdrawalTransfer(id, transferEvidenceUrl, req.user);
+    return { success: true, message: 'Xác nhận chuyển tiền thành công!', data };
+  }
+
+  @Post('withdrawals/:id/reject')
+  async rejectWithdrawal(
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+    @Request() req: any
+  ) {
+    const data = await this.adminService.rejectWithdrawal(id, reason, req.user);
+    return { success: true, message: 'Đã từ chối và hoàn tiền vào ví cửa hàng!', data };
+  }
+  // PayOS Payout Admin Controls
+  @Get('payos/payout-balance')
+  async getPayoutBalance() {
+    const data = await this.adminService.getPayosPayoutBalance();
+    return { success: true, data };
+  }
+
+  @Post('withdrawals/:id/payout')
+  async payoutViaPayOS(@Param('id') id: string, @Request() req: any) {
+    const data = await this.adminService.payoutViaPayOS(id, req.user);
+    return { success: true, message: '�� g?i l?nh chi ti?n PayOS th�nh c�ng!', data };
+  }
+
+    @Post('withdrawals/:id/sync-payout')
+  async syncPayoutStatus(@Param('id') id: string) {
+    const data = await this.adminService.syncPayoutStatus(id);
+    return { success: true, message: 'Đã đồng bộ trạng thái chi tiền PayOS!', data };
+  }
+
+  @Post('payos/payouts/batch')
+  async createBatchPayout(@Body() body: CreatePayosBatchPayoutDto) {
+    const res = await this.adminService.createBatchPayout(body);
+    return { success: true, message: 'Đã gửi lệnh chi theo lô PayOS!', data: res?.data || res };
+  }
+
+  @Post('payos/payouts/estimate-credit')
+  async estimatePayoutCredit(@Body() body: EstimatePayoutCreditDto) {
+    const res = await this.adminService.estimatePayoutCredit(body);
+    return { success: true, data: res?.data || res };
+  }
+
+  @Get('payos/payouts')
+  async listPayosPayouts(@Query() query: ListPayosPayoutsQueryDto) {
+    const res = await this.adminService.listPayosPayouts(query);
+    return { success: true, data: res?.data || res };
   }
 }

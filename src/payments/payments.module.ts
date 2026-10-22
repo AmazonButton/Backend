@@ -1,13 +1,15 @@
-import { Module } from '@nestjs/common';
-import { PaymentsService } from './payments.service';
-import { PaymentsController } from './payments.controller';
-import { PrismaModule } from '../prisma/prisma.module';
 import { WebSocketModule } from '../websocket/websocket.module';
+import { Module } from '@nestjs/common';
+import { PaymentsController } from './payments.controller';
+import { PaymentsService } from './payments.service';
+import { PaymentsRepository } from './payments.repository';
+import { PayOSPayoutService } from './payos-payout.service';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
   imports: [PrismaModule, WebSocketModule],
   controllers: [PaymentsController],
-  providers: [PaymentsService],
-  exports: [PaymentsService],
+  providers: [PaymentsService, PaymentsRepository, PayOSPayoutService],
+  exports: [PaymentsService, PaymentsRepository, PayOSPayoutService],
 })
 export class PaymentsModule {}

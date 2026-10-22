@@ -11,6 +11,11 @@ import {
   Inject,
 } from '@nestjs/common';
 import { DeviceTemplatesService } from './device-templates.service';
+import {
+  CreateDeviceTemplateDto,
+  UpdateDeviceTemplateDto,
+  DeployDeviceTemplateDto,
+} from './dto/device-template.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -31,7 +36,7 @@ export class DeviceTemplatesController {
   }
 
   @Post()
-  async create(@Body() body: any, @Request() req: any) {
+  async create(@Body() body: CreateDeviceTemplateDto, @Request() req: any) {
     const data = await this.templatesService.create(body, req.user);
     return { success: true, message: 'Đã tạo template mẫu thiết bị thành công', data };
   }
@@ -43,7 +48,11 @@ export class DeviceTemplatesController {
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() body: UpdateDeviceTemplateDto,
+    @Request() req: any,
+  ) {
     const data = await this.templatesService.update(id, body, req.user);
     return { success: true, message: 'Cập nhật template thành công', data };
   }
@@ -54,7 +63,11 @@ export class DeviceTemplatesController {
   }
 
   @Post(':id/deploy')
-  async deploy(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async deploy(
+    @Param('id') id: string,
+    @Body() body: DeployDeviceTemplateDto,
+    @Request() req: any,
+  ) {
     return this.templatesService.deploy(id, body, req.user);
   }
 }

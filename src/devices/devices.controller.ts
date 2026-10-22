@@ -17,6 +17,26 @@ import { OrdersService } from '../orders/orders.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import {
+  RegisterDeviceDto,
+  BulkImportDevicesDto,
+  BatchGenerateDevicesDto,
+  AssignProductDto,
+  CustomerUpdateConfigDto,
+  AllocateStoreDto,
+  LookupCodeDto,
+  ConfigureByCodeDto,
+  UpdateDeviceDto,
+  PairDeviceDto,
+  ClaimLegacyDto,
+  AssignDeviceDto,
+  UpdateConfigDto,
+  ExtendWarrantyDto,
+  UpdateBehaviorDto,
+  UpdateBatteryDto,
+  UpdateDeviceStatusDto,
+  SimulatePressDto,
+} from './dto/devices.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('devices')
@@ -40,14 +60,14 @@ export class DevicesController {
 
   @Post()
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
-  async register(@Body() body: any, @Request() req: any) {
+  async register(@Body() body: RegisterDeviceDto, @Request() req: any) {
     const data = await this.devicesService.registerDevice(body, req.user);
     return { success: true, message: 'Đăng ký thiết bị thành công!', data };
   }
 
   @Post('bulk-import')
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
-  async bulkImport(@Body() body: { rows: any[]; storeId?: string }, @Request() req: any) {
+  async bulkImport(@Body() body: BulkImportDevicesDto, @Request() req: any) {
     return this.devicesService.bulkImport(body, req.user);
   }
 
@@ -56,7 +76,7 @@ export class DevicesController {
    */
   @Post('batch-generate')
   @Roles('SUPER_ADMIN')
-  async batchGenerate(@Body() body: { count: number; prefix?: string; model?: string }, @Request() req: any) {
+  async batchGenerate(@Body() body: BatchGenerateDevicesDto, @Request() req: any) {
     return this.devicesService.batchGenerateBlankDevices(body, req.user);
   }
 
@@ -75,7 +95,7 @@ export class DevicesController {
    */
   @Post('allocate-store')
   @Roles('SUPER_ADMIN')
-  async allocateToStore(@Body() body: { storeId: string; deviceIds: string[]; productId?: string }, @Request() req: any) {
+  async allocateToStore(@Body() body: AllocateStoreDto, @Request() req: any) {
     return this.devicesService.allocateDevicesToStore(body, req.user);
   }
 
@@ -83,7 +103,7 @@ export class DevicesController {
    * Search device by 6-digit PIN, Device ID, or QR Payload without MAC
    */
   @Post('lookup-code')
-  async lookupCode(@Body() body: { code: string }) {
+  async lookupCode(@Body() body: LookupCodeDto) {
     const data = await this.devicesService.lookupByCode(body.code);
     return { success: true, data };
   }
@@ -92,7 +112,7 @@ export class DevicesController {
    * Pair / Claim / Configure device directly by Code or QR Payload (No MAC needed)
    */
   @Post('configure-by-code')
-  async configureByCode(@Body() body: any, @Request() req: any) {
+  async configureByCode(@Body() body: ConfigureByCodeDto, @Request() req: any) {
     return this.devicesService.configureByCode(body, req.user);
   }
 
@@ -104,7 +124,7 @@ export class DevicesController {
 
   @Patch(':id')
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
-  async update(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async update(@Param('id') id: string, @Body() body: UpdateDeviceDto, @Request() req: any) {
     const data = await this.devicesService.update(id, body, req.user);
     return { success: true, message: 'Cập nhật thiết bị thành công', data };
   }
@@ -118,7 +138,7 @@ export class DevicesController {
 
   @Post(':id/pair')
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
-  async pair(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async pair(@Param('id') id: string, @Body() body: PairDeviceDto, @Request() req: any) {
     const data = await this.devicesService.pair(id, body, req.user);
     return { success: true, message: 'Ghép nối thiết bị thành công!', data };
   }
@@ -132,7 +152,7 @@ export class DevicesController {
 
   @Post(':id/assign-product')
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
-  async assignProduct(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async assignProduct(@Param('id') id: string, @Body() body: AssignProductDto, @Request() req: any) {
     return this.devicesService.assignProduct(id, body, req.user);
   }
 
@@ -143,14 +163,14 @@ export class DevicesController {
   }
 
   @Post(':id/disable')
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   async disable(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.disable(id, req.user);
     return { success: true, message: 'Đã vô hiệu hóa thiết bị', data };
   }
 
   @Post(':id/enable')
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   async enable(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.enable(id, req.user);
     return { success: true, message: 'Đã kích hoạt thiết bị', data };
@@ -171,7 +191,7 @@ export class DevicesController {
   // --- Backward Compatibility Endpoints ---
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
   @Post('claim')
-  async claim(@Request() req: any, @Body() body: { deviceId: string; claimCode: string }) {
+  async claim(@Request() req: any, @Body() body: ClaimLegacyDto) {
     const data = await this.devicesService.claim(
       body.deviceId,
       body.claimCode,
@@ -183,22 +203,22 @@ export class DevicesController {
 
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
   @Post(':id/assign')
-  async assign(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async assign(@Param('id') id: string, @Body() body: AssignDeviceDto, @Request() req: any) {
     const data = await this.devicesService.assign(id, body, req.user.storeId, req.user.id);
     return { success: true, message: 'Gán nút bấm thành công!', data };
   }
 
   @Put(':id/config')
-  async updateConfig(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async updateConfig(@Param('id') id: string, @Body() body: UpdateConfigDto, @Request() req: any) {
     const data = await this.devicesService.updateConfig(id, body, req.user);
     return { success: true, message: 'Cập nhật cấu hình thành công', data };
   }
 
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
   @Patch(':id/status')
-  async toggleStatus(@Param('id') id: string, @Body('status') status: string) {
-    const data = await this.devicesService.toggleStatus(id, status);
-    return { success: true, message: `Trạng thái đã chuyển sang ${status}`, data };
+  async toggleStatus(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
+    const data = await this.devicesService.toggleStatus(id, body.status, req.user);
+    return { success: true, message: `Trạng thái đã chuyển sang ${body.status}`, data };
   }
 
   /**
@@ -207,7 +227,7 @@ export class DevicesController {
    */
   @Roles('CUSTOMER', 'SUPER_ADMIN')
   @Put(':id/customer-config')
-  async customerUpdateConfig(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async customerUpdateConfig(@Param('id') id: string, @Body() body: CustomerUpdateConfigDto, @Request() req: any) {
     const data = await this.devicesService.customerUpdateConfig(id, body, req.user);
     return { success: true, message: 'Cấu hình nút bấm thành công!', data };
   }
@@ -215,19 +235,19 @@ export class DevicesController {
   /**
    * Cập nhật / Sạc / Thay pin cho nút bấm
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/battery')
-  async updateBattery(@Param('id') id: string, @Body('batteryLevel') batteryLevel: number, @Request() req: any) {
-    const data = await this.devicesService.updateBattery(id, batteryLevel !== undefined ? batteryLevel : 100, req.user);
+  async updateBattery(@Param('id') id: string, @Body() body: UpdateBatteryDto, @Request() req: any) {
+    const data = await this.devicesService.updateBattery(id, body.batteryLevel, req.user);
     return { success: true, message: 'Cập nhật pin thiết bị thành công!', data };
   }
 
   /**
    * Gia hạn thời hạn sử dụng / hạn bảo hành cho nút bấm
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/extend-warranty')
-  async extendWarranty(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async extendWarranty(@Param('id') id: string, @Body() body: ExtendWarrantyDto, @Request() req: any) {
     const data = await this.devicesService.extendWarranty(id, body, req.user);
     return { success: true, message: 'Gia hạn thời hạn sử dụng thành công!', data };
   }
@@ -235,18 +255,19 @@ export class DevicesController {
   /**
    * Bật / Tắt trạng thái còn xài hay không của nút bấm
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/toggle-active')
-  async toggleActive(@Param('id') id: string, @Body('status') status: string, @Request() req: any) {
-    const data = await this.devicesService.toggleDeviceStatus(id, status, req.user);
+  async toggleActive(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
+    const data = await this.devicesService.toggleDeviceStatus(id, body.status, req.user);
     return { success: true, message: `Đã chuyển trạng thái thiết bị sang ${data.status}`, data };
   }
 
   /**
    * Cấu hình hành vi nút bấm (SmartSupply Behavior Designer)
    */
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
   @Put(':id/behavior')
-  async updateBehavior(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async updateBehavior(@Param('id') id: string, @Body() body: UpdateBehaviorDto, @Request() req: any) {
     const data = await this.devicesService.updateBehavior(id, body, req.user);
     return { success: true, message: 'Cập nhật hành vi nút bấm thành công!', data };
   }
@@ -255,7 +276,7 @@ export class DevicesController {
    * Mô phỏng bấm nút gửi tín hiệu cho server
    */
   @Post(':id/simulate-press')
-  async simulatePress(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+  async simulatePress(@Param('id') id: string, @Body() body: SimulatePressDto, @Request() req: any) {
     return this.ordersService.simulateButtonPress({ deviceId: id, ...body }, req.user);
   }
 }

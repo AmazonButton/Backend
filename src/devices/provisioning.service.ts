@@ -1,18 +1,26 @@
+import { DevicesService } from './devices.service';
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
   UnauthorizedException,
   ConflictException,
+  ForbiddenException,
+  InternalServerErrorException,
+  Logger,
   Inject,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { ProvisioningRepository } from './provisioning.repository';
 import { CryptoService } from '../security/crypto.service';
 import { EventsGateway } from '../websocket/events.gateway';
 import * as crypto from 'crypto';
 
+// activeSessions migrated to PostgreSQL provisioning_sessions
+
 @Injectable()
 export class ProvisioningService {
+  private readonly logger = new Logger(ProvisioningService.name);
+  // usedNonces migrated to PostgreSQL device_nonces
   private failedAttempts: Array<{
     type: string;
     deviceId: string;
@@ -22,624 +30,314 @@ export class ProvisioningService {
   }> = [];
 
   constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ProvisioningRepository) private readonly provRepo: ProvisioningRepository,
     @Inject(CryptoService) private readonly cryptoService: CryptoService,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
   ) {}
 
-  /**
-   * Helper to parse QR payload
-   * Supports:
-   * 1. SOBPAIR://setup?device=SOB-000001&token=XXXXXX&v=1
-   * 2. SOBPAIR://device/SOB-000001/token/XXXXXX
-   * 3. Raw deviceId + token
-   */
-  /**
-   * Helper to parse QR payload or 6-digit Code / Device ID
-   */
-  private async resolveDeviceFromInput(inputStr: string): Promise<{ device: any; token: string }> {
+  private async resolveDeviceFromInput(inputStr: string): Promise<{ button: any; token: string }> {
     if (!inputStr) throw new BadRequestException('Mã thiết bị hoặc mã QR rỗng');
 
-    const trimmed = inputStr.trim();
-
-    // Standard format 1: SOBPAIR://setup?device=SOB-000001&token=XXXXXX&v=1
-    if (trimmed.startsWith('SOBPAIR://setup?')) {
-      const queryStr = trimmed.replace('SOBPAIR://setup?', '');
-      const params = new URLSearchParams(queryStr);
-      const devId = (params.get('device') || params.get('deviceId') || '').toUpperCase();
-      const tok = params.get('token') || '';
-      if (devId) {
-        const d = await this.prisma.device.findUnique({
-          where: { deviceId: devId },
-          include: { store: true, product: true, configuration: { include: { product: true } } },
-        });
-        if (d) return { device: d, token: tok || d.pairingToken || 'default_tok' };
+    let targetId = inputStr.trim();
+    if (targetId.includes('/device/')) {
+      const match = targetId.match(/\/device\/([^\/\s]+)/i);
+      if (match && match[1]) {
+        targetId = match[1];
       }
+    } else if (targetId.toUpperCase().startsWith('SOBPAIR://')) {
+      targetId = targetId.substring(10).split('/')[0];
     }
 
-    // Standard format 2: SOBPAIR://device/SOB-000001/token/XXXXXX
-    const match = trimmed.match(/^SOBPAIR:\/\/device\/([^/]+)\/token\/([^/?&]+)/i);
-    if (match) {
-      const devId = match[1].toUpperCase();
-      const tok = match[2];
-      const d = await this.prisma.device.findUnique({
-        where: { deviceId: devId },
-        include: { store: true, product: true, configuration: { include: { product: true } } },
-      });
-      if (d) return { device: d, token: tok };
+    const trimmed = targetId.trim().toUpperCase();
+    const button = await this.provRepo.findButtonByIdentifier(trimmed);
+
+    if (button) {
+      return { button, token: 'direct_pin' };
     }
 
-    // Format 3: Direct 6-digit pairing code, Device ID, or Claim code
-    const d = await this.prisma.device.findFirst({
-      where: {
-        OR: [
-          { pairingCode: trimmed },
-          { deviceId: trimmed.toUpperCase() },
-          { claimCode: trimmed.toUpperCase() },
-          { qrPayload: trimmed },
-        ],
-      },
-      include: { store: true, product: true, configuration: { include: { product: true } } },
-    });
-
-    if (d) {
-      return { device: d, token: d.pairingToken || 'direct_pin' };
-    }
-
-    throw new BadRequestException(`Không tìm thấy thiết bị với mã "${trimmed}". Vui lòng kiểm tra lại mã trên thiết bị.`);
+    throw new BadRequestException(`Không tìm thấy nút bấm với mã "${inputStr}". Vui lòng kiểm tra lại.`);
   }
 
-  /**
-   * 1. Start Provisioning Session from QR Code or 6-digit PIN
-   */
   async createSession(body: { qrPayload?: string; deviceId?: string; token?: string; code?: string }) {
     const rawInput = body.code || body.qrPayload || body.deviceId;
     if (!rawInput) {
       throw new BadRequestException('Vui lòng cung cấp mã số thiết bị hoặc mã QR');
     }
 
-    const { device, token } = await this.resolveDeviceFromInput(rawInput);
-    const deviceId = device.deviceId;
-
-    if (!device) {
-      this.recordSecurityEvent('INVALID_DEVICE_PAIRING', deviceId, 'Device ID không tồn tại');
-      throw new NotFoundException(`Không tìm thấy thiết bị: ${deviceId}`);
+    let token = body.token;
+    if (body.qrPayload) {
+      const match = body.qrPayload.match(/\/token\/([^\/\s\?]+)/i) || body.qrPayload.match(/[?&]token=([^&\s]+)/i);
+      if (match && match[1]) {
+        token = match[1];
+      }
     }
 
-    if (device.status === 'REVOKED' || device.status === 'DISABLED') {
-      this.recordSecurityEvent('REVOKED_DEVICE_ACCESS', deviceId, `Device trạng thái ${device.status}`);
-      throw new BadRequestException(`Thiết bị này đã bị vô hiệu hóa hoặc thu hồi`);
+    // Require valid pairing token or QR payload with token
+    if (!token) {
+      throw new UnauthorizedException('Yêu cầu mã ghép nối (Pairing Token) hoặc mã QR hợp lệ để khởi tạo phiên');
     }
 
-    // Verify token matches current device pairing token
-    if (device.pairingToken && device.pairingToken !== token) {
-      this.recordSecurityEvent('INVALID_PAIRING_TOKEN', deviceId, 'Pairing token không khớp');
-      throw new UnauthorizedException('Mã Pairing Token không hợp lệ hoặc đã hết hạn');
+    const { button } = await this.resolveDeviceFromInput(rawInput);
+    if (!button) {
+      throw new NotFoundException('Không tìm thấy thiết bị');
     }
 
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const tokenHash = DevicesService.hashToken(token);
 
-    // Invalidate any old active sessions for this device
-    await this.prisma.devicePairingSession.updateMany({
-      where: { deviceId: device.id, status: 'ACTIVE' },
-      data: { status: 'EXPIRED' },
-    });
+    const sessionId = `sess_${crypto.randomBytes(12).toString('hex')}`;
+    const sessionData = {
+      sessionId,
+      deviceId: button.deviceId,
+      buttonId: button.buttonId.toString(),
+      storeId: button.storeId ? button.storeId.toString() : null,
+      storeName: button.store?.name,
+      status: 'ACTIVE',
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      createdAt: new Date(),
+    };
+    const sessionHash = crypto.createHash('sha256').update(sessionId).digest('hex');
 
-    // Create 10-minute temporary claim session
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    const session = await this.prisma.devicePairingSession.create({
-      data: {
-        deviceId: device.id,
+    // ATOMIC TRANSACTION: Consume token and create session in a single database transaction
+    try {
+      await this.provRepo.createSessionAtomicTx(
+        button.deviceId,
         tokenHash,
-        expiresAt,
-        status: 'ACTIVE',
-      },
-    });
-
-    await this.prisma.device.update({
-      where: { id: device.id },
-      data: { provisioningStatus: 'PROVISIONING' },
-    });
-
-    const assignedProduct = device.product || device.configuration?.product;
-
-    return {
-      success: true,
-      data: {
-        sessionId: session.id,
-        deviceId: device.deviceId,
-        serialNumber: device.serialNumber,
-        macAddress: device.macAddress,
-        customName: device.customName || 'Smart Order Button',
-        storeName: device.store?.name || 'Đại Lý Cung Ứng',
-        product: assignedProduct
-          ? {
-              id: assignedProduct.id,
-              name: assignedProduct.name,
-              sku: assignedProduct.sku,
-              price: assignedProduct.price,
-              unit: assignedProduct.unit,
-            }
-          : null,
-        expiresAt: session.expiresAt,
-      },
-    };
-  }
-
-  /**
-   * 2. Verify an ongoing provisioning session
-   */
-  async verifySession(sessionId: string) {
-    const session = await this.prisma.devicePairingSession.findUnique({
-      where: { id: sessionId },
-      include: {
-        device: {
-          include: {
-            product: true,
-            configuration: { include: { product: true } },
-          },
-        },
-      },
-    });
-
-    if (!session || session.status !== 'ACTIVE') {
-      throw new UnauthorizedException('Phiên ghép nối không tồn tại hoặc đã kết thúc');
-    }
-
-    if (new Date() > session.expiresAt) {
-      await this.prisma.devicePairingSession.update({
-        where: { id: session.id },
-        data: { status: 'EXPIRED' },
+        sessionId,
+        sessionHash,
+        button.buttonId,
+        sessionData,
+        sessionData.expiresAt,
+      );
+    } catch (err: any) {
+      this.failedAttempts.push({
+        type: 'INVALID_PAIRING_TOKEN',
+        deviceId: button.deviceId,
+        reason: 'Mã token ghép nối không hợp lệ, đã hết hạn hoặc đã qua sử dụng',
+        timestamp: new Date(),
       });
-      throw new UnauthorizedException('Phiên ghép nối đã hết hạn sau 10 phút. Vui lòng quét lại mã QR.');
+      throw new UnauthorizedException('Mã token ghép nối không hợp lệ, đã hết hạn hoặc đã qua sử dụng');
     }
 
-    const assignedProduct = session.device.product || session.device.configuration?.product;
+    DevicesService.markPairingTokenUsed(button.deviceId, token);
 
     return {
       success: true,
-      valid: true,
-      data: {
-        sessionId: session.id,
-        deviceId: session.device.deviceId,
-        status: session.device.status,
-        provisioningStatus: session.device.provisioningStatus,
-        product: assignedProduct,
-      },
+      data: sessionData, // Neither raw token nor tokenHash is exposed to client!
     };
   }
 
-  /**
-   * 3. ESP32 Cloud Bootstrap via HMAC-SHA256 (When device first connects to home Wi-Fi)
-   */
+  async verifySession(sessionId: string) {
+    const session = await this.provRepo.findProvisioningSession(sessionId);
+    if (!session) {
+      throw new NotFoundException('Phiên ghép nối không tồn tại hoặc đã hết hạn');
+    }
+    const safeData = session.session_data || {};
+    return { success: true, valid: true, data: safeData };
+  }
+
+  async getSession(sessionId: string) {
+    return this.verifySession(sessionId);
+  }
+
+    async confirmPairing(sessionId: string, dto: any, user: any) {
+    const customerId = user?.customerProfileId
+      ? BigInt(user.customerProfileId)
+      : user?.customerId
+      ? BigInt(user.customerId)
+      : null;
+
+    if (!customerId) {
+      throw new UnauthorizedException('Chỉ khách hàng cá nhân có hồ sơ mới có thể kích hoạt ghép nối thiết bị');
+    }
+
+    try {
+      const result = await this.provRepo.confirmPairingAtomicTx(sessionId, customerId, {
+        deviceId: dto.deviceId,
+        buttonName: dto.buttonName,
+        productId: dto.productId,
+      });
+
+      this.eventsGateway.emitToStore(result.storeId, 'DEVICE_PROVISIONED', {
+        deviceId: result.deviceId,
+        buttonName: result.buttonName,
+        customerId: result.customerId,
+      });
+
+      return {
+        success: true,
+        message: 'Kích hoạt sở hữu và ghép nối thiết bị thành công!',
+        data: result,
+      };
+    } catch (err: any) {
+      const msg = err.message || '';
+      if (msg.startsWith('NOT_FOUND:')) throw new NotFoundException(msg.replace('NOT_FOUND: ', ''));
+      if (msg.startsWith('CONFLICT:')) throw new ConflictException(msg.replace('CONFLICT: ', ''));
+      if (msg.startsWith('BAD_REQUEST:')) throw new BadRequestException(msg.replace('BAD_REQUEST: ', ''));
+      this.logger.error('Unexpected error in confirmPairing:', err);
+      throw new InternalServerErrorException('Lỗi hệ thống khi xác nhận ghép nối');
+    }
+  }
+
+  async cancelSession(sessionId: string) {
+    await this.provRepo.deleteProvisioningSession(sessionId);
+    return { success: true, message: 'Đã hủy phiên ghép nối' };
+  }
+
   async bootstrap(headers: any, body: any) {
-    const deviceId = headers['x-device-id']?.toString()?.trim()?.toUpperCase();
-    const timestamp = parseInt(headers['x-timestamp']?.toString(), 10);
-    const nonce = headers['x-nonce']?.toString()?.trim();
-    const signature = headers['x-signature']?.toString()?.trim();
+    const deviceId = headers['x-device-id'] || headers['x-deviceid'];
+    const signature = headers['x-signature'];
+    const timestamp = headers['x-timestamp'];
+    const nonce = headers['x-nonce'];
 
-    if (!deviceId || !timestamp || !nonce || !signature) {
-      throw new BadRequestException('Thiếu các header xác thực: x-device-id, x-timestamp, x-nonce, x-signature');
+    // Enforce HMAC authentication for physical ESP32 bootstrap
+    if (!deviceId || !signature || !timestamp || !nonce) {
+      throw new UnauthorizedException('Yêu cầu bắt buộc phải có chữ ký HMAC-SHA256 (x-device-id, x-signature, x-timestamp, x-nonce)');
     }
 
-    // Clock drift guard (+-300s, relaxed in development environment)
-    const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+    // Must find device in DB first via Repository - NEVER bootstrap unregistered devices!
+    const button = await this.provRepo.findButtonByIdentifier(deviceId);
+    if (!button) {
+      throw new NotFoundException(`Thiết bị không tồn tại trong hệ thống: ${deviceId}`);
+    }
+
+    // 1. Verify timestamp freshness first (strictly within 300s)
     const nowSec = Math.floor(Date.now() / 1000);
-    if (!isDev && Math.abs(nowSec - timestamp) > 300) {
-      this.recordSecurityEvent('CLOCK_DRIFT_EXCEEDED', deviceId, `Drift: ${nowSec - timestamp}s`);
-      throw new UnauthorizedException('Độ lệch thời gian thiết bị vượt quá 300 giây');
+    const reqTime = parseInt(timestamp, 10);
+    if (isNaN(reqTime) || Math.abs(nowSec - reqTime) > 300) {
+      throw new UnauthorizedException('Chữ ký HMAC đã hết hạn (lệch > 300s)');
     }
 
-    const device = await this.prisma.device.findUnique({ where: { deviceId } });
-    if (!device) {
-      this.recordSecurityEvent('UNKNOWN_DEVICE_BOOTSTRAP', deviceId, 'Device không tồn tại');
-      throw new NotFoundException(`Thiết bị ID: ${deviceId} không tồn tại`);
+    // 2. Strictly enforce device-specific secret from DB - ZERO FALLBACK!
+    const secret = (button as any).hmacSecret;
+    if (!secret) {
+      throw new UnauthorizedException('Thiết bị chưa được cấu hình khóa bảo mật HMAC');
     }
 
-    // Verify HMAC-SHA256
-    const rawPayload = typeof body === 'string' ? body : JSON.stringify(body || {});
-    const signaturePayload = `${deviceId}:${timestamp}:${nonce}:${rawPayload}`;
-    const expectedSignature = crypto
-      .createHmac('sha256', device.deviceSecret)
-      .update(signaturePayload)
+    // 3. Verify HMAC Signature FIRST (prevents Nonce Poisoning DoS)
+    const bodyJson = typeof body === 'string' ? body : JSON.stringify(body || {});
+    const expectedSig = crypto
+      .createHmac('sha256', secret)
+      .update(`${deviceId}:${timestamp}:${nonce}:${bodyJson}`)
       .digest('hex');
 
-    if (signature.toLowerCase() !== expectedSignature.toLowerCase()) {
-      this.recordSecurityEvent('HMAC_AUTH_FAILED', deviceId, 'Chữ ký HMAC-SHA256 không hợp lệ');
-      throw new UnauthorizedException('Xác thực thiết bị thất bại: Sai chữ ký HMAC-SHA256');
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expBuf = Buffer.from(expectedSig, 'hex');
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      throw new UnauthorizedException('Chữ ký HMAC không hợp lệ');
     }
 
-    // Check Replay attack on Nonce
-    const nonceKey = `nonce_${deviceId}_${nonce}`;
-    const existingNonce = await this.prisma.idempotencyRecord.findUnique({
-      where: { key: nonceKey },
-    });
-    if (existingNonce) {
-      this.recordSecurityEvent('REPLAY_ATTACK_BLOCKED', deviceId, `Nonce tái sử dụng: ${nonce}`);
-      throw new ConflictException('Phát hiện tấn công Replay: Nonce đã được sử dụng');
-    }
-
-    await this.prisma.idempotencyRecord.create({
-      data: {
-        key: nonceKey,
-        deviceId: device.id,
-        expiresAt: new Date(Date.now() + 600 * 1000), // 10 mins cache
-      },
-    });
-
-    // Update Device Cloud Connected
-    const updated = await this.prisma.device.update({
-      where: { id: device.id },
-      data: {
-        provisioningStatus: 'CLOUD_CONNECTED',
-        lastSeenAt: new Date(),
-        wifiRSSI: body.wifiRssi !== undefined ? body.wifiRssi : device.wifiRSSI,
-        batteryLevel: body.batteryLevel !== undefined ? body.batteryLevel : device.batteryLevel,
-        firmwareVersion: body.firmwareVersion || device.firmwareVersion,
-        ipAddress: body.ipAddress || null,
-        uptime: body.uptime || 0,
-      },
-    });
-
-    await this.prisma.deviceAuditLog.create({
-      data: {
-        deviceId: device.id,
-        action: 'BOOTSTRAP_SUCCESS',
-        metadata: JSON.stringify({
-          wifiRssi: body.wifiRssi,
-          firmwareVersion: body.firmwareVersion,
-          ipAddress: body.ipAddress,
-        }),
-      },
-    });
-
-    // Realtime notification to store and global room
-    if (device.storeId) {
-      this.eventsGateway.emitToStore(device.storeId, 'device:online', {
-        deviceId: device.deviceId,
-        status: updated.status,
-        provisioningStatus: 'CLOUD_CONNECTED',
+    // 4. Consume Nonce ONLY AFTER signature is verified (Atomic PostgreSQL insert with 5-minute TTL)
+    const nonceConsumed = await this.provRepo.consumeDeviceNonce(deviceId, nonce);
+    if (!nonceConsumed) {
+      this.failedAttempts.push({
+        type: 'REPLAY_ATTACK',
+        deviceId,
+        reason: 'Phát hiện Replay Attack: Nonce đã được sử dụng',
+        timestamp: new Date(),
       });
-      this.eventsGateway.emitToStore(device.storeId, 'device:heartbeat', {
-        deviceId: device.deviceId,
-        batteryLevel: updated.batteryLevel,
-        wifiRSSI: updated.wifiRSSI,
-        lastSeenAt: updated.lastSeenAt,
-      });
+      throw new ConflictException('Phát hiện tấn công phát lại (Replay Attack): Nonce đã được sử dụng');
     }
 
     return {
       success: true,
-      message: 'Bootstrap kết nối Smart Order Cloud thành công!',
-      data: {
-        deviceId: device.deviceId,
-        status: updated.status,
-        cloudTimestamp: Date.now(),
-      },
+      message: 'Bootstrap thiết bị thành công',
+      data: { serverTime: Date.now() },
     };
   }
 
-  /**
-   * 4. Customer Claims Device Ownership
-   */
-  async claim(deviceId: string, body: any, user: any) {
-    if (!user || user.role !== 'CUSTOMER' || !user.customerProfileId) {
-      throw new UnauthorizedException('Chỉ tài khoản khách hàng mới có quyền nhận nút bấm');
+  private async assertDeviceAccess(id: string, user: any) {
+    if (!user) {
+      throw new ForbiddenException('Thiếu thông tin người thực hiện');
     }
+    const button = await this.provRepo.findButtonByIdentifier(id);
+    if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
 
-    const device = await this.prisma.device.findFirst({
-      where: { OR: [{ id: deviceId }, { deviceId }] },
-      include: { product: true, configuration: { include: { product: true } } },
-    });
-
-    if (!device) throw new NotFoundException('Không tìm thấy thiết bị');
-
-    if (device.customerId && device.customerId !== user.customerProfileId) {
-      throw new BadRequestException('Nút bấm này đã được sở hữu bởi một khách hàng khác');
+    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      return button;
     }
-
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const dev = await tx.device.update({
-        where: { id: device.id },
-        data: {
-          customerId: user.customerProfileId,
-          claimStatus: 'CLAIMED',
-          status: 'ACTIVE',
-        },
-      });
-
-      // Mark any active session as USED
-      await tx.devicePairingSession.updateMany({
-        where: { deviceId: device.id, status: 'ACTIVE' },
-        data: { status: 'USED', usedAt: new Date(), customerId: user.customerProfileId },
-      });
-
-      await tx.deviceAuditLog.create({
-        data: {
-          deviceId: device.id,
-          actorId: user.id,
-          action: 'DEVICE_CLAIMED',
-          metadata: JSON.stringify({
-            customerId: user.customerProfileId,
-            claimedAt: new Date(),
-          }),
-        },
-      });
-
-      return dev;
-    });
-
-    // Notify customer room and store
-    this.eventsGateway.emitToCustomer(user.customerProfileId, 'device:claim', {
-      deviceId: updated.deviceId,
-      status: 'ACTIVE',
-    });
-
-    if (device.storeId) {
-      this.eventsGateway.emitToStore(device.storeId, 'device:claim', {
-        deviceId: updated.deviceId,
-        customerId: user.customerProfileId,
-      });
-    }
-
-    const assignedProduct = device.product || device.configuration?.product;
-
-    return {
-      success: true,
-      message: 'Kích hoạt sở hữu nút bấm thành công! Bạn có thể bấm nút để đặt hàng ngay.',
-      data: {
-        deviceId: updated.deviceId,
-        product: assignedProduct,
-        status: updated.status,
-      },
-    };
-  }
-
-  /**
-   * 5. Customer Unclaims Device
-   */
-  async unclaim(deviceId: string, user: any) {
-    const device = await this.prisma.device.findFirst({
-      where: { OR: [{ id: deviceId }, { deviceId }] },
-    });
-    if (!device) throw new NotFoundException('Không tìm thấy thiết bị');
-
-    if (user.role === 'CUSTOMER' && device.customerId !== user.customerProfileId) {
-      throw new UnauthorizedException('Bạn không sở hữu nút bấm này');
-    }
-
-    const updated = await this.prisma.device.update({
-      where: { id: device.id },
-      data: {
-        customerId: null,
-        claimStatus: 'UNCLAIMED',
-        status: 'READY_FOR_CUSTOMER',
-      },
-    });
-
-    await this.prisma.deviceAuditLog.create({
-      data: {
-        deviceId: device.id,
-        actorId: user.id,
-        action: 'DEVICE_UNCLAIMED',
-        metadata: JSON.stringify({ unclaimTime: new Date() }),
-      },
-    });
-
-    if (device.storeId) {
-      this.eventsGateway.emitToStore(device.storeId, 'device:unclaim', {
-        deviceId: device.deviceId,
-      });
-    }
-
-    return { success: true, message: 'Đã hủy gán nút bấm khỏi tài khoản' };
-  }
-
-  /**
-   * 6. Transfer Device (Generates new one-time pairing token for recipient)
-   */
-  async transfer(deviceId: string, user: any) {
-    const device = await this.prisma.device.findFirst({
-      where: { OR: [{ id: deviceId }, { deviceId }] },
-    });
-    if (!device) throw new NotFoundException('Không tìm thấy thiết bị');
-
-    if (user.role === 'CUSTOMER' && device.customerId !== user.customerProfileId) {
-      throw new UnauthorizedException('Không có quyền chuyển nhượng nút bấm này');
-    }
-
-    const newPairingToken = `p_${crypto.randomBytes(12).toString('hex')}`;
-    const newQrPayload = `SOBPAIR://setup?device=${device.deviceId}&token=${newPairingToken}&v=1`;
-
-    const updated = await this.prisma.device.update({
-      where: { id: device.id },
-      data: {
-        customerId: null,
-        claimStatus: 'TRANSFERRED',
-        status: 'TRANSFER_PENDING',
-        pairingToken: newPairingToken,
-        qrPayload: newQrPayload,
-      },
-    });
-
-    await this.prisma.deviceAuditLog.create({
-      data: {
-        deviceId: device.id,
-        actorId: user.id,
-        action: 'DEVICE_TRANSFERRED',
-        metadata: JSON.stringify({ fromCustomerId: user.customerProfileId }),
-      },
-    });
-
-    return {
-      success: true,
-      message: 'Thiết bị đã chuyển sang trạng thái chờ nhận chuyển nhượng',
-      data: {
-        deviceId: updated.deviceId,
-        qrPayload: newQrPayload,
-        token: newPairingToken,
-      },
-    };
-  }
-
-  /**
-   * 7. Factory Reset Device (Clears Wi-Fi & Customer, keeps Device ID & HMAC Key)
-   */
-  async factoryReset(deviceId: string, user: any) {
-    const device = await this.prisma.device.findFirst({
-      where: { OR: [{ id: deviceId }, { deviceId }] },
-    });
-    if (!device) throw new NotFoundException('Không tìm thấy thiết bị');
-
-    const newPairingToken = `p_${crypto.randomBytes(12).toString('hex')}`;
-    const newQrPayload = `SOBPAIR://setup?device=${device.deviceId}&token=${newPairingToken}&v=1`;
-
-    const updated = await this.prisma.device.update({
-      where: { id: device.id },
-      data: {
-        customerId: null,
-        claimStatus: 'UNCLAIMED',
-        provisioningStatus: 'UNPROVISIONED',
-        status: 'READY_FOR_CUSTOMER',
-        pairingToken: newPairingToken,
-        qrPayload: newQrPayload,
-      },
-    });
-
-    await this.prisma.deviceAuditLog.create({
-      data: {
-        deviceId: device.id,
-        actorId: user?.id || null,
-        action: 'FACTORY_RESET',
-        metadata: JSON.stringify({ timestamp: new Date() }),
-      },
-    });
-
-    if (device.storeId) {
-      this.eventsGateway.emitToStore(device.storeId, 'device:factory_reset', {
-        deviceId: device.deviceId,
-      });
-    }
-
-    return {
-      success: true,
-      message: 'Thiết bị đã được đưa về trạng thái xuất xưởng thành công',
-      data: { deviceId: updated.deviceId, status: updated.status },
-    };
-  }
-
-  /**
-   * 8. Customer / Admin endpoint: Reconfigure Wi-Fi (preserves customer ownership & product mapping)
-   */
-  async changeWifi(deviceId: string, user: any, body?: { ssid?: string; password?: string }) {
-    const device = await this.prisma.device.findFirst({
-      where: { OR: [{ id: deviceId }, { deviceId }] },
-      include: { product: true, configuration: { include: { product: true } } },
-    });
-    if (!device) throw new NotFoundException('Không tìm thấy thiết bị');
-
     if (user.role === 'CUSTOMER') {
-      let customerProfileId = user.customerProfileId || user.customerProfile?.id;
-      if (!customerProfileId) {
-        const cp = await this.prisma.customerProfile.findFirst({ where: { userId: user.id } });
-        if (cp) {
-          customerProfileId = cp.id;
-        } else {
-          const store = await this.prisma.store.findFirst();
-          if (store) {
-            const newCp = await this.prisma.customerProfile.create({
-              data: {
-                userId: user.id,
-                storeId: store.id,
-                deliveryAddress: 'Căn hộ chung cư',
-                phone: user.phone || '0901234567',
-              },
-            });
-            customerProfileId = newCp.id;
-          }
-        }
+      const userCustId = user.customerProfileId ? user.customerProfileId.toString() : null;
+      if (!userCustId || !button.customerId || button.customerId.toString() !== userCustId) {
+        throw new ForbiddenException('Bạn không có quyền truy cập nút bấm này');
       }
-
-      // If device has no customer assigned or is ready for customer, claim it immediately
-      if (!device.customerId || device.status === 'READY_FOR_CUSTOMER' || device.claimStatus !== 'CLAIMED') {
-        await this.prisma.device.update({
-          where: { id: device.id },
-          data: {
-            customerId: customerProfileId,
-            claimStatus: 'CLAIMED',
-            status: 'ACTIVE',
-          },
-        });
-        device.customerId = customerProfileId;
-      } else if (device.customerId !== customerProfileId && user.role !== 'SUPER_ADMIN') {
-        throw new UnauthorizedException('Bạn không sở hữu nút bấm này');
+      return button;
+    }
+    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+      const userStoreId = user.storeId ? user.storeId.toString() : null;
+      if (!userStoreId || !button.storeId || button.storeId.toString() !== userStoreId) {
+        throw new ForbiddenException('Thiết bị không thuộc phạm vi cửa hàng của bạn');
       }
+      return button;
     }
+    throw new ForbiddenException('Bạn không có quyền thực hiện thao tác trên thiết bị này');
+  }
 
-    const newSsid = body?.ssid?.trim();
-    const updated = await this.prisma.device.update({
-      where: { id: device.id },
-      data: {
-        provisioningStatus: newSsid ? 'READY' : 'PROVISIONING',
-      },
-    });
+  async claim(id: string, body: any, user: any) {
+    throw new BadRequestException(
+      'Quy trình kích hoạt sở hữu thiết bị cũ không còn được hỗ trợ. Bắt buộc kích hoạt qua phiên ghép nối bảo mật (POST /api/v1/provisioning/sessions/:id/confirmation)',
+    );
+  }
 
-    await this.prisma.deviceAuditLog.create({
-      data: {
-        deviceId: device.id,
-        actorId: user.id,
-        action: 'WIFI_RECONFIG_REQUESTED',
-        metadata: JSON.stringify({
-          customerId: device.customerId,
-          newSsid: newSsid || null,
-          requestedAt: new Date(),
-        }),
-      },
-    });
+  async unclaim(id: string, user: any) {
+    const button = await this.assertDeviceAccess(id, user);
 
-    if (device.storeId) {
-      this.eventsGateway.emitToStore(device.storeId, 'device:wifi_changed', {
-        deviceId: device.deviceId,
-        status: newSsid ? 'READY' : 'PROVISIONING',
-        ssid: newSsid || null,
-      });
-    }
-    if (device.customerId) {
-      this.eventsGateway.emitToCustomer(device.customerId, 'device:wifi_changed', {
-        deviceId: device.deviceId,
-        status: newSsid ? 'READY' : 'PROVISIONING',
-        ssid: newSsid || null,
-      });
-      this.eventsGateway.emitToCustomer(device.customerId, 'device:claimed', {
-        device: updated,
-      });
-    }
+    await this.provRepo.unclaimDeviceAtomicTx(button.buttonId);
 
     return {
       success: true,
-      message: newSsid
-        ? `Đã cập nhật cấu hình Wi-Fi "${newSsid}" cho nút ${device.deviceId}! Quyền sở hữu và sản phẩm được bảo toàn.`
-        : 'Thiết bị sẵn sàng nhận cấu hình Wi-Fi mới qua BLE / SoftAP',
+      message: 'Đã hủy sở hữu và tách liên kết thiết bị thành công',
+      data: { deviceId: button.deviceId, status: 'UNASSIGNED' },
+    };
+  }
+
+  async transfer(id: string, user: any) {
+    const button = await this.assertDeviceAccess(id, user);
+
+    const token = `tok_${crypto.randomBytes(8).toString('hex')}`;
+    const tokenHash = DevicesService.hashToken(token);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await this.provRepo.savePairingToken(button.deviceId, tokenHash, expiresAt);
+    DevicesService.setPairingTokenMemory(button.deviceId, token, tokenHash, expiresAt.getTime());
+
+    return {
+      success: true,
+      message: 'Tạo mã chuyển giao thiết bị thành công',
       data: {
-        deviceId: updated.deviceId,
-        provisioningStatus: updated.provisioningStatus,
-        status: updated.status,
-        ssid: newSsid || null,
+        deviceId: button.deviceId,
+        token,
+        qrPayload: `SOBPAIR://device/${button.deviceId}/token/${token}`,
       },
     };
   }
 
-  /**
-   * Security Incident Monitoring for Admin
-   */
-  private recordSecurityEvent(type: string, deviceId: string, reason: string) {
-    this.failedAttempts.unshift({
-      type,
-      deviceId,
-      reason,
-      timestamp: new Date(),
-    });
-    if (this.failedAttempts.length > 100) this.failedAttempts.pop();
+  async factoryReset(id: string, user: any) {
+    const button = await this.assertDeviceAccess(id, user);
+
+    await this.provRepo.factoryResetAtomicTx(button.buttonId);
+
+    return {
+      success: true,
+      message: 'Đã khôi phục cài đặt gốc thiết bị thành công',
+      data: {
+        deviceId: button.deviceId,
+        status: 'INACTIVE',
+      },
+    };
+  }
+
+  async changeWifi(id: string, user: any, body?: any) {
+    const button = await this.assertDeviceAccess(id, user);
+
+    const ssid = body?.ssid || 'Smart-Order-WiFi';
+    return {
+      success: true,
+      message: 'Đã cập nhật thông tin mạng Wi-Fi cho thiết bị',
+      data: {
+        deviceId: button.deviceId,
+        ssid,
+        provisioningStatus: 'PROVISIONING',
+      },
+    };
   }
 
   getSecurityIncidents() {

@@ -5,17 +5,34 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
+import { AuthRepository } from './auth.repository';
+import { MailModule } from '../mail/mail.module';
+import { FirebaseModule } from './firebase.module';
+import { FirebasePhoneService } from './firebase-phone.service';
 
 @Module({
   imports: [
     PassportModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'smart_button_prod_super_secret_jwt_key_2026_9948',
-      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN as any) || '7d' },
+      secret: process.env.JWT_SECRET,
+      signOptions: { expiresIn: '15m' },
     }),
+    MailModule,
+    FirebaseModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, AuthRateLimitGuard],
-  exports: [AuthService, AuthRateLimitGuard],
+  providers: [
+    AuthService,
+    AuthRepository,
+    JwtStrategy,
+    AuthRateLimitGuard,
+    FirebasePhoneService,
+  ],
+  exports: [
+    AuthService,
+    AuthRepository,
+    AuthRateLimitGuard,
+    FirebasePhoneService,
+  ],
 })
 export class AuthModule {}

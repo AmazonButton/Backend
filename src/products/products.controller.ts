@@ -3,57 +3,112 @@ import {
   Get,
   Post,
   Put,
-  Delete,
+  Patch,
   Param,
   Body,
   Query,
   UseGuards,
   Request,
   Inject,
+  ParseIntPipe,
+  HttpStatus,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+import { ProductQueryDto } from './dto/query-product.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 
+@ApiTags('Products & Inventory')
 @Controller('products')
 export class ProductsController {
   constructor(@Inject(ProductsService) private readonly productsService: ProductsService) {}
 
+  @Get('storefront/catalog')
+  @ApiOperation({ summary: 'Xem danh mục sản phẩm công khai cho storefront (Không yêu cầu đăng nhập)' })
+  async getStorefrontCatalog(
+    @Query('search') search?: string,
+    @Query('storeId') storeId?: string,
+    @Query('category') category?: string,
+  ) {
+    const data = await this.productsService.getStorefrontCatalog({ search, storeId, category });
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get()
-  async list(@Request() req: any, @Query('storeId') storeId?: string) {
-    const targetStoreId = req.user.storeId || storeId;
-    const data = await this.productsService.list(targetStoreId);
-    return { success: true, data };
+  @ApiOperation({ summary: 'Xem danh sách sản phẩm và tồn kho' })
+  async list(
+    @Request() req: any,
+    @Query() query: ProductQueryDto,
+  ) {
+    const targetStoreId = req.user.storeId || query.storeId;
+    const effectivePageSize = query.pageSize || query.limit;
+    const pagination = {
+      page: query.page,
+      pageSize: effectivePageSize,
+    };
+    const res = await this.productsService.list(targetStoreId, pagination);
+    return {
+      success: true,
+      data: res.data,
+      ...(res.pagination ? { pagination: res.pagination } : {}),
+    };
   }
 
-  @Get('storefront/catalog')
-  async storefrontCatalog(@Query('search') search?: string, @Query('category') category?: string) {
-    const data = await this.productsService.storefrontCatalog(search, category);
-    return { success: true, data };
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get(':id')
+  @ApiOperation({ summary: 'Xem chi tiet san pham va danh sach anh' })
+  async getById(
+    @Param('id', new ParseIntPipe({ errorHttpStatusCode: HttpStatus.BAD_REQUEST })) id: number,
+    @Request() req: any,
+  ) {
+    const data = await this.productsService.getById(id, req.user);
+    return {
+      success: true,
+      data,
+    };
   }
 
+  @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post()
-  async create(@Request() req: any, @Body() body: any) {
+  @ApiOperation({ summary: 'Tạo sản phẩm mới (STORE_OWNER hoặc SYSTEM_ADMIN)' })
+  async create(@Request() req: any, @Body() body: CreateProductDto) {
     const data = await this.productsService.create(req.user, body);
     return { success: true, message: 'Tạo sản phẩm thành công!', data };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Put(':id')
-  async update(@Param('id') id: string, @Body() body: any) {
-    const data = await this.productsService.update(id, body);
+  @ApiOperation({ summary: 'Cập nhật thông tin và giá sản phẩm (STORE_OWNER hoặc SYSTEM_ADMIN)' })
+  async update(@Param('id') id: string, @Body() body: UpdateProductDto, @Request() req: any) {
+    const data = await this.productsService.update(id, body, req.user);
     return { success: true, message: 'Cập nhật sản phẩm thành công!', data };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
-  @Delete(':id')
-  async delete(@Param('id') id: string) {
-    const data = await this.productsService.delete(id);
-    return { success: true, message: 'Xóa sản phẩm thành công!', data };
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'STAFF_INVENTORY', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Patch(':id/inventory')
+  @ApiOperation({ summary: 'Cập nhật số lượng tồn kho (STAFF_INVENTORY hoặc STORE_OWNER)' })
+  async updateStock(
+    @Param('id') id: string,
+    @Body() body: { availableStock: number; lowStockThreshold?: number },
+    @Request() req: any,
+  ) {
+    const data = await this.productsService.updateStock(id, body, req.user);
+    return { success: true, message: 'Cập nhật tồn kho thành công!', data };
   }
 }

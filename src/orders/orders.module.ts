@@ -2,14 +2,16 @@ import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import { StorefrontController } from './storefront.controller';
-import { PrismaModule } from '../prisma/prisma.module';
+import { OrdersRepository } from './orders.repository';
+import { OrdersLifecycleWorker } from './orders-lifecycle.worker';
+import { StoreWalletModule } from '../store-wallet/store-wallet.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { WebSocketModule } from '../websocket/websocket.module';
-import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 
 @Module({
-  imports: [PrismaModule, WebSocketModule],
+  imports: [StoreWalletModule, NotificationsModule, WebSocketModule],
   controllers: [OrdersController, StorefrontController],
-  providers: [OrdersService, OptionalJwtAuthGuard],
-  exports: [OrdersService],
+  providers: [OrdersService, OrdersRepository, OrdersLifecycleWorker],
+  exports: [OrdersService, OrdersRepository, OrdersLifecycleWorker],
 })
 export class OrdersModule {}

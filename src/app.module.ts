@@ -1,4 +1,12 @@
+import { IdentityVerificationsModule } from './identity-verifications/identity-verifications.module';
+import { DriversModule } from './drivers/drivers.module';
+import { DriverShiftsModule } from './driver-shifts/driver-shifts.module';
+import { StoresModule } from './stores/stores.module';
+import { StoreSubscriptionsModule } from './store-subscriptions/store-subscriptions.module';
+import { StoreWalletModule } from './store-wallet/store-wallet.module';
+import { RentalsModule } from './rentals/rentals.module';
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { WebSocketModule } from './websocket/websocket.module';
 import { SecurityModule } from './security/security.module';
@@ -9,21 +17,23 @@ import { DevicesModule } from './devices/devices.module';
 import { ProductsModule } from './products/products.module';
 import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
-import { HouseholdsModule } from './households/households.module';
-import { ConsumptionModule } from './consumption/consumption.module';
-import { PredictionModule } from './prediction/prediction.module';
-import { RemindersModule } from './reminders/reminders.module';
-import { ShoppingListModule } from './shopping-list/shopping-list.module';
-import { ServiceRequestsModule } from './service-requests/service-requests.module';
+import { MediaModule } from './media/media.module';
+import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
-import { WalletModule } from './wallet/wallet.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { BankVerificationModule } from './bank-verification/bank-verification.module';
 import { AppController } from './app.controller';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
+    StoreSubscriptionsModule,
+    StoreWalletModule,
+    RentalsModule,
     PrismaModule,
     WebSocketModule,
     SecurityModule,
+    MailModule,
     AuthModule,
     OrdersModule,
     IotModule,
@@ -31,14 +41,14 @@ import { AppController } from './app.controller';
     ProductsModule,
     AdminModule,
     AnalyticsModule,
-    HouseholdsModule,
-    ConsumptionModule,
-    PredictionModule,
-    RemindersModule,
-    ShoppingListModule,
-    ServiceRequestsModule,
+    MediaModule,
     PaymentsModule,
-    WalletModule,
+    NotificationsModule,
+    StoresModule,
+    DriversModule,
+    DriverShiftsModule,
+    IdentityVerificationsModule,
+    BankVerificationModule,
   ],
   controllers: [AppController],
 })

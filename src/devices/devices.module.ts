@@ -5,6 +5,8 @@ import { DeviceTemplatesService } from './device-templates.service';
 import { DeviceTemplatesController } from './device-templates.controller';
 import { ProvisioningService } from './provisioning.service';
 import { ProvisioningController } from './provisioning.controller';
+import { DevicesRepository } from './devices.repository';
+import { ProvisioningRepository } from './provisioning.repository';
 import { OrdersModule } from '../orders/orders.module';
 
 @Module({
@@ -16,11 +18,15 @@ import { OrdersModule } from '../orders/orders.module';
   ],
   providers: [
     DevicesService,
+    DevicesRepository,
+    ProvisioningRepository,
     DeviceTemplatesService,
     ProvisioningService,
   ],
   exports: [
     DevicesService,
+    DevicesRepository,
+    ProvisioningRepository,
     DeviceTemplatesService,
     ProvisioningService,
   ],

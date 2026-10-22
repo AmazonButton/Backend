@@ -1,6 +1,8 @@
 import crypto from 'crypto';
+import { PrismaClient } from '@prisma/client';
 
-const BASE_URL = 'http://localhost:5000';
+const prisma = new PrismaClient();
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000/api/v1';
 
 function logTest(name: string, passed: boolean, detail?: string) {
   if (passed) {
@@ -17,58 +19,75 @@ async function runTests() {
 
   let passed = 0;
   let failed = 0;
+  let autoDevice: any = null;
+  let bulkDeviceId: string | null = null;
+  let createdTemplateId: string | null = null;
 
-  // 1. Auth Login as Store Owner
-  let storeToken = '';
-  let storeId = '';
   try {
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: 'store@smartorder.local',
-        password: 'Password123!',
-      }),
-    });
-    const data = await res.json();
-    if (res.status === 200 && data.data?.token) {
-      storeToken = data.data.token;
-      storeId = data.data.user.storeId;
-      logTest('1. Auth: Store Owner Login', true);
-      passed++;
-    } else {
-      throw new Error(data.message);
+    // 1. Auth Login as Store Owner
+    let storeToken = '';
+    let storeId = '';
+    try {
+      const res = await fetch(`${BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'store@smartorder.local',
+          password: 'Password123!',
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 200 && data.data?.token) {
+        storeToken = data.data.token;
+        storeId = data.data.user.storeId;
+        logTest('1. Auth: Store Owner Login', true);
+        passed++;
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (e: any) {
+      logTest('1. Auth: Store Owner Login', false, e.message);
+      failed++;
     }
-  } catch (e: any) {
-    logTest('1. Auth: Store Owner Login', false, e.message);
-    failed++;
-  }
 
-  // 2. Fetch Store Products (for SKU mapping)
-  let waterProduct: any = null;
-  let gasProduct: any = null;
-  try {
-    const res = await fetch(`${BASE_URL}/api/products`, {
-      headers: { Authorization: `Bearer ${storeToken}` },
-    });
-    const data = await res.json();
-    if (res.status === 200 && data.data?.length > 0) {
-      waterProduct = data.data.find((p: any) => p.category === 'Nước uống') || data.data[0];
-      gasProduct = data.data.find((p: any) => p.category === 'Gas') || data.data[1] || data.data[0];
-      logTest('2. Products Catalog Lookup (SKU Mapping)', true, `Water: ${waterProduct.sku}, Gas: ${gasProduct.sku}`);
-      passed++;
-    } else {
-      throw new Error('No products found');
+    // 2. Fetch Store Products (for SKU mapping)
+    let waterProduct: any = null;
+    let gasProduct: any = null;
+    try {
+      const res = await fetch(`${BASE_URL}/products`, {
+        headers: { Authorization: `Bearer ${storeToken}` },
+      });
+      const data = await res.json();
+      if (res.status === 200 && data.data?.length > 0) {
+        waterProduct = data.data.find((p: any) =>
+          p.category?.categoryName?.includes('Nước') ||
+          p.category === 'Nước uống' ||
+          p.productName?.includes('La Vie') ||
+          p.productCode?.includes('WTR')
+        ) || data.data[0];
+
+        gasProduct = data.data.find((p: any) =>
+          (p.category?.categoryName?.includes('Gas') ||
+           p.category === 'Gas' ||
+           p.productName?.includes('Gas') ||
+           p.productCode?.includes('GAS')) &&
+          (p.productId || p.id) !== (waterProduct.productId || waterProduct.id)
+        ) || data.data.find((p: any) => (p.productId || p.id) !== (waterProduct.productId || waterProduct.id)) || data.data[1] || data.data[0];
+
+        logTest('2. Products Catalog Lookup (SKU Mapping)', true, `Water: ${waterProduct.sku || waterProduct.productCode}, Gas: ${gasProduct.sku || gasProduct.productCode}`);
+        passed++;
+      } else {
+        throw new Error('No products found');
+      }
+    } catch (e: any) {
+      logTest('2. Products Catalog Lookup (SKU Mapping)', false, e.message);
+      failed++;
     }
-  } catch (e: any) {
-    logTest('2. Products Catalog Lookup (SKU Mapping)', false, e.message);
-    failed++;
-  }
 
   // 3. Register New Physical Device with auto-generated SOB ID
-  let autoDevice: any = null;
+  const uniqueMac = `24:6F:28:${crypto.randomBytes(1).toString('hex').toUpperCase()}:${crypto.randomBytes(1).toString('hex').toUpperCase()}:01`;
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -76,7 +95,7 @@ async function runTests() {
       },
       body: JSON.stringify({
         customName: 'Nút Thử Nghiệm Tự Động',
-        macAddress: `24:6F:28:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:01`,
+        macAddress: uniqueMac,
         location: 'Khu Vực Test A',
       }),
     });
@@ -99,7 +118,7 @@ async function runTests() {
 
   // 4. Verify QR Payload and Zero HMAC Secret Leak
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.id}`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.id}`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
@@ -120,7 +139,7 @@ async function runTests() {
 
   // 5. Test Duplicate Device ID Rejection
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -145,7 +164,7 @@ async function runTests() {
 
   // 6. Test Duplicate MAC Address Rejection
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -170,20 +189,20 @@ async function runTests() {
 
   // 7. Assign Product (Water SKU) to Device
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.deviceId}/assign-product`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.deviceId}/assign-product`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${storeToken}`,
       },
       body: JSON.stringify({
-        productId: waterProduct.id,
+        productId: Number(waterProduct.productId || waterProduct.id),
         customName: 'Nút Đặt Nước Bếp',
       }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {
-      logTest('7. Dynamic Product Mapping: Assign Water SKU', true, `Assigned: ${waterProduct.sku}`);
+      logTest('7. Dynamic Product Mapping: Assign Water SKU', true, `Assigned: ${waterProduct.sku || waterProduct.productCode}`);
       passed++;
     } else {
       throw new Error(data.message);
@@ -195,20 +214,20 @@ async function runTests() {
 
   // 8. Reassign to a Different Product (Gas SKU) WITHOUT touching firmware
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.deviceId}/assign-product`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.deviceId}/assign-product`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${storeToken}`,
       },
       body: JSON.stringify({
-        productId: gasProduct.id,
+        productId: Number(gasProduct.productId || gasProduct.id),
         customName: 'Nút Đặt Gas Nhà Bếp',
       }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {
-      logTest('8. Dynamic Product Mapping: Reassign to Gas SKU without firmware reflash', true, `Reassigned: ${gasProduct.sku}`);
+      logTest('8. Dynamic Product Mapping: Reassign to Gas SKU without firmware reflash', true, `Reassigned: ${gasProduct.sku || gasProduct.productCode}`);
       passed++;
     } else {
       throw new Error(data.message);
@@ -220,7 +239,7 @@ async function runTests() {
 
   // 9. Verify Device Audit Logs (recorded old vs new values)
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${autoDevice.deviceId}/audit-logs`, {
+    const res = await fetch(`${BASE_URL}/devices/${autoDevice.deviceId}/audit-logs`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
@@ -238,7 +257,7 @@ async function runTests() {
 
   // 10. Fleet Stats API Verification
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/fleet/stats`, {
+    const res = await fetch(`${BASE_URL}/devices/fleet/stats`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
@@ -255,17 +274,19 @@ async function runTests() {
 
   // 11. Bulk Import CSV Validation
   try {
+    bulkDeviceId = `SOB-BLK-${Date.now().toString(36).toUpperCase()}-${Math.floor(10 + Math.random() * 89)}`;
+    const bulkMac = `24:6F:28:90:${crypto.randomBytes(1).toString('hex').toUpperCase()}:99`;
     const bulkRows = [
       {
-        deviceId: `SOB-BLK-${Math.floor(100 + Math.random() * 899)}`,
+        deviceId: bulkDeviceId,
         serialNumber: `SN-BLK-${Date.now()}`,
-        macAddress: `24:6F:28:90:${Math.floor(10 + Math.random() * 89)}:99`,
+        macAddress: bulkMac,
         customName: 'Bulk Button 01',
-        productSku: waterProduct.sku,
+        productSku: waterProduct.sku || waterProduct.productCode,
       },
     ];
 
-    const res = await fetch(`${BASE_URL}/api/devices/bulk-import`, {
+    const res = await fetch(`${BASE_URL}/devices/bulk-import`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -288,16 +309,15 @@ async function runTests() {
   // 12. Device Templates: Create and Deploy
   try {
     // Create Template
-    const createRes = await fetch(`${BASE_URL}/api/device-templates`, {
+    const createRes = await fetch(`${BASE_URL}/device-templates`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${storeToken}`,
       },
       body: JSON.stringify({
-        name: 'WATER PROFILE 20L',
+        name: `WATER PROFILE ${Date.now()}`,
         category: 'Nước uống',
-        defaultProductId: waterProduct.id,
         singlePressAction: 'CREATE_ORDER',
         doublePressAction: 'CANCEL_ORDER',
         defaultQuantity: 1,
@@ -305,17 +325,20 @@ async function runTests() {
       }),
     });
     const createData = await createRes.json();
-    const templateId = createData.data.id;
+    if (!createData.data) {
+      throw new Error(`Failed to create template: ${createData.message || JSON.stringify(createData)}`);
+    }
+    createdTemplateId = createData.data.id;
 
     // Deploy Template to autoDevice
-    const deployRes = await fetch(`${BASE_URL}/api/device-templates/${templateId}/deploy`, {
+    const deployRes = await fetch(`${BASE_URL}/device-templates/${createdTemplateId}/deploy`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${storeToken}`,
       },
       body: JSON.stringify({
-        deviceIds: [autoDevice.deviceId],
+        deviceId: autoDevice.deviceId,
       }),
     });
     const deployData = await deployRes.json();
@@ -329,6 +352,31 @@ async function runTests() {
   } catch (e: any) {
     logTest('12. Device Templates: Create & Deploy Profile', false, e.message);
     failed++;
+  }
+  } finally {
+    // Zero residue cleanup
+    try {
+      const cleanupDeviceIds: string[] = [];
+      if (autoDevice?.deviceId) cleanupDeviceIds.push(autoDevice.deviceId);
+      if (bulkDeviceId) cleanupDeviceIds.push(bulkDeviceId);
+
+      for (const dId of cleanupDeviceIds) {
+        const btn = await prisma.ioTButton.findFirst({ where: { deviceId: dId } });
+        if (btn) {
+          await prisma.buttonProduct.deleteMany({ where: { buttonId: btn.buttonId } });
+          await prisma.ioTButton.delete({ where: { buttonId: btn.buttonId } });
+        }
+      }
+
+      if (createdTemplateId) {
+        await prisma.deviceTemplate.deleteMany({ where: { templateId: BigInt(createdTemplateId) } });
+      }
+      console.log('  ✔ [CLEANUP] Successfully cleaned up test devices and templates');
+    } catch (cleanupErr: any) {
+      console.warn('  ⚠️ [CLEANUP WARNING]', cleanupErr.message);
+    } finally {
+      await prisma.$disconnect();
+    }
   }
 
   console.log('\n------------------------------------------------------');

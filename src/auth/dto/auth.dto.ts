@@ -7,6 +7,7 @@ import {
   Matches,
   IsOptional,
   IsBoolean,
+  IsIn,
 } from 'class-validator';
 
 export class RegisterDto {
@@ -48,7 +49,7 @@ export class RegisterDto {
   storeName?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(['CUSTOMER', 'STORE_OWNER'], { message: 'Vai trò chỉ có thể là CUSTOMER hoặc STORE_OWNER' })
   role?: string;
 }
 
@@ -73,6 +74,9 @@ export class ForgotPasswordDto {
 }
 
 export class ResetPasswordDto {
+  @IsNotEmpty({ message: 'Vui lòng nhập email' })
+  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
+  email: string;
   @IsNotEmpty({ message: 'Thiếu mã xác thực đặt lại mật khẩu' })
   @IsString()
   token: string;
@@ -86,6 +90,9 @@ export class ResetPasswordDto {
 }
 
 export class VerifyEmailDto {
+  @IsNotEmpty({ message: 'Vui lòng nhập email' })
+  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
+  email: string;
   @IsNotEmpty({ message: 'Thiếu mã xác minh email' })
   @IsString()
   token: string;
@@ -103,22 +110,18 @@ export class RefreshTokenDto {
   refreshToken: string;
 }
 
-export class GoogleAuthDto {
+export class GoogleLoginDto {
   @IsOptional()
   @IsString()
-  idToken?: string;
+  token?: string;
 
-  @IsNotEmpty({ message: 'Vui lòng cung cấp email Google' })
-  @IsEmail({}, { message: 'Định dạng email Google không hợp lệ' })
-  email: string;
+  @IsOptional()
+  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
+  email?: string;
 
   @IsOptional()
   @IsString()
   fullName?: string;
-
-  @IsOptional()
-  @IsString()
-  username?: string;
 
   @IsOptional()
   @IsString()
@@ -138,10 +141,11 @@ export class GoogleAuthDto {
 
   @IsOptional()
   @IsString()
-  address?: string;
+  phone?: string;
 
   @IsOptional()
   @IsString()
-  phone?: string;
+  address?: string;
 }
 
+export * from './update-profile.dto';

@@ -2,7 +2,7 @@ import {
   Controller,
   Post,
   Get,
-  Put,
+  Patch,
   Body,
   Query,
   UseGuards,
@@ -21,12 +21,20 @@ import {
   VerifyEmailDto,
   ResendVerificationDto,
   RefreshTokenDto,
-  GoogleAuthDto,
+  GoogleLoginDto,
+  UpdateProfileDto,
 } from './dto/auth.dto';
+import { VerifyFirebasePhoneDto } from './dto/verify-firebase-phone.dto';
+import { RegisterByPhoneDto } from './dto/register-by-phone.dto';
+import { LoginByPhoneDto } from './dto/login-by-phone.dto';
+import { FirebasePhoneService } from './firebase-phone.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
+  constructor(
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(FirebasePhoneService) private readonly firebasePhoneService: FirebasePhoneService,
+  ) {}
 
   @UseGuards(AuthRateLimitGuard)
   @Post('register')
@@ -36,14 +44,26 @@ export class AuthController {
 
   @UseGuards(AuthRateLimitGuard)
   @HttpCode(200)
-  @Post('google')
-  googleAuth(@Body() body: GoogleAuthDto, @Request() req: any) {
+  @Post('google-login')
+  googleLogin(@Body() body: GoogleLoginDto, @Request() req: any) {
     const ip =
       req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
       req.ip ||
       req.connection?.remoteAddress;
     const userAgent = req.headers['user-agent']?.toString();
-    return this.authService.googleAuth(body, ip, userAgent);
+    return this.authService.googleLogin(body, ip, userAgent);
+  }
+
+  @UseGuards(AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('google')
+  google(@Body() body: GoogleLoginDto, @Request() req: any) {
+    const ip =
+      req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
+      req.ip ||
+      req.connection?.remoteAddress;
+    const userAgent = req.headers['user-agent']?.toString();
+    return this.authService.googleLogin(body, ip, userAgent);
   }
 
   @UseGuards(AuthRateLimitGuard)
@@ -71,10 +91,11 @@ export class AuthController {
 
   @HttpCode(200)
   @Post('logout')
-  logout(@Request() req: any, @Body() body: { refreshToken?: string }) {
+  async logout(@Request() req: any, @Body() body: { refreshToken?: string; fcmToken?: string }) {
     const authHeader = req.headers['authorization']?.toString();
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : undefined;
     const userId = req.user?.id || req.user?.userId;
-    return this.authService.logout(userId, body?.refreshToken);
+    return this.authService.logout(userId, body?.refreshToken, accessToken, body?.fcmToken);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -84,25 +105,17 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Put('profile')
-  updateProfilePut(@Request() req: any, @Body() body: any) {
-    const userId = req.user?.id || req.user?.userId;
-    return this.authService.updateProfile(userId, body);
+  @Patch('me')
+  updateMe(@Request() req: any, @Body() body: UpdateProfileDto) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    return this.authService.updateProfile(rawUserId, body);
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('profile')
-  updateProfilePost(@Request() req: any, @Body() body: any) {
-    const userId = req.user?.id || req.user?.userId;
-    return this.authService.updateProfile(userId, body);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(200)
-  @Post('change-password')
-  changePassword(@Request() req: any, @Body() body: any) {
-    const userId = req.user?.id || req.user?.userId;
-    return this.authService.changePassword(userId, body);
+  @Patch('profile')
+  updateProfile(@Request() req: any, @Body() body: UpdateProfileDto) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    return this.authService.updateProfile(rawUserId, body);
   }
 
   @UseGuards(AuthRateLimitGuard)
@@ -131,6 +144,7 @@ export class AuthController {
     return this.authService.resetPassword(body);
   }
 
+  @UseGuards(AuthRateLimitGuard)
   @HttpCode(200)
   @Post('verify-email')
   verifyEmail(@Body() body: VerifyEmailDto) {
@@ -143,4 +157,41 @@ export class AuthController {
   resendVerification(@Body() body: ResendVerificationDto) {
     return this.authService.resendVerification(body);
   }
+
+  @UseGuards(JwtAuthGuard, AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('phone/verify')
+  async verifyPhone(
+    @Request() req: any,
+    @Body() dto: VerifyFirebasePhoneDto,
+  ) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    const userId = BigInt(rawUserId);
+    const result = await this.firebasePhoneService.verifyPhoneToken(
+      dto.firebaseIdToken,
+      userId,
+    );
+    return {
+      success: true,
+      message: 'Xác thực số điện thoại thành công qua Firebase.',
+      data: result,
+    };
+  }
+
+  @UseGuards(AuthRateLimitGuard)
+  @Post('register-by-phone')
+  registerByPhone(@Body() dto: RegisterByPhoneDto) {
+    return this.authService.registerByPhone(dto);
+  }
+
+  @UseGuards(AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('login-by-phone')
+  loginByPhone(@Body() dto: LoginByPhoneDto, @Request() req: any) {
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    return this.authService.loginByPhone(dto, ip, userAgent);
+  }
 }
+
+

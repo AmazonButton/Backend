@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-const BASE_URL = 'http://localhost:5000';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000/api/v1';
 
 function logStep(step: number, title: string, passed: boolean, detail?: string) {
   if (passed) {
@@ -24,7 +24,7 @@ async function runE2ELifecycleTest() {
   let storeToken = '';
   let storeId = '';
   try {
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+    const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -49,7 +49,7 @@ async function runE2ELifecycleTest() {
   let newDevice: any = null;
   const mockMac = `24:6F:28:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
   try {
-    const res = await fetch(`${BASE_URL}/api/devices`, {
+    const res = await fetch(`${BASE_URL}/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -80,13 +80,15 @@ async function runE2ELifecycleTest() {
   // -------------------------------------------------------------
   let selectedProduct: any = null;
   try {
-    const res = await fetch(`${BASE_URL}/api/products`, {
+    const res = await fetch(`${BASE_URL}/products`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();
     const products = data.data || [];
     selectedProduct = products[0]; // e.g. Lavie 20L
-    logStep(3, 'Store Product Catalog Lookup', true, `${selectedProduct.name} (SKU: ${selectedProduct.sku}, Price: ${selectedProduct.price} VND)`);
+    const prodName = selectedProduct.name || selectedProduct.productName || 'Sản phẩm';
+    const prodPrice = selectedProduct.price || selectedProduct.basePrice || 0;
+    logStep(3, 'Store Product Catalog Lookup', true, `${prodName} (SKU: ${selectedProduct.sku}, Price: ${prodPrice} VND)`);
     passed++;
   } catch (e: any) {
     logStep(3, 'Store Product Catalog Lookup', false, e.message);
@@ -97,20 +99,21 @@ async function runE2ELifecycleTest() {
   // STEP 4: DYNAMIC PRODUCT MAPPING (WITHOUT FIRMWARE UPDATE)
   // -------------------------------------------------------------
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${newDevice.deviceId}/assign-product`, {
+    const prodId = selectedProduct.id || selectedProduct.productId;
+    const res = await fetch(`${BASE_URL}/devices/${newDevice.deviceId}/assign-product`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${storeToken}`,
       },
       body: JSON.stringify({
-        productId: selectedProduct.id,
+        productId: prodId,
         customName: 'Nút Nước Lavie Bếp Ăn E2E',
       }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {
-      logStep(4, 'Dynamic Product Mapping Assigned', true, `Mapped to: ${selectedProduct.name}`);
+      logStep(4, 'Dynamic Product Mapping Assigned', true, `Mapped to: ${selectedProduct.name || selectedProduct.productName}`);
       passed++;
     } else {
       throw new Error(data.message);
@@ -126,7 +129,7 @@ async function runE2ELifecycleTest() {
   let customerToken = '';
   let customerProfileId = '';
   try {
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+    const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -149,10 +152,17 @@ async function runE2ELifecycleTest() {
   // -------------------------------------------------------------
   let pairingSession: any = null;
   try {
-    const res = await fetch(`${BASE_URL}/api/provisioning/session`, {
+    const repairRes = await fetch(`${BASE_URL}/devices/${newDevice.deviceId}/re-pair`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${storeToken}` },
+    });
+    const repairData = await repairRes.json();
+    const pairingToken = repairData.data?.pairingToken || repairData.pairingToken;
+
+    const res = await fetch(`${BASE_URL}/provisioning/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qrPayload: newDevice.qrPayload }),
+      body: JSON.stringify({ deviceId: newDevice.deviceId, token: pairingToken }),
     });
     const data = await res.json();
     pairingSession = data.data;
@@ -183,7 +193,7 @@ async function runE2ELifecycleTest() {
     // For test purposes, retrieve the deviceSecret from database or use seeded device
     // Or call bootstrap with registered device
     const testDeviceId = 'BTN-8829-WTR';
-    const testSecret = 'sec_smart_button_8829_wtr_key_99';
+    const testSecret = process.env.TEST_DEVICE_SECRET || 'sec_btn8829_f79c428784e5e14ddf0cb866fc07ca7f5c68a5a295b27ede';
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = `e2e_nonce_${Date.now()}`;
     const body = {
@@ -199,7 +209,7 @@ async function runE2ELifecycleTest() {
       .update(`${testDeviceId}:${timestamp}:${nonce}:${bodyJson}`)
       .digest('hex');
 
-    const res = await fetch(`${BASE_URL}/api/devices/bootstrap`, {
+    const res = await fetch(`${BASE_URL}/devices/bootstrap`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -226,12 +236,17 @@ async function runE2ELifecycleTest() {
   // STEP 9: CUSTOMER CLAIMS DEVICE (DEVICE BECOMES ACTIVE)
   // -------------------------------------------------------------
   try {
-    const res = await fetch(`${BASE_URL}/api/devices/${newDevice.deviceId}/claim`, {
+    const prodId = selectedProduct.id || selectedProduct.productId;
+    const res = await fetch(`${BASE_URL}/provisioning/sessions/${pairingSession.sessionId}/confirmation`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${customerToken}`,
       },
+      body: JSON.stringify({
+        buttonName: 'Nút Nước Lavie Bếp Ăn E2E',
+        productId: prodId,
+      }),
     });
     const data = await res.json();
     if (res.status === 200 || res.status === 201) {
@@ -251,7 +266,7 @@ async function runE2ELifecycleTest() {
   let orderResult: any = null;
   try {
     const testDeviceId = 'BTN-8829-WTR';
-    const testSecret = 'sec_smart_button_8829_wtr_key_99';
+    const testSecret = process.env.TEST_DEVICE_SECRET || 'sec_btn8829_f79c428784e5e14ddf0cb866fc07ca7f5c68a5a295b27ede';
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = `press_${Date.now()}`;
     const requestId = `req_e2e_${Date.now()}`;
@@ -267,7 +282,7 @@ async function runE2ELifecycleTest() {
       .update(`${testDeviceId}:${timestamp}:${nonce}:${bodyJson}`)
       .digest('hex');
 
-    const res = await fetch(`${BASE_URL}/api/iot/events`, {
+    const res = await fetch(`${BASE_URL}/iot/events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -296,7 +311,7 @@ async function runE2ELifecycleTest() {
   // -------------------------------------------------------------
   try {
     const testDeviceId = 'BTN-8829-WTR';
-    const testSecret = 'sec_smart_button_8829_wtr_key_99';
+    const testSecret = process.env.TEST_DEVICE_SECRET || 'sec_btn8829_f79c428784e5e14ddf0cb866fc07ca7f5c68a5a295b27ede';
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = `idem_nonce_${Date.now()}`;
     const fixedRequestId = `fixed_idempotent_key_${Date.now()}`;
@@ -308,7 +323,7 @@ async function runE2ELifecycleTest() {
       .digest('hex');
 
     // First
-    await fetch(`${BASE_URL}/api/iot/events`, {
+    await fetch(`${BASE_URL}/iot/events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -327,7 +342,7 @@ async function runE2ELifecycleTest() {
       .update(`${testDeviceId}:${timestamp}:${dupNonce}:${bodyJson}`)
       .digest('hex');
 
-    const dupRes = await fetch(`${BASE_URL}/api/iot/events`, {
+    const dupRes = await fetch(`${BASE_URL}/iot/events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -354,7 +369,7 @@ async function runE2ELifecycleTest() {
   // STEP 12: STORE RECEIVED ORDER IN ORDER LIST
   // -------------------------------------------------------------
   try {
-    const res = await fetch(`${BASE_URL}/api/orders`, {
+    const res = await fetch(`${BASE_URL}/orders`, {
       headers: { Authorization: `Bearer ${storeToken}` },
     });
     const data = await res.json();

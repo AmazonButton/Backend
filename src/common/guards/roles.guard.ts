@@ -17,12 +17,16 @@ export class RolesGuard implements CanActivate {
     }
 
     const { user } = context.switchToHttp().getRequest();
-    if (!user || !requiredRoles.includes(user.role)) {
-      throw new ForbiddenException(
-        `Bạn không có quyền thực hiện hành động này. Vai trò yêu cầu: ${requiredRoles.join(', ')}`,
-      );
+    if (!user) {
+      throw new ForbiddenException('Yêu cầu đăng nhập để truy cập tài nguyên này');
     }
 
-    return true;
+    if (user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN' || requiredRoles.includes(user.role)) {
+      return true;
+    }
+
+    throw new ForbiddenException(
+      `Bạn không có quyền thực hiện hành động này. Vai trò yêu cầu: ${requiredRoles.join(', ')}`,
+    );
   }
 }

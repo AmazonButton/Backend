@@ -1,152 +1,401 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
+import { Injectable, NotFoundException, BadRequestException, Optional, Inject } from '@nestjs/common';
+import { PayOSPayoutService } from '../payments/payos-payout.service';
+import { AdminRepository } from './admin.repository';
 
 @Injectable()
 export class AdminService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+      constructor(
+    @Inject(AdminRepository)
+    private readonly adminRepo: AdminRepository,
+    @Optional()
+    private readonly payosPayoutService?: PayOSPayoutService,
+  ) {}
 
   async listPendingStores() {
-    return this.prisma.store.findMany({
-      where: { status: 'PENDING_APPROVAL' },
-      include: { users: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.adminRepo.findPendingStores();
   }
 
   async listAllStores() {
-    return this.prisma.store.findMany({
-      orderBy: { name: 'asc' },
-      include: {
-        _count: { select: { devices: true, products: true } },
-      },
-    });
+    return this.adminRepo.findAllStores();
   }
 
-  async approveStore(storeId: string, adminUser: any) {
-    const store = await this.prisma.store.findUnique({ where: { id: storeId } });
+  async approveStore(storeId: string | number | bigint, _adminUser?: any) {
+    const targetStoreId = BigInt(storeId);
+    const store = await this.adminRepo.findStoreById(targetStoreId);
     if (!store) throw new NotFoundException('Không tìm thấy cửa hàng');
-
-    return this.prisma.$transaction(async (tx) => {
-      const s = await tx.store.update({
-        where: { id: storeId },
-        data: {
-          status: 'ACTIVE',
-          approvedAt: new Date(),
-        },
-      });
-
-      await tx.user.updateMany({
-        where: { storeId, role: 'STORE_OWNER' },
-        data: { isActive: true },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId: adminUser.id,
-          action: 'STORE_APPROVED',
-          entity: 'Store',
-          entityId: storeId,
-          newValues: JSON.stringify({ approvedBy: adminUser.email }),
-        },
-      });
-
-      return s;
-    });
+    return this.adminRepo.approveStore(targetStoreId, store.ownerUserId);
   }
 
-  async rejectStore(storeId: string, reason: string, adminUser: any) {
+  async rejectStore(storeId: string | number | bigint, reason: string, _adminUser?: any) {
     if (!reason) throw new BadRequestException('Bắt buộc phải nhập lý do từ chối');
-
-    return this.prisma.$transaction(async (tx) => {
-      const s = await tx.store.update({
-        where: { id: storeId },
-        data: {
-          status: 'REJECTED',
-          rejectionReason: reason,
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId: adminUser.id,
-          action: 'STORE_REJECTED',
-          entity: 'Store',
-          entityId: storeId,
-          newValues: JSON.stringify({ reason, rejectedBy: adminUser.email }),
-        },
-      });
-
-      return s;
-    });
+    const targetStoreId = BigInt(storeId);
+    const store = await this.adminRepo.findStoreById(targetStoreId);
+    if (!store) throw new NotFoundException('Không tìm thấy cửa hàng');
+    return this.adminRepo.rejectStore(targetStoreId);
   }
 
   async getSystemStats() {
-    const [totalStores, totalUsers, totalDevices, totalOrders, pendingStores, orders] =
-      await Promise.all([
-        this.prisma.store.count(),
-        this.prisma.user.count(),
-        this.prisma.device.count(),
-        this.prisma.order.count(),
-        this.prisma.store.count({ where: { status: 'PENDING_APPROVAL' } }),
-        this.prisma.order.findMany({ select: { totalAmount: true, status: true } }),
-      ]);
+    const { totalStores, totalUsers, totalButtons, totalOrders, stores, orders, activeButtons } =
+      await this.adminRepo.getCounts();
 
-    const totalRevenue = orders
-      .filter((o) => o.status !== 'CANCELLED' && o.status !== 'REJECTED')
-      .reduce((sum, o) => sum + o.totalAmount, 0);
-
-    const activeDevices = await this.prisma.device.count({ where: { status: 'ACTIVE' } });
+    const activeStores = stores.filter((s: any) => s.status === 'ACTIVE').length;
+    const completedOrders = orders.filter((o: any) => o.orderStatus === 'CONFIRMED' || o.orderStatus === 'DELIVERED').length;
+    const totalGmv = orders
+      .filter((o: any) => o.orderStatus === 'CONFIRMED' || o.orderStatus === 'DELIVERED')
+      .reduce((sum: number, o: any) => sum + Number(o.totalAmount || 0), 0);
 
     return {
       totalStores,
+      activeStores,
       totalUsers,
-      totalDevices,
-      activeDevices,
+      totalButtons,
+      activeButtons,
       totalOrders,
-      pendingStores,
-      totalRevenue,
+      completedOrders,
+      totalGmv,
+    };
+  }
+
+  async getAuditLogs() {
+    const [orderLogs, priceLogs] = await this.adminRepo.findAuditLogs();
+    return {
+      orderLogs: orderLogs.map((l: any) => ({
+        id: l.historyId.toString(),
+        orderId: l.orderId.toString(),
+        orderNumber: l.order?.orderNumber,
+        fromStatus: l.fromStatus,
+        toStatus: l.toStatus,
+        note: l.note,
+        changedBy: l.changedByUser?.fullName || 'Hệ thống',
+        changedAt: l.changedAt,
+      })),
+      priceLogs: priceLogs.map((p: any) => ({
+        id: p.historyId.toString(),
+        productId: p.productId.toString(),
+        productName: p.product?.productName,
+        oldPrice: p.oldPrice,
+        newPrice: p.newPrice,
+        reason: p.reason,
+        changedAt: p.changedAt,
+      })),
     };
   }
 
   async listAuditLogs() {
-    return this.prisma.auditLog.findMany({
-      take: 50,
-      orderBy: { createdAt: 'desc' },
-      include: { user: true },
-    });
+    return this.getAuditLogs();
   }
 
   async listUsers() {
-    return this.prisma.user.findMany({
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        fullName: true,
-        phone: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        lastLoginAt: true,
-        store: { select: { name: true, code: true } },
-      },
-      orderBy: { createdAt: 'desc' },
+    const users = await this.adminRepo.findUsers();
+    return users.map((u: any) => {
+      const isActive = u.status === 'ACTIVE';
+      let role = 'CUSTOMER';
+      const isSuperAdmin =
+        u.username === 'admin' ||
+        u.email === 'admin@smartorder.local' ||
+        u.storeStaffs?.some((s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN');
+
+      if (isSuperAdmin) {
+        role = 'SUPER_ADMIN';
+      } else if (u.ownedStores && u.ownedStores.length > 0) {
+        role = 'STORE_OWNER';
+      } else if (u.storeStaffs && u.storeStaffs.length > 0) {
+        role = u.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+      } else if (u.customerProfile) {
+        role = 'CUSTOMER';
+      }
+
+      const storeName =
+        u.ownedStores && u.ownedStores.length > 0
+          ? u.ownedStores[0].name
+          : (u.storeStaffs && u.storeStaffs.length > 0 ? u.storeStaffs[0].store?.name : null);
+
+      return {
+        ...u,
+        id: u.userId.toString(),
+        userId: u.userId.toString(),
+        role,
+        isActive,
+        status: u.status,
+        storeName: storeName || 'Mặc định',
+      };
     });
   }
 
-  async toggleUserStatus(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('Không tìm thấy tài khoản');
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { isActive: !user.isActive },
+  async toggleUserStatus(userId: string | number | bigint, status?: string, _adminUser?: any) {
+    const targetUserId = BigInt(userId);
+    const user = await this.adminRepo.findUserById(targetUserId);
+    if (!user) throw new NotFoundException('Không tìm thấy người dùng');
+    const nextStatus = status || (user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE');
+    const updated = await this.adminRepo.updateUserStatus(targetUserId, nextStatus);
+    return {
+      ...updated,
+      id: updated.userId.toString(),
+      userId: updated.userId.toString(),
+      isActive: updated.status === 'ACTIVE',
+      status: updated.status,
+    };
+  }
+
+  async updateUserRole(userId: string | number | bigint, roleCode: string, _adminUser?: any) {
+    const targetUserId = BigInt(userId);
+    const user = await this.adminRepo.findUserById(targetUserId);
+    if (!user) throw new NotFoundException('Không tìm thấy người dùng');
+
+    const role = await this.adminRepo.findOrCreateRole(roleCode);
+    await this.adminRepo.updateStaffRole(targetUserId, role.roleId);
+
+    return { success: true, message: 'Đã cập nhật vai trò người dùng thành ' + roleCode };
+  }
+
+  async createSubscriptionPlan(body: any, _adminUser?: any) {
+    const { planCode, planName, price, durationDays, maxProducts, description } = body;
+    if (!planCode || !planName || price === undefined) {
+      throw new BadRequestException('Vui lòng điền đầy đủ mã gói, tên gói và giá cước');
+    }
+
+    const existing = await this.adminRepo.findSubscriptionPlanByCode(planCode);
+    if (existing) {
+      throw new BadRequestException('Mã gói cước đã tồn tại');
+    }
+
+    return this.adminRepo.createSubscriptionPlan({
+      planCode,
+      planName,
+      description: description || null,
+      price,
+      durationDays: durationDays ? Number(durationDays) : 30,
+      maxProducts: maxProducts ? Number(maxProducts) : 50,
+      isActive: true,
     });
   }
 
-  async updateUserRole(userId: string, role: string) {
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { role },
+  async createPlan(body: any, _adminUser?: any) {
+    return this.createSubscriptionPlan(body, _adminUser);
+  }
+
+  async listSubscriptionPlans() {
+    return this.adminRepo.findAllSubscriptionPlans();
+  }
+
+  async listPlans() {
+    return this.listSubscriptionPlans();
+  }
+
+  async updateSubscriptionPlan(id: string | number | bigint, body: any, _adminUser?: any) {
+    const planId = BigInt(id);
+    const existing = await this.adminRepo.findSubscriptionPlanById(planId);
+    if (!existing) throw new NotFoundException('Không tìm thấy gói cước');
+    return this.adminRepo.updateSubscriptionPlan(planId, body);
+  }
+
+  async updatePlan(id: string | number | bigint, body: any, _adminUser?: any) {
+    return this.updateSubscriptionPlan(id, body, _adminUser);
+  }
+
+  async createRentalPackage(body: any, _adminUser?: any) {
+    const {
+      packageCode,
+      packageName,
+      monthlyPrice,
+      depositAmount,
+      depositFee,
+      description,
+      buttonQuantity,
+      features,
+      minRentalMonths,
+    } = body;
+    if (!packageCode || !packageName || monthlyPrice === undefined) {
+      throw new BadRequestException('Vui lòng điền đầy đủ mã gói, tên gói và giá thuê hàng tháng');
+    }
+
+    const existing = await this.adminRepo.findRentalPackageByCode(packageCode);
+    if (existing) {
+      throw new BadRequestException('Mã gói thuê thiết bị đã tồn tại');
+    }
+
+    return this.adminRepo.createRentalPackage({
+      packageCode,
+      packageName,
+      description,
+      buttonQuantity: buttonQuantity ?? 1,
+      monthlyPrice,
+      depositFee: depositFee ?? depositAmount ?? 0,
+      minRentalMonths: minRentalMonths || 1,
+      features: features || [],
+      status: 'ACTIVE',
     });
+  }
+
+  async listRentalPackages() {
+    return this.adminRepo.findAllRentalPackages();
+  }
+
+  async updateRentalPackage(id: string | number | bigint, body: any, _adminUser?: any) {
+    const packageId = BigInt(id);
+    const existing = await this.adminRepo.findRentalPackageById(packageId);
+    if (!existing) throw new NotFoundException('Không tìm thấy gói thuê');
+    return this.adminRepo.updateRentalPackage(packageId, body);
+  }
+
+  async listAllWithdrawals() {
+    return this.adminRepo.findWithdrawals();
+  }
+
+  async listWithdrawals() {
+    return this.listAllWithdrawals();
+  }
+
+  async confirmWithdrawalTransfer(withdrawalId: string | number | bigint, transferEvidenceUrl?: string, adminUser?: any) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    if (withdrawal.status !== 'PENDING') {
+      throw new BadRequestException('Yêu cầu đang ở trạng thái ' + withdrawal.status + ', không thể duyệt');
+    }
+
+    return this.adminRepo.updateWithdrawal(rawWithdrawalId, {
+      status: 'TRANSFERRED',
+      transferEvidenceUrl: typeof transferEvidenceUrl === 'string' ? transferEvidenceUrl : null,
+      approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
+      processedAt: new Date(),
+    });
+  }
+
+  async approveWithdrawalTransfer(withdrawalId: string | number | bigint, adminUser?: any) {
+    return this.confirmWithdrawalTransfer(withdrawalId, undefined, adminUser);
+  }
+
+  async rejectWithdrawal(withdrawalId: string | number | bigint, reason: string, adminUser?: any) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    if (!reason?.trim()) {
+      throw new BadRequestException('Vui lòng nhập lý do từ chối yêu cầu rút tiền');
+    }
+
+    const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    if (withdrawal.status !== 'PENDING') {
+      throw new BadRequestException('Yêu cầu đang ở trạng thái ' + withdrawal.status + ', không thể từ chối');
+    }
+
+    return this.adminRepo.rejectWithdrawalTransaction(
+      withdrawal,
+      reason,
+      adminUser?.userId ? BigInt(adminUser.userId) : undefined,
+    );
+  }
+
+  async getPayosPayoutBalance() {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException({
+        success: false,
+        code: 'PAYOS_PAYOUT_NOT_CONFIGURED',
+        message: 'Kênh chi hộ PayOS Payout chưa được tích hợp hoặc cấu hình',
+      });
+    }
+    return this.payosPayoutService.getPayoutBalance();
+  }
+
+  async getPayOSPayoutBalance() {
+    return this.getPayosPayoutBalance();
+  }
+
+  async executePayOSPayout(withdrawalId: string | number | bigint, adminUser?: any) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+
+    // Atomic race-condition prevention via Pure Repository
+    const claimed = await this.adminRepo.claimPendingWithdrawal(rawWithdrawalId);
+    if (!claimed) {
+      const current = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+      if (!current) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+      throw new BadRequestException(
+        `Yêu cầu rút tiền đang ở trạng thái ${current.status}, không thể xuất lệnh chi hộ hoặc đang được xử lý đồng thời`
+      );
+    }
+
+    const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+
+    if (!this.payosPayoutService) {
+      await this.adminRepo.refundFailedWithdrawalTransaction(rawWithdrawalId, 'PayOSPayoutService chưa sẵn sàng');
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+
+    // Provider reference must be stable and idempotent (NO Date.now() suffix!)
+    const providerReferenceId = withdrawal.providerReferenceId || withdrawal.withdrawalCode;
+
+    const payoutPayload = {
+      referenceId: providerReferenceId,
+      amount: Number(withdrawal.amount),
+      description: ('Chi ho SOB ' + withdrawal.withdrawalCode).slice(0, 25),
+      toBin: (withdrawal.wallet as any)?.bankBin || withdrawal.bankCode || '970422',
+      toAccountNumber: (withdrawal.wallet as any)?.bankAccount || withdrawal.bankAccountNumber || '000000000',
+    };
+
+    try {
+      const payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
+      const providerPayoutId = payoutResult?.data?.id || `payout_${providerReferenceId}`;
+
+      return await this.adminRepo.updateWithdrawal(rawWithdrawalId, {
+        status: 'PROCESSING',
+        providerReferenceId,
+        providerPayoutId,
+        approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
+        processedAt: new Date(),
+      });
+    } catch (err: any) {
+      // Auto-refund and mark FAILED on PayOS failure, network error, or exception
+      await this.adminRepo.refundFailedWithdrawalTransaction(
+        rawWithdrawalId,
+        err.message || 'Lỗi kết nối hoặc xử lý từ PayOS'
+      );
+      throw new BadRequestException(`Xuất lệnh chi hộ PayOS thất bại: ${err.message || 'Lỗi cổng PayOS'}`);
+    }
+  }
+
+  async payoutViaPayOS(withdrawalId: string | number | bigint, adminUser?: any) {
+    return this.executePayOSPayout(withdrawalId, adminUser);
+  }
+
+  async syncPayoutStatus(withdrawalId: string | number | bigint, _adminUser?: any) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+
+    if (withdrawal.providerPayoutId) {
+      const statusData = await this.payosPayoutService.getPayout(withdrawal.providerPayoutId);
+      return { withdrawal, statusData };
+    } else if (withdrawal.providerReferenceId) {
+      const listData = await this.payosPayoutService.getPayouts({ referenceId: withdrawal.providerReferenceId });
+      return { withdrawal, listData };
+    }
+
+        return { withdrawal, message: 'Chưa có thông tin provider reference id' };
+  }
+
+  async createBatchPayout(params: CreatePayosBatchPayoutDto) {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+    return this.payosPayoutService.createBatchPayout(params);
+  }
+
+  async estimatePayoutCredit(params: EstimatePayoutCreditDto) {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+    return this.payosPayoutService.estimateCredit(params);
+  }
+
+  async listPayosPayouts(query?: ListPayosPayoutsQueryDto) {
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+    return this.payosPayoutService.getPayouts(query);
   }
 }
