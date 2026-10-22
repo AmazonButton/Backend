@@ -12,7 +12,10 @@ import {
   BadRequestException,
   ForbiddenException,
   ServiceUnavailableException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
+import { BankLookupRateLimitGuard } from '../src/bank-verification/guards/bank-lookup-rate-limit.guard';
 
 async function runBankVerificationTests() {
   console.log('================================================================');
@@ -22,6 +25,7 @@ async function runBankVerificationTests() {
   process.env.BANK_VERIFICATION_AMOUNT_VND = '2000';
   process.env.BANK_VERIFICATION_EXPIRY_MINUTES = '30';
   process.env.BANK_VERIFICATION_WEBHOOK_SECRET = 'test_bank_webhook_secret_key_12345';
+  process.env.PLATFORM_BANK_ACCOUNT_NUMBER = '999888777666';
   process.env.BANK_VERIFICATION_STRICT = 'true';
   process.env.BANK_VERIFICATION_MOCK = 'true';
   process.env.NODE_ENV = 'test';
@@ -195,6 +199,88 @@ async function runBankVerificationTests() {
       '1.5 Fail-Closed: Payout throws ServiceUnavailableException when BANK_VERIFICATION_MOCK !== "true"',
     );
 
+    // Test 1.6 (Risk 7): Lookup Rate Limiting Guard (15 req/min cap)
+    const rateLimitGuard = new BankLookupRateLimitGuard();
+    BankLookupRateLimitGuard.reset();
+    const mockContext = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: { userId: 'rate_limit_test_user' },
+          ip: '127.0.0.1',
+          headers: {},
+        }),
+      }),
+    } as any;
+
+    let allowedCount = 0;
+    for (let i = 0; i < 15; i++) {
+      if (rateLimitGuard.canActivate(mockContext)) {
+        allowedCount++;
+      }
+    }
+    let rateLimitBlocked = false;
+    try {
+      rateLimitGuard.canActivate(mockContext);
+    } catch (err: any) {
+      rateLimitBlocked =
+        err instanceof HttpException && err.getStatus() === HttpStatus.TOO_MANY_REQUESTS;
+    }
+    BankLookupRateLimitGuard.reset();
+    assert(
+      allowedCount === 15 && rateLimitBlocked,
+      '1.6 Anti-Enumeration: BankLookupRateLimitGuard allows 15 lookups/min and blocks 16th with 429 Too Many Requests',
+    );
+
+    // Test 1.7 (Risk 4): Lookup Opaque Error Handling (No vendor error leaks to client)
+    const originalLookup = provider.lookupAccount.bind(provider);
+    provider.lookupAccount = async () => {
+      throw new Error('Internal VietQR stack trace leak with secret credentials');
+    };
+    let opaqueLookupMessage = '';
+    try {
+      await service.lookupBankAccount({ bankBin: '970422', accountNumber: '0987654321' });
+    } catch (err: any) {
+      opaqueLookupMessage = err.message;
+    }
+    provider.lookupAccount = originalLookup;
+    assert(
+      opaqueLookupMessage === 'Không thể xác minh tài khoản ngân hàng lúc này',
+      '1.7 Zero Vendor Leakage: lookupBankAccount returns opaque fixed error and hides vendor error message',
+    );
+
+    // Test 1.8 (Risk 6): Fail-Fast Boot: onModuleInit throws fatal Error if BANK_VERIFICATION_MOCK is true in production
+    process.env.NODE_ENV = 'production';
+    process.env.BANK_VERIFICATION_MOCK = 'true';
+    let prodMockBlocked = false;
+    try {
+      service.onModuleInit();
+    } catch (err: any) {
+      prodMockBlocked = err.message.includes('BANK_VERIFICATION_MOCK must be disabled in production');
+    }
+    assert(
+      prodMockBlocked,
+      '1.8 Production Boot Guard: onModuleInit throws fatal error if BANK_VERIFICATION_MOCK is true in production',
+    );
+
+    // Test 1.9 (Risk 5): Fail-Fast Boot: onModuleInit throws fatal Error if PLATFORM_BANK_ACCOUNT_NUMBER is missing in production
+    process.env.BANK_VERIFICATION_MOCK = 'false';
+    delete process.env.PLATFORM_BANK_ACCOUNT_NUMBER;
+    let missingPlatformAccBlocked = false;
+    try {
+      service.onModuleInit();
+    } catch (err: any) {
+      missingPlatformAccBlocked = err.message.includes('PLATFORM_BANK_ACCOUNT_NUMBER must be configured in production');
+    }
+    assert(
+      missingPlatformAccBlocked,
+      '1.9 Production Boot Guard: onModuleInit throws fatal error if PLATFORM_BANK_ACCOUNT_NUMBER is missing in production',
+    );
+
+    // Restore test environment variables
+    process.env.NODE_ENV = 'test';
+    process.env.BANK_VERIFICATION_MOCK = 'true';
+    process.env.PLATFORM_BANK_ACCOUNT_NUMBER = '999888777666';
+
     // ------------------------------------------------------------------------
     // SECTION 2: Create Verification Request, Client Zero Trust & RBAC
     // ------------------------------------------------------------------------
@@ -284,7 +370,7 @@ async function runBankVerificationTests() {
       return crypto.createHmac('sha256', secret).update(raw).digest('hex');
     }
 
-    // Test 3.0 (High 2): Fail-closed on missing providerTransactionId
+    // Test 3.0 (High 2 & Risk 2): Fail-closed on missing providerTransactionId and reject paymentLinkId/orderCode fallback
     let missingTxIdThrew = false;
     try {
       await service.handleVerificationWebhook({
@@ -295,9 +381,27 @@ async function runBankVerificationTests() {
     } catch (err: any) {
       missingTxIdThrew = err instanceof BadRequestException;
     }
+
+    let fallbackIdRejected = false;
+    try {
+      await service.handleVerificationWebhook({
+        amount: 2000,
+        description: `Thanh toan tien ${refCode}`,
+        referenceCode: refCode,
+        data: {
+          paymentLinkId: 'pl_test_123',
+          orderCode: 998877,
+        },
+      } as any);
+    } catch (err: any) {
+      fallbackIdRejected =
+        err instanceof BadRequestException &&
+        err.message.includes('Missing provider transaction ID');
+    }
+
     assert(
-      missingTxIdThrew,
-      '3.0 Fail-Closed: Missing providerTransactionId throws BadRequestException (no dummy random ID)',
+      missingTxIdThrew && fallbackIdRejected,
+      '3.0 Fail-Closed: Missing providerTransactionId throws BadRequestException and paymentLinkId/orderCode are rejected',
     );
 
     // Test 3.1: Inbound webhook with wrong amount (1.000 VND instead of 2.000 VND)
@@ -329,18 +433,83 @@ async function runBankVerificationTests() {
       data: { status: 'PENDING', receivedAmount: null },
     });
 
-    // Test 3.3 (High 3): Webhook with senderAccountNumber mismatch rejected
+    // Test 3.3a (Risk 1): Fail-closed when destinationAccountNumber is missing in strict mode
+    const missingDestWebhook = {
+      providerTransactionId: `txn_miss_dest_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      senderAccountNumber: testAccNumber,
+    };
+    const missingDestRes = await service.handleVerificationWebhook(missingDestWebhook);
+    assert(
+      missingDestRes.success === false &&
+        missingDestRes.reason === 'DESTINATION_ACCOUNT_UNVERIFIABLE',
+      '3.3a Webhook Cross-Check: Missing destination account rejected with DESTINATION_ACCOUNT_UNVERIFIABLE in strict mode',
+    );
+
+    // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null },
+    });
+
+    // Test 3.3b (Risk 1): Fail-closed when senderAccountNumber is missing in strict mode
+    const missingSenderWebhook = {
+      providerTransactionId: `txn_miss_sender_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      destinationAccountNumber: '999888777666',
+    };
+    const missingSenderRes = await service.handleVerificationWebhook(missingSenderWebhook);
+    assert(
+      missingSenderRes.success === false &&
+        missingSenderRes.reason === 'SENDER_ACCOUNT_UNVERIFIABLE',
+      '3.3b Webhook Cross-Check: Missing sender account rejected with SENDER_ACCOUNT_UNVERIFIABLE in strict mode',
+    );
+
+    // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null },
+    });
+
+    // Test 3.3c (Risk 1): Destination account mismatch rejected
+    const destMismatchWebhook = {
+      providerTransactionId: `txn_dest_mismatch_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      destinationAccountNumber: '000111222333', // Mismatch against PLATFORM_BANK_ACCOUNT_NUMBER
+      senderAccountNumber: testAccNumber,
+    };
+    const destMismatchRes = await service.handleVerificationWebhook(destMismatchWebhook);
+    assert(
+      destMismatchRes.success === false &&
+        destMismatchRes.reason === 'DESTINATION_ACCOUNT_MISMATCH',
+      '3.3c Webhook Cross-Check: Destination account mismatch rejected with DESTINATION_ACCOUNT_MISMATCH',
+    );
+
+    // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null },
+    });
+
+    // Test 3.3d (High 3): Webhook with senderAccountNumber mismatch rejected
     const senderMismatchWebhook = {
       providerTransactionId: `txn_mismatch_${Date.now()}`,
       amount: 2000,
       description: `Chuyen tien ${refCode}`,
       referenceCode: refCode,
+      destinationAccountNumber: '999888777666',
       senderAccountNumber: '999999999999', // Registered account is testAccNumber: 123456789012
     };
     const senderMismatchRes = await service.handleVerificationWebhook(senderMismatchWebhook);
     assert(
       senderMismatchRes.success === false && senderMismatchRes.reason === 'SENDER_ACCOUNT_MISMATCH',
-      '3.3 Webhook Cross-Check: Sender account mismatch rejected with SENDER_ACCOUNT_MISMATCH',
+      '3.3d Webhook Cross-Check: Sender account mismatch rejected with SENDER_ACCOUNT_MISMATCH',
     );
 
     // Reset back to PENDING
@@ -388,19 +557,20 @@ async function runBankVerificationTests() {
       },
     });
 
-    // Test 3.6: Valid Inbound Webhook (with matching senderAccountNumber)
+    // Test 3.6: Valid Inbound Webhook (with matching senderAccountNumber and destinationAccountNumber)
     const validProviderTxId = `txn_valid_${Date.now()}`;
     const validWebhook = {
       providerTransactionId: validProviderTxId,
       amount: 2000,
       description: `Thanh toan xac minh tai khoan ${refCode} MB`,
       referenceCode: refCode,
+      destinationAccountNumber: '999888777666',
       senderAccountNumber: testAccNumber,
     };
     const validRes = await service.handleVerificationWebhook(validWebhook);
     assert(
       validRes.success === true && validRes.message?.includes('thành công'),
-      '3.6 Valid 2.000 VND webhook with matching sender account processed successfully',
+      '3.6 Valid 2.000 VND webhook with matching sender and platform accounts processed successfully',
     );
 
     // Test 3.7 & 3.8 (Medium 6): Verify OWNERSHIP_VERIFIED and dynamic refund
@@ -459,12 +629,16 @@ async function runBankVerificationTests() {
       amount: 2000,
       description: `Chuyen tien ${concRef}`,
       referenceCode: concRef,
+      destinationAccountNumber: '999888777666',
+      senderAccountNumber: '998877665544',
     };
     const parallelWebhook2 = {
       providerTransactionId: `txn_conc_2_${Date.now()}`,
       amount: 2000,
       description: `Chuyen tien ${concRef}`,
       referenceCode: concRef,
+      destinationAccountNumber: '999888777666',
+      senderAccountNumber: '998877665544',
     };
 
     const concurrentResults = await Promise.all([

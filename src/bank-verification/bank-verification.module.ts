@@ -7,6 +7,7 @@ import { BankVerificationWebhookController } from './bank-verification-webhook.c
 import { BankVerificationService } from './bank-verification.service';
 import { BankVerificationRepository } from './bank-verification.repository';
 import { BankVerificationWebhookGuard } from './guards/bank-verification-webhook.guard';
+import { BankLookupRateLimitGuard } from './guards/bank-lookup-rate-limit.guard';
 import { PayOSBankVerificationProvider } from './providers/payos-bank-verification.provider';
 import { BANK_VERIFICATION_PROVIDER_TOKEN } from './providers/bank-verification.provider.interface';
 
@@ -21,6 +22,7 @@ import { BANK_VERIFICATION_PROVIDER_TOKEN } from './providers/bank-verification.
     BankVerificationService,
     BankVerificationRepository,
     BankVerificationWebhookGuard,
+    BankLookupRateLimitGuard,
     PayOSBankVerificationProvider,
     {
       provide: BANK_VERIFICATION_PROVIDER_TOKEN,
@@ -30,6 +32,7 @@ import { BANK_VERIFICATION_PROVIDER_TOKEN } from './providers/bank-verification.
   exports: [
     BankVerificationService,
     BankVerificationRepository,
+    BankLookupRateLimitGuard,
     BANK_VERIFICATION_PROVIDER_TOKEN,
   ],
 })

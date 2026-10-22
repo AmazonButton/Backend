@@ -280,12 +280,25 @@ export class BankVerificationRepository {
         };
       }
 
-      // 6. Kiểm tra tài khoản nhận nếu có cấu hình nền tảng
+      // 6. Kiểm tra chéo tài khoản nhận (destination account)
       const platformAcc = process.env.PLATFORM_BANK_ACCOUNT_NUMBER?.trim();
+      const isStrict =
+        process.env.NODE_ENV === 'production' ||
+        process.env.BANK_VERIFICATION_STRICT === 'true';
+
+      if (isStrict) {
+        if (!platformAcc || !params.destinationAccountNumber) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] Thieu thong tin tai khoan nhan de doi chieu (ref: ${params.referenceCode})`,
+          );
+          return { success: false, reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE' };
+        }
+      }
+
       if (params.destinationAccountNumber && platformAcc) {
         if (params.destinationAccountNumber.trim() !== platformAcc) {
           this.logger.warn(
-            `[AtomicWebhookVerification] Tài khoản nhận không khớp nền tảng: nhận ${params.destinationAccountNumber}, kỳ vọng ${platformAcc}`,
+            `[AtomicWebhookVerification] Tai khoan nhan khong khop nen tang (ref: ${params.referenceCode})`,
           );
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
@@ -303,7 +316,16 @@ export class BankVerificationRepository {
         }
       }
 
-      // 7. Kiểm tra tài khoản gửi (sender/counter account) nếu webhook cung cấp
+      // 7. Kiểm tra chéo tài khoản gửi (sender/counter account)
+      if (isStrict) {
+        if (!params.senderAccountNumber) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] Thieu thong tin tai khoan gui de doi chieu (ref: ${params.referenceCode})`,
+          );
+          return { success: false, reason: 'SENDER_ACCOUNT_UNVERIFIABLE' };
+        }
+      }
+
       if (params.senderAccountNumber) {
         let plainRegisteredAcc = '';
         try {
@@ -316,7 +338,7 @@ export class BankVerificationRepository {
 
         if (plainRegisteredAcc && params.senderAccountNumber.trim() !== plainRegisteredAcc) {
           this.logger.warn(
-            `[AtomicWebhookVerification] Tài khoản gửi không khớp tài khoản cần xác minh: nhận ${params.senderAccountNumber.slice(-3)}, kỳ vọng ${plainRegisteredAcc.slice(-3)}`,
+            `[AtomicWebhookVerification] Tai khoan gui khong khop tai khoan can xac minh (ref: ${params.referenceCode})`,
           );
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions

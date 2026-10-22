@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BankVerificationRepository } from './bank-verification.repository';
@@ -19,7 +20,7 @@ import { VIETNAM_BANKS } from './constants/vietnam-banks.constant';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 
 @Injectable()
-export class BankVerificationService {
+export class BankVerificationService implements OnModuleInit {
   private readonly logger = new Logger(BankVerificationService.name);
 
   constructor(
@@ -28,6 +29,26 @@ export class BankVerificationService {
     @Inject(BANK_VERIFICATION_PROVIDER_TOKEN)
     private readonly provider: BankVerificationProvider,
   ) {}
+
+  onModuleInit() {
+    if (
+      process.env.NODE_ENV === 'production' &&
+      !process.env.PLATFORM_BANK_ACCOUNT_NUMBER
+    ) {
+      throw new Error(
+        'FATAL: PLATFORM_BANK_ACCOUNT_NUMBER must be configured in production',
+      );
+    }
+
+    if (
+      process.env.NODE_ENV === 'production' &&
+      process.env.BANK_VERIFICATION_MOCK === 'true'
+    ) {
+      throw new Error(
+        'FATAL: BANK_VERIFICATION_MOCK must be disabled in production',
+      );
+    }
+  }
 
   /**
    * Lấy danh sách ngân hàng Việt Nam chính thức từ NAPAS / VietQR
@@ -59,9 +80,9 @@ export class BankVerificationService {
         accountName: result.accountName,
       };
     } catch (error: any) {
-      this.logger.error(`Lookup account failed - bankBin: ${dto.bankBin} - error: ${error?.message}`);
+      this.logger.error(`Lookup account failed [bankBin: ${dto.bankBin}] [operation: lookupAccount]`);
       throw new BadRequestException(
-        error?.message || 'Không thể tra cứu thông tin tài khoản ngân hàng',
+        'Không thể xác minh tài khoản ngân hàng lúc này',
       );
     }
   }
@@ -271,11 +292,7 @@ export class BankVerificationService {
     if (dto.data) {
       amount = amount || dto.data.amount;
       description = description || dto.data.description || '';
-      providerTransactionId =
-        providerTransactionId ||
-        dto.data.reference ||
-        dto.data.paymentLinkId ||
-        (dto.data.orderCode ? String(dto.data.orderCode) : undefined);
+      providerTransactionId = providerTransactionId || dto.data.reference;
     }
 
     // Trích xuất referenceCode từ description nếu chưa có
@@ -287,7 +304,7 @@ export class BankVerificationService {
     }
 
     if (!referenceCode) {
-      this.logger.warn(`Webhook ignored: no verification reference code found in description: "${description}"`);
+      this.logger.warn('Webhook ignored: missing reference code in transaction [operation: webhook]');
       return {
         success: false,
         message: 'Nội dung giao dịch không chứa mã xác minh hợp lệ',
@@ -333,6 +350,10 @@ export class BankVerificationService {
             ? 'Tài khoản người gửi không khớp với tài khoản đăng ký'
             : txResult.reason === 'DESTINATION_ACCOUNT_MISMATCH'
             ? 'Tài khoản người nhận không khớp với tài khoản nền tảng'
+            : txResult.reason === 'DESTINATION_ACCOUNT_UNVERIFIABLE'
+            ? 'Không thể xác thực tài khoản nhận của nền tảng'
+            : txResult.reason === 'SENDER_ACCOUNT_UNVERIFIABLE'
+            ? 'Không thể xác thực tài khoản ngân hàng của người chuyển'
             : txResult.reason === 'EXPIRED'
             ? 'Yêu cầu xác minh đã hết hạn'
             : 'Xác minh giao dịch thất bại',
@@ -402,10 +423,10 @@ export class BankVerificationService {
           status: 'REFUND_PENDING',
           refundStatus: 'FAILED',
         });
-        this.logger.error(`Hoàn tiền ${amountToRefund} VND thất bại cho verificationId #${transactionId}`);
+        this.logger.error(`Hoan tien khong thanh cong [verificationId: #${transactionId}] [operation: createRefund]`);
       }
     } catch (error: any) {
-      this.logger.error(`Lỗi kích hoạt hoàn tiền - verificationId: #${transactionId} - error: ${error?.message}`);
+      this.logger.error(`Hoan tien that bai [verificationId: #${transactionId}] [operation: createRefund]`);
       await this.repository.updateTransactionRefundStatus({
         transactionId,
         status: 'REFUND_PENDING',

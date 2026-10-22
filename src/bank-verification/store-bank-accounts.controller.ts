@@ -15,12 +15,13 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { BankVerificationService } from './bank-verification.service';
 import { LookupBankAccountDto } from './dto/lookup-bank-account.dto';
 import { CreateVerificationRequestDto } from './dto/create-verification-request.dto';
+import { BankLookupRateLimitGuard } from './guards/bank-lookup-rate-limit.guard';
 
 @Controller('stores')
 export class StoreBankAccountsController {
   constructor(private readonly service: BankVerificationService) {}
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BankLookupRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Post('bank-accounts/lookup')
   async lookupAccount(@Body() dto: LookupBankAccountDto) {

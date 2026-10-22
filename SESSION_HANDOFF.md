@@ -187,15 +187,27 @@ When starting a new conversation, prompt the agent with:
      - Account lookup and payout simulation are restricted strictly to `BANK_VERIFICATION_MOCK === 'true'`. Generic `NODE_ENV !== 'production'` fallback is prohibited to avoid mock pollution in staging environments.
   8. **Strict storeId Validation (Medium 8):**
      - `CreateVerificationRequestDto.storeId` validated with `@IsString()` and `@Matches(/^[1-9]\d*$/)` to prevent BigInt casting 500 runtime crashes.
-  9. **Vendor Error Log Sanitization (Medium 9):**
-     - Sanitized all error logging in `BankVerificationService` and `PayOSBankVerificationProvider`: logs operation, provider name, HTTP status, and internal verificationId without leaking raw payloads, vendor credentials, or sensitive account numbers.
-  10. **Functional Gaps Completed:**
-      - Set Default Bank Account: `PATCH /api/v1/stores/:storeId/bank-accounts/:id/default`
-      - Delete Bank Account: `DELETE /api/v1/stores/:storeId/bank-accounts/:id` (prevents deletion if pending verification exists)
-      - Cancel Pending Verification: `POST /api/v1/stores/bank-accounts/verification/:id/cancel`
+  9. **Vendor Error Log Sanitization (Medium 9 & Risk 3):**
+     - Sanitized all error logging in `BankVerificationService`, `BankVerificationRepository`, and `PayOSBankVerificationProvider`: logs operation, provider name, HTTP status, and internal verificationId without leaking raw payloads, vendor credentials, transaction descriptions, or sensitive account numbers.
+  10. **Fail-Closed Webhook Account Cross-Verification (Risk 1):**
+     - In `BankVerificationRepository.executeAtomicWebhookVerificationTx`: in production (`NODE_ENV === 'production'`) or strict mode (`BANK_VERIFICATION_STRICT === 'true'`), missing `destinationAccountNumber` or platform account strictly fails closed with `DESTINATION_ACCOUNT_UNVERIFIABLE`. Missing `senderAccountNumber` strictly fails closed with `SENDER_ACCOUNT_UNVERIFIABLE`.
+  11. **Provider Transaction ID Disambiguation (Risk 2):**
+     - In `BankVerificationService.handleVerificationWebhook`: rejected `paymentLinkId` and `orderCode` fallbacks. Only strictly accepts provider transaction identifiers (`dto.providerTransactionId || dto.data?.reference`). Missing IDs throw `BadRequestException('Missing provider transaction ID')`.
+  12. **Opaque Error Masking on Lookup Failure (Risk 4):**
+     - In `BankVerificationService.lookupBankAccount`: catches vendor lookup errors and throws fixed generic exception `BadRequestException('Không thể xác minh tài khoản ngân hàng lúc này')`. Zero URL, API error code, or vendor internal traces exposed to clients.
+  13. **Fail-Fast Boot Guard on Platform Bank Account (Risk 5):**
+     - In `BankVerificationService.onModuleInit`: throws fatal error during NestJS boot if `NODE_ENV === 'production'` and `PLATFORM_BANK_ACCOUNT_NUMBER` is missing.
+  14. **Production Mock Ban (Risk 6):**
+     - In `BankVerificationService.onModuleInit`, `PayOSBankVerificationProvider.lookupAccount`, and `createRefund`: throws fatal error if `NODE_ENV === 'production' && BANK_VERIFICATION_MOCK === 'true'`.
+  15. **Anti-Enumeration Lookup Rate Limiting Guard (Risk 7):**
+     - Created `BankLookupRateLimitGuard` (`src/bank-verification/guards/bank-lookup-rate-limit.guard.ts`) capped at 15 requests/minute per user/IP. Applied to `POST /api/v1/stores/bank-accounts/lookup`. Blocks abuse with HTTP 429 Too Many Requests.
+  16. **Functional Gaps Completed:**
+     - Set Default Bank Account: `PATCH /api/v1/stores/:storeId/bank-accounts/:id/default`
+     - Delete Bank Account: `DELETE /api/v1/stores/:storeId/bank-accounts/:id` (prevents deletion if pending verification exists)
+     - Cancel Pending Verification: `POST /api/v1/stores/bank-accounts/verification/:id/cancel`
 - Verification Evidence:
-  - `npx tsx tests/bank-account-verification.spec.ts` — PASS (25/25 assertions pass)
-  - `npm run test:all` — PASS (13/13 suites pass, 275.5s)
+  - `npx tsx tests/bank-account-verification.spec.ts` — PASS (32/32 assertions pass)
+  - `npm run test:all` — PASS (13/13 suites pass, 291.3s)
   - `npx tsc --noEmit` — PASS (0 errors)
   - `npm run build` — PASS (0 errors)
   - `npx prisma migrate status` — PASS ("Database schema is up to date!")

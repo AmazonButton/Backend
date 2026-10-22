@@ -36,6 +36,10 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
     const bank = VIETNAM_BANKS.find((b) => b.bin === bankBin);
     const bankName = bank ? bank.shortName : `Ngân hàng (BIN ${bankBin})`;
 
+    if (process.env.NODE_ENV === 'production' && process.env.BANK_VERIFICATION_MOCK === 'true') {
+      throw new Error('FATAL: BANK_VERIFICATION_MOCK must be disabled in production');
+    }
+
     // Chỉ cho phép mock khi có cờ rõ ràng BANK_VERIFICATION_MOCK=true
     const isExplicitMock = process.env.BANK_VERIFICATION_MOCK === 'true';
 
@@ -78,7 +82,7 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
         };
       }
 
-      throw new Error(resData.desc || 'Không tìm thấy thông tin tài khoản ngân hàng');
+      throw new Error('Không tìm thấy thông tin tài khoản ngân hàng');
     } catch (error: any) {
       this.logger.warn(`[PayOSBankVerificationProvider] Lookup failed for BIN ${bankBin}`);
       throw error;
@@ -89,6 +93,10 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
    * Tạo lệnh hoàn trả tiền xác minh qua PayOS Payout API (Chỉ mock khi BANK_VERIFICATION_MOCK=true)
    */
   async createRefund(params: BankRefundParams): Promise<BankRefundResult> {
+    if (process.env.NODE_ENV === 'production' && process.env.BANK_VERIFICATION_MOCK === 'true') {
+      throw new Error('FATAL: BANK_VERIFICATION_MOCK must be disabled in production');
+    }
+
     if (!this.payosPayoutService) {
       if (process.env.BANK_VERIFICATION_MOCK === 'true') {
         this.logger.log(`[BankVerification Mock] Simulating refund payout for ref: ${params.referenceId}`);
@@ -116,13 +124,17 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
         };
       }
 
-      this.logger.warn(`[PayOSBankVerificationProvider] Payout rejected: ${result.desc}`);
+      this.logger.warn(
+        `[PayOSBankVerificationProvider] Payout rejected for referenceId: ${params.referenceId}`,
+      );
       return {
         refundTransactionId: '',
         status: 'FAILED',
       };
     } catch (error: any) {
-      this.logger.error(`[PayOSBankVerificationProvider] createRefund failed for referenceId: ${params.referenceId}`);
+      this.logger.error(
+        `[PayOSBankVerificationProvider] createRefund failed for referenceId: ${params.referenceId}`,
+      );
       return {
         refundTransactionId: '',
         status: 'FAILED',
