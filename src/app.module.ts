@@ -21,6 +21,7 @@ import { MediaModule } from './media/media.module';
 import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { BankVerificationModule } from './bank-verification/bank-verification.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -47,6 +48,7 @@ import { AppController } from './app.controller';
     DriversModule,
     DriverShiftsModule,
     IdentityVerificationsModule,
+    BankVerificationModule,
   ],
   controllers: [AppController],
 })

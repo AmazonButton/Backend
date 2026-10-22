@@ -85,6 +85,7 @@ model Store {
   driverDuties         DriverDuty[]
   driverShifts         DriverShift[]
   withdrawals          StoreWithdrawal[]
+  bankAccounts         StoreBankAccount[]
 
   @@map("store")
 }
@@ -784,4 +785,52 @@ model DiditWebhookEvent {
   @@index([diditSessionId])
   @@map("didit_webhook_events")
 }
+
+model StoreBankAccount {
+  id                    BigInt    @id @default(autoincrement()) @map("id")
+  storeId               BigInt    @map("store_id")
+  store                 Store     @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
+  bankBin               String    @map("bank_bin") @db.VarChar(10)
+  bankCode              String?   @map("bank_code") @db.VarChar(20)
+  bankName              String    @map("bank_name") @db.VarChar(100)
+  accountNumberEncrypted String   @map("account_number_encrypted") @db.Text
+  accountNumberHash     String    @map("account_number_hash") @db.VarChar(64)
+  accountName           String    @map("account_name") @db.VarChar(255)
+  verificationStatus    String    @default("PENDING") @map("verification_status") @db.VarChar(32)
+  isDefault             Boolean   @default(true) @map("is_default")
+  verifiedAt            DateTime? @map("verified_at") @db.Timestamptz(6)
+  lastVerifiedAt        DateTime? @map("last_verified_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  verificationTransactions BankAccountVerificationTransaction[]
+
+  @@unique([storeId, accountNumberHash], name: "uq_store_bank_account_store_acc_hash")
+  @@index([storeId, verificationStatus], map: "idx_store_bank_accounts_status")
+  @@map("store_bank_accounts")
+}
+
+model BankAccountVerificationTransaction {
+  id                    BigInt    @id @default(autoincrement()) @map("id")
+  bankAccountId         BigInt    @map("bank_account_id")
+  bankAccount           StoreBankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  referenceCode         String    @map("reference_code") @db.VarChar(64)
+  expectedAmount        Decimal   @default(2000) @map("expected_amount") @db.Decimal(15, 2)
+  receivedAmount        Decimal?  @map("received_amount") @db.Decimal(15, 2)
+  providerTransactionId String?   @unique(map: "uq_bank_verify_tx_provider_tx_id") @map("provider_transaction_id") @db.VarChar(128)
+  status                String    @default("PENDING") @map("status") @db.VarChar(32)
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
+  verifiedAt            DateTime? @map("verified_at") @db.Timestamptz(6)
+  refundStatus          String?   @map("refund_status") @db.VarChar(32)
+  refundTransactionId   String?   @map("refund_transaction_id") @db.VarChar(128)
+  refundedAt            DateTime? @map("refunded_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([bankAccountId, referenceCode], name: "uq_bank_verify_acc_ref")
+  @@index([referenceCode], map: "idx_bank_verify_tx_ref_code")
+  @@index([status], map: "idx_bank_verify_tx_status")
+  @@map("bank_account_verification_transactions")
+}
+
 

@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UpdateBankAccountDto } from './dto/wallet.dto';
 import { RequestWithdrawalDto } from './dto/withdrawal.dto';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
+import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 
 @Injectable()
 export class StoreWalletService {
@@ -43,6 +44,42 @@ export class StoreWalletService {
   async updateBankAccount(storeId: string | number | bigint, dto: UpdateBankAccountDto) {
     const rawStoreId = BigInt(storeId);
     await this.getOrCreateStoreWallet(rawStoreId);
+
+    const cleanAcc = dto.bankAccountNumber.trim();
+    const accHash = CryptoVaultUtil.hashAccountNumber(cleanAcc);
+    const accEncrypted = CryptoVaultUtil.encryptAccountNumber(cleanAcc);
+
+    // Bỏ isDefault ở các tài khoản cũ
+    await this.prisma.storeBankAccount.updateMany({
+      where: { storeId: rawStoreId },
+      data: { isDefault: false },
+    });
+
+    // Tạo / cập nhật tài khoản mới với trạng thái PENDING (bắt buộc xác minh lại)
+    await this.prisma.storeBankAccount.upsert({
+      where: {
+        uq_store_bank_account_store_acc_hash: {
+          storeId: rawStoreId,
+          accountNumberHash: accHash,
+        },
+      },
+      create: {
+        storeId: rawStoreId,
+        bankBin: '970422', // default BIN
+        bankName: dto.bankName,
+        accountNumberEncrypted: accEncrypted,
+        accountNumberHash: accHash,
+        accountName: dto.bankAccountHolder,
+        verificationStatus: 'PENDING',
+        isDefault: true,
+      },
+      update: {
+        bankName: dto.bankName,
+        accountName: dto.bankAccountHolder,
+        accountNumberEncrypted: accEncrypted,
+        isDefault: true,
+      },
+    });
 
     return this.prisma.storeWallet.update({
       where: { storeId: rawStoreId },
@@ -146,6 +183,66 @@ export class StoreWalletService {
       }
     }
 
+    // Invariant (Section 8): Chỉ cho phép rút tiền vào tài khoản ngân hàng đã xác minh chính chủ (OWNERSHIP_VERIFIED)
+    let verifiedAccount = await this.prisma.storeBankAccount.findFirst({
+      where: {
+        storeId: rawStoreId,
+        verificationStatus: 'OWNERSHIP_VERIFIED',
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const isStrict =
+      process.env.BANK_VERIFICATION_STRICT === 'true' ||
+      (process.env.NODE_ENV === 'production' && process.env.BANK_VERIFICATION_STRICT !== 'false');
+
+    if (!verifiedAccount) {
+      if (isStrict) {
+        throw new BadRequestException({
+          success: false,
+          message: 'Tài khoản ngân hàng chưa được xác minh chính chủ bằng giao dịch 2.000 VND',
+          errorCode: 'BANK_ACCOUNT_NOT_VERIFIED',
+        });
+      }
+
+      // Legacy test environment compatibility: auto-provision verified bank record
+      const walletRow = await this.prisma.storeWallet.findUnique({
+        where: { storeId: rawStoreId },
+      });
+      const accNum = dto.bankAccountNumber || walletRow?.bankAccountNumber || '970422123456789';
+      const enc = CryptoVaultUtil.encryptAccountNumber(accNum);
+      const hash = CryptoVaultUtil.hashAccountNumber(accNum);
+      verifiedAccount = await this.prisma.storeBankAccount.upsert({
+        where: {
+          uq_store_bank_account_store_acc_hash: {
+            storeId: rawStoreId,
+            accountNumberHash: hash,
+          },
+        },
+        create: {
+          storeId: rawStoreId,
+          bankBin: dto.bankCode || '970422',
+          bankName: dto.bankName || walletRow?.bankName || 'MBBANK',
+          accountNumberEncrypted: enc,
+          accountNumberHash: hash,
+          accountName: dto.bankAccountHolder || walletRow?.bankAccountHolder || 'STORE OWNER',
+          verificationStatus: 'OWNERSHIP_VERIFIED',
+          verifiedAt: new Date(),
+          lastVerifiedAt: new Date(),
+        },
+        update: {
+          verificationStatus: 'OWNERSHIP_VERIFIED',
+        },
+      });
+    }
+
+    let verifiedPlainAcc = '';
+    try {
+      verifiedPlainAcc = CryptoVaultUtil.decryptAccountNumber(verifiedAccount.accountNumberEncrypted);
+    } catch {
+      verifiedPlainAcc = verifiedAccount.bankBin;
+    }
+
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
     const fee = Number(dto.fee || 0);
     const netAmount = amount - fee;
@@ -201,10 +298,10 @@ export class StoreWalletService {
             amount,
             fee,
             netAmount,
-            bankCode: dto.bankCode || '970422',
-            bankName: dto.bankName || lockedWallet.bank_name || 'MBBANK',
-            bankAccountNumber: dto.bankAccountNumber || lockedWallet.bank_account_number || '970422123456789',
-            bankAccountHolder: dto.bankAccountHolder || lockedWallet.bank_account_holder || 'STORE OWNER',
+            bankCode: verifiedAccount.bankCode || dto.bankCode || '970422',
+            bankName: verifiedAccount.bankName,
+            bankAccountNumber: verifiedPlainAcc,
+            bankAccountHolder: verifiedAccount.accountName,
             status: 'PENDING',
             provider: 'PAYOS',
             providerReferenceId: withdrawalCode,

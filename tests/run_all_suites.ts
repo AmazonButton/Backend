@@ -68,6 +68,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'identity-verification-didit.spec.ts')],
   },
+  {
+    name: '13. Penny-Deposit Bank Account Verification (2.000 VND) Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'bank-account-verification.spec.ts')],
+  },
 ];
 
 async function main() {

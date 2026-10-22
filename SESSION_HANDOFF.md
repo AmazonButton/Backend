@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 12/12 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`).
+> **Status:** All 13/13 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`).
 
 ---
 
@@ -12,7 +12,8 @@
 - Check TypeScript types: `npx tsc --noEmit`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (11 suites): `npm run test:all`
+- Run All Tests (13 suites): `npm run test:all`
+- Run Bank Verification Suite: `npx tsx tests/bank-account-verification.spec.ts`
 - Run Avatar Suite: `npx tsx tests/user-avatar-profile.spec.ts`
 - Run Minimum Order Suite: `npx tsx tests/order-minimum-value.spec.ts`
 
@@ -166,3 +167,37 @@ When starting a new conversation, prompt the agent with:
   - `npm run test:all` — PASS (12/12 suites pass, 255.8s)
   - `npx tsc --noEmit` — PASS (0 errors)
   - `npm run build` — PASS (0 errors)
+
+### [2026-10-22] Penny-Deposit Bank Account Verification (2.000 VND) & Automated Refund Hardening
+- Status: COMPLETED & HARDENED (Integration Tests 25/25 PASS, Master Suite 13/13 PASS)
+- 9 Security Review Points & Functional Gaps Resolved:
+  1. **Fail-Closed on Missing Payout Provider (High 1):**
+     - In `PayOSBankVerificationProvider.createRefund`: throws `ServiceUnavailableException('Payout provider is not configured')` if `payosPayoutService` is unavailable and `BANK_VERIFICATION_MOCK !== 'true'`. Never auto-mocks in production or staging.
+  2. **Fail-Closed Missing Webhook Transaction ID (High 2):**
+     - In `BankVerificationService.handleVerificationWebhook`: strictly throws `BadRequestException('Missing provider transaction ID')` if `providerTransactionId` is omitted. Banned dummy random ID generation (`txn_${Date.now()}...`) to guarantee robust replay defense.
+  3. **Webhook Sender & Platform Destination Account Cross-Check (High 3):**
+     - In `BankVerificationRepository.executeAtomicWebhookVerificationTx`: cross-verifies `destinationAccountNumber` against platform account (`PLATFORM_BANK_ACCOUNT_NUMBER` if set) and `senderAccountNumber` against decrypted store bank account (`account_number_encrypted`). Mismatches are rejected with `SENDER_ACCOUNT_MISMATCH` or `DESTINATION_ACCOUNT_MISMATCH`.
+  4. **Client Zero-Trust on Bank & Account Metadata (High 4):**
+     - In `CreateVerificationRequestDto`: client is only permitted to submit `storeId`, `bankBin`, and `accountNumber`. Client inputs for `accountName`, `bankName`, or `bankCode` are rejected / ignored. Server fetches bank metadata from `VIETNAM_BANKS` constant and always invokes provider lookup for `accountName`.
+  5. **Role-Based Bank Account Management (High 5):**
+     - In `verifyStoreOwnership`: allows ONLY `store.ownerUserId === userId` or global `ADMIN`. Active store staff (`StoreStaff`) is strictly blocked with `ForbiddenException` (403 Forbidden) from adding, verifying, setting default, or deleting bank accounts.
+  6. **Dynamic Expected Refund Amount (Medium 6):**
+     - `triggerAutomatedRefund` takes `expected_amount` directly from the locked verification transaction in PostgreSQL. Eliminated hardcoded 2,000 VND; refunds dynamically mirror whatever amount was required and received.
+  7. **Strict Environment Mock Boundary (Medium 7):**
+     - Account lookup and payout simulation are restricted strictly to `BANK_VERIFICATION_MOCK === 'true'`. Generic `NODE_ENV !== 'production'` fallback is prohibited to avoid mock pollution in staging environments.
+  8. **Strict storeId Validation (Medium 8):**
+     - `CreateVerificationRequestDto.storeId` validated with `@IsString()` and `@Matches(/^[1-9]\d*$/)` to prevent BigInt casting 500 runtime crashes.
+  9. **Vendor Error Log Sanitization (Medium 9):**
+     - Sanitized all error logging in `BankVerificationService` and `PayOSBankVerificationProvider`: logs operation, provider name, HTTP status, and internal verificationId without leaking raw payloads, vendor credentials, or sensitive account numbers.
+  10. **Functional Gaps Completed:**
+      - Set Default Bank Account: `PATCH /api/v1/stores/:storeId/bank-accounts/:id/default`
+      - Delete Bank Account: `DELETE /api/v1/stores/:storeId/bank-accounts/:id` (prevents deletion if pending verification exists)
+      - Cancel Pending Verification: `POST /api/v1/stores/bank-accounts/verification/:id/cancel`
+- Verification Evidence:
+  - `npx tsx tests/bank-account-verification.spec.ts` — PASS (25/25 assertions pass)
+  - `npm run test:all` — PASS (13/13 suites pass, 275.5s)
+  - `npx tsc --noEmit` — PASS (0 errors)
+  - `npm run build` — PASS (0 errors)
+  - `npx prisma migrate status` — PASS ("Database schema is up to date!")
+
+
