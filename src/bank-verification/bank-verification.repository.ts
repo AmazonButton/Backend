@@ -422,16 +422,52 @@ export class BankVerificationRepository {
       }
 
       if (params.senderAccountNumber) {
-        let plainRegisteredAcc = '';
+        let plainRegisteredAcc: string;
         try {
           plainRegisteredAcc = CryptoVaultUtil.decryptAccountNumber(
             lockedAccount.account_number_encrypted,
           ).trim();
-        } catch {
-          plainRegisteredAcc = '';
+        } catch (decryptErr: any) {
+          this.logger.error(
+            `[AtomicWebhookVerification] Giai ma tai khoan dang ky that bai (ref: ${params.referenceCode})`,
+          );
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE' },
+          };
         }
 
-        if (plainRegisteredAcc && params.senderAccountNumber.trim() !== plainRegisteredAcc) {
+        if (!plainRegisteredAcc) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] So tai khoan sau giai ma rong (ref: ${params.referenceCode})`,
+          );
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE' },
+          };
+        }
+
+        if (params.senderAccountNumber.trim() !== plainRegisteredAcc) {
           this.logger.warn(
             `[AtomicWebhookVerification] Tai khoan gui khong khop tai khoan can xac minh (ref: ${params.referenceCode})`,
           );

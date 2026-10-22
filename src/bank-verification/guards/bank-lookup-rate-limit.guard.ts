@@ -96,8 +96,25 @@ export class BankLookupRateLimitGuard implements CanActivate, OnModuleDestroy {
     const windowSec = 60; // 60 giây TTL
     const key = `rate_limit:bank_lookup:${userId}:${ip}`;
 
-    // 1. Thao tác atomic INCR trên Redis nếu có kết nối
     const redis = BankLookupRateLimitGuard.getRedisClient();
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // 1. Kiểm tra trạng thái Redis trong môi trường Production (Bắt buộc phân tán, cấm RAM fallback)
+    if (isProduction && (!redis || redis.status !== 'ready')) {
+      BankLookupRateLimitGuard.logger.error(
+        `[BankLookupRateLimitGuard] Production fail-closed: Redis client is not ready (status: ${redis?.status || 'unconfigured'})`,
+      );
+      throw new HttpException(
+        {
+          success: false,
+          code: 'RATE_LIMIT_SERVICE_UNAVAILABLE',
+          message: 'Dịch vụ tra cứu tài khoản đang tạm thời bảo trì hệ thống phân tán. Vui lòng thử lại sau ít phút.',
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    // 2. Thao tác atomic INCR trên Redis nếu có kết nối
     if (redis && redis.status === 'ready') {
       try {
         const currentCount = await redis.incr(key);
@@ -118,13 +135,28 @@ export class BankLookupRateLimitGuard implements CanActivate, OnModuleDestroy {
         return true;
       } catch (err: any) {
         if (err instanceof HttpException) throw err;
+
+        if (isProduction) {
+          BankLookupRateLimitGuard.logger.error(
+            `[BankLookupRateLimitGuard] Redis atomic INCR failed in production: ${err?.message}`,
+          );
+          throw new HttpException(
+            {
+              success: false,
+              code: 'RATE_LIMIT_SERVICE_UNAVAILABLE',
+              message: 'Dịch vụ tra cứu tài khoản đang tạm thời bảo trì hệ thống phân tán. Vui lòng thử lại sau ít phút.',
+            },
+            HttpStatus.SERVICE_UNAVAILABLE,
+          );
+        }
+
         BankLookupRateLimitGuard.logger.warn(
           `Redis INCR error, falling back to in-memory rate limiting: ${err?.message}`,
         );
       }
     }
 
-    // 2. In-memory Fallback (đơn instance / test environment)
+    // 3. In-memory Fallback (CHỈ cho phép trong môi trường Non-Production / Test / Local Dev)
     const now = Date.now();
     const windowMs = windowSec * 1000;
     const record = BankLookupRateLimitGuard.memoryLimits.get(key);

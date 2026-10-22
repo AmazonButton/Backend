@@ -235,6 +235,21 @@ async function runBankVerificationTests() {
       '1.6 Anti-Enumeration: BankLookupRateLimitGuard allows 15 lookups/min and blocks 16th with 429 Too Many Requests',
     );
 
+    // Test 1.6b: Production Anti-Bypass (Redis missing/offline in production throws 503 Service Unavailable)
+    process.env.NODE_ENV = 'production';
+    let prodRedisFailClosed = false;
+    try {
+      await rateLimitGuard.canActivate(mockContext);
+    } catch (err: any) {
+      prodRedisFailClosed =
+        err instanceof HttpException && err.getStatus() === HttpStatus.SERVICE_UNAVAILABLE;
+    }
+    process.env.NODE_ENV = 'test';
+    assert(
+      prodRedisFailClosed,
+      '1.6b Production Anti-Bypass: BankLookupRateLimitGuard throws 503 Service Unavailable when Redis is unavailable in production (RAM fallback banned)',
+    );
+
     // Test 1.7 (Risk 4): Lookup Opaque Error Handling (No vendor error leaks to client)
     const originalLookup = provider.lookupAccount.bind(provider);
     provider.lookupAccount = async () => {
@@ -296,9 +311,23 @@ async function runBankVerificationTests() {
     }
     process.env.PAYOS_CLIENT_ID = 'test_payos_client_id_123';
 
+    delete process.env.REDIS_URL;
+    delete process.env.REDIS_CACHE_URL;
+    delete process.env.REDIS_HOST;
+    let missingRedisBlocked = false;
+    try {
+      service.onModuleInit();
+    } catch (err: any) {
+      missingRedisBlocked = err.message.includes('REDIS_URL or REDIS_HOST must be configured in production');
+    }
+    process.env.REDIS_URL = 'redis://localhost:6379';
+
     assert(
-      missingPlatformAccBlocked && missingPlatformBinBlocked && missingPayosClientIdBlocked,
-      '1.9 Production Boot Guard: onModuleInit throws fatal error if any mandatory secret (PLATFORM_BANK_ACCOUNT_NUMBER, PLATFORM_BANK_BIN, PAYOS_*) is missing in production',
+      missingPlatformAccBlocked &&
+        missingPlatformBinBlocked &&
+        missingPayosClientIdBlocked &&
+        missingRedisBlocked,
+      '1.9 Production Boot Guard: onModuleInit throws fatal error if any mandatory secret or REDIS_URL is missing in production',
     );
 
     // Test 1.10: VietQR Credential Decoupling
@@ -700,6 +729,51 @@ async function runBankVerificationTests() {
     );
 
     // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
+    });
+
+    // Test 3.3e (Security Hardening): Decryption failure on corrupted ciphertext fails closed -> SENDER_ACCOUNT_UNVERIFIABLE
+    const originalAccRecord = await prisma.storeBankAccount.findUnique({
+      where: { id: createdAccId },
+    });
+    const originalCiphertext = originalAccRecord?.accountNumberEncrypted;
+
+    // Tamper ciphertext in DB to simulate corrupted encryption payload
+    await prisma.storeBankAccount.update({
+      where: { id: createdAccId },
+      data: { accountNumberEncrypted: 'corrupted:ciphertext:not:valid:hex' },
+    });
+
+    const decryptFailWebhook = {
+      providerTransactionId: `txn_decrypt_fail_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      destinationBankBin: '970422',
+      destinationAccountNumber: '999888777666',
+      senderBankBin: '970422',
+      senderAccountNumber: testAccNumber,
+    };
+
+    const decryptFailRes = await service.handleVerificationWebhook(decryptFailWebhook);
+    const dbTxDecryptFail = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
+    assert(
+      decryptFailRes.success === false &&
+        decryptFailRes.reason === 'SENDER_ACCOUNT_UNVERIFIABLE' &&
+        dbTxDecryptFail?.status === 'FAILED' &&
+        dbTxDecryptFail?.failureReason === 'SENDER_ACCOUNT_UNVERIFIABLE',
+      '3.3e Fail-Closed: Decryption failure fails closed with SENDER_ACCOUNT_UNVERIFIABLE and audited in DB',
+    );
+
+    // Restore original valid ciphertext and reset transaction
+    await prisma.storeBankAccount.update({
+      where: { id: createdAccId },
+      data: { accountNumberEncrypted: originalCiphertext },
+    });
     await prisma.bankAccountVerificationTransaction.update({
       where: { id: createdTxId },
       data: { status: 'PENDING', receivedAmount: null, failureReason: null },

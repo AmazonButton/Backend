@@ -52,6 +52,17 @@ export class BankVerificationService implements OnModuleInit {
           'FATAL: BANK_VERIFICATION_MOCK must be disabled in production',
         );
       }
+
+      const hasRedis =
+        Boolean(process.env.REDIS_URL?.trim()) ||
+        Boolean(process.env.REDIS_CACHE_URL?.trim()) ||
+        Boolean(process.env.REDIS_HOST?.trim());
+
+      if (!hasRedis) {
+        throw new Error(
+          'FATAL: REDIS_URL or REDIS_HOST must be configured in production for distributed rate limiting',
+        );
+      }
     }
   }
 

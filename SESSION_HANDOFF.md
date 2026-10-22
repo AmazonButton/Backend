@@ -233,12 +233,17 @@ When starting a new conversation, prompt the agent with:
      - All rejected transactions record `status = 'FAILED'` and exact `failure_reason` in PostgreSQL for complete admin auditability.
   7. **Clean Repository (Zero Test/Mock/Secret Data Committed):**
      - Verified with `git grep` and `git ls-files` that no `.env` files, secrets, or hardcoded production mocks exist in version control.
+  8. **Fail-Closed on Account Number Decryption Failure:**
+     - In `BankVerificationRepository.executeAtomicWebhookVerificationTx`: if `CryptoVaultUtil.decryptAccountNumber` fails or produces an empty string, immediately rejects the transaction with `SENDER_ACCOUNT_UNVERIFIABLE`, marks `status = 'FAILED'`, and persists `failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE'`. Prevents any unverified webhook from bypassing verification.
+  9. **Production Anti-Bypass Distributed Rate Limiting (Redis 503 Fail-Closed):**
+     - In `BankLookupRateLimitGuard`: when `NODE_ENV === 'production'`, if Redis client is missing, not in `ready` state, or throws an error on `INCR`, immediately throws HTTP 503 Service Unavailable (`RATE_LIMIT_SERVICE_UNAVAILABLE`). RAM Map fallback is strictly banned in production to prevent multi-instance limit evasion.
+     - In `BankVerificationService.onModuleInit()`: production boot halts if `REDIS_URL` or `REDIS_HOST` is unconfigured.
 - Verification Evidence:
-  - `npx tsx tests/bank-account-verification.spec.ts` — PASS (37/37 assertions pass)
-  - `npm run test:all` — PASS (13/13 suites pass, 281.8s)
+  - `npx tsx tests/bank-account-verification.spec.ts` — PASS (39/39 assertions pass)
   - `npx tsc --noEmit` — PASS (0 errors)
   - `npm run build` — PASS (0 errors)
   - `npx prisma migrate status` — PASS ("Database schema is up to date!")
+
 
 
 
