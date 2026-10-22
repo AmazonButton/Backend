@@ -39,6 +39,14 @@ export class BankVerificationWebhookDto {
 
   @IsOptional()
   @IsString()
+  senderBankBin?: string;
+
+  @IsOptional()
+  @IsString()
+  counterBankBin?: string;
+
+  @IsOptional()
+  @IsString()
   counterAccountBankId?: string;
 
   @IsOptional()

@@ -53,14 +53,22 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
       };
     }
 
+    const vietqrClientId = process.env.VIETQR_CLIENT_ID || process.env.PAYOS_CLIENT_ID || '';
+    const vietqrApiKey = process.env.VIETQR_API_KEY || process.env.PAYOS_API_KEY || '';
+
+    if (!vietqrClientId || !vietqrApiKey) {
+      this.logger.warn('[PayOSBankVerificationProvider] VietQR API credentials are not configured');
+      throw new ServiceUnavailableException('Dịch vụ tra cứu tài khoản chưa được cấu hình');
+    }
+
     try {
       // Gọi VietQR Open API để tra cứu tên tài khoản
       const response = await fetch('https://api.vietqr.io/v2/lookup', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-client-id': process.env.PAYOS_CLIENT_ID || '',
-          'x-api-key': process.env.PAYOS_API_KEY || '',
+          'x-client-id': vietqrClientId,
+          'x-api-key': vietqrApiKey,
         },
         body: JSON.stringify({
           bin: bankBin,

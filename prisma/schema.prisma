@@ -819,6 +819,7 @@ model BankAccountVerificationTransaction {
   receivedAmount        Decimal?  @map("received_amount") @db.Decimal(15, 2)
   providerTransactionId String?   @unique(map: "uq_bank_verify_tx_provider_tx_id") @map("provider_transaction_id") @db.VarChar(128)
   status                String    @default("PENDING") @map("status") @db.VarChar(32)
+  failureReason         String?   @map("failure_reason") @db.VarChar(64)
   expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
   verifiedAt            DateTime? @map("verified_at") @db.Timestamptz(6)
   refundStatus          String?   @map("refund_status") @db.VarChar(32)

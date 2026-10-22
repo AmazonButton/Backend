@@ -26,6 +26,10 @@ async function runBankVerificationTests() {
   process.env.BANK_VERIFICATION_EXPIRY_MINUTES = '30';
   process.env.BANK_VERIFICATION_WEBHOOK_SECRET = 'test_bank_webhook_secret_key_12345';
   process.env.PLATFORM_BANK_ACCOUNT_NUMBER = '999888777666';
+  process.env.PLATFORM_BANK_BIN = '970422';
+  process.env.PAYOS_CLIENT_ID = 'test_payos_client_id_123';
+  process.env.PAYOS_API_KEY = 'test_payos_api_key_123';
+  process.env.PAYOS_CHECKSUM_KEY = 'test_payos_checksum_key_123';
   process.env.BANK_VERIFICATION_STRICT = 'true';
   process.env.BANK_VERIFICATION_MOCK = 'true';
   process.env.NODE_ENV = 'test';
@@ -214,18 +218,18 @@ async function runBankVerificationTests() {
 
     let allowedCount = 0;
     for (let i = 0; i < 15; i++) {
-      if (rateLimitGuard.canActivate(mockContext)) {
+      if (await rateLimitGuard.canActivate(mockContext)) {
         allowedCount++;
       }
     }
     let rateLimitBlocked = false;
     try {
-      rateLimitGuard.canActivate(mockContext);
+      await rateLimitGuard.canActivate(mockContext);
     } catch (err: any) {
       rateLimitBlocked =
         err instanceof HttpException && err.getStatus() === HttpStatus.TOO_MANY_REQUESTS;
     }
-    BankLookupRateLimitGuard.reset();
+    await BankLookupRateLimitGuard.reset();
     assert(
       allowedCount === 15 && rateLimitBlocked,
       '1.6 Anti-Enumeration: BankLookupRateLimitGuard allows 15 lookups/min and blocks 16th with 429 Too Many Requests',
@@ -262,8 +266,9 @@ async function runBankVerificationTests() {
       '1.8 Production Boot Guard: onModuleInit throws fatal error if BANK_VERIFICATION_MOCK is true in production',
     );
 
-    // Test 1.9 (Risk 5): Fail-Fast Boot: onModuleInit throws fatal Error if PLATFORM_BANK_ACCOUNT_NUMBER is missing in production
+    // Test 1.9 (Risk 5): Fail-Fast Boot: onModuleInit throws fatal Error if any required production secret is missing
     process.env.BANK_VERIFICATION_MOCK = 'false';
+    const originalPlatformAcc = process.env.PLATFORM_BANK_ACCOUNT_NUMBER;
     delete process.env.PLATFORM_BANK_ACCOUNT_NUMBER;
     let missingPlatformAccBlocked = false;
     try {
@@ -271,15 +276,54 @@ async function runBankVerificationTests() {
     } catch (err: any) {
       missingPlatformAccBlocked = err.message.includes('PLATFORM_BANK_ACCOUNT_NUMBER must be configured in production');
     }
+    process.env.PLATFORM_BANK_ACCOUNT_NUMBER = originalPlatformAcc;
+
+    delete process.env.PLATFORM_BANK_BIN;
+    let missingPlatformBinBlocked = false;
+    try {
+      service.onModuleInit();
+    } catch (err: any) {
+      missingPlatformBinBlocked = err.message.includes('PLATFORM_BANK_BIN must be configured in production');
+    }
+    process.env.PLATFORM_BANK_BIN = '970422';
+
+    delete process.env.PAYOS_CLIENT_ID;
+    let missingPayosClientIdBlocked = false;
+    try {
+      service.onModuleInit();
+    } catch (err: any) {
+      missingPayosClientIdBlocked = err.message.includes('PAYOS_CLIENT_ID must be configured in production');
+    }
+    process.env.PAYOS_CLIENT_ID = 'test_payos_client_id_123';
+
     assert(
-      missingPlatformAccBlocked,
-      '1.9 Production Boot Guard: onModuleInit throws fatal error if PLATFORM_BANK_ACCOUNT_NUMBER is missing in production',
+      missingPlatformAccBlocked && missingPlatformBinBlocked && missingPayosClientIdBlocked,
+      '1.9 Production Boot Guard: onModuleInit throws fatal error if any mandatory secret (PLATFORM_BANK_ACCOUNT_NUMBER, PLATFORM_BANK_BIN, PAYOS_*) is missing in production',
+    );
+
+    // Test 1.10: VietQR Credential Decoupling
+    delete process.env.VIETQR_CLIENT_ID;
+    delete process.env.VIETQR_API_KEY;
+    process.env.BANK_VERIFICATION_MOCK = 'false';
+    const originalPayosClient = process.env.PAYOS_CLIENT_ID;
+    delete process.env.PAYOS_CLIENT_ID;
+    let missingVietQRBlocked = false;
+    try {
+      await provider.lookupAccount('970422', '0987654321');
+    } catch (err: any) {
+      missingVietQRBlocked = err instanceof ServiceUnavailableException;
+    }
+    process.env.PAYOS_CLIENT_ID = originalPayosClient;
+    assert(
+      missingVietQRBlocked,
+      '1.10 VietQR Credential Separation: lookupAccount throws ServiceUnavailableException if both VIETQR and PAYOS credentials are unconfigured in non-mock mode',
     );
 
     // Restore test environment variables
     process.env.NODE_ENV = 'test';
     process.env.BANK_VERIFICATION_MOCK = 'true';
     process.env.PLATFORM_BANK_ACCOUNT_NUMBER = '999888777666';
+    process.env.PLATFORM_BANK_BIN = '970422';
 
     // ------------------------------------------------------------------------
     // SECTION 2: Create Verification Request, Client Zero Trust & RBAC
@@ -433,89 +477,232 @@ async function runBankVerificationTests() {
       data: { status: 'PENDING', receivedAmount: null },
     });
 
-    // Test 3.3a (Risk 1): Fail-closed when destinationAccountNumber is missing in strict mode
+    // Test 3.3a (Risk 1): Fail-closed when destinationAccountNumber is missing in strict mode + DB audit trail
     const missingDestWebhook = {
       providerTransactionId: `txn_miss_dest_${Date.now()}`,
       amount: 2000,
       description: `Chuyen tien ${refCode}`,
       referenceCode: refCode,
+      destinationBankBin: '970422',
+      senderBankBin: '970422',
       senderAccountNumber: testAccNumber,
     };
     const missingDestRes = await service.handleVerificationWebhook(missingDestWebhook);
+    const dbTxMissingDest = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
     assert(
       missingDestRes.success === false &&
-        missingDestRes.reason === 'DESTINATION_ACCOUNT_UNVERIFIABLE',
-      '3.3a Webhook Cross-Check: Missing destination account rejected with DESTINATION_ACCOUNT_UNVERIFIABLE in strict mode',
+        missingDestRes.reason === 'DESTINATION_ACCOUNT_UNVERIFIABLE' &&
+        dbTxMissingDest?.status === 'FAILED' &&
+        dbTxMissingDest?.failureReason === 'DESTINATION_ACCOUNT_UNVERIFIABLE',
+      '3.3a Webhook Cross-Check: Missing destination account rejected with DESTINATION_ACCOUNT_UNVERIFIABLE and audited in DB',
     );
 
     // Reset back to PENDING
     await prisma.bankAccountVerificationTransaction.update({
       where: { id: createdTxId },
-      data: { status: 'PENDING', receivedAmount: null },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
     });
 
-    // Test 3.3b (Risk 1): Fail-closed when senderAccountNumber is missing in strict mode
+    // Test 3.3a2 (Tertiary 1 & 6): Fail-closed when destinationBankBin is missing in strict mode + DB audit trail
+    const missingDestBinWebhook = {
+      providerTransactionId: `txn_miss_dest_bin_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      destinationAccountNumber: '999888777666',
+      senderBankBin: '970422',
+      senderAccountNumber: testAccNumber,
+    };
+    const missingDestBinRes = await service.handleVerificationWebhook(missingDestBinWebhook);
+    const dbTxMissingDestBin = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
+    assert(
+      missingDestBinRes.success === false &&
+        missingDestBinRes.reason === 'DESTINATION_BANK_UNVERIFIABLE' &&
+        dbTxMissingDestBin?.status === 'FAILED' &&
+        dbTxMissingDestBin?.failureReason === 'DESTINATION_BANK_UNVERIFIABLE',
+      '3.3a2 Webhook Cross-Check: Missing destination bank BIN rejected with DESTINATION_BANK_UNVERIFIABLE and audited in DB',
+    );
+
+    // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
+    });
+
+    // Test 3.3b (Risk 1): Fail-closed when senderAccountNumber is missing in strict mode + DB audit trail
     const missingSenderWebhook = {
       providerTransactionId: `txn_miss_sender_${Date.now()}`,
       amount: 2000,
       description: `Chuyen tien ${refCode}`,
       referenceCode: refCode,
+      destinationBankBin: '970422',
       destinationAccountNumber: '999888777666',
+      senderBankBin: '970422',
     };
     const missingSenderRes = await service.handleVerificationWebhook(missingSenderWebhook);
+    const dbTxMissingSender = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
     assert(
       missingSenderRes.success === false &&
-        missingSenderRes.reason === 'SENDER_ACCOUNT_UNVERIFIABLE',
-      '3.3b Webhook Cross-Check: Missing sender account rejected with SENDER_ACCOUNT_UNVERIFIABLE in strict mode',
+        missingSenderRes.reason === 'SENDER_ACCOUNT_UNVERIFIABLE' &&
+        dbTxMissingSender?.status === 'FAILED' &&
+        dbTxMissingSender?.failureReason === 'SENDER_ACCOUNT_UNVERIFIABLE',
+      '3.3b Webhook Cross-Check: Missing sender account rejected with SENDER_ACCOUNT_UNVERIFIABLE and audited in DB',
     );
 
     // Reset back to PENDING
     await prisma.bankAccountVerificationTransaction.update({
       where: { id: createdTxId },
-      data: { status: 'PENDING', receivedAmount: null },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
     });
 
-    // Test 3.3c (Risk 1): Destination account mismatch rejected
+    // Test 3.3b2 (Tertiary 1 & 6): Fail-closed when senderBankBin is missing in strict mode + DB audit trail
+    const missingSenderBinWebhook = {
+      providerTransactionId: `txn_miss_sender_bin_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      destinationBankBin: '970422',
+      destinationAccountNumber: '999888777666',
+      senderAccountNumber: testAccNumber,
+    };
+    const missingSenderBinRes = await service.handleVerificationWebhook(missingSenderBinWebhook);
+    const dbTxMissingSenderBin = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
+    assert(
+      missingSenderBinRes.success === false &&
+        missingSenderBinRes.reason === 'SENDER_BANK_UNVERIFIABLE' &&
+        dbTxMissingSenderBin?.status === 'FAILED' &&
+        dbTxMissingSenderBin?.failureReason === 'SENDER_BANK_UNVERIFIABLE',
+      '3.3b2 Webhook Cross-Check: Missing sender bank BIN rejected with SENDER_BANK_UNVERIFIABLE and audited in DB',
+    );
+
+    // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
+    });
+
+    // Test 3.3c (Risk 1): Destination account mismatch rejected + DB audit trail
     const destMismatchWebhook = {
       providerTransactionId: `txn_dest_mismatch_${Date.now()}`,
       amount: 2000,
       description: `Chuyen tien ${refCode}`,
       referenceCode: refCode,
-      destinationAccountNumber: '000111222333', // Mismatch against PLATFORM_BANK_ACCOUNT_NUMBER
+      destinationBankBin: '970422',
+      destinationAccountNumber: '000111222333', // Mismatch against PLATFORM_BANK_ACCOUNT_NUMBER (999888777666)
+      senderBankBin: '970422',
       senderAccountNumber: testAccNumber,
     };
     const destMismatchRes = await service.handleVerificationWebhook(destMismatchWebhook);
+    const dbTxDestMismatch = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
     assert(
       destMismatchRes.success === false &&
-        destMismatchRes.reason === 'DESTINATION_ACCOUNT_MISMATCH',
-      '3.3c Webhook Cross-Check: Destination account mismatch rejected with DESTINATION_ACCOUNT_MISMATCH',
+        destMismatchRes.reason === 'DESTINATION_ACCOUNT_MISMATCH' &&
+        dbTxDestMismatch?.status === 'FAILED' &&
+        dbTxDestMismatch?.failureReason === 'DESTINATION_ACCOUNT_MISMATCH',
+      '3.3c Webhook Cross-Check: Destination account mismatch rejected with DESTINATION_ACCOUNT_MISMATCH and audited in DB',
     );
 
     // Reset back to PENDING
     await prisma.bankAccountVerificationTransaction.update({
       where: { id: createdTxId },
-      data: { status: 'PENDING', receivedAmount: null },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
     });
 
-    // Test 3.3d (High 3): Webhook with senderAccountNumber mismatch rejected
+    // Test 3.3c2 (Tertiary 1 & 6): Destination Bank BIN mismatch rejected + DB audit trail
+    const destBinMismatchWebhook = {
+      providerTransactionId: `txn_dest_bin_mismatch_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      destinationBankBin: '970407', // Techcombank (970407) vs Platform MBBank (970422)
+      destinationAccountNumber: '999888777666',
+      senderBankBin: '970422',
+      senderAccountNumber: testAccNumber,
+    };
+    const destBinMismatchRes = await service.handleVerificationWebhook(destBinMismatchWebhook);
+    const dbTxDestBinMismatch = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
+    assert(
+      destBinMismatchRes.success === false &&
+        destBinMismatchRes.reason === 'DESTINATION_BANK_MISMATCH' &&
+        dbTxDestBinMismatch?.status === 'FAILED' &&
+        dbTxDestBinMismatch?.failureReason === 'DESTINATION_BANK_MISMATCH',
+      '3.3c2 Webhook Cross-Check: Destination bank BIN mismatch rejected with DESTINATION_BANK_MISMATCH and audited in DB',
+    );
+
+    // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
+    });
+
+    // Test 3.3d (High 3): Webhook with senderAccountNumber mismatch rejected + DB audit trail
     const senderMismatchWebhook = {
       providerTransactionId: `txn_mismatch_${Date.now()}`,
       amount: 2000,
       description: `Chuyen tien ${refCode}`,
       referenceCode: refCode,
+      destinationBankBin: '970422',
       destinationAccountNumber: '999888777666',
+      senderBankBin: '970422',
       senderAccountNumber: '999999999999', // Registered account is testAccNumber: 123456789012
     };
     const senderMismatchRes = await service.handleVerificationWebhook(senderMismatchWebhook);
+    const dbTxSenderMismatch = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
     assert(
-      senderMismatchRes.success === false && senderMismatchRes.reason === 'SENDER_ACCOUNT_MISMATCH',
-      '3.3d Webhook Cross-Check: Sender account mismatch rejected with SENDER_ACCOUNT_MISMATCH',
+      senderMismatchRes.success === false &&
+        senderMismatchRes.reason === 'SENDER_ACCOUNT_MISMATCH' &&
+        dbTxSenderMismatch?.status === 'FAILED' &&
+        dbTxSenderMismatch?.failureReason === 'SENDER_ACCOUNT_MISMATCH',
+      '3.3d Webhook Cross-Check: Sender account mismatch rejected with SENDER_ACCOUNT_MISMATCH and audited in DB',
     );
 
     // Reset back to PENDING
     await prisma.bankAccountVerificationTransaction.update({
       where: { id: createdTxId },
-      data: { status: 'PENDING', receivedAmount: null },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
+    });
+
+    // Test 3.3d2 (Tertiary 1 & 6): Webhook with senderBankBin mismatch rejected + DB audit trail
+    const senderBinMismatchWebhook = {
+      providerTransactionId: `txn_sender_bin_mismatch_${Date.now()}`,
+      amount: 2000,
+      description: `Chuyen tien ${refCode}`,
+      referenceCode: refCode,
+      destinationBankBin: '970422',
+      destinationAccountNumber: '999888777666',
+      senderBankBin: '970407', // Techcombank (970407) vs Registered MBBank (970422)
+      senderAccountNumber: testAccNumber,
+    };
+    const senderBinMismatchRes = await service.handleVerificationWebhook(senderBinMismatchWebhook);
+    const dbTxSenderBinMismatch = await prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id: createdTxId },
+    });
+    assert(
+      senderBinMismatchRes.success === false &&
+        senderBinMismatchRes.reason === 'SENDER_BANK_MISMATCH' &&
+        dbTxSenderBinMismatch?.status === 'FAILED' &&
+        dbTxSenderBinMismatch?.failureReason === 'SENDER_BANK_MISMATCH',
+      '3.3d2 Webhook Cross-Check: Sender bank BIN mismatch rejected with SENDER_BANK_MISMATCH and audited in DB',
+    );
+
+    // Reset back to PENDING
+    await prisma.bankAccountVerificationTransaction.update({
+      where: { id: createdTxId },
+      data: { status: 'PENDING', receivedAmount: null, failureReason: null },
     });
 
     // Test 3.4: Webhook with wrong reference code
@@ -557,20 +744,22 @@ async function runBankVerificationTests() {
       },
     });
 
-    // Test 3.6: Valid Inbound Webhook (with matching senderAccountNumber and destinationAccountNumber)
+    // Test 3.6: Valid Inbound Webhook (with matching sender and destination [bankBin + accountNumber])
     const validProviderTxId = `txn_valid_${Date.now()}`;
     const validWebhook = {
       providerTransactionId: validProviderTxId,
       amount: 2000,
       description: `Thanh toan xac minh tai khoan ${refCode} MB`,
       referenceCode: refCode,
+      destinationBankBin: '970422',
       destinationAccountNumber: '999888777666',
+      senderBankBin: '970422',
       senderAccountNumber: testAccNumber,
     };
     const validRes = await service.handleVerificationWebhook(validWebhook);
     assert(
       validRes.success === true && validRes.message?.includes('thành công'),
-      '3.6 Valid 2.000 VND webhook with matching sender and platform accounts processed successfully',
+      '3.6 Valid 2.000 VND webhook with matching sender and platform (BIN + AccountNumber) processed successfully',
     );
 
     // Test 3.7 & 3.8 (Medium 6): Verify OWNERSHIP_VERIFIED and dynamic refund
@@ -629,7 +818,9 @@ async function runBankVerificationTests() {
       amount: 2000,
       description: `Chuyen tien ${concRef}`,
       referenceCode: concRef,
+      destinationBankBin: '970422',
       destinationAccountNumber: '999888777666',
+      senderBankBin: '970436',
       senderAccountNumber: '998877665544',
     };
     const parallelWebhook2 = {
@@ -637,7 +828,9 @@ async function runBankVerificationTests() {
       amount: 2000,
       description: `Chuyen tien ${concRef}`,
       referenceCode: concRef,
+      destinationBankBin: '970422',
       destinationAccountNumber: '999888777666',
+      senderBankBin: '970436',
       senderAccountNumber: '998877665544',
     };
 

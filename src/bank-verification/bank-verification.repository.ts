@@ -173,7 +173,9 @@ export class BankVerificationRepository {
     receivedAmount: number;
     providerTransactionId: string;
     senderAccountNumber?: string;
+    senderBankBin?: string;
     destinationAccountNumber?: string;
+    destinationBankBin?: string;
   }): Promise<AtomicWebhookVerificationResult> {
     return this.prisma.$transaction(async (tx) => {
       // 1. Khóa hàng verification transaction bằng SELECT ... FOR UPDATE
@@ -248,13 +250,15 @@ export class BankVerificationRepository {
       if (new Date(lockedTx.expires_at) < now) {
         await tx.$executeRaw`
           UPDATE bank_account_verification_transactions
-          SET status = 'EXPIRED', updated_at = NOW()
+          SET status = 'EXPIRED',
+              failure_reason = 'EXPIRED',
+              updated_at = NOW()
           WHERE id = ${lockedTx.id}
         `;
         return {
           success: false,
           reason: 'EXPIRED',
-          transaction: { ...lockedTx, status: 'EXPIRED' },
+          transaction: { ...lockedTx, status: 'EXPIRED', failure_reason: 'EXPIRED' },
         };
       }
 
@@ -268,6 +272,7 @@ export class BankVerificationRepository {
         await tx.$executeRaw`
           UPDATE bank_account_verification_transactions
           SET status = 'FAILED',
+              failure_reason = 'AMOUNT_MISMATCH',
               received_amount = ${params.receivedAmount},
               provider_transaction_id = ${params.providerTransactionId},
               updated_at = NOW()
@@ -276,12 +281,13 @@ export class BankVerificationRepository {
         return {
           success: false,
           reason: 'AMOUNT_MISMATCH',
-          transaction: { ...lockedTx, status: 'FAILED' },
+          transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'AMOUNT_MISMATCH' },
         };
       }
 
-      // 6. Kiểm tra chéo tài khoản nhận (destination account)
+      // 6. Kiểm tra chéo tài khoản nhận (destination account & BIN)
       const platformAcc = process.env.PLATFORM_BANK_ACCOUNT_NUMBER?.trim();
+      const platformBin = process.env.PLATFORM_BANK_BIN?.trim();
       const isStrict =
         process.env.NODE_ENV === 'production' ||
         process.env.BANK_VERIFICATION_STRICT === 'true';
@@ -289,9 +295,42 @@ export class BankVerificationRepository {
       if (isStrict) {
         if (!platformAcc || !params.destinationAccountNumber) {
           this.logger.warn(
-            `[AtomicWebhookVerification] Thieu thong tin tai khoan nhan de doi chieu (ref: ${params.referenceCode})`,
+            `[AtomicWebhookVerification] Thieu thong tin tai khoan nhan (ref: ${params.referenceCode})`,
           );
-          return { success: false, reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE' };
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'DESTINATION_ACCOUNT_UNVERIFIABLE',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE' },
+          };
+        }
+
+        if (!platformBin || !params.destinationBankBin) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] Thieu thong tin BIN ngan hang nhan (ref: ${params.referenceCode})`,
+          );
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'DESTINATION_BANK_UNVERIFIABLE',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'DESTINATION_BANK_UNVERIFIABLE',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_UNVERIFIABLE' },
+          };
         }
       }
 
@@ -303,6 +342,7 @@ export class BankVerificationRepository {
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
+                failure_reason = 'DESTINATION_ACCOUNT_MISMATCH',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
                 updated_at = NOW()
@@ -311,18 +351,73 @@ export class BankVerificationRepository {
           return {
             success: false,
             reason: 'DESTINATION_ACCOUNT_MISMATCH',
-            transaction: { ...lockedTx, status: 'FAILED' },
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_MISMATCH' },
           };
         }
       }
 
-      // 7. Kiểm tra chéo tài khoản gửi (sender/counter account)
+      if (params.destinationBankBin && platformBin) {
+        if (params.destinationBankBin.trim() !== platformBin) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] BIN ngan hang nhan khong khop nen tang (ref: ${params.referenceCode})`,
+          );
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'DESTINATION_BANK_MISMATCH',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'DESTINATION_BANK_MISMATCH',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_MISMATCH' },
+          };
+        }
+      }
+
+      // 7. Kiểm tra chéo tài khoản gửi (sender account & BIN)
       if (isStrict) {
         if (!params.senderAccountNumber) {
           this.logger.warn(
-            `[AtomicWebhookVerification] Thieu thong tin tai khoan gui de doi chieu (ref: ${params.referenceCode})`,
+            `[AtomicWebhookVerification] Thieu thong tin tai khoan gui (ref: ${params.referenceCode})`,
           );
-          return { success: false, reason: 'SENDER_ACCOUNT_UNVERIFIABLE' };
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE' },
+          };
+        }
+
+        if (!params.senderBankBin) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] Thieu thong tin BIN ngan hang gui (ref: ${params.referenceCode})`,
+          );
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'SENDER_BANK_UNVERIFIABLE',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'SENDER_BANK_UNVERIFIABLE',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_BANK_UNVERIFIABLE' },
+          };
         }
       }
 
@@ -343,6 +438,7 @@ export class BankVerificationRepository {
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
+                failure_reason = 'SENDER_ACCOUNT_MISMATCH',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
                 updated_at = NOW()
@@ -351,7 +447,29 @@ export class BankVerificationRepository {
           return {
             success: false,
             reason: 'SENDER_ACCOUNT_MISMATCH',
-            transaction: { ...lockedTx, status: 'FAILED' },
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_MISMATCH' },
+          };
+        }
+      }
+
+      if (params.senderBankBin && lockedAccount.bank_bin) {
+        if (params.senderBankBin.trim() !== lockedAccount.bank_bin.trim()) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] BIN ngan hang gui khong khop tai khoan can xac minh (ref: ${params.referenceCode})`,
+          );
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'SENDER_BANK_MISMATCH',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'SENDER_BANK_MISMATCH',
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_BANK_MISMATCH' },
           };
         }
       }
@@ -364,6 +482,13 @@ export class BankVerificationRepository {
         LIMIT 1
       `;
       if (duplicateTx && duplicateTx.length > 0) {
+        await tx.$executeRaw`
+          UPDATE bank_account_verification_transactions
+          SET status = 'FAILED',
+              failure_reason = 'DUPLICATE_PROVIDER_TRANSACTION',
+              updated_at = NOW()
+          WHERE id = ${lockedTx.id}
+        `;
         return {
           success: false,
           reason: 'DUPLICATE_PROVIDER_TRANSACTION',

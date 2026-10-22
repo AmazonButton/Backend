@@ -31,22 +31,27 @@ export class BankVerificationService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    if (
-      process.env.NODE_ENV === 'production' &&
-      !process.env.PLATFORM_BANK_ACCOUNT_NUMBER
-    ) {
-      throw new Error(
-        'FATAL: PLATFORM_BANK_ACCOUNT_NUMBER must be configured in production',
-      );
-    }
+    if (process.env.NODE_ENV === 'production') {
+      const requiredSecrets = [
+        'PLATFORM_BANK_ACCOUNT_NUMBER',
+        'PLATFORM_BANK_BIN',
+        'PAYOS_CLIENT_ID',
+        'PAYOS_API_KEY',
+        'PAYOS_CHECKSUM_KEY',
+        'BANK_VERIFICATION_WEBHOOK_SECRET',
+      ];
 
-    if (
-      process.env.NODE_ENV === 'production' &&
-      process.env.BANK_VERIFICATION_MOCK === 'true'
-    ) {
-      throw new Error(
-        'FATAL: BANK_VERIFICATION_MOCK must be disabled in production',
-      );
+      for (const key of requiredSecrets) {
+        if (!process.env[key]?.trim()) {
+          throw new Error(`FATAL: ${key} must be configured in production`);
+        }
+      }
+
+      if (process.env.BANK_VERIFICATION_MOCK === 'true') {
+        throw new Error(
+          'FATAL: BANK_VERIFICATION_MOCK must be disabled in production',
+        );
+      }
     }
   }
 
@@ -318,16 +323,30 @@ export class BankVerificationService implements OnModuleInit {
 
     const receivedAmount = Number(amount || 0);
 
-    // Trích xuất thông tin tài khoản gửi / nhận để kiểm tra chéo
+    // Trích xuất thông tin tài khoản và BIN gửi / nhận để kiểm tra chéo
     const destinationAccountNumber =
       dto.destinationAccountNumber ||
       dto.data?.destinationAccountNumber ||
-      dto.data?.accountNumber;
+      dto.data?.accountNumber ||
+      dto.data?.virtualAccountNumber;
+
+    const destinationBankBin =
+      dto.destinationBankBin ||
+      dto.data?.destinationBankBin ||
+      dto.data?.bin;
+
     const senderAccountNumber =
       dto.senderAccountNumber ||
       dto.counterAccountNumber ||
       dto.data?.counterAccountNumber ||
       dto.data?.senderAccountNumber;
+
+    const senderBankBin =
+      dto.senderBankBin ||
+      dto.counterBankBin ||
+      dto.data?.counterAccountBankId ||
+      dto.data?.counterBankBin ||
+      dto.data?.senderBankBin;
 
     // Thực thi transaction nguyên tử với SELECT ... FOR UPDATE
     const txResult = await this.repository.executeAtomicWebhookVerificationTx({
@@ -335,7 +354,9 @@ export class BankVerificationService implements OnModuleInit {
       receivedAmount,
       providerTransactionId,
       senderAccountNumber,
+      senderBankBin,
       destinationAccountNumber,
+      destinationBankBin,
     });
 
     if (!txResult.success) {
@@ -348,12 +369,20 @@ export class BankVerificationService implements OnModuleInit {
             ? 'Số tiền giao dịch không đúng 2.000 VND'
             : txResult.reason === 'SENDER_ACCOUNT_MISMATCH'
             ? 'Tài khoản người gửi không khớp với tài khoản đăng ký'
+            : txResult.reason === 'SENDER_BANK_MISMATCH'
+            ? 'Ngân hàng người gửi không khớp với ngân hàng đã đăng ký'
             : txResult.reason === 'DESTINATION_ACCOUNT_MISMATCH'
             ? 'Tài khoản người nhận không khớp với tài khoản nền tảng'
+            : txResult.reason === 'DESTINATION_BANK_MISMATCH'
+            ? 'Ngân hàng người nhận không khớp với ngân hàng nền tảng'
             : txResult.reason === 'DESTINATION_ACCOUNT_UNVERIFIABLE'
             ? 'Không thể xác thực tài khoản nhận của nền tảng'
+            : txResult.reason === 'DESTINATION_BANK_UNVERIFIABLE'
+            ? 'Không thể xác thực ngân hàng nhận của nền tảng'
             : txResult.reason === 'SENDER_ACCOUNT_UNVERIFIABLE'
             ? 'Không thể xác thực tài khoản ngân hàng của người chuyển'
+            : txResult.reason === 'SENDER_BANK_UNVERIFIABLE'
+            ? 'Không thể xác thực ngân hàng của người chuyển'
             : txResult.reason === 'EXPIRED'
             ? 'Yêu cầu xác minh đã hết hạn'
             : 'Xác minh giao dịch thất bại',
