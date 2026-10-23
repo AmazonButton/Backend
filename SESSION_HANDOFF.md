@@ -410,4 +410,26 @@ When starting a new conversation, prompt the agent with:
    - Registered in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
 8. **Physical Database ERD Synchronization (43 Tables Full Alignment):**
    - File: [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio)
-   - Synced diagram to full 43 physical tables matching [`prisma/schema.prisma`](file:///f:/Learning/SEM9-FPTu/backend/prisma/schema.prisma) 100% (added `NOTIFICATIONS`, `USER_FCM_TOKENS`, `IDENTITY_VERIFICATION_SESSIONS`, `DIDIT_WEBHOOK_EVENTS`, `STORE_BANK_ACCOUNTS`, `BANK_ACCOUNT_VERIFICATION_TRANSACTIONS`, `DRIVER_SHIFTS`, `DRIVER_DUTIES`) with collision-free coordinates, exact data types, PK/UK indicators, and relational foreign-key edges.
+   - Synced diagram to full 43 physical tables matching [`prisma/schema.prisma`](file:///f:/Learning/SEM9-FPTu/backend/prisma/schema.prisma) 100% (added `NOTIFICATIONS`, `USER_FCM_TOKENS`, `IDENTITY_VERIFICATION_SESSIONS`, `DIDIT_WEBHOOK_EVENTS`, `STORE_BANK_ACCOUNTS`, `BANK_ACCOUNT_VERIFICATION_TRANSACTIONS`, `DRIVER_SHIFTS`, `DRIVER_DUTIES`) with collision-free coordinates, exact data types, PK/UK indicators, and relational foreign-key edges. 
+---
+
+### G. Production Deployment on Render (LIVE Verified)
+1. **Live Production Endpoints:**
+   - Base API URL: `https://backend-fae8.onrender.com/api/v1`
+   - Liveness Probe (`/healthz`): `https://backend-fae8.onrender.com/healthz` -> Returns `{"status":"UP"}` (HTTP 200 OK).
+   - Readiness Probe (`/readyz`): `https://backend-fae8.onrender.com/readyz` -> Returns `{"status":"READY"}` with live DB connectivity (HTTP 200 OK).
+   - Swagger OpenAPI Documentation: `https://backend-fae8.onrender.com/docs`
+   - WebSocket Gateway: `wss://backend-fae8.onrender.com` (Socket.io)
+2. **Network & Database Resolution (Supabase IPv4 Pooler):**
+   - Render container networks operate in an IPv4-only stack and cannot resolve Supabase direct connection strings (`db.<ref>.supabase.co:5432`) which have IPv6-only AAAA records.
+   - Resolution: Switched database connection to Supabase Session Pooler in Tokyo region:
+     `postgresql://postgres.<project-ref>:[PASSWORD]@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require`
+   - All 14 Prisma database migrations verified deployed without errors.
+3. **Memory Optimization & OOM Protection:**
+   - Excluded `tests/` directory from production compilation via [`tsconfig.build.json`](file:///f:/Learning/SEM9-FPTu/backend/tsconfig.build.json) and [`nest-cli.json`](file:///f:/Learning/SEM9-FPTu/backend/nest-cli.json), reducing build-time memory usage by >60%.
+   - Switched production start command from `nest start` (which ran TypeScript dev compiler in memory) to `node scripts/start-prod.js` in [`package.json`](file:///f:/Learning/SEM9-FPTu/backend/package.json), maintaining runtime footprint well below the 512MB free tier limit (~50-60MB).
+4. **Third-Party Webhook Endpoints for Production:**
+   - PayOS Payment Webhook: `https://backend-fae8.onrender.com/api/v1/payments/payos/webhook`
+   - Didit Identity Webhook: `https://backend-fae8.onrender.com/api/v1/webhooks/didit`
+   - VietQR / Bank Verification Webhook: `https://backend-fae8.onrender.com/api/v1/webhooks/bank-verification`
+
