@@ -24,6 +24,10 @@ export class RequestWithdrawalDto {
   @IsNumber()
   @IsOptional()
   fee?: number;
+
+  @IsString()
+  @IsOptional()
+  note?: string;
 }
 
 export class ConfirmTransferDto {

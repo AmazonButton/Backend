@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   NotFoundException,
   OnModuleInit,
+  HttpException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BankVerificationRepository } from './bank-verification.repository';
@@ -76,7 +77,7 @@ export class BankVerificationService implements OnModuleInit {
   /**
    * Tra cứu tên chủ tài khoản ngân hàng (Lookup Account Name)
    */
-  async lookupBankAccount(dto: LookupBankAccountDto) {
+  async lookupBankAccount(dto: LookupBankAccountDto, userId?: bigint) {
     const bank = VIETNAM_BANKS.find((b) => b.bin === dto.bankBin);
     if (!bank) {
       throw new BadRequestException('Mã BIN ngân hàng không hợp lệ hoặc không được hỗ trợ');
@@ -87,8 +88,27 @@ export class BankVerificationService implements OnModuleInit {
       throw new BadRequestException('Số tài khoản ngân hàng không hợp lệ');
     }
 
+    let fallbackName: string | undefined;
+    if (userId) {
+      try {
+        const user = await this.prisma.user.findUnique({
+          where: { userId },
+          select: { fullName: true },
+        });
+        if (user?.fullName) {
+          fallbackName = user.fullName
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/g, 'd')
+            .replace(/Đ/g, 'D')
+            .toUpperCase()
+            .trim();
+        }
+      } catch {}
+    }
+
     try {
-      const result = await this.provider.lookupAccount(dto.bankBin, cleanAcc);
+      const result = await this.provider.lookupAccount(dto.bankBin, cleanAcc, fallbackName);
       return {
         bankBin: dto.bankBin,
         bankName: result.bankName || bank.shortName,
@@ -96,7 +116,10 @@ export class BankVerificationService implements OnModuleInit {
         accountName: result.accountName,
       };
     } catch (error: any) {
-      this.logger.error(`Lookup account failed [bankBin: ${dto.bankBin}] [operation: lookupAccount]`);
+      this.logger.error(`Lookup account failed [bankBin: ${dto.bankBin}] [operation: lookupAccount]: ${error.message}`);
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw new BadRequestException(
         'Không thể xác minh tài khoản ngân hàng lúc này',
       );

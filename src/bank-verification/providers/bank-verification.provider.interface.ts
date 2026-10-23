@@ -24,7 +24,7 @@ export interface BankVerificationProvider {
   /**
    * Lookup bank account holder name via NAPAS / VietQR directory
    */
-  lookupAccount(bankBin: string, accountNumber: string): Promise<BankAccountLookupResult>;
+  lookupAccount(bankBin: string, accountNumber: string, fallbackName?: string): Promise<BankAccountLookupResult>;
 
   /**
    * Initiate payout refund of 2,000 VND to verified bank account

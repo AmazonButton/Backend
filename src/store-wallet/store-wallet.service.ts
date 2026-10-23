@@ -41,6 +41,18 @@ export class StoreWalletService {
     return wallet;
   }
 
+  async getWallet(storeId: string | number | bigint) {
+    const wallet = await this.getOrCreateStoreWallet(storeId);
+    // Do not expose Prisma records directly: they contain BigInt values that
+    // JSON.stringify cannot serialize and would turn a successful request into
+    // an HTTP 500 in Nest/Express.
+    const defaultBankAccount = await this.prisma.storeBankAccount.findFirst({
+      where: { storeId: wallet.storeId, isDefault: true },
+      select: { bankBin: true },
+    });
+    return this.toWalletDto(wallet, defaultBankAccount?.bankBin || '');
+  }
+
   async updateBankAccount(storeId: string | number | bigint, dto: UpdateBankAccountDto) {
     const rawStoreId = BigInt(storeId);
     await this.getOrCreateStoreWallet(rawStoreId);
@@ -65,7 +77,7 @@ export class StoreWalletService {
       },
       create: {
         storeId: rawStoreId,
-        bankBin: '970422', // default BIN
+        bankBin: dto.bankBin || '970422',
         bankName: dto.bankName,
         accountNumberEncrypted: accEncrypted,
         accountNumberHash: accHash,
@@ -74,6 +86,7 @@ export class StoreWalletService {
         isDefault: true,
       },
       update: {
+        bankBin: dto.bankBin || undefined,
         bankName: dto.bankName,
         accountName: dto.bankAccountHolder,
         accountNumberEncrypted: accEncrypted,
@@ -81,7 +94,7 @@ export class StoreWalletService {
       },
     });
 
-    return this.prisma.storeWallet.update({
+    await this.prisma.storeWallet.update({
       where: { storeId: rawStoreId },
       data: {
         bankName: dto.bankName,
@@ -89,6 +102,7 @@ export class StoreWalletService {
         bankAccountHolder: dto.bankAccountHolder,
       },
     });
+    return this.getWallet(rawStoreId);
   }
 
   async creditOrderRevenue(
@@ -149,10 +163,22 @@ export class StoreWalletService {
     const rawStoreId = BigInt(storeId);
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
 
-    return this.prisma.walletTransaction.findMany({
+    const transactions = await this.prisma.walletTransaction.findMany({
       where: { walletId: wallet.walletId },
       orderBy: { createdAt: 'desc' },
     });
+
+    return transactions.map((transaction) => ({
+      id: transaction.transactionId.toString(),
+      amount: Number(transaction.amount),
+      type: transaction.type,
+      status: 'SUCCESS',
+      balanceBefore: Number(transaction.balanceBefore),
+      balanceAfter: Number(transaction.balanceAfter),
+      referenceId: transaction.referenceId,
+      description: transaction.description,
+      createdAt: transaction.createdAt.toISOString(),
+    }));
   }
 
   /**
@@ -561,10 +587,90 @@ export class StoreWalletService {
     const rawStoreId = BigInt(storeId);
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
 
-    return this.prisma.storeWithdrawal.findMany({
+    const withdrawals = await this.prisma.storeWithdrawal.findMany({
       where: { walletId: wallet.walletId },
       orderBy: { requestedAt: 'desc' },
     });
+
+    return withdrawals.map((withdrawal) => ({
+      id: withdrawal.withdrawalId.toString(),
+      withdrawalCode: withdrawal.withdrawalCode,
+      amount: Number(withdrawal.amount),
+      fee: Number(withdrawal.fee),
+      netAmount: withdrawal.netAmount === null ? null : Number(withdrawal.netAmount),
+      status: withdrawal.status,
+      bankCode: withdrawal.bankCode,
+      bankName: withdrawal.bankName,
+      accountNumber: withdrawal.bankAccountNumber,
+      accountHolderName: withdrawal.bankAccountHolder,
+      payoutId: withdrawal.providerPayoutId,
+      referenceId: withdrawal.providerReferenceId,
+      failureReason: withdrawal.failureReason,
+      createdAt: withdrawal.createdAt.toISOString(),
+      requestedAt: withdrawal.requestedAt.toISOString(),
+      processedAt: withdrawal.processedAt?.toISOString(),
+    }));
+  }
+
+  private toWalletDto(wallet: {
+    walletId: bigint;
+    storeId: bigint;
+    balance: unknown;
+    frozenBalance: unknown;
+    bankName: string | null;
+    bankAccountNumber: string | null;
+    bankAccountHolder: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }, bankBin: string) {
+    const balance = Number(wallet.balance);
+    const frozenBalance = Number(wallet.frozenBalance);
+    const hasBankAccount = Boolean(
+      wallet.bankName && wallet.bankAccountNumber && wallet.bankAccountHolder,
+    );
+
+    return {
+      id: wallet.walletId.toString(),
+      storeId: wallet.storeId.toString(),
+      balance,
+      availableBalance: Math.max(0, balance - frozenBalance),
+      pendingBalance: frozenBalance,
+      bankAccount: hasBankAccount
+        ? {
+            bankName: wallet.bankName!,
+            bankBin,
+            accountNumber: wallet.bankAccountNumber!,
+            accountHolderName: wallet.bankAccountHolder!,
+          }
+        : null,
+      // Kept for existing internal API consumers during the response-contract migration.
+      bankName: wallet.bankName,
+      bankAccountNumber: wallet.bankAccountNumber,
+      bankAccountHolder: wallet.bankAccountHolder,
+      createdAt: wallet.createdAt.toISOString(),
+      updatedAt: wallet.updatedAt.toISOString(),
+    };
+  }
+
+  serializeWithdrawal(withdrawal: any) {
+    return {
+      id: withdrawal.withdrawalId.toString(),
+      withdrawalCode: withdrawal.withdrawalCode,
+      amount: Number(withdrawal.amount),
+      fee: Number(withdrawal.fee),
+      netAmount: withdrawal.netAmount === null ? null : Number(withdrawal.netAmount),
+      status: withdrawal.status,
+      bankCode: withdrawal.bankCode,
+      bankName: withdrawal.bankName,
+      accountNumber: withdrawal.bankAccountNumber,
+      accountHolderName: withdrawal.bankAccountHolder,
+      payoutId: withdrawal.providerPayoutId,
+      referenceId: withdrawal.providerReferenceId,
+      failureReason: withdrawal.failureReason,
+      createdAt: withdrawal.createdAt?.toISOString(),
+      requestedAt: withdrawal.requestedAt?.toISOString(),
+      processedAt: withdrawal.processedAt?.toISOString(),
+    };
   }
 
   async getWithdrawal(withdrawalId: string | number | bigint) {

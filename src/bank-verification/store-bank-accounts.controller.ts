@@ -24,8 +24,9 @@ export class StoreBankAccountsController {
   @UseGuards(JwtAuthGuard, BankLookupRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Post('bank-accounts/lookup')
-  async lookupAccount(@Body() dto: LookupBankAccountDto) {
-    const data = await this.service.lookupBankAccount(dto);
+  async lookupAccount(@Body() dto: LookupBankAccountDto, @Request() req?: any) {
+    const userId = req?.user?.userId ? BigInt(req.user.userId) : (req?.user?.id ? BigInt(req.user.id) : undefined);
+    const data = await this.service.lookupBankAccount(dto, userId);
     return {
       success: true,
       message: 'Tra cứu thông tin tài khoản thành công',

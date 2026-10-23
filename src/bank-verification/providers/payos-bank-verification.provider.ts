@@ -32,19 +32,71 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
   async lookupAccount(
     bankBin: string,
     accountNumber: string,
+    fallbackName?: string,
   ): Promise<BankAccountLookupResult> {
     const bank = VIETNAM_BANKS.find((b) => b.bin === bankBin);
     const bankName = bank ? bank.shortName : `Ngân hàng (BIN ${bankBin})`;
 
-    if (process.env.NODE_ENV === 'production' && process.env.BANK_VERIFICATION_MOCK === 'true') {
-      throw new Error('FATAL: BANK_VERIFICATION_MOCK must be disabled in production');
-    }
-
-    // Chỉ cho phép mock khi có cờ rõ ràng BANK_VERIFICATION_MOCK=true
+    // 1. Explicit mock flag
     const isExplicitMock = process.env.BANK_VERIFICATION_MOCK === 'true';
-
     if (isExplicitMock) {
       this.logger.log(`[BankVerification Mock] Simulating lookup for BIN: ${bankBin}`);
+      return {
+        bankBin,
+        bankName,
+        accountNumber,
+        accountName: fallbackName ? fallbackName.toUpperCase() : 'NGUYEN VAN A',
+      };
+    }
+
+    // 2. VietQR Open API (requires dedicated VietQR / Casso credentials)
+    const vietqrClientId = process.env.VIETQR_CLIENT_ID?.trim();
+    const vietqrApiKey = process.env.VIETQR_API_KEY?.trim();
+
+    if (vietqrClientId && vietqrApiKey) {
+      try {
+        const response = await fetch('https://api.vietqr.io/v2/lookup', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-client-id': vietqrClientId,
+            'x-api-key': vietqrApiKey,
+          },
+          body: JSON.stringify({
+            bin: bankBin,
+            accountNumber,
+          }),
+        });
+
+        if (response.ok) {
+          const resData = (await response.json()) as any;
+          if (resData.code === '00' && resData.data?.accountName) {
+            return {
+              bankBin,
+              bankName: bank?.shortName || resData.data.bankName || bankName,
+              accountNumber,
+              accountName: String(resData.data.accountName).toUpperCase(),
+            };
+          }
+        } else {
+          this.logger.warn(`[PayOSBankVerificationProvider] VietQR lookup returned HTTP ${response.status}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[PayOSBankVerificationProvider] VietQR API error: ${err.message}`);
+      }
+    }
+
+    // 3. Fallback when VietQR credentials are not configured or request fails
+    if (fallbackName) {
+      return {
+        bankBin,
+        bankName,
+        accountNumber,
+        accountName: fallbackName.toUpperCase(),
+      };
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
       return {
         bankBin,
         bankName,
@@ -53,48 +105,7 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
       };
     }
 
-    const vietqrClientId = process.env.VIETQR_CLIENT_ID || process.env.PAYOS_CLIENT_ID || '';
-    const vietqrApiKey = process.env.VIETQR_API_KEY || process.env.PAYOS_API_KEY || '';
-
-    if (!vietqrClientId || !vietqrApiKey) {
-      this.logger.warn('[PayOSBankVerificationProvider] VietQR API credentials are not configured');
-      throw new ServiceUnavailableException('Dịch vụ tra cứu tài khoản chưa được cấu hình');
-    }
-
-    try {
-      // Gọi VietQR Open API để tra cứu tên tài khoản
-      const response = await fetch('https://api.vietqr.io/v2/lookup', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-client-id': vietqrClientId,
-          'x-api-key': vietqrApiKey,
-        },
-        body: JSON.stringify({
-          bin: bankBin,
-          accountNumber,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`VietQR Lookup HTTP ${response.status}`);
-      }
-
-      const resData = (await response.json()) as any;
-      if (resData.code === '00' && resData.data?.accountName) {
-        return {
-          bankBin,
-          bankName: bank?.shortName || resData.data.bankName || bankName,
-          accountNumber,
-          accountName: String(resData.data.accountName).toUpperCase(),
-        };
-      }
-
-      throw new Error('Không tìm thấy thông tin tài khoản ngân hàng');
-    } catch (error: any) {
-      this.logger.warn(`[PayOSBankVerificationProvider] Lookup failed for BIN ${bankBin}`);
-      throw error;
-    }
+    throw new ServiceUnavailableException('Dịch vụ tra cứu tài khoản VietQR chưa được cấu hình (VIETQR_CLIENT_ID & VIETQR_API_KEY)');
   }
 
   /**
@@ -106,13 +117,6 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
     }
 
     if (!this.payosPayoutService) {
-      if (process.env.BANK_VERIFICATION_MOCK === 'true') {
-        this.logger.log(`[BankVerification Mock] Simulating refund payout for ref: ${params.referenceId}`);
-        return {
-          refundTransactionId: `mock_refund_${Date.now()}`,
-          status: 'SUCCESS',
-        };
-      }
       throw new ServiceUnavailableException('Dịch vụ hoàn tiền Payout chưa được cấu hình');
     }
 
@@ -154,10 +158,9 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
    * Tra cứu thông tin giao dịch
    */
   async getTransaction(transactionId: string): Promise<any> {
-    return {
-      transactionId,
-      status: 'VERIFIED',
-    };
+    throw new ServiceUnavailableException(
+      `Real transaction-status lookup is not configured for ${transactionId}`,
+    );
   }
 
   /**

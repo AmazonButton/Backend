@@ -1,9 +1,14 @@
-import { IsNotEmpty, IsString, IsOptional, IsNumberString } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsNumberString, Matches } from 'class-validator';
 
 export class UpdateBankAccountDto {
   @IsString()
   @IsNotEmpty()
   bankName: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{6}$/)
+  bankBin?: string;
 
   @IsString()
   @IsNotEmpty()
