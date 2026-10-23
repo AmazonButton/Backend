@@ -393,6 +393,11 @@ export class OrdersService {
   }
 
   async updateOrderStatus(orderId: string | number | bigint, newStatus: string, user?: any) {
+    let normalizedStatus = typeof newStatus === 'string' ? newStatus.trim().toUpperCase() : newStatus;
+    if (normalizedStatus === 'OUT_FOR_DELIVERY') {
+      normalizedStatus = 'READY_FOR_DELIVERY';
+    }
+
     const targetOrderId = BigInt(orderId);
     const order = await this.ordersRepo.findOrderById(targetOrderId);
 
@@ -409,34 +414,34 @@ export class OrdersService {
     }
 
     // Idempotent check: if already at target status, return directly
-    if (order.orderStatus === newStatus) {
+    if (order.orderStatus === normalizedStatus) {
       return toOrderResponseDto(order);
     }
 
     // Validate transition graph according to BRD
     const allowedNext = ALLOWED_ORDER_TRANSITIONS[order.orderStatus] || [];
-    if (!allowedNext.includes(newStatus)) {
+    if (!allowedNext.includes(normalizedStatus)) {
       throw new BadRequestException(
-        `Không thể chuyển trạng thái đơn hàng từ ${order.orderStatus} sang ${newStatus}`,
+        `Không thể chuyển trạng thái đơn hàng từ ${order.orderStatus} sang ${normalizedStatus}`,
       );
     }
 
     let updated: any;
-    if (newStatus === 'COMPLETED') {
+    if (normalizedStatus === 'COMPLETED') {
       updated = await this.ordersRepo.completeOrderAtomicTx(targetOrderId);
-    } else if (['CANCELLED', 'REJECTED'].includes(newStatus)) {
+    } else if (['CANCELLED', 'REJECTED'].includes(normalizedStatus)) {
       updated = await this.ordersRepo.cancelOrderAtomicTx(
         targetOrderId,
-        newStatus === 'REJECTED' ? 'Cửa hàng từ chối tiếp nhận đơn' : 'Cập nhật hủy đơn',
+        normalizedStatus === 'REJECTED' ? 'Cửa hàng từ chối tiếp nhận đơn' : 'Cập nhật hủy đơn',
         user?.userId || user?.id,
-        newStatus as 'CANCELLED' | 'REJECTED',
+        normalizedStatus as 'CANCELLED' | 'REJECTED',
       );
     } else {
       updated = await this.ordersRepo.transitionOrderStatusAtomicTx(
         targetOrderId,
-        newStatus,
+        normalizedStatus,
         user?.userId || user?.id,
-        `Chuyển trạng thái sang ${newStatus}`,
+        `Chuyển trạng thái sang ${normalizedStatus}`,
       );
     }
 
@@ -448,12 +453,12 @@ export class OrdersService {
     // Send FCM Push Notification
     if (this.notificationsService) {
       const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
-      this.notificationsService.sendOrderStatusChanged(formattedOrder, customerUserId, newStatus).catch((err) => {
+      this.notificationsService.sendOrderStatusChanged(formattedOrder, customerUserId, normalizedStatus).catch((err) => {
         this.logger.warn(`Failed to send order status changed push notification: ${err.message}`);
       });
     }
 
-    if (newStatus === 'READY_FOR_DELIVERY') {
+    if (normalizedStatus === 'READY_FOR_DELIVERY') {
       const readyPayload = {
         orderId: formattedOrder.orderId,
         orderCode: formattedOrder.orderCode,

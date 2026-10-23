@@ -33,10 +33,11 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
+      // Security: Only accept token via Authorization header or Socket.IO handshake.auth
+      // Query parameters are strictly rejected to prevent tokens appearing in access/proxy logs
       const authHeader =
         client.handshake.headers?.authorization ||
-        client.handshake.auth?.token ||
-        (client.handshake.query?.token as string);
+        client.handshake.auth?.token;
 
       let token = '';
       if (typeof authHeader === 'string') {
@@ -108,11 +109,45 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Auto-join personal rooms
       client.join(`user:${payload.userId}`);
+      client.join(`user_${payload.userId}`);
       client.join(`driver:${payload.userId}`);
+
+      const targetStoreIds = new Set<string>();
       if (payload.storeId) {
-        client.join(`store_${payload.storeId}`);
-        client.join(`store:${payload.storeId}`);
+        targetStoreIds.add(payload.storeId.toString());
       }
+
+      // Query database for all stores owned by this user or where they are active staff
+      if (this.prisma) {
+        try {
+          const userBigInt = BigInt(payload.userId);
+          const [ownedStores, staffStores] = await Promise.all([
+            this.prisma.store.findMany({
+              where: { ownerUserId: userBigInt, status: 'ACTIVE' },
+              select: { storeId: true },
+            }),
+            this.prisma.storeStaff.findMany({
+              where: { userId: userBigInt, status: 'ACTIVE' },
+              select: { storeId: true },
+            }),
+          ]);
+
+          for (const s of ownedStores) {
+            targetStoreIds.add(s.storeId.toString());
+          }
+          for (const s of staffStores) {
+            targetStoreIds.add(s.storeId.toString());
+          }
+        } catch (storeQueryErr: any) {
+          this.logger.warn(`⚠️ [WS] Failed to fetch stores for user ${payload.userId}: ${storeQueryErr.message}`);
+        }
+      }
+
+      for (const sId of targetStoreIds) {
+        client.join(`store_${sId}`);
+        client.join(`store:${sId}`);
+      }
+
       if (payload.customerProfileId) {
         client.join(`customer_${payload.customerProfileId}`);
         client.join(`customer:${payload.customerProfileId}`);
@@ -183,6 +218,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.server.to(`driver:${driverId}`).emit(event, payload);
       this.server.to(`user:${driverId}`).emit(event, payload);
       this.logger.log(`📢 [WS -> Driver ${driverId}] ${event}`);
+    }
+  }
+
+  emitToUser(userId: string, event: string, payload: any) {
+    if (this.server) {
+      this.server.to(`user:${userId}`).emit(event, payload);
+      this.server.to(`user_${userId}`).emit(event, payload);
+      this.logger.log(`📢 [WS -> User ${userId}] ${event}`);
     }
   }
 

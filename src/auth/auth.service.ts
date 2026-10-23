@@ -27,6 +27,7 @@ import {
 import { RegisterByPhoneDto } from './dto/register-by-phone.dto';
 import { LoginByPhoneDto } from './dto/login-by-phone.dto';
 import { FirebasePhoneService } from './firebase-phone.service';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -753,6 +754,55 @@ export class AuthService {
     return {
       success: true,
       message: 'Mật khẩu đã được cập nhật thành công. Vui lòng đăng nhập lại.',
+    };
+  }
+
+  /**
+   * 8.1 Change Password for Authenticated User
+   */
+  async changePassword(userId: string | number | bigint, dto: ChangePasswordDto, rawAccessToken?: string) {
+    const targetUserId = BigInt(userId);
+    const user = await this.authRepo.findById(targetUserId);
+
+    if (!user || user.status !== 'ACTIVE') {
+      throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị vô hiệu hóa');
+    }
+
+    if (!user.passwordHash) {
+      throw new BadRequestException('Tài khoản này chưa thiết lập mật khẩu (đăng nhập bằng mạng xã hội hoặc số điện thoại)');
+    }
+
+    const isMatch = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new UnauthorizedException({
+        success: false,
+        code: 'INCORRECT_CURRENT_PASSWORD',
+        message: 'Mật khẩu hiện tại không chính xác',
+      });
+    }
+
+    if (dto.currentPassword === dto.newPassword) {
+      throw new BadRequestException({
+        success: false,
+        code: 'PASSWORD_UNCHANGED',
+        message: 'Mật khẩu mới không được trùng với mật khẩu hiện tại',
+      });
+    }
+
+    const newPasswordHash = await bcrypt.hash(dto.newPassword, 12);
+    const passwordChangedAt = new Date();
+
+    await this.authRepo.updatePasswordTx(targetUserId, newPasswordHash, passwordChangedAt);
+
+    // Invalidate token in blacklist and invalidate session cache
+    if (rawAccessToken) {
+      await TokenBlacklist.revokeTokenAsync(rawAccessToken, 7 * 86400, targetUserId);
+    }
+    TokenBlacklist.revokeUser(targetUserId);
+
+    return {
+      success: true,
+      message: 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại.',
     };
   }
 

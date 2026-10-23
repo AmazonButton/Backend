@@ -236,6 +236,7 @@ export class ProvisioningRepository {
       deviceId?: string;
       buttonName?: string;
       productId: string | number | bigint;
+      addressId?: string | number | bigint;
     },
   ): Promise<any> {
     return this.prisma.$transaction(async (tx: any) => {
@@ -300,17 +301,42 @@ export class ProvisioningRepository {
         );
       }
 
-      // 4. Update device owner and status
+      // 4. Resolve customer address to satisfy composite foreign key (customer_id, address_id)
+      let resolvedAddressId: bigint | null = null;
+      if (dto.addressId) {
+        const addrRows: any[] = await tx.$queryRawUnsafe(
+          `SELECT address_id FROM customer_address WHERE address_id = $1 AND customer_id = $2;`,
+          BigInt(dto.addressId),
+          customerId,
+        );
+        if (addrRows && addrRows.length > 0) {
+          resolvedAddressId = addrRows[0].address_id;
+        }
+      }
+
+      if (!resolvedAddressId) {
+        const defaultAddrRows: any[] = await tx.$queryRawUnsafe(
+          `SELECT address_id FROM customer_address WHERE customer_id = $1 ORDER BY is_default DESC, address_id ASC LIMIT 1;`,
+          customerId,
+        );
+        if (defaultAddrRows && defaultAddrRows.length > 0) {
+          resolvedAddressId = defaultAddrRows[0].address_id;
+        }
+      }
+
+      // Update device owner, address, and status
       const buttonName = dto.buttonName?.trim() || device.button_name;
       await tx.$executeRawUnsafe(
         `UPDATE iot_button
          SET customer_id = $1,
-             button_name = $2,
+             address_id = $2,
+             button_name = $3,
              status = 'ACTIVE',
              installed_at = NOW(),
              updated_at = NOW()
-         WHERE button_id = $3;`,
+         WHERE button_id = $4;`,
         customerId,
+        resolvedAddressId,
         buttonName,
         device.button_id,
       );

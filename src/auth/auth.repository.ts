@@ -368,6 +368,23 @@ export class AuthRepository {
     });
   }
 
+  async updatePasswordTx(userId: bigint, newPasswordHash: string, passwordChangedAt: Date) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { userId },
+        data: {
+          passwordHash: newPasswordHash,
+          passwordChangedAt,
+          updatedAt: new Date(),
+        },
+      });
+      await tx.refreshToken.updateMany({
+        where: { userId },
+        data: { isRevoked: true },
+      });
+    });
+  }
+
   // --- Dedicated OTP Table Methods (Atomic & Peppered) ---
   async createAuthOtp(data: {
     userId?: bigint;

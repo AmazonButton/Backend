@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -287,11 +287,13 @@ export class DevicesRepository {
   async deployTemplateAtomicTx(buttonId: bigint, template: {
     singlePressAction?: string | null;
     doublePressAction?: string | null;
+    longPressAction?: string | null;
     defaultQuantity?: number | null;
     cancelWindowSeconds?: number | null;
     doubleClickWindowMs?: number | null;
     templateId?: bigint | null;
     deployedTemplateId?: bigint | null;
+    defaultProductId?: bigint | null;
   }) {
     return this.prisma.$transaction(async (tx) => {
       // 1. Lock button row for update
@@ -317,6 +319,7 @@ export class DevicesRepository {
         clickBehavior,
         singlePressAction: template.singlePressAction !== undefined ? template.singlePressAction : undefined,
         doublePressAction: template.doublePressAction !== undefined ? template.doublePressAction : undefined,
+        longPressAction: template.longPressAction !== undefined ? template.longPressAction : undefined,
         cancelWindowSeconds: template.cancelWindowSeconds !== undefined ? template.cancelWindowSeconds : undefined,
       };
       if (targetTemplateId !== undefined) {
@@ -338,8 +341,17 @@ export class DevicesRepository {
         },
       });
 
-      // 3. Atomically update button product default quantity if specified
-      if (template.defaultQuantity && template.defaultQuantity > 0) {
+      // 3. Atomically map default product and default quantity if specified
+      if (template.defaultProductId) {
+        await tx.buttonProduct.deleteMany({ where: { buttonId } });
+        await tx.buttonProduct.create({
+          data: {
+            buttonId,
+            productId: template.defaultProductId,
+            quantity: template.defaultQuantity && template.defaultQuantity > 0 ? template.defaultQuantity : 1,
+          },
+        });
+      } else if (template.defaultQuantity && template.defaultQuantity > 0) {
         await tx.buttonProduct.updateMany({
           where: { buttonId },
           data: { quantity: template.defaultQuantity },
@@ -347,6 +359,56 @@ export class DevicesRepository {
       }
 
       return updatedButton;
+    });
+  }
+
+  async allocateDevicesToStoreTx(targetStoreId: bigint, deviceIds: string[]) {
+    return this.prisma.$transaction(async (tx) => {
+      const store = await tx.store.findUnique({
+        where: { storeId: targetStoreId },
+        include: { owner: true },
+      });
+      if (!store) {
+        throw new NotFoundException('Cửa hàng đích không tồn tại');
+      }
+      if (store.status !== 'ACTIVE') {
+        throw new BadRequestException('Cửa hàng đích không hoạt động');
+      }
+
+      // Khóa các thiết bị bằng SELECT ... FOR UPDATE
+      const lockedButtons = await tx.$queryRawUnsafe<any[]>(
+        'SELECT button_id, device_id, store_id, status FROM iot_button WHERE device_id = ANY($1::text[]) FOR UPDATE',
+        deviceIds,
+      );
+
+      const foundMap = new Map<string, any>();
+      lockedButtons.forEach((b) => foundMap.set(b.device_id, b));
+
+      const missingIds = deviceIds.filter((id) => !foundMap.has(id));
+      if (missingIds.length > 0) {
+        throw new NotFoundException(`Các thiết bị không tồn tại: ${missingIds.join(', ')}`);
+      }
+
+      for (const b of lockedButtons) {
+        if (b.store_id && BigInt(b.store_id) !== targetStoreId) {
+          throw new BadRequestException(`Thiết bị ${b.device_id} đã được phân bổ cho cửa hàng khác`);
+        }
+      }
+
+      await tx.ioTButton.updateMany({
+        where: { deviceId: { in: deviceIds } },
+        data: {
+          storeId: targetStoreId,
+          status: 'ACTIVE',
+        },
+      });
+
+      return {
+        store,
+        targetStoreId,
+        ownerUserId: store.ownerUserId ? store.ownerUserId.toString() : (store.owner?.userId ? store.owner.userId.toString() : null),
+        deviceIds,
+      };
     });
   }
 

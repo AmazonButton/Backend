@@ -58,7 +58,7 @@ async function runOrderLifecycleSuite() {
 
   try {
     // 0. Setup Fixtures
-    testStore = await prisma.store.findFirst();
+    testStore = (await prisma.store.findFirst({ where: { products: { some: {} } } })) || (await prisma.store.findFirst());
     if (!testStore) throw new Error('No store found in database');
 
     testCustomerProfile = await prisma.customerProfile.findFirst({

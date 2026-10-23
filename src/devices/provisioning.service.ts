@@ -155,6 +155,7 @@ export class ProvisioningService {
         deviceId: dto.deviceId,
         buttonName: dto.buttonName,
         productId: dto.productId,
+        addressId: dto.addressId,
       });
 
       this.eventsGateway.emitToStore(result.storeId, 'DEVICE_PROVISIONED', {

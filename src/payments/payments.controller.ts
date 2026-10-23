@@ -10,11 +10,23 @@ import {
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentLinkDto, PayosWebhookDto, CancelPaymentLinkDto } from './dto/payment.dto';
+import { ChangePaymentMethodDto } from './dto/change-payment-method.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
+
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  @Post('orders/:orderId/payment-method')
+  async changePaymentMethod(
+    @Param('orderId') orderId: string,
+    @Body() body: ChangePaymentMethodDto,
+    @Request() req: any,
+  ) {
+    return this.paymentsService.changeOrderPaymentMethod(orderId, body, req.user);
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post('payos/create-link')

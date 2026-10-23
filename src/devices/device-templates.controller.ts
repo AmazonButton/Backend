@@ -21,7 +21,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+@Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
 @Controller('device-templates')
 export class DeviceTemplatesController {
   constructor(

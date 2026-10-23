@@ -1,16 +1,23 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FirebaseService, SendPushResult } from './firebase.service';
 import { RegisterFcmTokenDto } from './dto/register-fcm-token.dto';
+import { NotificationsRepository } from './notifications.repository';
+import { QueryNotificationsDto } from './dto/query-notifications.dto';
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
+  private readonly repo: NotificationsRepository;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(FirebaseService) private readonly firebaseService: FirebaseService,
-  ) {}
+    @Optional() @Inject(NotificationsRepository) private readonly notificationsRepo?: NotificationsRepository,
+  ) {
+    this.repo = this.notificationsRepo || new NotificationsRepository(this.prisma);
+  }
+
 
   /**
    * 1. Dang ky FCM Token cho User
@@ -252,5 +259,121 @@ export class NotificationsService {
         status: newStatus,
       },
     });
+  }
+
+  private formatNotification(item: any) {
+    return {
+      notificationId: item.notificationId.toString(),
+      userId: item.userId.toString(),
+      type: item.type,
+      title: item.title,
+      body: item.body,
+      data: item.data,
+      idempotencyKey: item.idempotencyKey,
+      readAt: item.readAt,
+      createdAt: item.createdAt,
+    };
+  }
+
+  /**
+   * 7. Lay danh sach thong bao cua user (phan trang)
+   */
+  async getNotifications(userId: string | number | bigint, query: QueryNotificationsDto) {
+    const targetUserId = BigInt(userId);
+    const res = await this.repo.findMany(targetUserId, {
+      page: query.page,
+      pageSize: query.pageSize,
+    });
+
+    return {
+      success: true,
+      data: res.items.map((item) => this.formatNotification(item)),
+      unreadCount: res.unreadCount,
+      pagination: {
+        page: res.page,
+        pageSize: res.pageSize,
+        total: res.total,
+        totalPages: Math.ceil(res.total / res.pageSize) || 1,
+      },
+    };
+  }
+
+  /**
+   * 8. Lay so luong thong bao chua doc
+   */
+  async getUnreadCount(userId: string | number | bigint) {
+    const targetUserId = BigInt(userId);
+    const unreadCount = await this.repo.getUnreadCount(targetUserId);
+    return {
+      success: true,
+      data: {
+        unreadCount,
+      },
+    };
+  }
+
+  /**
+   * 9. Danh dau mot thong bao la da doc (BOLA protected)
+   */
+  async markAsRead(notificationId: string | number | bigint, userId: string | number | bigint) {
+    const notifId = BigInt(notificationId);
+    const targetUserId = BigInt(userId);
+    const updated = await this.repo.markAsRead(notifId, targetUserId);
+    return {
+      success: true,
+      message: 'Đã đánh dấu thông báo là đã đọc',
+      data: this.formatNotification(updated),
+    };
+  }
+
+  /**
+   * 10. Danh dau tat ca thong bao la da doc
+   */
+  async markAllAsRead(userId: string | number | bigint) {
+    const targetUserId = BigInt(userId);
+    const res = await this.repo.markAllAsRead(targetUserId);
+    return {
+      success: true,
+      message: 'Đã đánh dấu tất cả thông báo là đã đọc',
+      data: {
+        updatedCount: res.updatedCount,
+      },
+    };
+  }
+
+  /**
+   * 11. Tao va phat thong bao (DB History + FCM Push)
+   */
+  async createAndDispatchNotification(params: {
+    userId: bigint | number;
+    type: string;
+    title: string;
+    body: string;
+    data?: any;
+    idempotencyKey: string;
+  }) {
+    const targetUserId = BigInt(params.userId);
+    // 1. Luu lich su thong bao voi idempotency key
+    const record = await this.repo.createNotification({
+      userId: targetUserId,
+      type: params.type,
+      title: params.title,
+      body: params.body,
+      data: params.data,
+      idempotencyKey: params.idempotencyKey,
+    });
+
+    // 2. Gui FCM Push notification
+    this.sendPushToUser(targetUserId, {
+      title: params.title,
+      body: params.body,
+      data: params.data ? Object.fromEntries(
+        Object.entries(params.data).map(([k, v]) => [k, String(v)])
+      ) : undefined,
+    }).catch((err) => {
+      this.logger.error(`[NotificationsService] Failed to dispatch push for user ${targetUserId}: ${err.message}`);
+    });
+
+    return record ? this.formatNotification(record) : null;
   }
 }

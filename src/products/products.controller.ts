@@ -4,6 +4,7 @@ import {
   Post,
   Put,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -62,7 +63,7 @@ export class ProductsController {
     };
   }
 
-  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post()
   @ApiOperation({ summary: 'Tạo sản phẩm mới (STORE_OWNER hoặc SYSTEM_ADMIN)' })
   async create(@Request() req: any, @Body() body: CreateProductDto) {
@@ -70,7 +71,7 @@ export class ProductsController {
     return { success: true, message: 'Tạo sản phẩm thành công!', data };
   }
 
-  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Put(':id')
   @ApiOperation({ summary: 'Cập nhật thông tin và giá sản phẩm (STORE_OWNER hoặc SYSTEM_ADMIN)' })
   async update(@Param('id') id: string, @Body() body: UpdateProductDto, @Request() req: any) {
@@ -88,5 +89,15 @@ export class ProductsController {
   ) {
     const data = await this.productsService.updateStock(id, body, req.user);
     return { success: true, message: 'Cập nhật tồn kho thành công!', data };
+  }
+  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Delete(':id')
+  @ApiOperation({ summary: 'Xóa hoặc vô hiệu hóa sản phẩm' })
+  async deleteProduct(
+    @Param('id') id: string,
+    @Request() req: any,
+  ) {
+    const data = await this.productsService.deleteProduct(id, req.user);
+    return { success: true, message: 'Xóa sản phẩm thành công!', data };
   }
 }

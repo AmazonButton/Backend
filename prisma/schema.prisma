@@ -52,7 +52,7 @@ model User {
   confirmedShifts              DriverShift[]                 @relation("ConfirmedShifts")
   fcmTokens                    UserFcmToken[]
   identityVerificationSessions IdentityVerificationSession[]
-
+  notifications                Notification[]
 
   @@map("users")
 }
@@ -71,21 +71,21 @@ model Store {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  staffs          StoreStaff[]
-  storeCustomers  StoreCustomer[]
-  categories      Category[]
-  products        Product[]
-  inventories     Inventory[]
-  iotButtons      IoTButton[]
-  orders          Order[]
-  deviceTemplates DeviceTemplate[]
-  wallet          StoreWallet?
-  subscriptions   StoreSubscription[]
+  staffs                      StoreStaff[]
+  storeCustomers              StoreCustomer[]
+  categories                  Category[]
+  products                    Product[]
+  inventories                 Inventory[]
+  iotButtons                  IoTButton[]
+  orders                      Order[]
+  deviceTemplates             DeviceTemplate[]
+  wallet                      StoreWallet?
+  subscriptions               StoreSubscription[]
   subscriptionIdempotencyKeys SubscriptionIdempotencyKey[]
-  driverDuties         DriverDuty[]
-  driverShifts         DriverShift[]
-  withdrawals          StoreWithdrawal[]
-  bankAccounts         StoreBankAccount[]
+  driverDuties                DriverDuty[]
+  driverShifts                DriverShift[]
+  withdrawals                 StoreWithdrawal[]
+  bankAccounts                StoreBankAccount[]
 
   @@map("store")
 }
@@ -195,12 +195,13 @@ model Product {
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  priceHistories ProductPriceHistory[]
-  discounts      ProductDiscount[]
-  inventory      Inventory?
-  buttonProducts ButtonProduct[]
-  orderItems     OrderItem[]
-  images         ProductImage[]
+  priceHistories  ProductPriceHistory[]
+  discounts       ProductDiscount[]
+  inventory       Inventory?
+  buttonProducts  ButtonProduct[]
+  orderItems      OrderItem[]
+  images          ProductImage[]
+  deviceTemplates DeviceTemplate[]
 
   @@unique([storeId, productCode], name: "uq_product_store_code")
   @@unique([storeId, productId], name: "uq_product_store_pair")
@@ -250,33 +251,34 @@ model Inventory {
 }
 
 model IoTButton {
-  buttonId    BigInt          @id @default(autoincrement()) @map("button_id")
-  storeId     BigInt          @map("store_id")
-  store       Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
-  customerId  BigInt?         @map("customer_id")
-  customer    CustomerProfile? @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
-  addressId   BigInt?         @map("address_id")
-  address     CustomerAddress? @relation(fields: [customerId, addressId], references: [customerId, addressId], onDelete: Restrict)
-  deviceId    String          @unique @map("device_id")
-  buttonCode  String          @unique @map("button_code")
-  buttonName  String?         @map("button_name")
-  hmacSecret  String          @map("hmac_secret")
-  status              String          @default("ACTIVE")
-  batteryLevel        Int?            @default(100) @map("battery_level")
-  warrantyUntil       DateTime?       @map("warranty_until")
-  clickBehavior       String?         @default("SINGLE") @map("click_behavior")
-  doubleClickWindowMs Int?            @default(300) @map("double_click_window_ms")
-  holdDurationMs      Int?            @default(1500) @map("hold_duration_ms")
-  singlePressAction   String?         @default("CREATE_ORDER") @map("single_press_action") @db.VarChar(50)
-  doublePressAction   String?         @default("CANCEL_ORDER") @map("double_press_action") @db.VarChar(50)
-  cancelWindowSeconds Int?            @default(60) @map("cancel_window_seconds")
-  deployedTemplateId  BigInt?         @map("deployed_template_id")
-  deployedTemplate    DeviceTemplate? @relation(fields: [deployedTemplateId], references: [templateId], onDelete: SetNull)
-  installedAt DateTime?       @map("installed_at")
-  createdAt   DateTime        @default(now()) @map("created_at")
-  updatedAt   DateTime        @default(now()) @updatedAt @map("updated_at")
-  rentalId    BigInt?         @map("rental_id")
-  rental      ButtonRental?   @relation(fields: [rentalId], references: [rentalId], onDelete: SetNull)
+  buttonId            BigInt           @id @default(autoincrement()) @map("button_id")
+  storeId             BigInt           @map("store_id")
+  store               Store            @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  customerId          BigInt?          @map("customer_id")
+  customer            CustomerProfile? @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  addressId           BigInt?          @map("address_id")
+  address             CustomerAddress? @relation(fields: [customerId, addressId], references: [customerId, addressId], onDelete: Restrict)
+  deviceId            String           @unique @map("device_id")
+  buttonCode          String           @unique @map("button_code")
+  buttonName          String?          @map("button_name")
+  hmacSecret          String           @map("hmac_secret")
+  status              String           @default("ACTIVE")
+  batteryLevel        Int?             @default(100) @map("battery_level")
+  warrantyUntil       DateTime?        @map("warranty_until")
+  clickBehavior       String?          @default("SINGLE") @map("click_behavior")
+  doubleClickWindowMs Int?             @default(300) @map("double_click_window_ms")
+  holdDurationMs      Int?             @default(1500) @map("hold_duration_ms")
+  singlePressAction   String?          @default("CREATE_ORDER") @map("single_press_action") @db.VarChar(50)
+  doublePressAction   String?          @default("CANCEL_ORDER") @map("double_press_action") @db.VarChar(50)
+  longPressAction     String?          @default("WIFI_CONFIGURATION") @map("long_press_action") @db.VarChar(50)
+  cancelWindowSeconds Int?             @default(60) @map("cancel_window_seconds")
+  deployedTemplateId  BigInt?          @map("deployed_template_id")
+  deployedTemplate    DeviceTemplate?  @relation(fields: [deployedTemplateId], references: [templateId], onDelete: SetNull)
+  installedAt         DateTime?        @map("installed_at")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @default(now()) @updatedAt @map("updated_at")
+  rentalId            BigInt?          @map("rental_id")
+  rental              ButtonRental?    @relation(fields: [rentalId], references: [rentalId], onDelete: SetNull)
 
   buttonProducts  ButtonProduct[]
   orders          Order[]
@@ -431,8 +433,11 @@ model DeviceTemplate {
   category            String?
   storeId             BigInt?  @map("store_id")
   store               Store?   @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
+  defaultProductId    BigInt?  @map("default_product_id")
+  defaultProduct      Product? @relation(fields: [defaultProductId], references: [productId], onDelete: SetNull)
   singlePressAction   String?  @default("CREATE_ORDER") @map("single_press_action")
   doublePressAction   String?  @default("CANCEL_ORDER") @map("double_press_action")
+  longPressAction     String?  @default("WIFI_CONFIGURATION") @map("long_press_action")
   defaultQuantity     Int?     @default(1) @map("default_quantity")
   cancelWindowSeconds Int?     @default(60) @map("cancel_window_seconds")
   createdAt           DateTime @default(now()) @map("created_at")
@@ -661,7 +666,6 @@ model IotIdempotencyKey {
   @@map("iot_idempotency_keys")
 }
 
-
 model DeviceNonce {
   deviceId  String   @map("device_id") @db.VarChar(64)
   nonce     String   @db.VarChar(128)
@@ -674,17 +678,17 @@ model DeviceNonce {
 }
 
 model ProvisioningSession {
-  id          BigInt    @id @default(autoincrement())
-  sessionId   String    @unique @map("session_id") @db.VarChar(64)
-  sessionHash String    @map("session_hash") @db.VarChar(128)
-  deviceId    BigInt    @map("device_id")
-  sessionData Json?     @map("session_data")
-  tokenHash   String?   @map("token_hash") @db.VarChar(128)
-  status      String    @default("ACTIVE") @db.VarChar(20)
-  claimedBy   BigInt?   @map("claimed_by")
-  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id          BigInt   @id @default(autoincrement())
+  sessionId   String   @unique @map("session_id") @db.VarChar(64)
+  sessionHash String   @map("session_hash") @db.VarChar(128)
+  deviceId    BigInt   @map("device_id")
+  sessionData Json?    @map("session_data")
+  tokenHash   String?  @map("token_hash") @db.VarChar(128)
+  status      String   @default("ACTIVE") @db.VarChar(20)
+  claimedBy   BigInt?  @map("claimed_by")
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([sessionId])
   @@map("provisioning_sessions")
@@ -708,13 +712,13 @@ model SubscriptionIdempotencyKey {
 }
 
 model DriverDuty {
-  driverDutyId BigInt    @id @default(autoincrement()) @map("driver_duty_id")
-  driverId     BigInt    @unique @map("driver_id")
-  storeId      BigInt    @map("store_id")
-  status       String    @default("OFFLINE") @map("status") @db.VarChar(20)
-  lastSeenAt   DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  driverDutyId BigInt   @id @default(autoincrement()) @map("driver_duty_id")
+  driverId     BigInt   @unique @map("driver_id")
+  storeId      BigInt   @map("store_id")
+  status       String   @default("OFFLINE") @map("status") @db.VarChar(20)
+  lastSeenAt   DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   driver User  @relation(fields: [driverId], references: [userId], onDelete: Cascade)
   store  Store @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
@@ -787,21 +791,21 @@ model DiditWebhookEvent {
 }
 
 model StoreBankAccount {
-  id                    BigInt    @id @default(autoincrement()) @map("id")
-  storeId               BigInt    @map("store_id")
-  store                 Store     @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
-  bankBin               String    @map("bank_bin") @db.VarChar(10)
-  bankCode              String?   @map("bank_code") @db.VarChar(20)
-  bankName              String    @map("bank_name") @db.VarChar(100)
-  accountNumberEncrypted String   @map("account_number_encrypted") @db.Text
-  accountNumberHash     String    @map("account_number_hash") @db.VarChar(64)
-  accountName           String    @map("account_name") @db.VarChar(255)
-  verificationStatus    String    @default("PENDING") @map("verification_status") @db.VarChar(32)
-  isDefault             Boolean   @default(true) @map("is_default")
-  verifiedAt            DateTime? @map("verified_at") @db.Timestamptz(6)
-  lastVerifiedAt        DateTime? @map("last_verified_at") @db.Timestamptz(6)
-  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                     BigInt    @id @default(autoincrement()) @map("id")
+  storeId                BigInt    @map("store_id")
+  store                  Store     @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
+  bankBin                String    @map("bank_bin") @db.VarChar(10)
+  bankCode               String?   @map("bank_code") @db.VarChar(20)
+  bankName               String    @map("bank_name") @db.VarChar(100)
+  accountNumberEncrypted String    @map("account_number_encrypted") @db.Text
+  accountNumberHash      String    @map("account_number_hash") @db.VarChar(64)
+  accountName            String    @map("account_name") @db.VarChar(255)
+  verificationStatus     String    @default("PENDING") @map("verification_status") @db.VarChar(32)
+  isDefault              Boolean   @default(true) @map("is_default")
+  verifiedAt             DateTime? @map("verified_at") @db.Timestamptz(6)
+  lastVerifiedAt         DateTime? @map("last_verified_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   verificationTransactions BankAccountVerificationTransaction[]
 
@@ -811,22 +815,22 @@ model StoreBankAccount {
 }
 
 model BankAccountVerificationTransaction {
-  id                    BigInt    @id @default(autoincrement()) @map("id")
-  bankAccountId         BigInt    @map("bank_account_id")
+  id                    BigInt           @id @default(autoincrement()) @map("id")
+  bankAccountId         BigInt           @map("bank_account_id")
   bankAccount           StoreBankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
-  referenceCode         String    @map("reference_code") @db.VarChar(64)
-  expectedAmount        Decimal   @default(2000) @map("expected_amount") @db.Decimal(15, 2)
-  receivedAmount        Decimal?  @map("received_amount") @db.Decimal(15, 2)
-  providerTransactionId String?   @unique(map: "uq_bank_verify_tx_provider_tx_id") @map("provider_transaction_id") @db.VarChar(128)
-  status                String    @default("PENDING") @map("status") @db.VarChar(32)
-  failureReason         String?   @map("failure_reason") @db.VarChar(64)
-  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
-  verifiedAt            DateTime? @map("verified_at") @db.Timestamptz(6)
-  refundStatus          String?   @map("refund_status") @db.VarChar(32)
-  refundTransactionId   String?   @map("refund_transaction_id") @db.VarChar(128)
-  refundedAt            DateTime? @map("refunded_at") @db.Timestamptz(6)
-  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  referenceCode         String           @map("reference_code") @db.VarChar(64)
+  expectedAmount        Decimal          @default(2000) @map("expected_amount") @db.Decimal(15, 2)
+  receivedAmount        Decimal?         @map("received_amount") @db.Decimal(15, 2)
+  providerTransactionId String?          @unique(map: "uq_bank_verify_tx_provider_tx_id") @map("provider_transaction_id") @db.VarChar(128)
+  status                String           @default("PENDING") @map("status") @db.VarChar(32)
+  failureReason         String?          @map("failure_reason") @db.VarChar(64)
+  expiresAt             DateTime         @map("expires_at") @db.Timestamptz(6)
+  verifiedAt            DateTime?        @map("verified_at") @db.Timestamptz(6)
+  refundStatus          String?          @map("refund_status") @db.VarChar(32)
+  refundTransactionId   String?          @map("refund_transaction_id") @db.VarChar(128)
+  refundedAt            DateTime?        @map("refunded_at") @db.Timestamptz(6)
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([bankAccountId, referenceCode], name: "uq_bank_verify_acc_ref")
   @@index([referenceCode], map: "idx_bank_verify_tx_ref_code")
@@ -834,4 +838,21 @@ model BankAccountVerificationTransaction {
   @@map("bank_account_verification_transactions")
 }
 
+model Notification {
+  notificationId BigInt    @id @default(autoincrement()) @map("notification_id")
+  userId         BigInt    @map("user_id")
+  type           String    @map("type") @db.VarChar(50)
+  title          String    @map("title") @db.VarChar(255)
+  body           String    @map("body") @db.Text
+  data           Json?     @map("data")
+  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(128)
+  readAt         DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user           User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([userId, readAt], map: "idx_notifications_user_read")
+  @@index([userId, createdAt], map: "idx_notifications_user_created")
+  @@map("notifications")
+}
 

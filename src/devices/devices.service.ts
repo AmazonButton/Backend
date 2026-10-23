@@ -100,6 +100,7 @@ export class DevicesService {
     }
 
   }
+  private static deviceLocations = new Map<string, string>();
   private deviceAuditLogs = new Map<string, any[]>();
   constructor(
     @Inject(DevicesRepository) private readonly devicesRepo: DevicesRepository,
@@ -125,6 +126,7 @@ export class DevicesService {
       addressId: b.addressId ? b.addressId.toString() : null,
       batteryLevel: b.batteryLevel !== null && b.batteryLevel !== undefined ? b.batteryLevel : 98,
       warrantyUntil: b.warrantyUntil ?? null,
+      location: DevicesService.deviceLocations.get(b.deviceId) || 'Kho trung tâm',
       clickBehavior: b.clickBehavior ?? 'SINGLE',
       doubleClickWindowMs: b.doubleClickWindowMs ?? 300,
       holdDurationMs: b.holdDurationMs ?? 1500,
@@ -375,13 +377,57 @@ export class DevicesService {
   async update(id: string | number | bigint, body: any, user: any) {
     const existing = await this.getById(id, user);
 
-    const updated = await this.devicesRepo.update(BigInt(existing.buttonId), {
-      ...(body.buttonName ? { buttonName: body.buttonName } : {}),
-      ...(body.name ? { buttonName: body.name } : {}),
-      ...(body.status ? { status: body.status } : {}),
-    });
+    if (body.quantity !== undefined && !body.productId) {
+      if (!existing.products || existing.products.length === 0) {
+        throw new BadRequestException('Không thể thiết lập số lượng khi thiết bị chưa có sản phẩm được gán');
+      }
+    }
 
-    return this.formatButton(updated);
+    if (body.productId) {
+      const pId = BigInt(body.productId);
+      const prod = existing.storeId
+        ? await this.devicesRepo.findActiveProductInStore(pId, BigInt(existing.storeId))
+        : null;
+      if (!prod) {
+        throw new BadRequestException('Sản phẩm không thuộc cửa hàng sở hữu thiết bị này hoặc không tồn tại');
+      }
+      await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
+        { productId: pId, quantity: body.quantity || 1 },
+      ]);
+    } else if (body.quantity !== undefined && existing.products && existing.products.length > 0) {
+      const currentPId = BigInt(existing.products[0].productId);
+      await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
+        { productId: currentPId, quantity: body.quantity },
+      ]);
+    }
+
+    const updateData: any = {};
+    if (body.batteryLevel !== undefined) {
+      updateData.batteryLevel = Number(body.batteryLevel);
+    }
+    if (body.warrantyUntil !== undefined) {
+      updateData.warrantyUntil = new Date(body.warrantyUntil);
+    }
+    if (body.buttonName) {
+      updateData.buttonName = body.buttonName;
+    } else if (body.customName) {
+      updateData.buttonName = body.customName;
+    } else if (body.name) {
+      updateData.buttonName = body.name;
+    }
+    if (body.status) {
+      updateData.status = body.status;
+    }
+    if (body.location) {
+      DevicesService.deviceLocations.set(existing.deviceId, body.location);
+    }
+
+    const updated = await this.devicesRepo.update(BigInt(existing.buttonId), updateData);
+    const result = this.formatButton(updated);
+    if (body.location) {
+      result.location = body.location;
+    }
+    return result;
   }
 
   async remove(id: string | number | bigint, user: any) {
@@ -613,15 +659,36 @@ export class DevicesService {
     return buttons.map((b) => this.formatButton(b));
   }
 
-  async allocateDevicesToStore(body: { storeId: string; deviceIds: string[]; productId?: string }, user: any) {
-    const targetStoreId = BigInt(body.storeId);
-    for (const dId of body.deviceIds) {
-      const button = await this.devicesRepo.findByDeviceId(dId);
-      if (button) {
-        await this.devicesRepo.update(button.buttonId, { storeId: targetStoreId });
-      }
+  async allocateDevicesToStore(body: { storeId?: string; targetStoreId?: string; deviceIds: string[]; productId?: string }, user: any) {
+    const rawStoreId = body.targetStoreId || body.storeId;
+    if (!rawStoreId) {
+      throw new BadRequestException('Vui lòng chỉ định storeId hoặc targetStoreId');
     }
-    return { success: true, message: 'Phân bổ nút bấm cho cửa hàng thành công' };
+    const targetStoreId = BigInt(rawStoreId);
+    const allocResult = await this.devicesRepo.allocateDevicesToStoreTx(targetStoreId, body.deviceIds);
+
+    this.eventsGateway.emitToStore(targetStoreId.toString(), 'devices:allocated', {
+      storeId: targetStoreId.toString(),
+      deviceIds: body.deviceIds,
+      timestamp: new Date().toISOString(),
+    });
+    if (allocResult.ownerUserId) {
+      this.eventsGateway.emitToUser(allocResult.ownerUserId, 'devices:allocated', {
+        storeId: targetStoreId.toString(),
+        deviceIds: body.deviceIds,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Phân bổ nút bấm cho cửa hàng thành công',
+      data: {
+        succeeded: body.deviceIds.length,
+        total: body.deviceIds.length,
+        deviceIds: body.deviceIds,
+      },
+    };
   }
 
   async lookupByCode(code: string) {

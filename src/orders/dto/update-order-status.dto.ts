@@ -1,4 +1,5 @@
 import { IsNotEmpty, IsString, IsIn } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export const VALID_ORDER_STATUSES = [
   'PENDING',
@@ -31,6 +32,17 @@ export const ALLOWED_ORDER_TRANSITIONS: Record<OrderStatusType, readonly OrderSt
 export class UpdateOrderStatusDto {
   @IsNotEmpty({ message: 'Trạng thái đơn hàng không được để trống' })
   @IsString()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim().toUpperCase();
+      // Chuẩn hóa alias frontend OUT_FOR_DELIVERY -> READY_FOR_DELIVERY
+      if (trimmed === 'OUT_FOR_DELIVERY') {
+        return 'READY_FOR_DELIVERY';
+      }
+      return trimmed;
+    }
+    return value;
+  })
   @IsIn([...VALID_ORDER_STATUSES], {
     message: `Trạng thái phải là một trong: ${VALID_ORDER_STATUSES.join(', ')}`,
   })

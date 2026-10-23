@@ -14,6 +14,9 @@ import { CreatePaymentLinkDto, PayosWebhookDto } from './dto/payment.dto';
 import { signPaymentRequest, verifyWebhookSignature } from './payos.helper';
 import { Optional, Inject } from '@nestjs/common';
 
+import { NotificationsService } from '../notifications/notifications.service';
+import { ChangePaymentMethodDto } from './dto/change-payment-method.dto';
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -21,6 +24,7 @@ export class PaymentsService {
   constructor(
     private readonly paymentsRepo: PaymentsRepository,
     @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
+    @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
   ) {}
 
   async createPayosPaymentLink(dto: CreatePaymentLinkDto, userOrUserId?: any) {
@@ -401,7 +405,7 @@ export class PaymentsService {
       );
       this.logger.log(`[PayOS Webhook] Payment confirmed and marked as PAID (Escrow hold) for Order #${transaction.orderId} (Transaction #${transaction.paymentTransactionId})`);
 
-      if (this.eventsGateway && transaction.order) {
+      if (transaction.order) {
         const storeId = transaction.order.storeId ? transaction.order.storeId.toString() : '';
         const orderId = transaction.orderId ? transaction.orderId.toString() : '';
         const eventPayload = {
@@ -410,14 +414,46 @@ export class PaymentsService {
           amount: Number(transaction.amount),
           paymentTransactionId: transaction.paymentTransactionId.toString(),
         };
-        this.eventsGateway.emitToStore(storeId, 'ORDER_PAYMENT_CONFIRMED', eventPayload);
-        const assignedDriverId = (transaction.order as any)?.assignedDriverId;
-        if (assignedDriverId) {
-          this.eventsGateway.emitToDriver(
-            assignedDriverId.toString(),
-            'ORDER_PAYMENT_CONFIRMED',
-            eventPayload,
-          );
+
+        if (this.eventsGateway) {
+          this.eventsGateway.emitToStore(storeId, 'ORDER_PAYMENT_CONFIRMED', eventPayload);
+          const assignedDriverId = (transaction.order as any)?.assignedDriverId;
+          if (assignedDriverId) {
+            this.eventsGateway.emitToDriver(
+              assignedDriverId.toString(),
+              'ORDER_PAYMENT_CONFIRMED',
+              eventPayload,
+            );
+          }
+        }
+
+        // Post-commit: send FCM push notification to customer & emit customer websocket
+        const fullOrder = await this.paymentsRepo.findOrderById(transaction.orderId);
+        if (fullOrder && fullOrder.customer) {
+          const customerUserId = fullOrder.customer.userId;
+          const customerId = fullOrder.customer.customerId?.toString();
+
+          if (this.eventsGateway && customerId) {
+            this.eventsGateway.emitToCustomer(customerId, 'ORDER_PAYMENT_CONFIRMED', eventPayload);
+          }
+
+          if (this.notificationsService && customerUserId) {
+            const notifTitle = 'Thanh toán đơn hàng thành công';
+            const notifBody = `Đơn hàng #${orderCodeStr} đã thanh toán thành công qua PayOS với số tiền ${Number(transaction.amount).toLocaleString('vi-VN')} VND.`;
+            this.notificationsService
+              .sendPushToUser(customerUserId, {
+                title: notifTitle,
+                body: notifBody,
+                data: {
+                  orderId,
+                  orderCode: orderCodeStr,
+                  type: 'PAYMENT_SUCCESS',
+                },
+              })
+              .catch((err) => {
+                this.logger.error(`[PayOS Webhook] Failed to dispatch FCM push: ${err.message}`);
+              });
+          }
         }
       }
       return { success: true, message: 'Payment confirmed successfully' };
@@ -426,6 +462,68 @@ export class PaymentsService {
       this.logger.log(`[PayOS Webhook] Payment failed for Order #${transaction.orderId}`);
       return { success: true, message: 'Payment failed recorded' };
     }
+  }
+
+  /**
+   * Đổi phương thức thanh toán cho đơn hàng
+   * - BOLA: Kiểm tra order thuộc quyền sở hữu của user
+   * - Chỉ cho đổi khi order còn PENDING và paymentStatus UNPAID
+   * - Hủy các transaction PENDING cũ và hủy link PayOS tương ứng nếu có
+   */
+  async changeOrderPaymentMethod(orderIdParam: string, dto: ChangePaymentMethodDto, user: any) {
+    if (!orderIdParam || !/^\d+$/.test(orderIdParam)) {
+      throw new BadRequestException('Mã đơn hàng không hợp lệ');
+    }
+    const orderId = BigInt(orderIdParam);
+
+    const existingOrder = await this.paymentsRepo.findOrderById(orderId);
+    if (!existingOrder) {
+      throw new NotFoundException('Không tìm thấy đơn hàng');
+    }
+
+    // Ownership check (Anti-BOLA/IDOR)
+    const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN' || user.role === 'ADMIN';
+    const customerUserId = existingOrder.customer?.userId?.toString();
+    const requestUserId = (user.id || user.userId)?.toString();
+
+    if (!isSuperAdmin && (!customerUserId || customerUserId !== requestUserId)) {
+      throw new ForbiddenException('Bạn không có quyền thay đổi phương thức thanh toán của đơn hàng này');
+    }
+
+    if (existingOrder.paymentStatus === 'PAID') {
+      throw new BadRequestException('Không thể đổi phương thức thanh toán cho đơn hàng đã thanh toán');
+    }
+
+    const terminalStatuses = ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED'];
+    if (terminalStatuses.includes(existingOrder.orderStatus) || existingOrder.orderStatus !== 'PENDING') {
+      throw new BadRequestException(`Không thể đổi phương thức thanh toán khi đơn hàng đang ở trạng thái ${existingOrder.orderStatus}`);
+    }
+
+    // Hủy các pending payment transaction cũ nếu có
+    const pendingTransactions = await this.paymentsRepo.findTransactionsByOrderId(orderId);
+    for (const tx of pendingTransactions) {
+      if (tx.status === 'PENDING' && tx.paymentLinkId) {
+        try {
+          await this.cancelPaymentLink(tx.paymentLinkId, 'Người dùng thay đổi phương thức thanh toán');
+        } catch (err: any) {
+          this.logger.warn(`Failed to cancel remote PayOS link ${tx.paymentLinkId}: ${err.message}`);
+        }
+      }
+    }
+
+    const updated = await this.paymentsRepo.changePaymentMethodTx(orderId, dto.paymentMethod);
+
+    return {
+      success: true,
+      message: 'Cập nhật phương thức thanh toán thành công',
+      data: {
+        orderId: updated.orderId.toString(),
+        orderCode: updated.orderCode,
+        paymentMethod: updated.paymentMethod,
+        orderStatus: updated.orderStatus,
+        paymentStatus: updated.paymentStatus,
+      },
+    };
   }
 
   async getTransaction(id: string, user?: any) {

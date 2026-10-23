@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 13/13 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`).
+> **Status:** All 15/15 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`).
 
 ---
 
@@ -12,7 +12,9 @@
 - Check TypeScript types: `npx tsc --noEmit`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (13 suites): `npm run test:all`
+- Run All Tests (15 suites): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run Frontend Contract & Notifications Suite: `npx tsx tests/frontend-contract-and-notifications.spec.ts`
+- Run Device Templates & Bulk Deploy Suite: `npx tsx tests/device-templates-bulk-deploy.spec.ts`
 - Run Bank Verification Suite: `npx tsx tests/bank-account-verification.spec.ts`
 - Run Avatar Suite: `npx tsx tests/user-avatar-profile.spec.ts`
 - Run Minimum Order Suite: `npx tsx tests/order-minimum-value.spec.ts`
@@ -244,6 +246,168 @@ When starting a new conversation, prompt the agent with:
   - `npm run build` — PASS (0 errors)
   - `npx prisma migrate status` — PASS ("Database schema is up to date!")
 
+### [2026-10-22] ERD Level 3 Physical Schema Synchronization (BRD Folder)
+- Status: COMPLETED & FULLY VERIFIED (42/42 Tables Matched, Zero Schema Diff)
+- Files Updated:
+  - [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio)
+  - [`BRD/erd_level_3_drawio_editable.xml`](file:///f:/Learning/SEM9-FPTu/backend/BRD/erd_level_3_drawio_editable.xml)
+- Changes Summary (Zero changes made to existing drawn structures/layouts):
+  1. **Added 7 Missing Tables from Database:**
+     - `USER_FCM_TOKENS` (7 columns) - Placed at x=3320, y=3040 with FK to `USERS(user_id)`.
+     - `IDENTITY_VERIFICATION_SESSIONS` (13 columns) - Placed at x=2880, y=2580 with FK to `USERS(user_id)`.
+     - `DIDIT_WEBHOOK_EVENTS` (8 columns) - Placed at x=2880, y=3000 with FK to `IDENTITY_VERIFICATION_SESSIONS(didit_session_id)`.
+     - `STORE_BANK_ACCOUNTS` (14 columns) - Placed at x=6270, y=2860 with FK to `STORE(store_id)`.
+     - `BANK_ACCOUNT_VERIFICATION_TRANSACTIONS` (15 columns) - Placed at x=6270, y=3300 with FK to `STORE_BANK_ACCOUNTS(id)`.
+     - `DRIVER_DUTIES` (7 columns) - Placed at x=5350, y=3300 with FKs to `STORE(store_id)` and `USERS(driver_id)`.
+     - `DRIVER_SHIFTS` (16 columns) - Placed at x=5350, y=3560 with FKs to `STORE(store_id)`, `USERS(driver_id)`, and `USERS(confirmed_by_user_id)`.
+  2. **Appended Missing Columns to Existing Tables:**
+     - Table `USERS`: added `phone_verified_at` (timestamptz), `firebase_uid` (varchar), `avatar_url` (varchar), `kyc_status` (varchar).
+     - Table `STORE_WITHDRAWALS`: added `store_id` (bigint, FK) and `idempotency_key` (varchar) with connector from `STORE(store_id)`.
+  3. **Verification Evidence:**
+     - Draw.io MCP `list_pages` output: `id: "ERD_Level_3_Optimized"`, `name: "ERD Level 3 - 42 Tables Full Physical Schema"`, size `815,921 bytes`.
+     - Deep schema comparator: 0 missing tables, 0 missing columns across all 42 models.
 
+### [2026-10-23] Device Templates, Bulk Deployment, Safe Updates, Atomic Allocation & Order Status Alias (Phases 1-10)
+- Status: COMPLETED & FULLY VERIFIED (Suite 14: 25/25 PASS, Master Test Suite: 14/14 PASS, 0 Failures)
+- Resolved Requirements across All 10 Phases & Post-Review Hardening:
+  1. **Phase 1: Database Migration & Schema Update**
+     - Initial Migration: `prisma/migrations/20261023163000_device_templates_and_button_enhancements/migration.sql` (added `default_product_id` FK and `long_press_action` column).
+     - Constraint Migration: `prisma/migrations/20261023190000_add_long_press_action_check_constraints/migration.sql` adding PostgreSQL CHECK constraints:
+       `CHECK ("long_press_action" IN ('WIFI_CONFIGURATION', 'ORDER_PRODUCT', 'NONE'))` on both `device_templates` and `iot_button`.
+     - Data Normalization Notice: Migration automatically normalizes any legacy or out-of-spec values in existing records to the safe default `'WIFI_CONFIGURATION'` before applying the CHECK constraints to guarantee non-breaking deployment.
+     - Updated `prisma/schema.prisma` with relations and default values. Deployed cleanly via `prisma migrate deploy`.
+  2. **Phase 2: Strict DTOs & Validation Layer**
+     - [`src/devices/dto/device-template.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/dto/device-template.dto.ts):
+       - `CreateDeviceTemplateDto` & `UpdateDeviceTemplateDto`: Validates `defaultProductId`, `longPressAction` enum (`WIFI_CONFIGURATION`, `ORDER_PRODUCT`, `NONE`), `defaultQuantity` (>= 1), `cancelWindowSeconds` (5..300).
+       - `DeployDeviceTemplateDto`: Enforces mutual exclusivity and caps total batch deployment to 100 devices across 3 modes:
+         * Single: `deviceId`
+         * Bulk: `deviceIds` (array of strings, length 1..100)
+         * Range: `prefix`, `startRange` (>= 1), `endRange` (>= startRange), `padLength` (1..10), capped at `<= 100` total items.
+     - [`src/devices/dto/devices.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/dto/devices.dto.ts):
+       - `UpdateDeviceDto`: Enforces `@Min(0) @Max(100)` for `batteryLevel`, `@IsISO8601()` for `warrantyExpiry`, and completely removed `storeId` & `customerId` to prevent mass-assignment tenant tampering.
+       - `AllocateStoreDto`: Supports both `storeId` and `targetStoreId` alias with array of `deviceIds`.
+     - [`src/orders/dto/update-order-status.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/orders/dto/update-order-status.dto.ts):
+       - Added `@Transform` mapping frontend alias `OUT_FOR_DELIVERY` -> `READY_FOR_DELIVERY`.
+  3. **Phase 3 & 4: Template Management & Bulk Deployment Service**
+     - [`src/devices/device-templates.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/device-templates.service.ts):
+       - Tenant isolation: verifies `defaultProductId` belongs to the requesting store.
+       - Single, bulk array, and range deployment modes with strict off-by-one check: `if (endRange - startRange + 1 > 100)` throwing `BadRequestException`.
+       - Atomic transactional deployment via `deployTemplateAtomicTx` in repository: auto-provisions `iot_button` and maps `button_product` with default product and quantity.
+       - Returns per-device status reporting envelope: `{ success, total, succeeded, failed, results: [...] }`.
+  4. **Phase 5: Secure Device Update Service**
+     - [`src/devices/devices.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/devices.service.ts):
+       - Whitelisted updates for `buttonName`, `batteryLevel`, `batteryVoltage`, `warrantyExpiry`, `firmwareVersion`, `longPressAction`.
+       - Rejects with 400 Bad Request when setting `quantity` without a `productId` on unassigned devices.
+       - If `productId` is provided, verifies product belongs to the device's store.
+       - Zero tenant tampering: attempts to pass `storeId` or `customerId` are ignored/stripped.
+  5. **Phase 6: Atomic Device Allocation & WebSockets**
+     - [`src/devices/devices.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/devices.repository.ts):
+       - `allocateDevicesToStoreTx`: Uses `SELECT button_id, device_id, store_id, status FROM iot_button WHERE device_id = ANY($1::text[]) FOR UPDATE` row locking.
+       - Rejects already-allocated devices with 400 Bad Request.
+     - [`src/websocket/events.gateway.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/websocket/events.gateway.ts):
+       - Security: Query string tokens strictly banned to prevent leakage in access/proxy logs (`client.handshake.query?.token` removed). Only `headers.authorization` or `handshake.auth.token` accepted.
+       - Multi-Store Auto-Join: On connection, queries PostgreSQL for all active stores owned by the user (`ownerUserId`) or where they serve as active staff (`storeStaff`), automatically joining `store_${storeId}` and `store:${storeId}` for all associated stores.
+       - Emits `devices:allocated` post-commit to `store_${storeId}` and `user:${ownerUserId}` via `EventsGateway.emitToUser`.
+  6. **Phase 7: Role-Based Access Control (RBAC)**
+     - Updated `@Roles()` in `DeviceTemplatesController` and `DevicesController`:
+       - Added `ADMIN` alongside `SYSTEM_ADMIN`, `SUPER_ADMIN`, `STORE_OWNER`, and `STORE_MANAGER` on administrative device and allocation routes.
+       - Strictly blocks `CUSTOMER` role with HTTP 403 Forbidden.
+  7. **Phase 8: Order Status Normalization & State Machine**
+     - [`src/orders/orders.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/orders/orders.service.ts):
+       - Accepts `OUT_FOR_DELIVERY` alias from frontend and normalizes to `READY_FOR_DELIVERY`.
+       - Transitions order state machine cleanly and emits WebSocket event `ORDER_READY_FOR_DELIVERY` and `ORDER_STATUS_CHANGED`.
+  8. **Phase 9: Comprehensive Verification Test Suite 14**
+     - Created [`tests/device-templates-bulk-deploy.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/device-templates-bulk-deploy.spec.ts):
+       - 25/25 assertions passing covering all functional, security, and boundary checks (including `9.1b` boundary test for 1 -> 101 devices).
+     - Registered in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
+  9. **Phase 10: Full Regression Testing & System Integrity**
+     - Fixed composite foreign key `(customer_id, address_id)` sync in `confirmPairingAtomicTx` within `src/devices/provisioning.repository.ts` to satisfy `iot_button_customer_id_address_id_fkey`.
+     - Restored `BRD/` documentation files to keep the git working tree cleanly scoped to backend code changes.
+     - Verified 14/14 test suites pass in `npx tsx tests/run_all_suites.ts` with 0 failures (344.5s):
+       * Suite 1: Firebase Phone Authentication Suite (45/45 PASS)
+       * Suite 2: Firebase Cloud Messaging (FCM) & Notifications Suite (22/22 PASS)
+       * Suite 3: Order Lifecycle, Window Cancel & Inventory Safety (7/7 PASS)
+       * Suite 4: IoT Device Config & Product Mapping Suite (12/12 PASS)
+       * Suite 5: Zero-Touch Provisioning & Security Incidents Suite (13/13 PASS)
+       * Suite 6: End-to-End Zero-Touch Device Lifecycle v4.0 (12/12 PASS)
+       * Suite 7: Multi-Vendor Marketplace, Rental & Escrow Wallet E2E (13/13 PASS)
+       * Suite 8: Security Audit 8 Criteria & Zero Residue Verifier (8/8 PASS)
+       * Suite 9: Smart Order Button API Integration Suite (16/16 PASS)
+       * Suite 10: User Avatar URL & Profile Management Suite (25/25 PASS)
+       * Suite 11: Order Minimum Value (>= 2,000 VND) Constraint Suite (15/15 PASS)
+       * Suite 12: Didit eKYC Identity Verification Suite (47/47 PASS)
+       * Suite 13: Penny-Deposit Bank Account Verification (2.000 VND) Suite (39/39 PASS)
+       * Suite 14: Device Templates, Bulk Deploy, Allocation & Order Alias Suite (25/25 PASS)
+     - TypeScript compile clean (`npx tsc --noEmit` -> 0 errors).
+     - Production build clean (`npm run build` -> 0 errors).
+     - Database migration status (`npx prisma migrate status` -> "Database schema is up to date! 13 migrations found").
 
+---
 
+### E. Frontend Contract Gap Remediation & Notification History Module (Suite 15)
+1. **Database Migration (`notifications` Table):**
+   - Migration: [`prisma/migrations/20261023210000_add_notifications_table`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261023210000_add_notifications_table)
+   - Created PostgreSQL table `notifications` with columns:
+     - `notification_id BIGSERIAL PRIMARY KEY`
+     - `user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE`
+     - `type VARCHAR NOT NULL`
+     - `title VARCHAR NOT NULL`
+     - `body TEXT NOT NULL`
+     - `data JSONB NULL`
+     - `idempotency_key VARCHAR UNIQUE NOT NULL`
+     - `read_at TIMESTAMPTZ NULL`
+     - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+   - Composite indexes: `@@index([userId, readAt])` and `@@index([userId, createdAt])`.
+2. **Auth Contract Discrepancies Resolved:**
+   - **Change Password Endpoint:**
+     - Route: `POST /api/v1/auth/change-password` with `@UseGuards(JwtAuthGuard)` in [`src/auth/auth.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.controller.ts).
+     - DTO: [`src/auth/dto/change-password.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/dto/change-password.dto.ts) with strict password policy (min 8 chars, uppercase, lowercase, numbers, special characters).
+     - Service: `changePassword()` in [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts):
+       * Validates old password with `bcrypt.compare`.
+       * Rejects identical new password with 400 Bad Request (`PASSWORD_UNCHANGED`).
+       * Hashes new password with `bcrypt.hash(dto.newPassword, 12)`.
+       * Updates `password_hash` and `password_changed_at = NOW()` inside transaction.
+       * Revokes all active refresh tokens in database (`authRepo.updatePasswordTx`).
+       * Blacklists current access token and revokes user in `TokenBlacklist`.
+       * `jwt.strategy.ts` immediately blocks any JWTs issued prior to `passwordChangedAt` with HTTP 401 Unauthorized.
+       * Zero entity/hash leakage in response envelope.
+   - **Profile Update PUT Alias:**
+     - Added `PUT /api/v1/auth/profile` route in `AuthController` delegating to existing shared `authService.updateProfile` logic.
+3. **Payments Contract (Order Payment Method Change):**
+   - Route: `POST /api/v1/payments/orders/:orderId/payment-method` with `@HttpCode(200)` and `@UseGuards(JwtAuthGuard)`.
+   - DTO: [`src/payments/dto/change-payment-method.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/dto/change-payment-method.dto.ts) validating `paymentMethod IN ('PAYOS', 'COD')`.
+   - Service: `changeOrderPaymentMethod()` in [`src/payments/payments.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.service.ts):
+     * BOLA verification: checks `order.customer_id === req.user.customerProfileId` (unless Admin).
+     * Order status invariant: allows modification only if `orderStatus === 'PENDING'` and `paymentStatus === 'UNPAID'`. Rejects terminal states (`PAID`, `CONFIRMED`, `COMPLETED`, `CANCELLED`, `REJECTED`) with HTTP 400 Bad Request.
+     * PayOS cancellation: automatically cancels any previously active PayOS payment links via `cancelPaymentLink()`.
+     * Safe transactional update in [`src/payments/payments.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.repository.ts) (`changePaymentMethodTx`) with explicit field whitelisting.
+4. **Products Contract (Product Deletion Safety):**
+   - Route: `DELETE /api/v1/products/:id` with `@UseGuards(JwtAuthGuard, RolesGuard)` and `@Roles('STORE_OWNER', 'STORE_MANAGER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')`.
+   - Service: `deleteProduct()` in [`src/products/products.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/products/products.service.ts):
+     * Store ownership check: verifies product belongs to the store managed by the requester.
+     * Active order invariant: counts active processing orders (`PENDING`, `PREPARING`, `READY_FOR_DELIVERY`, `DELIVERING`) and rejects deletion with HTTP 400 Bad Request if active orders reference the product.
+     * IoT Button protection: verifies no active IoT button mapping references the product before deletion.
+     * Soft-delete: safely marks product `status = 'INACTIVE'`.
+     * Reference-count Cloudinary media cleanup: cleans orphaned product images via `cloudinaryService.destroyImage()`.
+5. **Notification History & Read Management APIs:**
+   - Module: [`src/notifications/notifications.module.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/notifications/notifications.module.ts)
+   - Repository: [`src/notifications/notifications.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/notifications/notifications.repository.ts)
+   - Endpoints:
+     * `GET /api/v1/notifications` (paginated `?page=1&pageSize=20`, BOLA scoped to `req.user.id`).
+     * `GET /api/v1/notifications/unread-count` (returns `{ unreadCount: N }` for authenticated user).
+     * `PATCH /api/v1/notifications/:id/read` (marks specific notification as read, returns 403 Forbidden on cross-user IDOR).
+     * `PATCH /api/v1/notifications/read-all` (marks all unread notifications for user as read).
+6. **PayOS Webhook Atomic Notification & Idempotency:**
+   - In [`src/payments/payments.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.repository.ts) (`confirmPaymentAtomicTx`):
+     * Inside PostgreSQL transaction, atomically writes notification with unique `idempotency_key = payment:${paymentTransactionId}:paid`.
+     * Replayed webhooks from PayOS are completely idempotent (`ON CONFLICT (idempotency_key) DO NOTHING`).
+   - In [`src/payments/payments.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.service.ts) (`handlePayosWebhook`):
+     * Post-commit: sends FCM push notification to customer devices via `NotificationsService.sendPushToUser`.
+     * Emits WebSocket events `ORDER_PAYMENT_CONFIRMED` to store and customer rooms.
+7. **Verification Test Suite 15:**
+   - Test File: [`tests/frontend-contract-and-notifications.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/frontend-contract-and-notifications.spec.ts)
+   - 23/23 tests passing with 0 failures covering all 5 sections.
+   - Registered in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
+8. **Physical Database ERD Synchronization (43 Tables Full Alignment):**
+   - File: [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio)
+   - Synced diagram to full 43 physical tables matching [`prisma/schema.prisma`](file:///f:/Learning/SEM9-FPTu/backend/prisma/schema.prisma) 100% (added `NOTIFICATIONS`, `USER_FCM_TOKENS`, `IDENTITY_VERIFICATION_SESSIONS`, `DIDIT_WEBHOOK_EVENTS`, `STORE_BANK_ACCOUNTS`, `BANK_ACCOUNT_VERIFICATION_TRANSACTIONS`, `DRIVER_SHIFTS`, `DRIVER_DUTIES`) with collision-free coordinates, exact data types, PK/UK indicators, and relational foreign-key edges.

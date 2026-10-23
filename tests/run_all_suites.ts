@@ -73,6 +73,16 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'bank-account-verification.spec.ts')],
   },
+  {
+    name: '14. Device Templates, Bulk Deploy, Allocation & Order Alias Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'device-templates-bulk-deploy.spec.ts')],
+  },
+  {
+    name: '15. Frontend Contract Gap & Notifications Integration Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'frontend-contract-and-notifications.spec.ts')],
+  },
 ];
 
 async function main() {

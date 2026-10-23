@@ -170,9 +170,84 @@ export class PaymentsRepository {
         }
       }
 
+      // 3. Atomically create customer notification with unique idempotency key
+      const custRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT user_id FROM customer_profile WHERE customer_id = $1`,
+        order.customer_id,
+      );
+      if (custRows && custRows.length > 0 && custRows[0].user_id) {
+        const customerUserId = custRows[0].user_id;
+        const idempotencyKey = `payment:${paymentTransactionId.toString()}:paid`;
+        const notifData = JSON.stringify({
+          orderId: order.order_id.toString(),
+          orderCode: order.order_code,
+          amount: Number(payment.amount),
+          paymentTransactionId: paymentTransactionId.toString(),
+        });
+        await tx.$executeRawUnsafe(
+          `INSERT INTO notifications (user_id, type, title, body, data, idempotency_key, created_at)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW())
+           ON CONFLICT (idempotency_key) DO NOTHING;`,
+          customerUserId,
+          'PAYMENT_SUCCESS',
+          'Thanh toán đơn hàng thành công',
+          `Đơn hàng #${order.order_code} đã thanh toán thành công qua PayOS với số tiền ${Number(payment.amount).toLocaleString('vi-VN')} VND.`,
+          notifData,
+          idempotencyKey,
+        );
+      }
+
       return this.findTransactionByIdTx(tx, paymentTransactionId);
     });
   }
+
+  async changePaymentMethodTx(orderId: bigint, newPaymentMethod: string) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Pessimistic lock order
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT order_id, order_status, payment_status, customer_id, store_id FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Không tìm thấy đơn hàng');
+      }
+      const order = lockedOrders[0];
+
+      if (order.payment_status === 'PAID') {
+        throw new BadRequestException('Không thể đổi phương thức thanh toán cho đơn hàng đã thanh toán');
+      }
+
+      const terminalStatuses = ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED'];
+      if (terminalStatuses.includes(order.order_status) || order.order_status !== 'PENDING') {
+        throw new BadRequestException(`Không thể đổi phương thức thanh toán khi đơn hàng đang ở trạng thái ${order.order_status}`);
+      }
+
+      // 2. Cancel any pending payment transactions
+      await tx.paymentTransaction.updateMany({
+        where: {
+          orderId,
+          status: 'PENDING',
+        },
+        data: {
+          status: 'CANCELLED',
+        },
+      });
+
+      // 3. Update order payment method
+      return tx.order.update({
+        where: { orderId },
+        data: {
+          paymentMethod: newPaymentMethod,
+          updatedAt: new Date(),
+        },
+        include: {
+          customer: true,
+          store: true,
+        },
+      });
+    });
+  }
+
 
   private async findTransactionByIdTx(tx: any, paymentTransactionId: bigint) {
     return tx.paymentTransaction.findUnique({

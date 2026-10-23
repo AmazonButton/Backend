@@ -299,4 +299,70 @@ export class ProductsService {
       body.lowStockThreshold,
     );
   }
+  async deleteProduct(id: string | number | bigint, user: any) {
+    const targetProductId = BigInt(id);
+    const existing = await this.productsRepo.findById(targetProductId);
+    if (!existing) {
+      throw new NotFoundException('Không tìm thấy sản phẩm');
+    }
+
+    // Tenant / Ownership isolation
+    const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
+    if (!isAdmin) {
+      if (!user?.storeId || existing.storeId.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xóa sản phẩm của cửa hàng khác.',
+        });
+      }
+    }
+
+    // Check active orders
+    const activeOrderCount = await this.productsRepo.countActiveOrdersWithProduct(targetProductId);
+    if (activeOrderCount > 0) {
+      throw new BadRequestException({
+        success: false,
+        code: 'PRODUCT_IN_ACTIVE_ORDERS',
+        message: 'Không thể xóa sản phẩm đang có trong các đơn hàng đang xử lý.',
+      });
+    }
+
+    // Check active button mappings
+    const activeButtonCount = await this.productsRepo.countActiveButtonMappings(targetProductId);
+    if (activeButtonCount > 0) {
+      throw new BadRequestException({
+        success: false,
+        code: 'PRODUCT_MAPPED_TO_ACTIVE_BUTTON',
+        message: 'Không thể xóa sản phẩm đang được gán cho thiết bị nút bấm đang hoạt động.',
+      });
+    }
+
+    // Cloudinary Asset Lifecycle: Destroy store assets if ref count will become 0
+    const oldImages = await this.productsRepo.findProductImages(targetProductId);
+    const storePrefix = existing.storeId ? `stores/${existing.storeId.toString()}/` : 'stores/';
+
+    for (const img of oldImages) {
+      const pubId = img.cloudinaryPublicId;
+      if (pubId && pubId.startsWith(storePrefix)) {
+        const remainingCount = await this.productsRepo.countImageReferences(pubId);
+        if (remainingCount <= 1) {
+          try {
+            await this.mediaService.deleteAsset(pubId);
+            this.logger.log(`[Cloudinary Lifecycle] Safely destroyed asset upon product deletion: ${pubId}`);
+          } catch (err: any) {
+            this.logger.warn(`Failed to destroy Cloudinary asset ${pubId}: ${err.message}`);
+          }
+        }
+      }
+    }
+
+    const updated = await this.productsRepo.softDeleteProduct(targetProductId);
+
+    return {
+      productId: updated.productId.toString(),
+      productName: updated.productName,
+      status: updated.status,
+    };
+  }
 }

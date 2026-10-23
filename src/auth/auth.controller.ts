@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Put,
   Body,
   Query,
   UseGuards,
@@ -28,6 +29,7 @@ import { VerifyFirebasePhoneDto } from './dto/verify-firebase-phone.dto';
 import { RegisterByPhoneDto } from './dto/register-by-phone.dto';
 import { LoginByPhoneDto } from './dto/login-by-phone.dto';
 import { FirebasePhoneService } from './firebase-phone.service';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -105,6 +107,23 @@ export class AuthController {
   updateProfile(@Request() req: any, @Body() body: UpdateProfileDto) {
     const rawUserId = req.user?.id || req.user?.userId;
     return this.authService.updateProfile(rawUserId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('profile')
+  updateProfilePut(@Request() req: any, @Body() body: UpdateProfileDto) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    return this.authService.updateProfile(rawUserId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('change-password')
+  changePassword(@Request() req: any, @Body() body: ChangePasswordDto) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    const authHeader = req.headers['authorization']?.toString();
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : undefined;
+    return this.authService.changePassword(rawUserId, body, accessToken);
   }
 
   @UseGuards(AuthRateLimitGuard)

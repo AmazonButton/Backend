@@ -213,4 +213,38 @@ export class ProductsRepository {
       data,
     });
   }
+
+  async countActiveOrdersWithProduct(productId: bigint): Promise<number> {
+    return this.prisma.orderItem.count({
+      where: {
+        productId,
+        order: {
+          orderStatus: {
+            in: ['PENDING', 'CONFIRMED', 'PREPARING', 'READY_FOR_DELIVERY', 'OUT_FOR_DELIVERY', 'DELIVERING'],
+          },
+        },
+      },
+    });
+  }
+
+  async countActiveButtonMappings(productId: bigint): Promise<number> {
+    return this.prisma.buttonProduct.count({
+      where: {
+        productId,
+        button: {
+          status: 'ACTIVE',
+        },
+      },
+    });
+  }
+
+  async softDeleteProduct(productId: bigint) {
+    return this.prisma.product.update({
+      where: { productId },
+      data: {
+        status: 'INACTIVE',
+        updatedAt: new Date(),
+      },
+    });
+  }
 }
