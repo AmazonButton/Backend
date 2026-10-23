@@ -15,23 +15,35 @@ export class AdminRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async findPendingStores() {
-    return this.prisma.store.findMany({
+    const stores = await this.prisma.store.findMany({
       where: { status: 'INACTIVE' },
       include: {
         owner: { select: SAFE_USER_SELECT },
       },
       orderBy: { createdAt: 'desc' },
     });
+    return stores.map((s) => ({
+      ...s,
+      id: s.storeId.toString(),
+      storeId: s.storeId.toString(),
+      ownerName: s.owner?.fullName || s.owner?.username || 'Chưa cập nhật',
+    }));
   }
 
   async findAllStores() {
-    return this.prisma.store.findMany({
+    const stores = await this.prisma.store.findMany({
       orderBy: { name: 'asc' },
       include: {
         owner: { select: SAFE_USER_SELECT },
         _count: { select: { iotButtons: true, products: true, orders: true } },
       },
     });
+    return stores.map((s) => ({
+      ...s,
+      id: s.storeId.toString(),
+      storeId: s.storeId.toString(),
+      ownerName: s.owner?.fullName || s.owner?.username || 'Chưa cập nhật',
+    }));
   }
 
   async findStoreById(storeId: bigint) {
@@ -121,6 +133,28 @@ export class AdminRepository {
   async findUserById(userId: bigint) {
     return this.prisma.user.findUnique({
       where: { userId },
+      select: {
+        userId: true,
+        email: true,
+        username: true,
+        fullName: true,
+        phone: true,
+        status: true,
+        createdAt: true,
+        customerProfile: true,
+        ownedStores: { select: { name: true, code: true } },
+      },
+    });
+  }
+
+  async findUserByIdentifier(identifier: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: identifier },
+          { username: identifier },
+        ],
+      },
       select: {
         userId: true,
         email: true,

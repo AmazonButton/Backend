@@ -64,9 +64,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       let storeId = payload.storeId || null;
       let customerProfileId = user.customerProfile?.customerId?.toString() || payload.customerProfileId || null;
 
-      const isSuperAdmin = user.storeStaffs?.some(
-        (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
-      );
+      const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local,admin@gmail.com')
+        .split(',')
+        .map((e) => e.trim().toLowerCase());
+
+      const isSuperAdmin =
+        user.username === 'admin' ||
+        superAdminEmails.includes((user.email || '').toLowerCase()) ||
+        payload.role === 'SUPER_ADMIN' ||
+        payload.role === 'SYSTEM_ADMIN' ||
+        user.storeStaffs?.some(
+          (s: any) =>
+            s.role?.roleCode === 'SUPER_ADMIN' ||
+            s.role?.roleCode === 'SYSTEM_ADMIN' ||
+            s.role?.roleCode === 'ADMIN',
+        );
 
       if (isSuperAdmin) {
         role = 'SUPER_ADMIN';

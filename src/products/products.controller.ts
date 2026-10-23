@@ -4,6 +4,7 @@ import {
   Post,
   Put,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -110,5 +111,15 @@ export class ProductsController {
   ) {
     const data = await this.productsService.updateStock(id, body, req.user);
     return { success: true, message: 'Cập nhật tồn kho thành công!', data };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Delete(':id')
+  @ApiOperation({ summary: 'Vô hiệu hóa (ngừng kinh doanh) sản phẩm thay vì xóa cứng (Soft delete)' })
+  async remove(@Param('id') id: string, @Request() req: any) {
+    const data = await this.productsService.update(id, { status: 'INACTIVE' }, req.user);
+    return { success: true, message: 'Đã chuyển sản phẩm sang trạng thái ngừng kinh doanh!', data };
   }
 }

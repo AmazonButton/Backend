@@ -57,6 +57,40 @@ export class AuthService {
     @Inject(FirebasePhoneService) private readonly firebasePhoneService: FirebasePhoneService,
   ) {}
 
+  public resolveUserRole(user: any): { role: string; storeId: string | null } {
+    if (!user) {
+      return { role: 'CUSTOMER', storeId: null };
+    }
+
+    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local,admin@gmail.com')
+      .split(',')
+      .map((e) => e.trim().toLowerCase());
+
+    const isSuperAdmin =
+      user.username === 'admin' ||
+      superAdminEmails.includes((user.email || '').toLowerCase()) ||
+      user.storeStaffs?.some(
+        (s: any) =>
+          s.role?.roleCode === 'SUPER_ADMIN' ||
+          s.role?.roleCode === 'SYSTEM_ADMIN' ||
+          s.role?.roleCode === 'ADMIN',
+      );
+
+    if (isSuperAdmin) {
+      return { role: 'SUPER_ADMIN', storeId: null };
+    }
+    if (user.ownedStores && user.ownedStores.length > 0) {
+      return { role: 'STORE_OWNER', storeId: user.ownedStores[0].storeId.toString() };
+    }
+    if (user.storeStaffs && user.storeStaffs.length > 0) {
+      return {
+        role: user.storeStaffs[0].role?.roleCode || 'STORE_STAFF',
+        storeId: user.storeStaffs[0].storeId.toString(),
+      };
+    }
+    return { role: 'CUSTOMER', storeId: null };
+  }
+
   /**
    * 1. Register new user (Global Customer or Store Owner)
    */
@@ -405,23 +439,8 @@ export class AuthService {
     }
 
     // Determine role & storeId
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
+    const { role, storeId } = this.resolveUserRole(user);
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
-
-    const isSuperAdmin = user.storeStaffs?.some(
-      (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
-    );
-
-    if (isSuperAdmin) {
-      role = 'SUPER_ADMIN';
-    } else if (user.ownedStores && user.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = user.ownedStores[0].storeId.toString();
-    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = user.storeStaffs[0].storeId.toString();
-    }
 
     // Generate JWT access token
     const accessToken = this.jwtService.sign(
@@ -523,27 +542,8 @@ export class AuthService {
     }
 
     // Determine primary role & storeId
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
+    const { role, storeId } = this.resolveUserRole(user);
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
-
-    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
-      .split(',')
-      .map((e) => e.trim().toLowerCase());
-    const isSuperAdmin =
-      user.storeStaffs?.some((s: any) => s.role?.roleCode === 'SUPER_ADMIN') ||
-      superAdminEmails.includes((user.email || '').toLowerCase()) ||
-      user.username === 'admin';
-
-    if (isSuperAdmin) {
-      role = 'SUPER_ADMIN';
-    } else if (user.ownedStores && user.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = user.ownedStores[0].storeId.toString();
-    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = user.storeStaffs[0].storeId.toString();
-    }
 
     const accessToken = this.jwtService.sign(
       {
@@ -668,16 +668,9 @@ export class AuthService {
         throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị khóa');
       }
 
-      const isAdmin = user.storeStaffs?.some((s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN');
-      if (isAdmin) {
-        role = 'SUPER_ADMIN';
-      } else if (user.ownedStores && user.ownedStores.length > 0) {
-        role = 'STORE_OWNER';
-        storeId = user.ownedStores[0].storeId.toString();
-      } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-        role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-        storeId = user.storeStaffs[0].storeId.toString();
-      }
+      const resolved = this.resolveUserRole(user);
+      role = resolved.role;
+      storeId = resolved.storeId;
       customerProfileId = user.customerProfile?.customerId?.toString() || null;
 
       const newAccessToken = this.jwtService.sign(
@@ -924,17 +917,7 @@ export class AuthService {
       return { success: false, data: null };
     }
 
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
-    if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
-      role = 'SUPER_ADMIN';
-    } else if (user.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = user.ownedStores[0].storeId.toString();
-    } else if (user.storeStaffs.length > 0) {
-      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = user.storeStaffs[0].storeId.toString();
-    }
+    const { role, storeId } = this.resolveUserRole(user);
 
     return {
       success: true,
@@ -971,17 +954,7 @@ export class AuthService {
       phone: dto.phone !== undefined ? dto.phone.trim() : undefined,
     });
 
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
-    if (updated.email === 'admin@smartorder.local' || updated.username === 'admin') {
-      role = 'SUPER_ADMIN';
-    } else if (updated.ownedStores && updated.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = updated.ownedStores[0].storeId.toString();
-    } else if (updated.storeStaffs && updated.storeStaffs.length > 0) {
-      role = updated.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = updated.storeStaffs[0].storeId.toString();
-    }
+    const { role, storeId } = this.resolveUserRole(updated);
 
     return {
       success: true,
@@ -1171,23 +1144,8 @@ export class AuthService {
     }
 
     // Determine primary role & storeId
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
+    const { role, storeId } = this.resolveUserRole(user);
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
-
-    const isSuperAdmin = user.storeStaffs?.some(
-      (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
-    );
-
-    if (isSuperAdmin) {
-      role = 'SUPER_ADMIN';
-    } else if (user.ownedStores && user.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = user.ownedStores[0].storeId.toString();
-    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = user.storeStaffs[0].storeId.toString();
-    }
 
     // Sign JWT access token
     const accessToken = this.jwtService.sign(

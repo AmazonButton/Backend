@@ -36,6 +36,7 @@ export interface OrderResponseDto {
   failureNote?: string | null;
   evidenceImageUrl?: string | null;
   notes?: string | null;
+  paidAt?: Date | string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
   customer?: {
@@ -84,6 +85,10 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
 
   const orderId = raw.orderId ? raw.orderId.toString() : raw.id ? raw.id.toString() : '';
   const orderCode = raw.orderCode || raw.orderNumber || '';
+  const confirmedPayment = raw.paymentTransactions?.find((transaction: any) =>
+    ['PAID', 'SUCCESS', 'COMPLETED'].includes(String(transaction.status || '').toUpperCase()),
+  );
+  const paymentStatus = confirmedPayment ? 'PAID' : (raw.paymentStatus || raw.payment_status || 'UNPAID');
 
   const dto: OrderResponseDto = {
     id: orderId,
@@ -96,8 +101,8 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
     buttonCode: raw.buttonCode || raw.button?.buttonCode || null,
     status: raw.orderStatus || raw.status || 'PENDING',
     orderStatus: raw.orderStatus || raw.status || 'PENDING',
-    paymentStatus: raw.paymentStatus || 'UNPAID',
-    paymentMethod: raw.paymentMethod || 'COD',
+    paymentStatus,
+    paymentMethod: raw.paymentMethod || raw.payment_method || confirmedPayment?.paymentMethod || 'COD',
     totalAmount: raw.totalAmount != null ? Number(raw.totalAmount) : 0,
     subtotalAmount: raw.subtotalAmount != null ? Number(raw.subtotalAmount) : (raw.totalAmount != null ? Number(raw.totalAmount) : 0),
     shippingFee: raw.shippingFee != null ? Number(raw.shippingFee) : 0,
@@ -123,6 +128,7 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
     notes: raw.notes || raw.orderNote || null,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
+    paidAt: confirmedPayment?.paidAt || raw.paidAt || null,
   };
 
   // Safe Customer mapping - NEVER leak raw User entity fields (passwordHash, authId, hmacSecret, etc.)

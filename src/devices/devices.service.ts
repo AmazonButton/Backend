@@ -5,10 +5,12 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { DevicesRepository } from './devices.repository';
 import { ProvisioningRepository } from './provisioning.repository';
 import { EventsGateway } from '../websocket/events.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -100,11 +102,13 @@ export class DevicesService {
     }
 
   }
+  private readonly logger = new Logger(DevicesService.name);
   private deviceAuditLogs = new Map<string, any[]>();
   constructor(
     @Inject(DevicesRepository) private readonly devicesRepo: DevicesRepository,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
     @Optional() @Inject(ProvisioningRepository) private readonly provRepo?: ProvisioningRepository,
+    @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
   ) {
     if (provRepo) DevicesService.provRepoInstance = provRepo;
   }
@@ -375,11 +379,39 @@ export class DevicesService {
   async update(id: string | number | bigint, body: any, user: any) {
     const existing = await this.getById(id, user);
 
-    const updated = await this.devicesRepo.update(BigInt(existing.buttonId), {
-      ...(body.buttonName ? { buttonName: body.buttonName } : {}),
-      ...(body.name ? { buttonName: body.name } : {}),
-      ...(body.status ? { status: body.status } : {}),
-    });
+    const buttonName = body.customName?.trim() || body.buttonName?.trim() || body.name?.trim();
+    const updateData: any = {};
+    if (buttonName !== undefined) updateData.buttonName = buttonName;
+    if (body.status !== undefined) updateData.status = body.status;
+    if (body.batteryLevel !== undefined && body.batteryLevel !== null) {
+      updateData.batteryLevel = Number(body.batteryLevel);
+    }
+    const warrantyDate = body.warrantyUntil || body.expiresAt;
+    if (warrantyDate !== undefined) {
+      updateData.warrantyUntil = warrantyDate ? new Date(warrantyDate) : null;
+    }
+
+    let updated: any = await this.devicesRepo.update(BigInt(existing.buttonId), updateData);
+
+    // Update product assignment if productId is provided or explicitly cleared
+    if (body.productId !== undefined) {
+      if (body.productId) {
+        const qty = Number(body.defaultQuantity) || Number(body.quantity) || 1;
+        updated = await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
+          { productId: BigInt(body.productId), quantity: qty },
+        ]);
+      } else {
+        // Clear products
+        updated = await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), []);
+      }
+    } else if (body.defaultQuantity !== undefined || body.quantity !== undefined) {
+      const qty = Number(body.defaultQuantity) || Number(body.quantity) || 1;
+      if (existing.products && existing.products.length > 0) {
+        updated = await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
+          { productId: BigInt(existing.products[0].productId), quantity: qty },
+        ]);
+      }
+    }
 
     return this.formatButton(updated);
   }
@@ -614,14 +646,80 @@ export class DevicesService {
   }
 
   async allocateDevicesToStore(body: { storeId: string; deviceIds: string[]; productId?: string }, user: any) {
+    if (!body?.storeId || isNaN(Number(body.storeId))) {
+      throw new BadRequestException('Mã cửa hàng (storeId) không hợp lệ');
+    }
+    if (!body?.deviceIds || !Array.isArray(body.deviceIds) || body.deviceIds.length === 0) {
+      throw new BadRequestException('Vui lòng chọn ít nhất 1 nút bấm cần phân bổ');
+    }
+
     const targetStoreId = BigInt(body.storeId);
+    const store = await this.devicesRepo.findStoreById(targetStoreId);
+    if (!store) {
+      throw new NotFoundException(`Không tìm thấy cửa hàng với ID: ${body.storeId}`);
+    }
+
+    let allocatedCount = 0;
+    const allocatedCodes: string[] = [];
     for (const dId of body.deviceIds) {
-      const button = await this.devicesRepo.findByDeviceId(dId);
+      if (!dId) continue;
+      const button = await this.devicesRepo.findByIdentifier(dId.toString().trim());
       if (button) {
-        await this.devicesRepo.update(button.buttonId, { storeId: targetStoreId });
+        await this.devicesRepo.update(button.buttonId, {
+          storeId: targetStoreId,
+          status: button.status === 'INACTIVE' ? 'ACTIVE' : button.status,
+        });
+        allocatedCount++;
+        allocatedCodes.push(button.buttonCode || button.deviceId);
       }
     }
-    return { success: true, message: 'Phân bổ nút bấm cho cửa hàng thành công' };
+
+    // 1. Emit realtime WebSocket event to store channel, owner user, and globally
+    const eventPayload = {
+      storeId: targetStoreId.toString(),
+      storeName: store.name,
+      allocatedCount,
+      deviceIds: allocatedCodes,
+      timestamp: new Date().toISOString(),
+      message: `Quản trị viên hệ thống vừa bàn giao ${allocatedCount} nút bấm mới vào kho của bạn!`,
+    };
+
+    // Emit to store rooms
+    this.eventsGateway.emitToStore(targetStoreId.toString(), 'DEVICES_ALLOCATED', eventPayload);
+    this.eventsGateway.emitToStore(targetStoreId.toString(), 'devices:allocated', eventPayload);
+
+    // Emit directly to store owner user channel (if available)
+    if (store.ownerUserId) {
+      this.eventsGateway.emitToUser(store.ownerUserId.toString(), 'DEVICES_ALLOCATED', eventPayload);
+      this.eventsGateway.emitToUser(store.ownerUserId.toString(), 'devices:allocated', eventPayload);
+    }
+
+    // Emit to admin management room
+    this.eventsGateway.emitToAdmin('DEVICES_ALLOCATED', eventPayload);
+    this.eventsGateway.emitToAdmin('devices:allocated', eventPayload);
+
+    this.logger.log(`📢 [DevicesService] Dispatched DEVICES_ALLOCATED to store ${targetStoreId} & owner ${store.ownerUserId} (${allocatedCount} devices)`);
+
+    // 2. Send push notification to store owner (if available)
+    if (store.ownerUserId && this.notificationsService) {
+      this.notificationsService.sendPushToUser(store.ownerUserId, {
+        title: '📦 Thiết bị mới về kho!',
+        body: `Quản trị viên vừa bàn giao ${allocatedCount} nút bấm thông minh (${allocatedCodes.slice(0, 3).join(', ')}${allocatedCodes.length > 3 ? '...' : ''}) cho cửa hàng "${store.name}".`,
+        data: {
+          type: 'DEVICES_ALLOCATED',
+          storeId: targetStoreId.toString(),
+          allocatedCount: allocatedCount.toString(),
+        },
+      }).catch((err: any) => {
+        this.logger.warn(`Failed to send push for allocated devices: ${err.message}`);
+      });
+    }
+
+    return {
+      success: true,
+      message: `Đã cấp phát thành công ${allocatedCount} nút bấm cho cửa hàng "${store.name}"`,
+      data: eventPayload,
+    };
   }
 
   async lookupByCode(code: string) {

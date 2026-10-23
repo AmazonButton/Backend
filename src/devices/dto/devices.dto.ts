@@ -218,6 +218,10 @@ export class UpdateDeviceDto {
 
   @IsOptional()
   @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
   customName?: string;
 
   @IsOptional()
@@ -231,12 +235,36 @@ export class UpdateDeviceDto {
   customerId?: string | number;
 
   @IsOptional()
-  productId?: string | number;
+  productId?: string | number | null;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
-  @Min(1)
   quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  defaultQuantity?: number;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  batteryLevel?: number;
+
+  @IsOptional()
+  expiresAt?: string | Date | null;
+
+  @IsOptional()
+  warrantyUntil?: string | Date | null;
 }
 
 export class PairDeviceDto {

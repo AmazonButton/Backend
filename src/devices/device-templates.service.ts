@@ -16,8 +16,10 @@ const inMemoryTemplates: any[] = [
     description: 'Cấu hình chuẩn cho nút giao nước tận nhà',
     category: 'Nước uống',
     storeId: null,
+    defaultProductId: null,
     singlePressAction: 'CREATE_ORDER',
     doublePressAction: 'CANCEL_ORDER',
+    longPressAction: 'WIFI_CONFIGURATION',
     defaultQuantity: 1,
     cancelWindowSeconds: 60,
     createdAt: new Date(),
@@ -28,8 +30,10 @@ const inMemoryTemplates: any[] = [
     description: 'Cấu hình cho nút đổi gas gia đình an toàn',
     category: 'Gas',
     storeId: null,
+    defaultProductId: null,
     singlePressAction: 'CREATE_ORDER',
     doublePressAction: 'CANCEL_ORDER',
+    longPressAction: 'WIFI_CONFIGURATION',
     defaultQuantity: 1,
     cancelWindowSeconds: 60,
     createdAt: new Date(),
@@ -67,6 +71,8 @@ export class DeviceTemplatesService {
       storeId,
       singlePressAction: dto.singlePressAction || 'CREATE_ORDER',
       doublePressAction: dto.doublePressAction || 'CANCEL_ORDER',
+      longPressAction: dto.longPressAction || 'WIFI_CONFIGURATION',
+      defaultProductId: dto.defaultProductId ? BigInt(dto.defaultProductId) : null,
       defaultQuantity: dto.defaultQuantity ? Number(dto.defaultQuantity) : 1,
       cancelWindowSeconds: dto.cancelWindowSeconds ? Number(dto.cancelWindowSeconds) : 60,
     });
@@ -76,6 +82,9 @@ export class DeviceTemplatesService {
       id: created.templateId.toString(),
       templateId: created.templateId.toString(),
       storeId: created.storeId ? created.storeId.toString() : null,
+      defaultProductId: created.defaultProductId ? created.defaultProductId.toString() : null,
+      longPressAction: created.longPressAction || 'WIFI_CONFIGURATION',
+      _count: { devices: 0 },
     };
   }
 
@@ -101,17 +110,20 @@ export class DeviceTemplatesService {
 
     const list = await this.devicesRepo.findTemplates(where);
 
-    return list.map((t) => ({
+    return list.map((t: any) => ({
       ...t,
       id: t.templateId.toString(),
       templateId: t.templateId.toString(),
       storeId: t.storeId ? t.storeId.toString() : null,
+      defaultProductId: t.defaultProductId ? t.defaultProductId.toString() : null,
+      longPressAction: t.longPressAction || 'WIFI_CONFIGURATION',
+      _count: { devices: t._count?.deployedButtons || 0 },
     }));
   }
 
   async getById(id: string, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    const template = await this.devicesRepo.findTemplateByIdOrCode(id);
+    const template: any = await this.devicesRepo.findTemplateByIdOrCode(id);
 
     if (!template) {
       const fallback = inMemoryTemplates.find((x) => x.id === id);
@@ -131,6 +143,9 @@ export class DeviceTemplatesService {
       id: template.templateId.toString(),
       templateId: template.templateId.toString(),
       storeId: template.storeId ? template.storeId.toString() : null,
+      defaultProductId: template.defaultProductId ? template.defaultProductId.toString() : null,
+      longPressAction: template.longPressAction || 'WIFI_CONFIGURATION',
+      _count: { devices: template._count?.deployedButtons || 0 },
     };
   }
 
@@ -152,21 +167,29 @@ export class DeviceTemplatesService {
       }
     }
 
-    const updated = await this.devicesRepo.updateTemplate(BigInt(template.templateId), {
+    const updateData: any = {
       name: dto.name,
       description: dto.description,
       category: dto.category,
       singlePressAction: dto.singlePressAction,
       doublePressAction: dto.doublePressAction,
+      longPressAction: dto.longPressAction,
       defaultQuantity: dto.defaultQuantity ? Number(dto.defaultQuantity) : undefined,
       cancelWindowSeconds: dto.cancelWindowSeconds ? Number(dto.cancelWindowSeconds) : undefined,
-    });
+    };
+    if (dto.defaultProductId !== undefined) {
+      updateData.defaultProductId = dto.defaultProductId ? BigInt(dto.defaultProductId) : null;
+    }
+
+    const updated = await this.devicesRepo.updateTemplate(BigInt(template.templateId), updateData);
 
     return {
       ...updated,
       id: updated.templateId.toString(),
       templateId: updated.templateId.toString(),
       storeId: updated.storeId ? updated.storeId.toString() : null,
+      defaultProductId: updated.defaultProductId ? updated.defaultProductId.toString() : null,
+      longPressAction: updated.longPressAction || 'WIFI_CONFIGURATION',
     };
   }
 
@@ -193,46 +216,82 @@ export class DeviceTemplatesService {
   }
 
   async deploy(id: string, body: DeployDeviceTemplateDto, user: any) {
-    if (!body?.deviceId) {
-      throw new BadRequestException('Mã thiết bị (deviceId) là bắt buộc khi triển khai template');
-    }
     const template = await this.getById(id, user);
 
-    const button = await this.devicesRepo.findByIdentifier(body.deviceId.toString().trim());
-    if (!button) throw new NotFoundException('Không tìm thấy thiết bị đích');
-
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
-    if (!isAdmin) {
-      if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
-        throw new ForbiddenException('Thiết bị không thuộc quyền quản lý của cửa hàng bạn');
+    // Resolve target device identifiers
+    let targetDeviceIds: string[] = [];
+    if (body.deviceId) {
+      targetDeviceIds.push(body.deviceId.trim());
+    } else if (body.deviceIds && Array.isArray(body.deviceIds)) {
+      targetDeviceIds = body.deviceIds.map((d) => d.trim()).filter(Boolean);
+    } else if (body.prefix && body.startRange !== undefined && body.endRange !== undefined) {
+      const padLen = body.padLength || 3;
+      const start = Math.min(body.startRange, body.endRange);
+      const end = Math.max(body.startRange, body.endRange);
+      for (let i = start; i <= end; i++) {
+        targetDeviceIds.push(`${body.prefix}${String(i).padStart(padLen, '0')}`);
       }
     }
 
+    if (targetDeviceIds.length === 0) {
+      throw new BadRequestException('Vui lòng chỉ định mã thiết bị hoặc dải thiết bị cần triển khai template');
+    }
+
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
     const clickBehavior = template.doublePressAction ? 'DOUBLE' : 'SINGLE';
     const templateBigIntId = template.templateId ? BigInt(template.templateId) : (template.id && !isNaN(Number(template.id)) ? BigInt(template.id) : null);
-    await this.devicesRepo.deployTemplateAtomicTx(button.buttonId, {
-      templateId: templateBigIntId,
-      deployedTemplateId: templateBigIntId,
-      singlePressAction: template.singlePressAction,
-      doublePressAction: template.doublePressAction,
-      defaultQuantity: template.defaultQuantity,
-      cancelWindowSeconds: template.cancelWindowSeconds,
-      doubleClickWindowMs: template.doublePressAction ? 300 : undefined,
-    });
+    const templateProductId = template.defaultProductId ? BigInt(template.defaultProductId) : null;
 
-    return {
-      success: true,
-      message: `Đã triển khai template "${template.name}" cho thiết bị ${button.deviceId}`,
-      data: {
-        templateId: template.id,
-        deviceId: button.deviceId,
-        clickBehavior,
+    let successCount = 0;
+    const errors: string[] = [];
+
+    for (const devId of targetDeviceIds) {
+      const button = await this.devicesRepo.findByIdentifier(devId);
+      if (!button) {
+        errors.push(`Không tìm thấy thiết bị: ${devId}`);
+        continue;
+      }
+
+      if (!isAdmin) {
+        if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
+          errors.push(`Thiết bị ${devId} không thuộc quyền quản lý của cửa hàng bạn`);
+          continue;
+        }
+      }
+
+      await this.devicesRepo.deployTemplateAtomicTx(button.buttonId, {
+        templateId: templateBigIntId,
+        deployedTemplateId: templateBigIntId,
         singlePressAction: template.singlePressAction,
         doublePressAction: template.doublePressAction,
         defaultQuantity: template.defaultQuantity,
         cancelWindowSeconds: template.cancelWindowSeconds,
+        doubleClickWindowMs: template.doublePressAction ? 300 : undefined,
+        productId: templateProductId,
+      });
+
+      successCount++;
+    }
+
+    if (successCount === 0 && errors.length > 0) {
+      throw new BadRequestException(errors.join(', '));
+    }
+
+    const message = targetDeviceIds.length === 1
+      ? `Đã triển khai template "${template.name}" cho thiết bị ${targetDeviceIds[0]}`
+      : `Đã triển khai template "${template.name}" cho ${successCount}/${targetDeviceIds.length} thiết bị thành công`;
+
+    return {
+      success: true,
+      message,
+      data: {
+        templateId: template.id,
+        successCount,
+        totalRequested: targetDeviceIds.length,
+        errors: errors.length > 0 ? errors : undefined,
         deployedAt: new Date(),
       },
     };
   }
 }
+

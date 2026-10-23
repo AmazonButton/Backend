@@ -433,6 +433,8 @@ model DeviceTemplate {
   store               Store?   @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
   singlePressAction   String?  @default("CREATE_ORDER") @map("single_press_action")
   doublePressAction   String?  @default("CANCEL_ORDER") @map("double_press_action")
+  longPressAction     String?  @default("WIFI_CONFIGURATION") @map("long_press_action")
+  defaultProductId    BigInt?  @map("default_product_id")
   defaultQuantity     Int?     @default(1) @map("default_quantity")
   cancelWindowSeconds Int?     @default(60) @map("cancel_window_seconds")
   createdAt           DateTime @default(now()) @map("created_at")

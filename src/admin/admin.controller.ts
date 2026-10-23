@@ -9,7 +9,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('SUPER_ADMIN')
+@Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
 @Controller('admin')
 export class AdminController {
   constructor(@Inject(AdminService) private readonly adminService: AdminService) {}

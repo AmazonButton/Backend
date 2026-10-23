@@ -9,6 +9,12 @@ export class DevicesRepository {
     return this.prisma.ioTButton.count({ where: whereClause });
   }
 
+  async findStoreById(storeId: bigint) {
+    return this.prisma.store.findUnique({
+      where: { storeId },
+    });
+  }
+
   async findMany(whereClause: any) {
     return this.prisma.ioTButton.findMany({
       where: whereClause,
@@ -120,8 +126,9 @@ export class DevicesRepository {
         include: {
           store: true,
           customer: { include: { user: true } },
+          address: true,
           buttonProducts: { include: { product: true } },
-        deployedTemplate: true,
+          deployedTemplate: true,
         },
       });
     });
@@ -173,6 +180,11 @@ export class DevicesRepository {
   async findTemplates(whereClause: any) {
     return this.prisma.deviceTemplate.findMany({
       where: whereClause,
+      include: {
+        _count: {
+          select: { deployedButtons: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -292,6 +304,7 @@ export class DevicesRepository {
     doubleClickWindowMs?: number | null;
     templateId?: bigint | null;
     deployedTemplateId?: bigint | null;
+    productId?: bigint | null;
   }) {
     return this.prisma.$transaction(async (tx) => {
       // 1. Lock button row for update
@@ -338,8 +351,17 @@ export class DevicesRepository {
         },
       });
 
-      // 3. Atomically update button product default quantity if specified
-      if (template.defaultQuantity && template.defaultQuantity > 0) {
+      // 3. Atomically update button product
+      if (template.productId) {
+        await tx.buttonProduct.deleteMany({ where: { buttonId } });
+        await tx.buttonProduct.create({
+          data: {
+            buttonId,
+            productId: template.productId,
+            quantity: template.defaultQuantity && template.defaultQuantity > 0 ? template.defaultQuantity : 1,
+          },
+        });
+      } else if (template.defaultQuantity && template.defaultQuantity > 0) {
         await tx.buttonProduct.updateMany({
           where: { buttonId },
           data: { quantity: template.defaultQuantity },

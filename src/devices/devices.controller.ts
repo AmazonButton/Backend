@@ -75,26 +75,26 @@ export class DevicesController {
    * Super Admin tạo lô nút bấm trống vào kho tổng
    */
   @Post('batch-generate')
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
   async batchGenerate(@Body() body: BatchGenerateDevicesDto, @Request() req: any) {
     return this.devicesService.batchGenerateBlankDevices(body, req.user);
   }
 
   /**
-   * Super Admin lấy danh sách nút trống chưa phân bổ
+   * Quản trị viên lấy danh sách nút trống chưa phân bổ
    */
   @Get('unassigned')
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'STORE_OWNER')
   async getUnassigned() {
     const data = await this.devicesService.getUnassignedDevices();
     return { success: true, data };
   }
 
   /**
-   * Super Admin cấp quyền phân phối danh sách nút cho Cửa hàng
+   * Quản trị viên cấp quyền phân phối danh sách nút cho Cửa hàng
    */
   @Post('allocate-store')
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'STORE_OWNER')
   async allocateToStore(@Body() body: AllocateStoreDto, @Request() req: any) {
     return this.devicesService.allocateDevicesToStore(body, req.user);
   }

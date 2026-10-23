@@ -117,6 +117,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Auto-join personal rooms
       client.join(`user:${payload.userId}`);
+      client.join(`user_${payload.userId}`);
       client.join(`driver:${payload.userId}`);
       if (payload.storeId) {
         client.join(`store_${payload.storeId}`);
@@ -126,8 +127,35 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.join(`customer_${payload.customerProfileId}`);
         client.join(`customer:${payload.customerProfileId}`);
       }
-      if (payload.role === 'SUPER_ADMIN' || payload.role === 'SYSTEM_ADMIN') {
+      if (payload.role === 'SUPER_ADMIN' || payload.role === 'SYSTEM_ADMIN' || payload.role === 'ADMIN') {
         client.join('admin');
+      }
+
+      // Automatically join all stores owned or staffed by this user
+      if (this.prisma && payload.userId) {
+        try {
+          const userStores = await this.prisma.user.findUnique({
+            where: { userId: BigInt(payload.userId) },
+            select: {
+              ownedStores: { select: { storeId: true } },
+              storeStaffs: { select: { storeId: true } },
+            },
+          });
+          if (userStores) {
+            for (const s of userStores.ownedStores) {
+              client.join(`store_${s.storeId}`);
+              client.join(`store:${s.storeId}`);
+              this.logger.log(`🔌 [WS] User ${payload.userId} joined owned store_${s.storeId}`);
+            }
+            for (const s of userStores.storeStaffs) {
+              client.join(`store_${s.storeId}`);
+              client.join(`store:${s.storeId}`);
+              this.logger.log(`🔌 [WS] User ${payload.userId} joined staff store_${s.storeId}`);
+            }
+          }
+        } catch (err: any) {
+          this.logger.warn(`Failed to auto-join store rooms: ${err.message}`);
+        }
       }
 
       this.logger.log(
@@ -155,21 +183,22 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('subscribe:store')
   handleSubscribeStore(client: Socket, storeId: string) {
+    if (!storeId) return;
     const user = client.data?.user;
     if (!user) {
-      client.emit('error', { code: 'UNAUTHORIZED', message: 'Vui lòng xác thực trước khi tham gia room' });
+      client.emit('error', { code: 'UNAUTHORIZED', message: 'Vui lòng xác thực trước khi tham gia room cửa hàng' });
       return;
     }
 
-    const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN';
-    const isStoreStaff = user.storeId && user.storeId.toString() === storeId?.toString();
+    const cleanStoreId = storeId.toString().trim();
+    const isStoreStaff = Boolean(user.storeId && user.storeId.toString() === cleanStoreId);
 
-    if (isSuperAdmin || isStoreStaff) {
-      client.join(`store_${storeId}`);
-      client.join(`store:${storeId}`);
-      this.logger.log(`🔌 Socket ${client.id} joined store_${storeId} and store:${storeId}`);
+    if (isStoreStaff) {
+      client.join(`store_${cleanStoreId}`);
+      client.join(`store:${cleanStoreId}`);
+      this.logger.log(`🔌 Socket ${client.id} (Store: ${user.storeId}) joined store_${cleanStoreId}`);
     } else {
-      this.logger.warn(`⛔ [WS] Socket ${client.id} denied access to store_${storeId}`);
+      this.logger.warn(`⛔ [WS] Socket ${client.id} (role: ${user.role}) denied access to store_${cleanStoreId}`);
       client.emit('error', { code: 'FORBIDDEN', message: 'Bạn không có quyền truy cập kênh của cửa hàng này' });
     }
   }
@@ -178,19 +207,27 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleSubscribeCustomer(client: Socket, customerId: string) {
     const user = client.data?.user;
     if (!user) {
-      client.emit('error', { code: 'UNAUTHORIZED', message: 'Vui lòng xác thực trước khi tham gia room' });
+      client.emit('error', { code: 'UNAUTHORIZED', message: 'Vui lòng xác thực trước khi tham gia room khách hàng' });
       return;
     }
 
-    const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN';
-    const isCustomer = user.customerId && user.customerId.toString() === customerId?.toString();
+    // Only this specific customer can subscribe to their personal order tracking channel
+    const isCustomer = user.role === 'CUSTOMER' && Boolean(user.customerId && user.customerId.toString() === customerId?.toString());
 
-    if (isSuperAdmin || isCustomer) {
+    if (isCustomer) {
       client.join(`customer_${customerId}`);
-      this.logger.log(`🔌 Socket ${client.id} joined customer_${customerId}`);
+      client.join(`customer:${customerId}`);
+      this.logger.log(`🔌 Socket ${client.id} (Customer: ${user.customerId}) joined customer_${customerId}`);
     } else {
-      this.logger.warn(`⛔ [WS] Socket ${client.id} denied access to customer_${customerId}`);
+      this.logger.warn(`⛔ [WS] Socket ${client.id} (role: ${user.role}) denied access to customer_${customerId}`);
       client.emit('error', { code: 'FORBIDDEN', message: 'Bạn không có quyền truy cập kênh của khách hàng này' });
+    }
+  }
+
+  emitToAdmin(event: string, payload: any) {
+    if (this.server) {
+      this.server.to('admin').emit(event, payload);
+      this.logger.log(`📢 [WS -> Admin] ${event}`);
     }
   }
 
@@ -198,6 +235,13 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (this.server) {
       this.server.to(`store_${storeId}`).to(`store:${storeId}`).emit(event, payload);
       this.logger.log(`📢 [WS -> Store ${storeId}] ${event}`);
+    }
+  }
+
+  emitToUser(userId: string, event: string, payload: any) {
+    if (this.server) {
+      this.server.to(`user:${userId}`).to(`user_${userId}`).emit(event, payload);
+      this.logger.log(`📢 [WS -> User ${userId}] ${event}`);
     }
   }
 

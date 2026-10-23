@@ -8,9 +8,10 @@ import { ProvisioningController } from './provisioning.controller';
 import { DevicesRepository } from './devices.repository';
 import { ProvisioningRepository } from './provisioning.repository';
 import { OrdersModule } from '../orders/orders.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [OrdersModule],
+  imports: [OrdersModule, NotificationsModule],
   controllers: [
     DevicesController,
     DeviceTemplatesController,
