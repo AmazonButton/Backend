@@ -202,12 +202,10 @@ export class ProductsRepository {
   }
 
   async recordPriceHistory(data: {
-    storeId?: bigint;
     productId: bigint;
     oldPrice: number;
     newPrice: number;
     changedByUserId?: bigint;
-    reason?: string;
   }) {
     return this.prisma.productPriceHistory.create({
       data: {

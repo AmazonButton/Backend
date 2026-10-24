@@ -221,7 +221,7 @@ export class ProductsService {
       }
     }
 
-    const { productName, name, brand, basePrice, price, status, description, reason } = body;
+    const { productName, name, brand, basePrice, price, status, description } = body;
     const finalProductName = productName || name;
     const finalPrice = basePrice !== undefined ? parseFloat(basePrice.toString()) : price !== undefined ? parseFloat(price.toString()) : undefined;
 
@@ -229,12 +229,10 @@ export class ProductsService {
     if (finalPrice !== undefined && Number(existing.basePrice) !== finalPrice) {
       try {
         await this.productsRepo.recordPriceHistory({
-          storeId: existing.storeId,
           productId: targetProductId,
           oldPrice: Number(existing.basePrice),
           newPrice: finalPrice,
           changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
-          reason: reason || 'Cập nhật giá bán sản phẩm',
         });
       } catch (err: any) {
         this.logger.warn(`Failed to record price history for product ${targetProductId}: ${err.message}`);
