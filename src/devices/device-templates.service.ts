@@ -63,6 +63,9 @@ export class DeviceTemplatesService {
 
     let defaultProductId: bigint | null = null;
     if (dto.defaultProductId !== undefined && dto.defaultProductId !== null && dto.defaultProductId !== '') {
+      if (dto.defaultProductId === 'undefined' || !/^\d+$/.test(String(dto.defaultProductId).trim())) {
+        throw new BadRequestException('ID sản phẩm mặc định không hợp lệ');
+      }
       const pId = BigInt(dto.defaultProductId);
       const product = await this.prisma.product.findUnique({
         where: { productId: pId },
@@ -187,6 +190,9 @@ export class DeviceTemplatesService {
       if (dto.defaultProductId === null || dto.defaultProductId === '') {
         defaultProductId = null;
       } else {
+        if (dto.defaultProductId === 'undefined' || !/^\d+$/.test(String(dto.defaultProductId).trim())) {
+          throw new BadRequestException('ID sản phẩm mặc định không hợp lệ');
+        }
         const pId = BigInt(dto.defaultProductId);
         const product = await this.prisma.product.findUnique({
           where: { productId: pId },

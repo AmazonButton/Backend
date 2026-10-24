@@ -45,7 +45,13 @@ async function runDeviceTemplateAndBulkDeployTests() {
       const data = await res.json();
       if (res.status === 200 && data.data?.token) {
         store1Token = data.data.token;
-        store1Id = String(data.data.user.storeId);
+        const rawStoreId = data.data.user?.storeId || data.data.user?.store?.storeId;
+        if (rawStoreId && rawStoreId !== 'undefined' && rawStoreId !== 'null') {
+          store1Id = String(rawStoreId);
+        } else {
+          const s = await prisma.store.findFirst({ where: { email: 'store@smartorder.local' } });
+          store1Id = s ? String(s.storeId) : '1';
+        }
         logTest('1.1 Auth: Store Owner 1 Login', true);
         passed++;
       } else {
@@ -66,7 +72,13 @@ async function runDeviceTemplateAndBulkDeployTests() {
       const data = await res.json();
       if (res.status === 200 && data.data?.token) {
         store2Token = data.data.token;
-        store2Id = String(data.data.user.storeId);
+        const rawStore2Id = data.data.user?.storeId || data.data.user?.store?.storeId;
+        if (rawStore2Id && rawStore2Id !== 'undefined' && rawStore2Id !== 'null') {
+          store2Id = String(rawStore2Id);
+        } else {
+          const s2 = await prisma.store.findFirst({ where: { email: 'minhkhoi@smartorder.local' } });
+          store2Id = s2 ? String(s2.storeId) : '2';
+        }
         logTest('1.2 Auth: Store Owner 2 Login', true);
         passed++;
       } else {
@@ -132,17 +144,18 @@ async function runDeviceTemplateAndBulkDeployTests() {
         store1Product = p1Data.data[0];
       }
 
+      const sId1 = store1Id && /^\d+$/.test(store1Id) ? BigInt(store1Id) : 1n;
       if (!store1Product) {
         store1Product = await prisma.product.findFirst({
-          where: { storeId: BigInt(store1Id), status: 'ACTIVE' },
+          where: { storeId: sId1, status: 'ACTIVE' },
         });
       }
 
       if (!store1Product) {
-        const cat = (await prisma.category.findFirst({ where: { storeId: BigInt(store1Id) } })) || (await prisma.category.findFirst());
+        const cat = (await prisma.category.findFirst({ where: { storeId: sId1 } })) || (await prisma.category.findFirst());
         store1Product = await prisma.product.create({
           data: {
-            storeId: BigInt(store1Id),
+            storeId: sId1,
             categoryId: cat ? cat.categoryId : 1n,
             productCode: `PRD-S1-${Date.now().toString().slice(-4)}`,
             productName: 'Store 1 Item Test',
@@ -155,17 +168,18 @@ async function runDeviceTemplateAndBulkDeployTests() {
       // Find another product that belongs to another store
       otherStoreProduct = await prisma.product.findFirst({
         where: {
-          storeId: { not: BigInt(store1Id) },
+          storeId: { not: sId1 },
           status: 'ACTIVE',
         },
       });
 
       if (!otherStoreProduct) {
         // Create a temporary product for Store 2 to test cross-store isolation
+        const sId2 = store2Id && /^\d+$/.test(store2Id) ? BigInt(store2Id) : 2n;
         const cat = await prisma.category.findFirst();
         otherStoreProduct = await prisma.product.create({
           data: {
-            storeId: BigInt(store2Id),
+            storeId: sId2,
             categoryId: cat ? cat.categoryId : 1n,
             productCode: `PRD-T2-${Date.now().toString().slice(-4)}`,
             productName: 'Other Store Item Test',
