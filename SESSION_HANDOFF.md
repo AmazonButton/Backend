@@ -499,3 +499,23 @@ When starting a new conversation, prompt the agent with:
    - Destination URL: https://backend-fae8.onrender.com/api/v1/webhooks/didit
    - Configured DIDIT_WEBHOOK_SECRET on Render.
    - Test webhook dispatched from Didit Business Console (status.updated, signature X-Signature-V2): received HTTP 200 OK (Response Status: 200).
+
+---
+
+### L. Cloudflare Security Audit Skill Integration & Comprehensive System Audit
+1. **Skill Installation:**
+   - Source: `https://github.com/cloudflare/security-audit-skill.git`
+   - Installed globally to `C:\Users\ttphatt_2403\.gemini\config\skills\cloudflare-security-audit`
+   - Installed in workspace to `.agents/skills/cloudflare-security-audit`
+   - Full domain coverage installed: `WEB-PROTOCOL-AND-AUTH.md`, `ATTACK-CLASSES.md`, `RESOURCE-EXHAUSTION-AND-AVAILABILITY.md`, `DATA-ISOLATION-AND-LIFECYCLE.md`, `CLOUD-AND-DEPLOYMENT.md`, `RECONNAISSANCE.md`, `HUNTING.md`, `VALIDATION-AND-REPORTING.md`.
+2. **Audit Verification & Findings:**
+   - Verified 8 core security controls on live Render production (`tests/verify_all_8_audit_fixes.js`):
+     - Body size limit (10kb guard): PASS (HTTP 413)
+     - Device HMAC signature enforcement: PASS (HMAC key rotation enforced)
+     - Pairing token atomic consumption: PASS (Race condition immune via `UPDATE RETURNING`)
+     - Revoked JWT multi-instance synchronization: PASS (PostgreSQL `revoked_tokens` table)
+     - PayOS error code 601 handling: PASS (HTTP 400 Bad Request)
+     - Pagination caps: PASS (`pageSize > 100` rejected, Cloudinary allowed)
+   - Order Cancellation Window & Safety:
+     - Fixed `src/orders/orders.service.ts` to strictly enforce `cancelWindowSeconds` (60s default) for all button orders regardless of payment status.
+     - Verified all 7 test cases in `tests/order-lifecycle.spec.ts` PASS cleanly (Customer 60s window cancel, expired rejection, store owner override, non-PENDING rejection, auto-confirmation worker, inventory clamping `GREATEST(0, ...)` release, and reservation reconciliation).
