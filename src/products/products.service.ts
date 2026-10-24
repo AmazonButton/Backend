@@ -409,4 +409,18 @@ export class ProductsService {
       };
     });
   }
+
+  async remove(id: string | number | bigint, user?: any) {
+    const targetProductId = BigInt(id);
+    const hasActive = await this.productsRepo.hasActiveOrders(targetProductId);
+    if (hasActive) {
+      throw new BadRequestException({
+        success: false,
+        code: 'PRODUCT_HAS_ACTIVE_ORDERS',
+        message: 'Không thể ngừng kinh doanh hoặc xóa sản phẩm đang có đơn hàng xử lý.',
+      });
+    }
+    return this.update(id, { status: 'INACTIVE' }, user);
+  }
 }
+

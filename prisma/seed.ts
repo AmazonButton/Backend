@@ -265,6 +265,43 @@ async function main() {
       },
     });
 
+  console.log('📋 Creating Device Templates (Water & Gas)...');
+  await prisma.deviceTemplate.upsert({
+    where: { code: 'TMPL-WATER-20L' },
+    update: { storeId: store1.storeId, defaultProductId: prodWater.productId },
+    create: {
+      code: 'TMPL-WATER-20L',
+      name: 'Mẫu Nút Bấm Đặt Nước La Vie 19L',
+      description: 'Mẫu nút bấm một chạm cho bình nước khoáng La Vie 19L',
+      category: 'Nước uống',
+      storeId: store1.storeId,
+      defaultProductId: prodWater.productId,
+      singlePressAction: 'CREATE_ORDER',
+      doublePressAction: 'CANCEL_ORDER',
+      longPressAction: 'WIFI_CONFIGURATION',
+      defaultQuantity: 1,
+      cancelWindowSeconds: 60,
+    },
+  });
+
+  await prisma.deviceTemplate.upsert({
+    where: { code: 'TMPL-GAS-12KG' },
+    update: { storeId: store1.storeId, defaultProductId: prodGas.productId },
+    create: {
+      code: 'TMPL-GAS-12KG',
+      name: 'Mẫu Nút Bấm Đặt Gas Petrolimex 12kg',
+      description: 'Mẫu nút bấm một chạm cho bình Gas Petrolimex 12kg',
+      category: 'Khí đốt & Gas',
+      storeId: store1.storeId,
+      defaultProductId: prodGas.productId,
+      singlePressAction: 'CREATE_ORDER',
+      doublePressAction: 'CANCEL_ORDER',
+      longPressAction: 'WIFI_CONFIGURATION',
+      defaultQuantity: 1,
+      cancelWindowSeconds: 60,
+    },
+  });
+
   console.log('🔘 Creating IoT Buttons (Fixed Store & Multi-Product Configuration)...');
   // Button 1: BTN-8829-WTR (used in automated test suite)
   const button1 = await prisma.ioTButton.upsert({

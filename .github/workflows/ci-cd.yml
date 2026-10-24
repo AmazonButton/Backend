@@ -113,6 +113,9 @@ jobs:
       PLATFORM_BANK_ACCOUNT_NUMBER: "999888777666"
       PLATFORM_BANK_BIN: "970422"
       FIREBASE_PROJECT_ID: iot-button-e59d7
+      CLOUDINARY_CLOUD_NAME: ci_test_cloud
+      CLOUDINARY_API_KEY: ci_test_api_key
+      CLOUDINARY_API_SECRET: ci_test_api_secret_32_characters_long!
 
     steps:
       - name: Checkout Code

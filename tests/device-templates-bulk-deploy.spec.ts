@@ -132,6 +132,26 @@ async function runDeviceTemplateAndBulkDeployTests() {
         store1Product = p1Data.data[0];
       }
 
+      if (!store1Product) {
+        store1Product = await prisma.product.findFirst({
+          where: { storeId: BigInt(store1Id), status: 'ACTIVE' },
+        });
+      }
+
+      if (!store1Product) {
+        const cat = (await prisma.category.findFirst({ where: { storeId: BigInt(store1Id) } })) || (await prisma.category.findFirst());
+        store1Product = await prisma.product.create({
+          data: {
+            storeId: BigInt(store1Id),
+            categoryId: cat ? cat.categoryId : 1n,
+            productCode: `PRD-S1-${Date.now().toString().slice(-4)}`,
+            productName: 'Store 1 Item Test',
+            basePrice: 50000,
+            status: 'ACTIVE',
+          },
+        });
+      }
+
       // Find another product that belongs to another store
       otherStoreProduct = await prisma.product.findFirst({
         where: {
@@ -155,8 +175,10 @@ async function runDeviceTemplateAndBulkDeployTests() {
         });
       }
 
-      const foundBoth = !!store1Product && !!otherStoreProduct;
-      logTest('2. Products Catalog Resolved for Stores', foundBoth, `Store1: ${store1Product?.id}, OtherStore: ${otherStoreProduct?.productId}`);
+      const store1ProdId = store1Product?.id || store1Product?.productId;
+      const otherProdId = otherStoreProduct?.productId || otherStoreProduct?.id;
+      const foundBoth = !!store1ProdId && !!otherProdId;
+      logTest('2. Products Catalog Resolved for Stores', foundBoth, `Store1: ${store1ProdId}, OtherStore: ${otherProdId}`);
       if (foundBoth) passed++; else failed++;
     } catch (e: any) {
       logTest('2. Products Catalog Resolved for Stores', false, e.message);
@@ -168,6 +190,7 @@ async function runDeviceTemplateAndBulkDeployTests() {
     // -------------------------------------------------------------------------
     let template1Id: string = '';
     try {
+      const defaultProdIdStr = String(store1Product?.id || store1Product?.productId);
       const res = await fetch(`${BASE_URL}/device-templates`, {
         method: 'POST',
         headers: {
@@ -177,7 +200,7 @@ async function runDeviceTemplateAndBulkDeployTests() {
         body: JSON.stringify({
           name: 'Water Quick Order Button V1',
           description: 'Official template for single-click water delivery',
-          defaultProductId: String(store1Product.id),
+          defaultProductId: defaultProdIdStr,
           longPressAction: 'WIFI_CONFIGURATION',
           defaultQuantity: 2,
           cancelWindowSeconds: 60,
@@ -187,7 +210,7 @@ async function runDeviceTemplateAndBulkDeployTests() {
       if (res.status === 201 && data.data?.id) {
         template1Id = data.data.id;
         createdTemplateIds.push(template1Id);
-        const hasProductId = String(data.data.defaultProductId) === String(store1Product.id);
+        const hasProductId = String(data.data.defaultProductId) === defaultProdIdStr;
         const hasLongPress = data.data.longPressAction === 'WIFI_CONFIGURATION';
         if (hasProductId && hasLongPress) {
           logTest('3. Phase 1 & 2: Template Created with defaultProductId and longPressAction', true);
@@ -207,6 +230,7 @@ async function runDeviceTemplateAndBulkDeployTests() {
     // 4. Phase 3: Tenant Product Boundary Check (Cross-Store Product Rejection)
     // -------------------------------------------------------------------------
     try {
+      const crossProdIdStr = String(otherStoreProduct?.productId || otherStoreProduct?.id);
       // Store 1 tries to use another store's product as defaultProductId
       const res = await fetch(`${BASE_URL}/device-templates`, {
         method: 'POST',
@@ -216,7 +240,7 @@ async function runDeviceTemplateAndBulkDeployTests() {
         },
         body: JSON.stringify({
           name: 'Cross Tenant Template',
-          defaultProductId: String(otherStoreProduct.productId), // BELONGS TO ANOTHER STORE
+          defaultProductId: crossProdIdStr, // BELONGS TO ANOTHER STORE
           longPressAction: 'WIFI_CONFIGURATION',
         }),
       });

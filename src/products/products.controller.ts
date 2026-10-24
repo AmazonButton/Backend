@@ -119,7 +119,7 @@ export class ProductsController {
   @Delete(':id')
   @ApiOperation({ summary: 'Vô hiệu hóa (ngừng kinh doanh) sản phẩm thay vì xóa cứng (Soft delete)' })
   async remove(@Param('id') id: string, @Request() req: any) {
-    const data = await this.productsService.update(id, { status: 'INACTIVE' }, req.user);
+    const data = await this.productsService.remove(id, req.user);
     return { success: true, message: 'Đã chuyển sản phẩm sang trạng thái ngừng kinh doanh!', data };
   }
 }

@@ -274,4 +274,19 @@ export class ProductsRepository {
       take: 100,
     });
   }
+
+  async hasActiveOrders(productId: bigint): Promise<boolean> {
+    const activeItem = await this.prisma.orderItem.findFirst({
+      where: {
+        productId,
+        order: {
+          orderStatus: {
+            in: ['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING', 'READY_FOR_DELIVERY', 'SHIPPING'],
+          },
+        },
+      },
+    });
+    return !!activeItem;
+  }
 }
+
