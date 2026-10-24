@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 16/16 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), CI/CD 3-layer GitHub Actions workflow active with Render deploy hook.
+> **Status:** All 16/16 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), CI/CD 3-layer GitHub Actions workflow verified green on run `#40089350959` with successful fail-closed release to Render production (`https://backend-fae8.onrender.com/healthz` responding 200 OK).
 
 ---
 
