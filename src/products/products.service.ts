@@ -221,20 +221,30 @@ export class ProductsService {
       }
     }
 
-    const { productName, name, brand, basePrice, price, status, description, reason } = body;
+    const { productName, name, brand, basePrice, price, status, description } = body;
     const finalProductName = productName || name;
     const finalPrice = basePrice !== undefined ? parseFloat(basePrice.toString()) : price !== undefined ? parseFloat(price.toString()) : undefined;
 
     // Track price change history if price is being updated
     if (finalPrice !== undefined && Number(existing.basePrice) !== finalPrice) {
-      await this.productsRepo.recordPriceHistory({
-        storeId: existing.storeId,
-        productId: targetProductId,
-        oldPrice: Number(existing.basePrice),
-        newPrice: finalPrice,
-        changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
-        reason: reason || 'Cập nhật giá bán sản phẩm',
-      });
+      try {
+        await this.productsRepo.recordPriceHistory({
+          productId: targetProductId,
+          oldPrice: Number(existing.basePrice),
+          newPrice: finalPrice,
+          changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
+        });
+      } catch (err: any) {
+        this.logger.warn(`Failed to record price history for product ${targetProductId}: ${err.message}`);
+      }
+    }
+
+    if (body.stock !== undefined && !isNaN(Number(body.stock))) {
+      try {
+        await this.productsRepo.updateInventoryStock(targetProductId, existing.storeId, Number(body.stock));
+      } catch (stockErr: any) {
+        this.logger.warn(`Failed to update stock for product ${targetProductId}: ${stockErr.message}`);
+      }
     }
 
     const imageInputs = this.parseImageInputs(body);
