@@ -123,6 +123,10 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
+      - name: Initialize PostgreSQL Extensions Schema
+        run: |
+          PGPASSWORD=postgrespassword psql -h localhost -U postgres -d smart_order_test -c "CREATE SCHEMA IF NOT EXISTS extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA extensions;"
+
       - name: Apply Database Migrations (Isolated CI DB)
         run: npx prisma migrate deploy
 
