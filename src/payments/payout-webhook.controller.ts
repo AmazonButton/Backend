@@ -8,7 +8,9 @@ import {
   Logger,
   Inject,
   forwardRef,
+  Req,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreWalletService } from '../store-wallet/store-wallet.service';
 import { verifyPayoutSignature } from './payos.helper';
@@ -48,7 +50,7 @@ export class PayoutWebhookController {
 
   @Post('payos/payout')
   @HttpCode(HttpStatus.OK)
-  async handlePayoutWebhook(@Body() body: PayosPayoutWebhookDto) {
+  async handlePayoutWebhook(@Body() body: PayosPayoutWebhookDto, @Req() req?: any) {
     if (!body?.data || !body?.signature) {
       throw new BadRequestException('Webhook payload hoặc chữ ký không hợp lệ');
     }
@@ -62,10 +64,21 @@ export class PayoutWebhookController {
       throw new BadRequestException('Thiếu cấu hình khóa xác thực chi hộ');
     }
 
-    // Timing-safe HMAC-SHA256 signature verification
-    const isValid = verifyPayoutSignature(body.data, body.signature, checksumKey);
+    // 1. Primary: Timing-safe HMAC-SHA256 verification on canonical sorted data (Official PayOS specification)
+    let isValid = verifyPayoutSignature(body.data, body.signature, checksumKey);
+
+    // 2. Secondary fallback: Raw body HMAC verification if rawBody buffer is present
+    if (!isValid && req?.rawBody) {
+      try {
+        const rawHmac = crypto.createHmac('sha256', checksumKey).update(req.rawBody).digest('hex');
+        isValid = crypto.timingSafeEqual(Buffer.from(rawHmac, 'hex'), Buffer.from(body.signature, 'hex'));
+      } catch {
+        isValid = false;
+      }
+    }
+
     if (!isValid) {
-      this.logger.warn(`Chữ ký webhook PayOS Payout không khớp cho ref: ${body.data.referenceId}`);
+      this.logger.warn(`Chữ ký webhook PayOS Payout không khớp cho ref: ${body.data?.referenceId}`);
       throw new BadRequestException('Chữ ký webhook không hợp lệ');
     }
 

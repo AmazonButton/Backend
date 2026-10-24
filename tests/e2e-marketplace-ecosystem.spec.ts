@@ -6,18 +6,26 @@ import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { StoreSubscriptionsService } from '../src/store-subscriptions/store-subscriptions.service';
 import { StoreSubscriptionsRepository } from '../src/store-subscriptions/store-subscriptions.repository';
 
+import { PayOSPayoutService } from '../src/payments/payos-payout.service';
+
 async function testFullMarketplaceE2E() {
   console.log('========================================================================');
   console.log('🚀 MASTER E2E: MULTI-VENDOR MARKETPLACE, BUTTON RENTAL & ESCROW WALLET');
   console.log('========================================================================\n');
 
+  process.env.PAYOS_MOCK_PAYOUT = 'true';
+  process.env.PAYOS_CLIENT_ID = 'test_payos_client_id';
+  process.env.PAYOS_API_KEY = 'test_payos_api_key';
+  process.env.PAYOS_CHECKSUM_KEY = 'test_payos_checksum_key';
+
   const prisma = new PrismaService();
   await prisma.$connect();
 
+  const payosPayoutService = new PayOSPayoutService();
   const adminRepo = new AdminRepository(prisma);
-  const adminService = new AdminService(adminRepo);
+  const adminService = new AdminService(adminRepo, payosPayoutService);
   const rentalsService = new RentalsService(prisma);
-  const walletService = new StoreWalletService(prisma);
+  const walletService = new StoreWalletService(prisma, payosPayoutService);
   const subscriptionsService = new StoreSubscriptionsService(new StoreSubscriptionsRepository(prisma), walletService);
 
   let passed = 0;
@@ -188,14 +196,30 @@ async function testFullMarketplaceE2E() {
       Number(walletAfterWithdrawReq?.balance) === 500000
     );
 
-    const transferred = await adminService.confirmWithdrawalTransfer(
+    // Verification 1: Manual transfer is strictly deprecated and blocked
+    let manualBlocked = false;
+    try {
+      await adminService.confirmWithdrawalTransfer(
+        withdrawal.withdrawalId,
+        'https://res.cloudinary.com/demo/image/upload/v1/bank_transfer_proof.jpg',
+        owner
+      );
+    } catch (err: any) {
+      manualBlocked = (err?.getResponse?.() as any)?.errorCode === 'MANUAL_TRANSFER_DEPRECATED';
+    }
+    assert(
+      'Manual transfer endpoint is deprecated and blocked (MANUAL_TRANSFER_DEPRECATED)',
+      manualBlocked
+    );
+
+    // Verification 2: Admin initiates automated PayOS Payout
+    const payoutResult = await adminService.payoutViaPayOS(
       withdrawal.withdrawalId,
-      'https://res.cloudinary.com/demo/image/upload/v1/bank_transfer_proof.jpg',
       owner
     );
     assert(
-      'Admin approves and records bank transfer proof receipt (Status: TRANSFERRED)',
-      transferred.status === 'TRANSFERRED' && !!transferred.transferEvidenceUrl
+      'Admin executes automated PayOS Payout (Status: PROCESSING)',
+      payoutResult.status === 'PROCESSING'
     );
   } catch (err: any) {
     console.error('E2E execution caught unexpected error:', err);

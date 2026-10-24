@@ -4,9 +4,10 @@ import { AdminService } from '../src/admin/admin.service';
 import { AdminRepository } from '../src/admin/admin.repository';
 import { PayOSPayoutService } from '../src/payments/payos-payout.service';
 import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
-import { signPayoutRequest } from '../src/payments/payos.helper';
+import { signPayoutRequest, verifyPayoutSignature } from '../src/payments/payos.helper';
 import { PayoutWebhookController } from '../src/payments/payout-webhook.controller';
 import { BadRequestException } from '@nestjs/common';
+import { WalletMapper } from '../src/store-wallet/mappers/wallet.mapper';
 
 async function runWithdrawalConcurrencyIdempotencyTests() {
   console.log('================================================================');
@@ -349,6 +350,74 @@ async function runWithdrawalConcurrencyIdempotencyTests() {
       signature: validSignature,
     });
     assert(replayedResult.success === true, '4.4 Replay Idempotency: Duplicate webhook handled cleanly without re-releasing funds');
+
+    // Test 4.5: Canonical Key Permutation Resilience (PayOS official specification)
+    const permutedData = {
+      toBin: '970422',
+      state: 'SUCCEEDED',
+      toAccountNumber: rawAccNum,
+      referenceId: wdrWebhook.withdrawalCode,
+      id: 'payout_wh_123',
+      description: 'Rut tien',
+      amount: 60000,
+    };
+    const isPermutedValid = verifyPayoutSignature(
+      permutedData,
+      validSignature,
+      process.env.PAYOS_PAYOUT_CHECKSUM_KEY!,
+    );
+    assert(
+      isPermutedValid === true,
+      '4.5 Canonical Signature Invariance: JSON key order permutations verify reliably via deep sort',
+    );
+
+    // Test 4.6: Tampered Payload Detection
+    const tamperedData = {
+      ...validWebhookData,
+      amount: 60001,
+    };
+    let tamperedRejected = false;
+    try {
+      await webhookController.handlePayoutWebhook({
+        code: '00',
+        desc: 'success',
+        data: tamperedData,
+        signature: validSignature,
+      });
+    } catch (err: any) {
+      tamperedRejected = err instanceof BadRequestException;
+    }
+    assert(
+      tamperedRejected === true,
+      '4.6 Tampered Payload Defense: Modified fields fail HMAC check and reject with 400 Bad Request',
+    );
+
+    // Test 4.7: Lockdown of Deprecated Manual Transfer Endpoint
+    let manualTransferBlocked = false;
+    try {
+      await adminService.confirmWithdrawalTransfer(wdrWebhook.withdrawalId, 'https://example.com/proof.jpg');
+    } catch (err: any) {
+      manualTransferBlocked =
+        err instanceof BadRequestException &&
+        (err.getResponse() as any)?.errorCode === 'MANUAL_TRANSFER_DEPRECATED';
+    }
+    assert(
+      manualTransferBlocked === true,
+      '4.7 Route Decommissioning: Manual transfer (/withdrawals/:id/transfer) strictly disabled with MANUAL_TRANSFER_DEPRECATED',
+    );
+
+    // Test 4.8: Zero Plaintext Bank Account Invariant
+    const storedWdr = await prisma.storeWithdrawal.findUnique({
+      where: { withdrawalId: wdrWebhook.withdrawalId },
+    });
+    const mappedWdr = WalletMapper.toWithdrawalDto(storedWdr);
+    assert(
+      storedWdr?.bankAccountNumber === null &&
+        storedWdr?.bankAccountEncrypted !== null &&
+        storedWdr?.bankAccountMasked !== null &&
+        !mappedWdr.bankAccountNumber.includes(rawAccNum),
+      '4.8 Zero Plaintext Account Storage: Database bankAccountNumber is NULL and mapped DTO returns only masked account',
+    );
 
   } catch (error: any) {
     console.error('  ✘ [EXCEPTION]:', error.message, error.stack);

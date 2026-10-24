@@ -225,7 +225,7 @@ jobs:
       - name: Wait & Verify Live Production Health (/healthz)
         run: |
           echo "Polling live Render production /healthz endpoint..."
-          LIVE_URL="https://backend-fae8.onrender.com/healthz"
+          LIVE_URL="${{ vars.RENDER_HEALTH_CHECK_URL || 'https://backend-fae8.onrender.com/healthz' }}"
           MAX_ATTEMPTS=30
           SLEEP_SECONDS=10
 

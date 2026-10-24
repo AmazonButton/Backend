@@ -47,9 +47,22 @@ export class PayOSPayoutService {
   private readonly baseUrl = 'https://api-merchant.payos.vn';
 
   private getCredentials() {
-    const clientId = process.env.PAYOS_PAYOUT_CLIENT_ID?.trim() || process.env.PAYOS_CLIENT_ID?.trim();
-    const apiKey = process.env.PAYOS_PAYOUT_API_KEY?.trim() || process.env.PAYOS_API_KEY?.trim();
-    const checksumKey = process.env.PAYOS_PAYOUT_CHECKSUM_KEY?.trim() || process.env.PAYOS_CHECKSUM_KEY?.trim();
+    const isProd = process.env.NODE_ENV === 'production';
+    let clientId = process.env.PAYOS_PAYOUT_CLIENT_ID?.trim();
+    let apiKey = process.env.PAYOS_PAYOUT_API_KEY?.trim();
+    let checksumKey = process.env.PAYOS_PAYOUT_CHECKSUM_KEY?.trim();
+
+    if (!isProd) {
+      clientId = clientId || process.env.PAYOS_CLIENT_ID?.trim();
+      apiKey = apiKey || process.env.PAYOS_API_KEY?.trim();
+      checksumKey = checksumKey || process.env.PAYOS_CHECKSUM_KEY?.trim();
+    } else {
+      if (!clientId || !apiKey || !checksumKey) {
+        throw new InternalServerErrorException(
+          'Môi trường production yêu cầu cấu hình bắt buộc bộ khóa PAYOS_PAYOUT_CLIENT_ID, PAYOS_PAYOUT_API_KEY, PAYOS_PAYOUT_CHECKSUM_KEY riêng cho chi hộ',
+        );
+      }
+    }
 
     return { clientId, apiKey, checksumKey };
   }

@@ -12,6 +12,7 @@ import { UpdateBankAccountDto } from './dto/wallet.dto';
 import { RequestWithdrawalDto } from './dto/withdrawal.dto';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
+import { WalletMapper } from './mappers/wallet.mapper';
 
 @Injectable()
 export class StoreWalletService {
@@ -81,14 +82,16 @@ export class StoreWalletService {
       },
     });
 
-    return this.prisma.storeWallet.update({
+    const updated = await this.prisma.storeWallet.update({
       where: { storeId: rawStoreId },
       data: {
         bankName: dto.bankName,
-        bankAccountNumber: dto.bankAccountNumber,
+        bankAccountNumber: CryptoVaultUtil.maskAccountNumber(cleanAcc),
         bankAccountHolder: dto.bankAccountHolder,
       },
     });
+
+    return WalletMapper.toWalletDto(updated);
   }
 
   async creditOrderRevenue(
@@ -149,10 +152,12 @@ export class StoreWalletService {
     const rawStoreId = BigInt(storeId);
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
 
-    return this.prisma.walletTransaction.findMany({
+    const txs = await this.prisma.walletTransaction.findMany({
       where: { walletId: wallet.walletId },
       orderBy: { createdAt: 'desc' },
     });
+
+    return WalletMapper.toTransactionDtoList(txs);
   }
 
   /**
@@ -307,7 +312,7 @@ export class StoreWalletService {
             bankAccountId: verifiedAccount.id,
             bankCode: verifiedAccount.bankCode || dto.bankCode || '970422',
             bankName: verifiedAccount.bankName,
-            bankAccountNumber: verifiedPlainAcc,
+            bankAccountNumber: null, // Zero plaintext in DB!
             bankAccountHolder: verifiedAccount.accountName,
             bankAccountEncrypted: verifiedAccount.accountNumberEncrypted,
             bankAccountHash: verifiedAccount.accountNumberHash,
@@ -385,13 +390,20 @@ export class StoreWalletService {
       throw new BadRequestException('Dịch vụ PayOS Payout chưa được kích hoạt trong hệ thống');
     }
 
+    let toAccountNumber = '';
+    if (withdrawal.bankAccountEncrypted) {
+      toAccountNumber = CryptoVaultUtil.decryptAccountNumber(withdrawal.bankAccountEncrypted);
+    } else if (withdrawal.bankAccountNumber) {
+      toAccountNumber = withdrawal.bankAccountNumber;
+    }
+
     try {
       const payoutResult = await this.payosPayoutService.createPayout({
         referenceId: withdrawal.withdrawalCode,
         amount: Number(withdrawal.netAmount || withdrawal.amount),
         description: `Rut tien ${withdrawal.withdrawalCode}`.slice(0, 25),
-        toBin: withdrawal.bankCode || '970422',
-        toAccountNumber: withdrawal.bankAccountNumber,
+        toBin: withdrawal.bankBinSnapshot || withdrawal.bankCode || '970422',
+        toAccountNumber,
         category: ['withdrawal'],
       });
 
@@ -618,10 +630,12 @@ export class StoreWalletService {
     const rawStoreId = BigInt(storeId);
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
 
-    return this.prisma.storeWithdrawal.findMany({
+    const withdrawals = await this.prisma.storeWithdrawal.findMany({
       where: { walletId: wallet.walletId },
       orderBy: { requestedAt: 'desc' },
     });
+
+    return WalletMapper.toWithdrawalDtoList(withdrawals);
   }
 
   async getWithdrawal(withdrawalId: string | number | bigint) {
@@ -635,6 +649,6 @@ export class StoreWalletService {
       throw new NotFoundException('Kh�ng t�m th?y th�ng tin r�t ti?n');
     }
 
-    return withdrawal;
+    return WalletMapper.toWithdrawalDto(withdrawal);
   }
 }

@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Put, Param, Body, UseGuards, Request, Inject, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, UseGuards, Request, Inject, Query, BadRequestException } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
 import { CreateRentalPackageDto, UpdateRentalPackageDto } from './dto/rental-packages.dto';
 import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
+import { WalletMapper } from '../store-wallet/mappers/wallet.mapper';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -110,11 +111,11 @@ export class AdminController {
   @Get('withdrawals')
   async listAllWithdrawals() {
     const data = await this.adminService.listAllWithdrawals();
-    return { success: true, data };
+    return { success: true, data: WalletMapper.toWithdrawalDtoList(data) };
   }
 
   /**
-   * @deprecated Endpoint này đã được đánh dấu deprecated để thay thế bằng cổng PayOS Payout tự động (/withdrawals/:id/payout).
+   * @deprecated Endpoint này đã bị vô hiệu hóa để bảo đảm tính toàn vẹn tài chính. Mọi khoản rút tiền phải qua PayOS Payout (/withdrawals/:id/payout).
    */
   @Post('withdrawals/:id/transfer')
   async confirmTransfer(
@@ -122,8 +123,12 @@ export class AdminController {
     @Body('transferEvidenceUrl') transferEvidenceUrl: string,
     @Request() req: any
   ) {
-    const data = await this.adminService.confirmWithdrawalTransfer(id, transferEvidenceUrl, req.user);
-    return { success: true, message: 'Xác nhận chuyển tiền thành công!', data };
+    throw new BadRequestException({
+      success: false,
+      errorCode: 'MANUAL_TRANSFER_DEPRECATED',
+      message:
+        'Phương thức chuyển khoản thủ công đã bị vô hiệu hóa. Trạng thái rút tiền chỉ được xử lý qua PayOS Payout (POST /api/v1/admin/withdrawals/:id/payout).',
+    });
   }
 
   @Post('withdrawals/:id/reject')
@@ -133,7 +138,7 @@ export class AdminController {
     @Request() req: any
   ) {
     const data = await this.adminService.rejectWithdrawal(id, reason, req.user);
-    return { success: true, message: 'Đã từ chối và hoàn tiền vào ví cửa hàng!', data };
+    return { success: true, message: 'Đã từ chối và hoàn tiền vào ví cửa hàng!', data: WalletMapper.toWithdrawalDto(data) };
   }
   // PayOS Payout Admin Controls
   @Get('payos/payout-balance')
@@ -145,7 +150,7 @@ export class AdminController {
   @Post('withdrawals/:id/payout')
   async payoutViaPayOS(@Param('id') id: string, @Request() req: any) {
     const data = await this.adminService.payoutViaPayOS(id, req.user);
-    return { success: true, message: '�� g?i l?nh chi ti?n PayOS th�nh c�ng!', data };
+    return { success: true, message: 'Đã gửi lệnh chi tiền PayOS thành công!', data: WalletMapper.toWithdrawalDto(data) };
   }
 
     @Post('withdrawals/:id/sync-payout')

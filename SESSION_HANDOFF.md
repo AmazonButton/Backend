@@ -590,3 +590,29 @@ When starting a new conversation, prompt the agent with:
 5. **NPM Scripts Enhancement:**
    - Added `"start:test": "node dist/src/main.js"` in `package.json`.
 
+---
+
+### N. Production Hardening: Zero Plaintext Bank Storage & Payout Engine Security
+1. **Zero Plaintext Bank Account Enforcement (Blocker 1 Resolved):**
+   - In `StoreWithdrawal`: `bankAccountNumber` is strictly set to `null` on withdrawal creation. Plaintext full bank accounts are NEVER persisted in database rows or audit logs.
+   - Database Migration: [`prisma/migrations/20261024210000_nullify_plaintext_bank_accounts`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261024210000_nullify_plaintext_bank_accounts) nullifies any remaining legacy plaintext `bank_account_number` in `store_withdrawals` and `store_wallets`.
+   - On-the-Fly RAM Decryption: `StoreWalletService.triggerPayosPayout` and `AdminService.executePayOSPayout` decrypt `bankAccountEncrypted` in ephemeral memory only for the exact duration of the outbound PayOS API HTTP call.
+   - Strict DTO Masking via [`src/store-wallet/mappers/wallet.mapper.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/mappers/wallet.mapper.ts): `listWithdrawals`, `getWithdrawal`, `getWallet`, `listTransactions`, and `admin.listAllWithdrawals` exclusively return masked account numbers (`bankAccountMasked`, e.g. `******9999`) and metadata. Entity leaking is completely eliminated.
+2. **Decommissioning Manual Transfer Endpoint (Blocker 2 Resolved):**
+   - `POST /api/v1/admin/withdrawals/:id/transfer` is permanently locked down and marked `@deprecated`.
+   - Any manual attempt to bypass PayOS and set `TRANSFERRED` directly throws HTTP 400 `MANUAL_TRANSFER_DEPRECATED`.
+   - All payouts must follow the automated, single-path PayOS Payout route (`POST /api/v1/admin/withdrawals/:id/payout`), and terminal success/failure is strictly finalized by verified PayOS webhooks or automated status sync.
+3. **Hardened Webhook Signature Verification (Blocker 3 Resolved):**
+   - Webhook controller [`src/payments/payout-webhook.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payout-webhook.controller.ts) implements dual verification:
+     - Primary: Timing-safe HMAC-SHA256 (`crypto.timingSafeEqual`) on canonical alphabetically sorted key-value query strings (Official PayOS specification).
+     - Secondary Fallback: Raw body buffer (`req.rawBody`) HMAC verification.
+   - Verified via automated test cases in Suite 16:
+     - 4.5: Permuted JSON key ordering matches canonical deep sort signature.
+     - 4.6: Tampered amounts or payloads are strictly rejected with HTTP 400 Bad Request.
+     - 4.7: Manual transfer endpoint lockdown verified with `MANUAL_TRANSFER_DEPRECATED`.
+     - 4.8: Database zero-residue check verifies `bankAccountNumber === null`.
+4. **Environment Isolation & Deployment Flexibility:**
+   - Dedicated Payout Credentials: `PayOSPayoutService` enforces dedicated `PAYOS_PAYOUT_CLIENT_ID`, `PAYOS_PAYOUT_API_KEY`, and `PAYOS_PAYOUT_CHECKSUM_KEY` in `NODE_ENV === 'production'`.
+   - CI/CD Deployment Health Check: `.github/workflows/ci-cd.yml` parameterized with `${{ vars.RENDER_HEALTH_CHECK_URL || 'https://backend-fae8.onrender.com/healthz' }}`.
+
+
