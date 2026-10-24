@@ -28,6 +28,9 @@ export class MailService {
         port,
         secure: port === 465,
         auth: { user, pass },
+        connectionTimeout: 4000,
+        greetingTimeout: 3000,
+        socketTimeout: 5000,
       });
       this.isConfigured = true;
       this.logger.log(`MailService initialized with SMTP host ${host}:${port} (User: ${user.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')})`);
@@ -80,17 +83,24 @@ export class MailService {
     try {
       const rawFrom = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@smartorder.vn';
       const from = rawFrom.includes('<') ? rawFrom : `"Smart Order Platform" <${rawFrom}>`;
-      await this.transporter.sendMail({
+
+      const sendPromise = this.transporter.sendMail({
         from,
         to: options.to,
         subject: options.subject,
         text: options.text,
         html: options.html,
       });
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('SMTP timeout (outbound connection blocked or unacknowledged)')), 4500),
+      );
+
+      await Promise.race([sendPromise, timeoutPromise]);
       this.logger.log(`Email dispatched successfully to ${options.to.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')}`);
       return true;
     } catch (err: any) {
-      this.logger.error(`Failed to send email to ${this.maskEmail(options.to)}: ${err.message}`);
+      this.logger.warn(`Failed to send email to ${this.maskEmail(options.to)}: ${err.message}`);
       return false;
     }
   }

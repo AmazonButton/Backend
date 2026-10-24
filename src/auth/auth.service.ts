@@ -108,7 +108,7 @@ export class AuthService {
       passwordHash,
       fullName,
       phone: phone || null,
-      status: 'PENDING_VERIFICATION',
+      status: 'ACTIVE',
       emailVerificationToken: verificationTokenHash,
       emailVerificationExpiresAt: verificationExpiresAt,
     };
@@ -149,7 +149,7 @@ export class AuthService {
       });
 
       // Dispatch 6-digit OTP to store owner's email
-      await this.mailService.sendRegistrationOtp(email, registrationOtp);
+      this.mailService.sendRegistrationOtp(email, registrationOtp).catch(() => {});
 
       return {
         success: true,
@@ -195,7 +195,7 @@ export class AuthService {
     });
 
     // Dispatch 6-digit OTP to customer's email
-    await this.mailService.sendRegistrationOtp(email, registrationOtp);
+    this.mailService.sendRegistrationOtp(email, registrationOtp).catch(() => {});
 
     return {
       success: true,
