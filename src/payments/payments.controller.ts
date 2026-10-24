@@ -7,6 +7,8 @@ import {
   UseGuards,
   Request,
   HttpCode,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentLinkDto, PayosWebhookDto, CancelPaymentLinkDto } from './dto/payment.dto';
@@ -37,6 +39,7 @@ export class PaymentsController {
 
   @HttpCode(200)
   @Post('payos/webhook')
+  @UsePipes(new ValidationPipe({ whitelist: false, forbidNonWhitelisted: false }))
   handleWebhook(@Body() body: PayosWebhookDto) {
     return this.paymentsService.handlePayosWebhook(body);
   }

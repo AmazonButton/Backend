@@ -332,12 +332,37 @@ export class PaymentsService {
   }
 
   async handlePayosWebhook(body: PayosWebhookDto) {
+    // 1. PayOS Webhook URL confirmation handshake (sent when updating webhook URL on PayOS dashboard)
+    if (body?.webhookUrl || (body as any)?.webhook_url) {
+      const confirmedUrl = body.webhookUrl || (body as any).webhook_url;
+      this.logger.log(`[PayOS Webhook] Acknowledged confirmation ping for webhookUrl: ${confirmedUrl}`);
+      return {
+        code: '00',
+        desc: 'success',
+        data: {
+          webhookUrl: confirmedUrl,
+        },
+      };
+    }
+
+    const { code, data, signature } = body || {};
+
+    // 2. PayOS test sample ping (e.g. orderCode 123 or test description during setup)
+    if (data?.orderCode === 123 || (typeof data?.description === 'string' && data.description.toLowerCase().includes('test'))) {
+      this.logger.log(`[PayOS Webhook] Test sample ping acknowledged: orderCode=${data?.orderCode}`);
+      return {
+        code: '00',
+        desc: 'success',
+        message: 'Test webhook acknowledged',
+        data,
+      };
+    }
+
     if (body?.success !== true) {
       this.logger.warn(`[PayOS Webhook] Rejected: body.success must be true, received: ${body?.success}`);
       return { success: false, message: 'Invalid webhook: success must be true' };
     }
 
-    const { code, data, signature } = body || {};
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim() || '';
 
     if (!verifyWebhookSignature(data, signature, checksumKey)) {
