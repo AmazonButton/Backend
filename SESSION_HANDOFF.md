@@ -472,3 +472,19 @@ When starting a new conversation, prompt the agent with:
 
 
 
+
+---
+
+### J. PayOS Webhook Handshake & Verification Fix
+1. **Root Cause of PayOS Status Code 400:**
+   - When saving the Webhook URL on PayOS dashboard (my.payos.vn), PayOS immediately dispatches a POST confirmation handshake request containing {"webhookUrl": "..."} or test samples.
+   - Global ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }) rejected PayOS pings because webhookUrl was not whitelisted in PayosWebhookDto.
+2. **Resolution:**
+   - Updated src/payments/dto/payment.dto.ts: added @IsOptional() @IsString() webhookUrl?: string; and made webhook fields optional.
+   - Updated src/payments/payments.controller.ts: added @UsePipes(new ValidationPipe({ whitelist: false, forbidNonWhitelisted: false })) on /api/v1/payments/payos/webhook to prevent unexpected external fields from being rejected.
+   - Updated src/payments/payments.service.ts: intercepted ody?.webhookUrl confirmation ping to respond with { code: '00', desc: 'success', data: { webhookUrl } }, and test pings (orderCode 123) to return { code: '00', desc: 'success' }.
+3. **Live Deployment Verification:**
+   - Commit e8ac84 pushed to main.
+   - Render deploy dep-dbe4076q1p3s73f8t700 finished with status live.
+   - Verified live handshake via PowerShell Invoke-RestMethod: returned HTTP 200 { code: '00', desc: 'success', data: { webhookUrl: 'https://backend-fae8.onrender.com/api/v1/payments/payos/webhook' } }.
+   - Verified live test ping (orderCode 123): returned HTTP 200 { code: '00', desc: 'success', message: 'Test webhook acknowledged' }.
