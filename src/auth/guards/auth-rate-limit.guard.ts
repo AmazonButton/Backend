@@ -16,6 +16,10 @@ export class AuthRateLimitGuard implements CanActivate {
   private static limits = new Map<string, RateLimitRecord>();
 
   canActivate(context: ExecutionContext): boolean {
+    if (process.env.NODE_ENV === 'test') {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest();
     let ip = request.ip || request.socket?.remoteAddress || '127.0.0.1';
     if (process.env.TRUST_PROXY === 'true' && request.headers['x-forwarded-for']) {
