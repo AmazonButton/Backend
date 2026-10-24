@@ -1,6 +1,8 @@
 -- Migration: 20261020150000_enforce_minimum_order_total
 -- Enforce minimum order total (total_amount >= 2000 VND) in Stored Procedure sp_create_order_from_button
 
+DROP FUNCTION IF EXISTS public.sp_create_order_from_button(bigint,character varying,numeric,text,character varying);
+
 CREATE OR REPLACE FUNCTION public.sp_create_order_from_button(
     p_button_id bigint,
     p_payment_method character varying DEFAULT 'COD'::character varying,
