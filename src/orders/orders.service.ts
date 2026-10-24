@@ -359,10 +359,10 @@ export class OrdersService {
         order.paymentStatus === 'UNPAID' ||
         (order.paymentStatus !== 'PAID' && order.paymentMethod !== 'COD' && order.paymentMethod !== 'CASH_ON_DELIVERY');
 
-      if (isButtonOrder && !isUnpaid) {
+      if (isButtonOrder) {
         if (order.orderStatus !== 'PENDING') {
           throw new BadRequestException(
-            `Khách hàng chỉ có thể hủy đơn hàng từ nút bấm khi đơn ở trạng thái PENDING. Trạng thái hiện tại: ${order.orderStatus}`,
+            `Khách hàng chỉ có thể hủy đơn hàng khi đơn ở trạng thái PENDING. Trạng thái hiện tại: ${order.orderStatus}`,
           );
         }
         if (elapsedSeconds > cancelWindowSeconds) {
