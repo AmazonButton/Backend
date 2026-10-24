@@ -135,14 +135,14 @@ export class AuthService {
     const verificationTokenHash = this.hashOtp(registrationOtp, 'EMAIL_VERIFICATION');
     const verificationExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    // 1. Transactional Registration with PENDING_VERIFICATION status
+    // 1. Transactional Registration with ACTIVE status
     const userCreateData = {
       username,
       email,
       passwordHash,
       fullName,
       phone: phone || null,
-      status: 'PENDING_VERIFICATION',
+      status: 'ACTIVE',
       emailVerificationToken: verificationTokenHash,
       emailVerificationExpiresAt: verificationExpiresAt,
     };
@@ -182,23 +182,53 @@ export class AuthService {
         expiresAt: verificationExpiresAt,
       });
 
-      // Dispatch 6-digit OTP to store owner's email
-      await this.mailService.sendRegistrationOtp(email, registrationOtp);
+      // Dispatch 6-digit OTP to store owner's email asynchronously (non-blocking)
+      this.mailService.sendRegistrationOtp(email, registrationOtp).catch((err) => {
+        this.logger.warn(`Failed to dispatch registration OTP email: ${err.message}`);
+      });
+
+      const accessToken = this.jwtService.sign(
+        {
+          userId: newUser.userId.toString(),
+          email: newUser.email,
+          username: newUser.username,
+          role: 'STORE_OWNER',
+          storeId: newStore.storeId.toString(),
+          customerProfileId: null,
+          tokenType: 'ACCESS',
+        },
+        { expiresIn: '7d' },
+      );
+
+      const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+      const refreshTokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+      const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await this.authRepo.createRefreshToken(newUser.userId, refreshTokenHash, refreshExpiresAt);
+
+      const userPayload = {
+        id: newUser.userId.toString(),
+        userId: newUser.userId.toString(),
+        email: newUser.email,
+        username: newUser.username,
+        fullName: newUser.fullName,
+        role: 'STORE_OWNER',
+        storeId: newStore.storeId.toString(),
+        customerProfileId: null,
+        status: newUser.status,
+      };
 
       return {
         success: true,
-        message: 'Đăng ký cửa hàng thành công! Vui lòng kiểm tra email để xác minh mã OTP 6 số kích hoạt tài khoản.',
+        message: 'Đăng ký tài khoản cửa hàng thành công!',
+        accessToken,
+        token: accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
         data: {
-          user: {
-            id: newUser.userId.toString(),
-            userId: newUser.userId.toString(),
-            email: newUser.email,
-            username: newUser.username,
-            fullName: newUser.fullName,
-            role: 'STORE_OWNER',
-            storeId: newStore.storeId.toString(),
-            status: newUser.status,
-          },
+          token: accessToken,
+          accessToken,
+          refreshToken: rawRefreshToken,
+          user: userPayload,
           store: {
             storeId: newStore.storeId.toString(),
             name: newStore.name,
@@ -228,23 +258,52 @@ export class AuthService {
       expiresAt: verificationExpiresAt,
     });
 
-    // Dispatch 6-digit OTP to customer's email
-    await this.mailService.sendRegistrationOtp(email, registrationOtp);
+    // Dispatch 6-digit OTP to customer's email asynchronously (non-blocking)
+    this.mailService.sendRegistrationOtp(email, registrationOtp).catch((err) => {
+      this.logger.warn(`Failed to dispatch registration OTP email: ${err.message}`);
+    });
+
+    const accessToken = this.jwtService.sign(
+      {
+        userId: newUser.userId.toString(),
+        email: newUser.email,
+        username: newUser.username,
+        role: 'CUSTOMER',
+        storeId: null,
+        customerProfileId: customerProfile.customerId.toString(),
+        tokenType: 'ACCESS',
+      },
+      { expiresIn: '7d' },
+    );
+
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+    const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await this.authRepo.createRefreshToken(newUser.userId, refreshTokenHash, refreshExpiresAt);
+
+    const userPayload = {
+      id: newUser.userId.toString(),
+      userId: newUser.userId.toString(),
+      email: newUser.email,
+      username: newUser.username,
+      fullName: newUser.fullName,
+      role: 'CUSTOMER',
+      customerProfileId: customerProfile.customerId.toString(),
+      status: newUser.status,
+    };
 
     return {
       success: true,
-      message: 'Tạo tài khoản khách hàng thành công! Vui lòng kiểm tra email để xác minh mã OTP 6 số kích hoạt tài khoản.',
+      message: 'Tạo tài khoản khách hàng thành công!',
+      accessToken,
+      token: accessToken,
+      refreshToken: rawRefreshToken,
+      user: userPayload,
       data: {
-        user: {
-          id: newUser.userId.toString(),
-          userId: newUser.userId.toString(),
-          email: newUser.email,
-          username: newUser.username,
-          fullName: newUser.fullName,
-          role: 'CUSTOMER',
-          customerProfileId: customerProfile.customerId.toString(),
-          status: newUser.status,
-        },
+        token: accessToken,
+        accessToken,
+        refreshToken: rawRefreshToken,
+        user: userPayload,
       },
     };
   }

@@ -251,8 +251,8 @@ model Inventory {
 
 model IoTButton {
   buttonId    BigInt          @id @default(autoincrement()) @map("button_id")
-  storeId     BigInt          @map("store_id")
-  store       Store           @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
+  storeId     BigInt?         @map("store_id")
+  store       Store?          @relation(fields: [storeId], references: [storeId], onDelete: Restrict)
   customerId  BigInt?         @map("customer_id")
   customer    CustomerProfile? @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
   addressId   BigInt?         @map("address_id")

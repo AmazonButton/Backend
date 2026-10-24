@@ -631,17 +631,74 @@ export class DevicesService {
   }
 
   async batchGenerateBlankDevices(body: { count?: number; prefix?: string; model?: string }, user: any) {
-    const count = body.count || 5;
+    const count = Math.min(Math.max(1, Number(body.count) || 5), 100);
+    const prefix = (body.prefix || 'BTN').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     const generated: any[] = [];
+
     for (let i = 0; i < count; i++) {
-      const b = await this.registerDevice({}, user);
-      generated.push(b);
+      let deviceId = '';
+      let isDevUnique = false;
+      while (!isDevUnique) {
+        deviceId = await this.generateNextDeviceId();
+        const existing = await this.devicesRepo.findByDeviceId(deviceId);
+        if (!existing) isDevUnique = true;
+      }
+
+      let buttonCode = '';
+      let isCodeUnique = false;
+      while (!isCodeUnique) {
+        const randNum = Math.floor(100000 + Math.random() * 900000);
+        buttonCode = prefix ? `${prefix}-${randNum}` : `BTN-${randNum}`;
+        const existing = await this.devicesRepo.findByIdentifier(buttonCode);
+        if (!existing) isCodeUnique = true;
+      }
+
+      const hmacSecret = crypto.randomBytes(32).toString('hex');
+      const buttonName = `Nút Bấm ${buttonCode}`;
+
+      // Mỗi nút tạo ra phải có: status: INACTIVE, storeId: null, customerId: null, addressId: null, chưa gán sản phẩm.
+      // Không tự lấy cửa hàng hoặc khách hàng đầu tiên trong hệ thống.
+      const newButton = await this.devicesRepo.create({
+        deviceId,
+        buttonCode,
+        buttonName,
+        hmacSecret,
+        status: 'INACTIVE',
+        storeId: null,
+        customerId: null,
+        addressId: null,
+        batteryLevel: 100,
+        clickBehavior: 'SINGLE',
+        doubleClickWindowMs: 300,
+        holdDurationMs: 1500,
+        singlePressAction: 'CREATE_ORDER',
+        doublePressAction: 'CANCEL_ORDER',
+        cancelWindowSeconds: 60,
+      });
+
+      generated.push(this.formatButton(newButton));
     }
-    return { success: true, count: generated.length, data: generated };
+
+    this.eventsGateway?.emitToAdmin('DEVICES_BATCH_GENERATED', {
+      count: generated.length,
+      devices: generated,
+    });
+
+    return {
+      success: true,
+      message: `Đã tạo thành công lô ${generated.length} nút bấm mới vào kho tổng`,
+      count: generated.length,
+      data: generated,
+    };
   }
 
   async getUnassignedDevices() {
-    const buttons = await this.devicesRepo.findMany({ status: 'INACTIVE' });
+    // Chỉ trả nút thỏa đồng thời: status = INACTIVE, storeId IS NULL, customerId IS NULL
+    const buttons = await this.devicesRepo.findMany({
+      status: 'INACTIVE',
+      storeId: null,
+      customerId: null,
+    });
     return buttons.map((b) => this.formatButton(b));
   }
 
@@ -658,57 +715,97 @@ export class DevicesService {
     if (!store) {
       throw new NotFoundException(`Không tìm thấy cửa hàng với ID: ${body.storeId}`);
     }
+    if (store.status !== 'ACTIVE') {
+      throw new BadRequestException(`Cửa hàng "${store.name}" hiện không hoạt động (status: ${store.status}). Chỉ có thể bàn giao nút cho cửa hàng đang ACTIVE.`);
+    }
 
-    let allocatedCount = 0;
-    const allocatedCodes: string[] = [];
+    // 1. Kiểm tra tất cả các nút: Chỉ nhận nút đang ở kho tổng (storeId = null, customerId = null, status = INACTIVE).
+    // Nếu nút đã thuộc cửa hàng khác, trả 400 với danh sách deviceIds bị lỗi; không tự chuyển quyền sở hữu.
+    const invalidDeviceIds: string[] = [];
+    const validButtons: any[] = [];
+
     for (const dId of body.deviceIds) {
-      if (!dId) continue;
-      const button = await this.devicesRepo.findByIdentifier(dId.toString().trim());
-      if (button) {
-        await this.devicesRepo.update(button.buttonId, {
-          storeId: targetStoreId,
-          status: button.status === 'INACTIVE' ? 'ACTIVE' : button.status,
-        });
-        allocatedCount++;
-        allocatedCodes.push(button.buttonCode || button.deviceId);
+      const identifier = String(dId || '').trim();
+      if (!identifier) continue;
+      const button = await this.devicesRepo.findByIdentifier(identifier);
+      if (!button) {
+        invalidDeviceIds.push(identifier);
+        continue;
+      }
+
+      const isInKhoTong = button.storeId === null && button.customerId === null && button.status === 'INACTIVE';
+      if (!isInKhoTong) {
+        invalidDeviceIds.push(button.deviceId || button.buttonCode || identifier);
+      } else {
+        validButtons.push(button);
       }
     }
 
-    // 1. Emit realtime WebSocket event to store channel, owner user, and globally
+    if (invalidDeviceIds.length > 0) {
+      throw new BadRequestException({
+        success: false,
+        message: `Có ${invalidDeviceIds.length} nút không hợp lệ hoặc đã thuộc quyền quản lý của cửa hàng khác. Không thể chuyển quyền sở hữu.`,
+        invalidDeviceIds,
+      });
+    }
+
+    // 2. Cập nhật khi thành công: storeId = targetStoreId, status = 'ACTIVE'
+    const allocatedButtons: any[] = [];
+    for (const button of validButtons) {
+      const updated = await this.devicesRepo.update(button.buttonId, {
+        storeId: targetStoreId,
+        status: 'ACTIVE',
+      });
+      const formatted = this.formatButton(updated);
+      allocatedButtons.push(formatted);
+
+      // Ghi audit log
+      const logList = this.deviceAuditLogs.get(button.deviceId) || [];
+      logList.unshift({
+        action: 'ALLOCATE_TO_STORE',
+        timestamp: new Date(),
+        details: `Quản trị viên bàn giao nút từ kho tổng cho cửa hàng "${store.name}" (ID: ${store.storeId.toString()})`,
+        user: { fullName: user?.fullName || 'Admin', role: user?.role },
+      });
+      this.deviceAuditLogs.set(button.deviceId, logList);
+    }
+
+    // 3. Emit realtime WebSocket event to store channel, owner user, and globally
     const eventPayload = {
       storeId: targetStoreId.toString(),
       storeName: store.name,
-      allocatedCount,
-      deviceIds: allocatedCodes,
+      allocatedCount: allocatedButtons.length,
+      deviceIds: allocatedButtons.map((b) => b.buttonCode || b.deviceId),
+      allocatedDevices: allocatedButtons,
       timestamp: new Date().toISOString(),
-      message: `Quản trị viên hệ thống vừa bàn giao ${allocatedCount} nút bấm mới vào kho của bạn!`,
+      message: `Quản trị viên hệ thống vừa bàn giao ${allocatedButtons.length} nút bấm mới vào kho của bạn!`,
     };
 
     // Emit to store rooms
-    this.eventsGateway.emitToStore(targetStoreId.toString(), 'DEVICES_ALLOCATED', eventPayload);
-    this.eventsGateway.emitToStore(targetStoreId.toString(), 'devices:allocated', eventPayload);
+    this.eventsGateway?.emitToStore(targetStoreId.toString(), 'DEVICES_ALLOCATED', eventPayload);
+    this.eventsGateway?.emitToStore(targetStoreId.toString(), 'devices:allocated', eventPayload);
 
     // Emit directly to store owner user channel (if available)
     if (store.ownerUserId) {
-      this.eventsGateway.emitToUser(store.ownerUserId.toString(), 'DEVICES_ALLOCATED', eventPayload);
-      this.eventsGateway.emitToUser(store.ownerUserId.toString(), 'devices:allocated', eventPayload);
+      this.eventsGateway?.emitToUser(store.ownerUserId.toString(), 'DEVICES_ALLOCATED', eventPayload);
+      this.eventsGateway?.emitToUser(store.ownerUserId.toString(), 'devices:allocated', eventPayload);
     }
 
     // Emit to admin management room
-    this.eventsGateway.emitToAdmin('DEVICES_ALLOCATED', eventPayload);
-    this.eventsGateway.emitToAdmin('devices:allocated', eventPayload);
+    this.eventsGateway?.emitToAdmin('DEVICES_ALLOCATED', eventPayload);
+    this.eventsGateway?.emitToAdmin('devices:allocated', eventPayload);
 
-    this.logger.log(`📢 [DevicesService] Dispatched DEVICES_ALLOCATED to store ${targetStoreId} & owner ${store.ownerUserId} (${allocatedCount} devices)`);
+    this.logger.log(`📢 [DevicesService] Dispatched DEVICES_ALLOCATED to store ${targetStoreId} & owner ${store.ownerUserId} (${allocatedButtons.length} devices)`);
 
-    // 2. Send push notification to store owner (if available)
+    // 4. Send push notification to store owner (if available)
     if (store.ownerUserId && this.notificationsService) {
       this.notificationsService.sendPushToUser(store.ownerUserId, {
         title: '📦 Thiết bị mới về kho!',
-        body: `Quản trị viên vừa bàn giao ${allocatedCount} nút bấm thông minh (${allocatedCodes.slice(0, 3).join(', ')}${allocatedCodes.length > 3 ? '...' : ''}) cho cửa hàng "${store.name}".`,
+        body: `Quản trị viên vừa bàn giao ${allocatedButtons.length} nút bấm thông minh (${allocatedButtons.slice(0, 3).map((b) => b.buttonCode).join(', ')}${allocatedButtons.length > 3 ? '...' : ''}) cho cửa hàng "${store.name}".`,
         data: {
           type: 'DEVICES_ALLOCATED',
           storeId: targetStoreId.toString(),
-          allocatedCount: allocatedCount.toString(),
+          allocatedCount: allocatedButtons.length.toString(),
         },
       }).catch((err: any) => {
         this.logger.warn(`Failed to send push for allocated devices: ${err.message}`);
@@ -717,12 +814,13 @@ export class DevicesService {
 
     return {
       success: true,
-      message: `Đã cấp phát thành công ${allocatedCount} nút bấm cho cửa hàng "${store.name}"`,
-      data: eventPayload,
+      message: `Đã cấp phát thành công ${allocatedButtons.length} nút bấm cho cửa hàng "${store.name}"`,
+      count: allocatedButtons.length,
+      data: allocatedButtons,
     };
   }
 
-  async lookupByCode(code: string) {
+    async lookupByCode(code: string) {
     const button = await this.devicesRepo.findByIdentifier(code.toUpperCase());
     if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
     return {
