@@ -88,7 +88,7 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
     orderCode: orderCode,
     storeId: raw.storeId ? raw.storeId.toString() : '',
     customerId: raw.customerId ? raw.customerId.toString() : '',
-    buttonId: raw.buttonId ? raw.buttonId.toString() : null,
+    buttonId: raw.buttonId ? raw.buttonId.toString() : (raw.button_id ? raw.button_id.toString() : null),
     buttonCode: raw.buttonCode || raw.button?.buttonCode || null,
     orderStatus: raw.orderStatus || 'PENDING',
     paymentStatus: raw.paymentStatus || 'UNPAID',

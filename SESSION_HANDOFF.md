@@ -433,3 +433,30 @@ When starting a new conversation, prompt the agent with:
    - Didit Identity Webhook: `https://backend-fae8.onrender.com/api/v1/webhooks/didit`
    - VietQR / Bank Verification Webhook: `https://backend-fae8.onrender.com/api/v1/webhooks/bank-verification`
 
+---
+
+### H. Fix Order.buttonId Nullable Schema Alignment
+1. **Root Cause Diagnosis:**
+   - Orders created via mobile app or web frontend without an IoT device physical press have `orders.button_id = NULL` in database.
+   - Prisma schema previously declared `buttonId BigInt` and `button IoTButton` as non-nullable, triggering runtime panic on `GET /api/v1/orders` (`Inconsistent column data: Conversion failed for column button_id: expected BigInt, got Null`).
+2. **Schema & Migration:**
+   - Updated `prisma/schema.prisma`:
+     ```prisma
+     buttonId BigInt? @map("button_id")
+     button   IoTButton? @relation(fields: [buttonId], references: [buttonId], onDelete: Restrict)
+     ```
+   - Migration: [`prisma/migrations/20261024110000_make_order_button_id_nullable/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261024110000_make_order_button_id_nullable/migration.sql)
+     ```sql
+     ALTER TABLE "orders" ALTER COLUMN "button_id" DROP NOT NULL;
+     ```
+   - Applied to database via `npx prisma migrate deploy` (15 migrations total).
+3. **Safe DTO Mapping:**
+   - In [`src/orders/dto/order-response.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/orders/dto/order-response.dto.ts):
+     `buttonId: raw.buttonId ? raw.buttonId.toString() : (raw.button_id ? raw.button_id.toString() : null)`
+   - Safe `if (raw.button)` mapping avoids attempting to access properties of null buttons.
+4. **Build & Typecheck:**
+   - `npx prisma format` & `npx prisma generate` clean.
+   - `npx tsc --noEmit` passed with 0 errors.
+   - `npm run build` compiled successfully.
+
+
