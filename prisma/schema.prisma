@@ -569,7 +569,7 @@ model StoreWithdrawal {
   netAmount           Decimal?    @map("net_amount") @db.Decimal(15, 2)
   bankCode            String?     @map("bank_code")
   bankName            String      @map("bank_name")
-  bankAccountNumber   String      @map("bank_account_number")
+  bankAccountNumber   String?     @map("bank_account_number")
   bankAccountHolder   String      @map("bank_account_holder")
   status              String      @default("PENDING") @map("status")
   provider            String      @default("PAYOS") @map("provider")
@@ -588,6 +588,17 @@ model StoreWithdrawal {
   store               Store?      @relation(fields: [storeId], references: [storeId], onDelete: SetNull)
   idempotencyKey      String?     @map("idempotency_key") @db.VarChar(255)
 
+  bankAccountId           BigInt?           @map("bank_account_id")
+  bankAccount             StoreBankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  bankAccountEncrypted    String?           @map("bank_account_encrypted") @db.Text
+  bankAccountHash         String?           @map("bank_account_hash") @db.VarChar(64)
+  bankAccountMasked       String?           @map("bank_account_masked") @db.VarChar(32)
+  bankAccountNameSnapshot String?           @map("bank_account_name_snapshot") @db.VarChar(255)
+  bankBinSnapshot         String?           @map("bank_bin_snapshot") @db.VarChar(10)
+  bankNameSnapshot        String?           @map("bank_name_snapshot") @db.VarChar(100)
+
+  @@index([bankAccountHash], map: "idx_store_withdrawals_acc_hash")
+  @@index([providerReferenceId], map: "idx_store_withdrawals_provider_ref")
   @@unique([storeId, idempotencyKey], map: "uq_store_withdrawals_store_idempotency")
   @@map("store_withdrawals")
 }
@@ -808,8 +819,10 @@ model StoreBankAccount {
   updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   verificationTransactions BankAccountVerificationTransaction[]
+  withdrawals              StoreWithdrawal[]
 
   @@unique([storeId, accountNumberHash], name: "uq_store_bank_account_store_acc_hash")
+  @@index([accountNumberHash], map: "idx_store_bank_accounts_acc_hash")
   @@index([storeId, verificationStatus], map: "idx_store_bank_accounts_status")
   @@map("store_bank_accounts")
 }

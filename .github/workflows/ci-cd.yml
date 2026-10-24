@@ -130,6 +130,9 @@ jobs:
       - name: Apply Database Migrations (Isolated CI DB)
         run: npx prisma migrate deploy
 
+      - name: Backfill and Verify Encrypted Snapshots (CI DB)
+        run: node scripts/backfill_and_verify_withdrawal_snapshots.js
+
       - name: Seed Database (Fresh Baseline Data)
         run: npm run prisma:seed
 
