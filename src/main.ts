@@ -98,7 +98,7 @@ async function bootstrap() {
   });
 
   app.setGlobalPrefix('api/v1', {
-    exclude: ['health', 'healthz', 'readyz', 'api/v1/health'],
+    exclude: ['health', 'healthz', 'readyz', 'api/v1/health', 'outbound-ip'],
   });
 
   // Setup Swagger Documentation (wrapped in try/catch to gracefully handle environments without emitDecoratorMetadata like tsx/esbuild)

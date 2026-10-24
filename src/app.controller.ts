@@ -58,4 +58,28 @@ export class AppController {
       },
     };
   }
+
+  /**
+   * Diagnostic endpoint to inspect the server's public outbound egress IP
+   */
+  @Get(['outbound-ip', 'api/v1/outbound-ip'])
+  async getOutboundIp() {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+      clearTimeout(timeout);
+      const data: any = await res.json();
+      return {
+        success: true,
+        outboundIp: data.ip,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message,
+      };
+    }
+  }
 }
