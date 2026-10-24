@@ -519,3 +519,28 @@ When starting a new conversation, prompt the agent with:
    - Order Cancellation Window & Safety:
      - Fixed `src/orders/orders.service.ts` to strictly enforce `cancelWindowSeconds` (60s default) for all button orders regardless of payment status.
      - Verified all 7 test cases in `tests/order-lifecycle.spec.ts` PASS cleanly (Customer 60s window cancel, expired rejection, store owner override, non-PENDING rejection, auto-confirmation worker, inventory clamping `GREATEST(0, ...)` release, and reservation reconciliation).
+
+---
+
+### M. Enterprise 3-Layer CI/CD Pipeline Implementation
+1. **GitHub Actions Workflow File:**
+   - [`.github/workflows/ci-cd.yml`](file:///f:/Learning/SEM9-FPTu/backend/.github/workflows/ci-cd.yml)
+2. **Layer 1: Code Quality & Build (`quality-and-build`)**:
+   - `timeout-minutes: 15`, Node 20 with `npm` caching.
+   - `npm ci`, `npx prisma generate`, `npx tsc --noEmit` (0 type errors), `npm run build` (2GB heap).
+   - Artifact caching for `dist/`.
+3. **Layer 2: Isolated Database & Integration Test Suites (`database-and-tests`)**:
+   - `timeout-minutes: 25`.
+   - Ephemeral Service Containers: `postgres:15-alpine` (`smart_order_test`) and `redis:7-alpine`.
+   - Isolated Environment Variables: `DATABASE_URL` pointing to localhost container, `REDIS_URL=redis://localhost:6379`, `NODE_ENV=test`. Zero mutation on production DB.
+   - Executes `npx prisma migrate deploy` and `npm run prisma:seed` on clean database instance.
+   - Background Server: boots `npm run start:test &` on port 3000, polls `wait-on http://localhost:3000/healthz` until UP, executes `npm run test:all` across all 15 suites, tears down server process on completion.
+   - Artifact logging: `actions/upload-artifact@v4` uploads `ci-test-failure-logs` on any test failure.
+4. **Layer 3: Production Deployment & Health Verification (`deploy-production`)**:
+   - `timeout-minutes: 15`. Trigger condition: `github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.quality-and-build.result == 'success' && needs.database-and-tests.result == 'success'`.
+   - Fail-Closed Secret Enforcement: halts immediately with `exit 1` if `RENDER_DEPLOY_HOOK_URL` secret is missing.
+   - Dispatches curl POST to Render Deploy Hook.
+   - Health Probe: polls live Render production URL `https://backend-fae8.onrender.com/healthz` for up to 300s (30 attempts x 10s) until HTTP 200 OK.
+5. **NPM Scripts Enhancement:**
+   - Added `"start:test": "node dist/src/main.js"` in `package.json`.
+

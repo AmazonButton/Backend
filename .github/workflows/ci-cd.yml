@@ -1,0 +1,218 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ============================================================================
+  # JOB 1: CODE QUALITY, TYPECHECK & BUILD VERIFICATION
+  # ============================================================================
+  quality-and-build:
+    name: 🛡️ Code Quality & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Static Type Check (TypeScript)
+        run: npx tsc --noEmit
+
+      - name: Build NestJS Application
+        run: npm run build
+
+      - name: Cache Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-build
+          path: dist/
+          retention-days: 1
+
+  # ============================================================================
+  # JOB 2: ISOLATED DATABASE & INTEGRATION TEST SUITES
+  # ============================================================================
+  database-and-tests:
+    name: 🧪 Isolated DB & Integration Tests
+    needs: quality-and-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: smart_order_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/smart_order_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      JWT_SECRET: ci_test_jwt_secret_key_minimum_32_characters_long_for_security!
+      JWT_ACCESS_SECRET: ci_test_jwt_access_secret_key_32_characters_minimum!
+      JWT_REFRESH_SECRET: ci_test_jwt_refresh_secret_key_32_characters_minimum!
+      DEFAULT_HMAC_SECRET: ci_test_hmac_secret_key_32_characters_minimum!
+      BASE_URL: http://localhost:3000/api/v1
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build
+          path: dist
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Apply Database Migrations (Isolated CI DB)
+        run: npx prisma migrate deploy
+
+      - name: Seed Database (Fresh Baseline Data)
+        run: npm run prisma:seed
+
+      - name: Start Background Server for HTTP Testing
+        run: |
+          npm run start:test &
+          echo $! > server.pid
+
+      - name: Wait for Server Readiness (/healthz)
+        run: npx --yes wait-on -t 60000 http://localhost:3000/healthz
+
+      - name: Run All 15 Integration Test Suites
+        run: npm run test:all
+
+      - name: Stop Background Server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill $(cat server.pid) 2>/dev/null || true
+          fi
+
+      - name: Upload Test Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-test-failure-logs
+          path: |
+            *.log
+            tests/
+          retention-days: 7
+
+  # ============================================================================
+  # JOB 3: PRODUCTION DEPLOYMENT & HEALTH VERIFICATION (FAIL-CLOSED)
+  # ============================================================================
+  deploy-production:
+    name: 🚀 Production Deploy & Verification
+    needs:
+      - quality-and-build
+      - database-and-tests
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.quality-and-build.result == 'success' &&
+      needs.database-and-tests.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate Deploy Secret (Fail-Closed Enforcement)
+        run: |
+          if [ -z "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
+            echo "::error::[SECURITY FATAL] RENDER_DEPLOY_HOOK_URL secret is not configured in GitHub repository secrets! Deployment failed-closed to prevent unauthorized or untracked releases."
+            exit 1
+          fi
+
+      - name: Trigger Render Deploy Hook
+        run: |
+          echo "Triggering Render Production Deployment..."
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+          HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n1)
+
+          echo "Render API Response: $HTTP_BODY"
+          echo "HTTP Status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "::error::Render Deploy Hook failed with HTTP status $HTTP_STATUS!"
+            exit 1
+          fi
+          echo "✅ Render deployment successfully triggered."
+
+      - name: Wait & Verify Live Production Health (/healthz)
+        run: |
+          echo "Polling live Render production /healthz endpoint..."
+          LIVE_URL="https://backend-fae8.onrender.com/healthz"
+          MAX_ATTEMPTS=30
+          SLEEP_SECONDS=10
+
+          for ((i=1; i<=MAX_ATTEMPTS; i++)); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$LIVE_URL" || true)
+            echo "Attempt $i/$MAX_ATTEMPTS - $LIVE_URL returned HTTP $STATUS"
+            if [ "$STATUS" -eq 200 ]; then
+              echo "✅ Production deployment is LIVE and HEALTHY (HTTP 200)!"
+              exit 0
+            fi
+            sleep $SLEEP_SECONDS
+          done
+
+          echo "::error::Production health check timed out after $((MAX_ATTEMPTS * SLEEP_SECONDS)) seconds!"
+          exit 1
