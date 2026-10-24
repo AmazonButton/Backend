@@ -99,7 +99,19 @@ jobs:
       JWT_ACCESS_SECRET: ci_test_jwt_access_secret_key_32_characters_minimum!
       JWT_REFRESH_SECRET: ci_test_jwt_refresh_secret_key_32_characters_minimum!
       DEFAULT_HMAC_SECRET: ci_test_hmac_secret_key_32_characters_minimum!
+      OTP_PEPPER: ci_test_otp_pepper_secret_key_minimum_32_characters!
       BASE_URL: http://localhost:3000/api/v1
+      PAYOS_CLIENT_ID: ci_test_payos_client_id
+      PAYOS_API_KEY: ci_test_payos_api_key
+      PAYOS_CHECKSUM_KEY: ci_test_payos_checksum_key_32_chars!
+      PAYOS_PAYOUT_CHECKSUM_KEY: ci_test_payos_checksum_key_32_chars!
+      PAYOS_MOCK_PAYOUT: "true"
+      BANK_VERIFICATION_MOCK: "true"
+      BANK_VERIFICATION_AMOUNT_VND: "2000"
+      BANK_VERIFICATION_EXPIRY_MINUTES: "30"
+      BANK_VERIFICATION_WEBHOOK_SECRET: ci_test_bank_webhook_secret_key_12345
+      PLATFORM_BANK_ACCOUNT_NUMBER: "999888777666"
+      PLATFORM_BANK_BIN: "970422"
 
     steps:
       - name: Checkout Code
@@ -138,11 +150,12 @@ jobs:
 
       - name: Start Background Server for HTTP Testing
         run: |
-          npm run start:test &
+          nohup npm run start:test > server.log 2>&1 &
           echo $! > server.pid
 
       - name: Wait for Server Readiness (/healthz)
-        run: npx --yes wait-on -t 60000 http://localhost:3000/healthz
+        run: |
+          npx --yes wait-on -t 60000 http://localhost:3000/healthz || (echo "=== SERVER LOG ON FAILURE ===" && cat server.log && exit 1)
 
       - name: Run All 15 Integration Test Suites
         run: npm run test:all
@@ -160,6 +173,7 @@ jobs:
         with:
           name: ci-test-failure-logs
           path: |
+            server.log
             *.log
             tests/
           retention-days: 7
