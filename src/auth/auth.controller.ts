@@ -53,7 +53,19 @@ export class AuthController {
       req.ip ||
       req.connection?.remoteAddress;
     const userAgent = req.headers['user-agent']?.toString();
-    return this.authService.googleLogin(body.token, ip, userAgent);
+    return this.authService.googleLogin(body, ip, userAgent);
+  }
+
+  @UseGuards(AuthRateLimitGuard)
+  @HttpCode(200)
+  @Post('google')
+  google(@Body() body: GoogleLoginDto, @Request() req: any) {
+    const ip =
+      req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
+      req.ip ||
+      req.connection?.remoteAddress;
+    const userAgent = req.headers['user-agent']?.toString();
+    return this.authService.googleLogin(body, ip, userAgent);
   }
 
   @UseGuards(AuthRateLimitGuard)

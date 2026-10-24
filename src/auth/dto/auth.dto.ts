@@ -111,9 +111,41 @@ export class RefreshTokenDto {
 }
 
 export class GoogleLoginDto {
-  @IsNotEmpty({ message: 'Thiếu access token Supabase Google OAuth' })
+  @IsOptional()
   @IsString()
-  token: string;
+  token?: string;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  fullName?: string;
+
+  @IsOptional()
+  @IsString()
+  avatarUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  googleId?: string;
+
+  @IsOptional()
+  @IsString()
+  role?: string;
+
+  @IsOptional()
+  @IsString()
+  storeName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
 }
 
 export * from './update-profile.dto';

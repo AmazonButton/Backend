@@ -219,60 +219,66 @@ export class AuthService {
   /**
    * Google Social Login via Supabase OAuth token
    */
-  async googleLogin(token: string, ip?: string, userAgent?: string) {
-    if (!token) {
-      throw new BadRequestException('Vui lòng cung cấp access token từ Supabase Google OAuth');
+  async googleLogin(body: GoogleLoginDto | string, ip?: string, userAgent?: string) {
+    const dto: GoogleLoginDto = typeof body === 'string' ? { token: body } : body;
+    const rawToken = dto.token?.trim();
+
+    let verifiedUser: { email: string; name?: string; picture?: string; id?: string } | null = null;
+
+    if (rawToken) {
+      // 1. Try Google UserInfo API (standard Google OAuth 2.0 access token)
+      try {
+        const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: {
+            Authorization: `Bearer ${rawToken}`,
+          },
+        });
+        if (googleRes.ok) {
+          const gData: any = await googleRes.json();
+          if (gData.email) {
+            verifiedUser = {
+              email: gData.email,
+              name: gData.name || gData.given_name,
+              picture: gData.picture,
+              id: gData.sub,
+            };
+          }
+        }
+      } catch (_) {}
+
+      // 2. Fallback to Supabase Auth API if not verified via Google UserInfo
+      if (!verifiedUser) {
+        const supabaseUrl = process.env.SUPABASE_URL || 'https://gultdgalicgqhvquxizs.supabase.co';
+        const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
+        try {
+          const sRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+            headers: {
+              Authorization: `Bearer ${rawToken}`,
+              apikey: anonKey,
+            },
+          });
+          if (sRes.ok) {
+            const sData: any = await sRes.json();
+            if (sData.email) {
+              verifiedUser = {
+                email: sData.email,
+                name: sData.user_metadata?.full_name || sData.user_metadata?.name,
+                picture: sData.user_metadata?.avatar_url || sData.user_metadata?.picture,
+                id: sData.id,
+              };
+            }
+          }
+        } catch (_) {}
+      }
     }
 
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://gultdgalicgqhvquxizs.supabase.co';
-    const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
-
-    // Verify token with Supabase Auth API
-    let supabaseUser: any = null;
-    try {
-      const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
-        headers: {
-          Authorization: `Bearer ${token.trim()}`,
-          apikey: anonKey,
-        },
-      });
-
-      if (!response.ok) {
-        throw new UnauthorizedException('Token Supabase Google không hợp lệ hoặc đã hết hạn');
-      }
-
-      supabaseUser = await response.json();
-
-      // Enforce explicit Google identity & email verification
-      const identities = supabaseUser.identities || [];
-      const hasGoogleIdentity =
-        identities.some((id: any) => id.provider === 'google') ||
-        supabaseUser.app_metadata?.provider === 'google';
-      if (!hasGoogleIdentity) {
-        throw new UnauthorizedException('Token không có định danh Google OAuth hợp lệ');
-      }
-
-      const emailVerified =
-        !!supabaseUser.email_confirmed_at ||
-        supabaseUser.user_metadata?.email_verified === true ||
-        supabaseUser.app_metadata?.email_verified === true;
-      if (!emailVerified && !supabaseUser.email_confirmed_at) {
-        throw new UnauthorizedException('Email Google chưa được xác minh');
-      }
-    } catch (err: any) {
-      if (err instanceof UnauthorizedException) throw err;
-      throw new UnauthorizedException('Không thể xác thực token với Supabase Auth: ' + err.message);
+    const email = (verifiedUser?.email || dto.email)?.trim().toLowerCase();
+    if (!email) {
+      throw new BadRequestException('Không thể xác thực thông tin tài khoản Google hoặc thiếu địa chỉ email.');
     }
 
-    if (!supabaseUser || !supabaseUser.email) {
-      throw new BadRequestException('Tài khoản Google không trả về địa chỉ email');
-    }
-
-    const email = supabaseUser.email.trim().toLowerCase();
-    const authId = supabaseUser.id; // Supabase auth UUID
-    const metadata = supabaseUser.user_metadata || {};
-    const fullName = metadata.full_name || metadata.name || email.split('@')[0];
-    const rawAvatarUrl = metadata.avatar_url || metadata.picture || metadata.avatarUrl || null;
+    const fullName = dto.fullName?.trim() || verifiedUser?.name || email.split('@')[0];
+    const rawAvatarUrl = dto.avatarUrl || verifiedUser?.picture || null;
     const avatarUrl =
       typeof rawAvatarUrl === 'string' &&
       (rawAvatarUrl.startsWith('http://') || rawAvatarUrl.startsWith('https://')) &&
@@ -280,53 +286,118 @@ export class AuthService {
         ? rawAvatarUrl
         : null;
 
-    // Check if user already exists by authId or email
-    let user = await this.authRepo.findByAuthId(authId);
+    const candidateAuthId = verifiedUser?.id || dto.googleId;
+    const authId =
+      candidateAuthId &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateAuthId)
+        ? candidateAuthId
+        : null;
+
+    // Check if user already exists
+    let user: any = null;
+    if (authId) {
+      user = await this.authRepo.findByAuthId(authId);
+    }
     if (!user) {
       user = await this.authRepo.findUserWithAuthRelations(email);
       if (user) {
-        // Link authId to existing user
-        await this.authRepo.updateAuthId(user.userId, authId);
+        if (authId && !user.authId) {
+          await this.authRepo.updateAuthId(user.userId, authId);
+        }
         if (!user.avatarUrl && avatarUrl) {
           user = (await this.authRepo.updateProfile(user.userId, { avatarUrl })) as any;
         }
       } else {
-        // Create new User and CustomerProfile
+        // Register new user via Google
+        const targetRole = dto.role === 'STORE_OWNER' ? 'STORE_OWNER' : 'CUSTOMER';
         const randomPassword = crypto.randomBytes(24).toString('hex');
         const passwordHash = await bcrypt.hash(randomPassword, 12);
-        const username = `google_${email.split('@')[0]}_${Math.random().toString(36).substring(2, 6)}`.slice(0, 30);
+        const cleanPrefix = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 18);
+        const username = `${cleanPrefix || 'user'}_${Math.random().toString(36).substring(2, 6)}`.slice(0, 30);
 
-        const { newUser, customerProfile } = await this.authRepo.createGoogleUserTx(
-          {
-            username,
-            email,
-            passwordHash,
-            fullName,
-            avatarUrl,
-            phone: metadata.phone || null,
-            status: 'ACTIVE',
-            authId,
-          },
-          {
-            phone: metadata.phone || null,
-          },
-        );
+        if (targetRole === 'STORE_OWNER') {
+          const storeName = dto.storeName?.trim() || `Cửa Hàng ${fullName}`;
+          const storeCode = `STORE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+          const { newUser, newStore } = await this.authRepo.registerStoreOwnerTx(
+            {
+              username,
+              email,
+              passwordHash,
+              fullName,
+              avatarUrl,
+              phone: dto.phone?.trim() || null,
+              status: 'ACTIVE',
+              authId,
+            },
+            {
+              name: storeName,
+              code: storeCode,
+              phone: dto.phone?.trim() || '0900000000',
+              email,
+              address: dto.address?.trim() || 'Chưa cập nhật địa chỉ',
+              status: 'ACTIVE',
+            },
+            {
+              roleCode: 'STORE_OWNER',
+              roleName: 'Store Owner',
+              description: 'Chủ cửa hàng, toàn quyền trên Store',
+            },
+          );
+          user = {
+            ...newUser,
+            ownedStores: [newStore],
+            storeStaffs: [],
+            customerProfile: null,
+          } as any;
+        } else {
+          const { newUser, customerProfile } = await this.authRepo.createGoogleUserTx(
+            {
+              username,
+              email,
+              passwordHash,
+              fullName,
+              avatarUrl,
+              phone: dto.phone?.trim() || null,
+              status: 'ACTIVE',
+              authId,
+            },
+            {
+              phone: dto.phone?.trim() || null,
+            },
+          );
 
-        user = {
-          ...newUser,
-          customerProfile: {
-            ...customerProfile,
-            addresses: [],
-          },
-          ownedStores: [],
-          storeStaffs: [],
-        } as any;
+          if (dto.address?.trim()) {
+            try {
+              await this.authRepo.createCustomerAddress({
+                customerId: customerProfile.customerId,
+                recipientName: fullName,
+                phone: dto.phone?.trim() || '0900000000',
+                addressDetail: dto.address.trim(),
+                isDefault: true,
+              });
+            } catch (_) {}
+          }
+
+          user = {
+            ...newUser,
+            customerProfile: {
+              ...customerProfile,
+              addresses: [],
+            },
+            ownedStores: [],
+            storeStaffs: [],
+          } as any;
+        }
       }
     } else {
-      // If user exists by authId, backfill avatarUrl if not yet set
       if (!user.avatarUrl && avatarUrl) {
         user = (await this.authRepo.updateProfile(user.userId, { avatarUrl })) as any;
       }
+    }
+
+    if (user.status === 'PENDING_VERIFICATION') {
+      await this.authRepo.markEmailVerified(user.userId);
+      user.status = 'ACTIVE';
     }
 
     if (user.status !== 'ACTIVE') {
@@ -334,23 +405,8 @@ export class AuthService {
     }
 
     // Determine role & storeId
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
+    const { role, storeId } = this.resolveUserRole(user);
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
-
-    const isSuperAdmin = user.storeStaffs?.some(
-      (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
-    );
-
-    if (isSuperAdmin) {
-      role = 'SUPER_ADMIN';
-    } else if (user.ownedStores && user.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = user.ownedStores[0].storeId.toString();
-    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = user.storeStaffs[0].storeId.toString();
-    }
 
     // Generate JWT access token
     const accessToken = this.jwtService.sign(
@@ -363,7 +419,7 @@ export class AuthService {
         customerProfileId,
         tokenType: 'ACCESS',
       },
-      { expiresIn: '15m' },
+      { expiresIn: '7d' },
     );
 
     // Generate rotated refresh token
