@@ -97,9 +97,11 @@ export class BankVerificationService implements OnModuleInit {
       };
     } catch (error: any) {
       this.logger.error(`Lookup account failed [bankBin: ${dto.bankBin}] [operation: lookupAccount]`);
-      throw new BadRequestException(
-        'Không thể xác minh tài khoản ngân hàng lúc này',
-      );
+      throw new BadRequestException({
+        success: false,
+        errorCode: 'BANK_LOOKUP_UNAVAILABLE',
+        message: 'Không thể xác minh tài khoản ngân hàng lúc này',
+      });
     }
   }
 

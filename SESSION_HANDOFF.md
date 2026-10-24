@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 15/15 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`).
+> **Status:** All 16/16 test suites passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), CI/CD 3-layer GitHub Actions workflow active with Render deploy hook.
 
 ---
 
@@ -12,10 +12,11 @@
 - Check TypeScript types: `npx tsc --noEmit`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (15 suites): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run All Tests (16 suites): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run Withdrawal Concurrency & Payout Suite: `npx tsx tests/withdrawal-concurrency-idempotency.spec.ts`
+- Run Bank Verification Suite: `npx tsx tests/bank-account-verification.spec.ts`
 - Run Frontend Contract & Notifications Suite: `npx tsx tests/frontend-contract-and-notifications.spec.ts`
 - Run Device Templates & Bulk Deploy Suite: `npx tsx tests/device-templates-bulk-deploy.spec.ts`
-- Run Bank Verification Suite: `npx tsx tests/bank-account-verification.spec.ts`
 - Run Avatar Suite: `npx tsx tests/user-avatar-profile.spec.ts`
 - Run Minimum Order Suite: `npx tsx tests/order-minimum-value.spec.ts`
 
@@ -82,7 +83,52 @@ When starting a new conversation, prompt the agent with:
 
 ---
 
-## 5. Task History & Handoff Log
+### [2026-10-24] Bank Account Verification (2.000 VND), Store Withdrawal Payout & CI/CD Pipeline
+- Status: COMPLETED
+- Changes:
+  1. Enterprise 3-Layer CI/CD (.github/workflows/ci-cd.yml):
+     - Job 1: `quality-and-build` (Prisma generate, Typecheck, Build with 2GB heap).
+     - Job 2: `database-and-tests` (Isolated postgres:15 & redis:7 service containers, extensions schema init, fresh migrations, wait-on healthz, runs npm run test:all).
+     - Job 3: `deploy-production` (Fail-closed check on RENDER_DEPLOY_HOOK_URL, triggers Render Deploy Hook, polls /healthz for up to 300s).
+  2. Safe 2-Phase Database Migration (20261024170000_standardize_bank_account_and_withdrawal):
+     - Upgraded `StoreWithdrawal` with `bankAccountId`, AES-256-GCM encrypted snapshot columns (`bankAccountEncrypted`, `bankAccountHash`, `bankAccountMasked`, `bankAccountNameSnapshot`, `bankBinSnapshot`, `bankNameSnapshot`). Retained legacy plaintext `bank_account_number` as nullable/deprecated.
+     - Backfilled all 16 existing records via `scripts/backfill_and_verify_withdrawal_snapshots.js` with 100% round-trip decryption verification.
+  3. Hardened Bank Lookup:
+     - Enforced 4000ms timeout on VietQR provider fetch, strict `errorCode: BANK_LOOKUP_UNAVAILABLE`, zero user name fallback, account number masking in logs.
+  4. 2,000 VND Penny-Deposit Ownership Verification:
+     - Gated `OWNERSHIP_VERIFIED` strictly on matching penny deposit. Deprecated arbitrary account update on `PUT /api/v1/store/wallet/bank-account`.
+  5. Frozen Balance & Concurrency Defense:
+     - Invariant strictly enforced: `balance -= amount`, `frozenBalance += amount` on withdrawal creation with `SELECT FOR UPDATE`.
+     - On Payout `SUCCEEDED`: `frozenBalance -= amount` (balance is never re-credited).
+     - On Payout `FAILED`: `frozenBalance -= amount`, `balance += amount` (exact 1x refund with `WITHDRAWAL_REFUND` ledger).
+  6. Single-Path PayOS Payout & Payout Webhook:
+     - Admin route `POST /api/v1/admin/withdrawals/:id/payout` with atomic `PENDING -> PROCESSING` claim and fail-closed refund on provider failure.
+     - Webhook endpoint `POST /api/v1/webhooks/payos/payout` in `src/payments/payout-webhook.controller.ts` with timing-safe HMAC-SHA256 (`crypto.timingSafeEqual`) using `PAYOS_PAYOUT_CHECKSUM_KEY`, replay idempotency, and monotonic terminal state protection.
+  7. Route Decommissioning & Zero Leakage:
+     - Marked `POST /api/v1/admin/withdrawals/:id/transfer` as `@deprecated`.
+     - Completely removed full account digits from `wallet_transactions.description`.
+- Files:
+  - `.github/workflows/ci-cd.yml`
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20261024170000_standardize_bank_account_and_withdrawal/`
+  - `scripts/backfill_and_verify_withdrawal_snapshots.js`
+  - `scripts/backfill_and_verify_withdrawal_snapshots.ts`
+  - `scripts/start-prod.js`
+  - `src/bank-verification/bank-verification.service.ts`
+  - `src/bank-verification/providers/payos-bank-verification.provider.ts`
+  - `src/store-wallet/store-wallet.service.ts`
+  - `src/admin/admin.controller.ts`
+  - `src/admin/admin.repository.ts`
+  - `src/payments/payout-webhook.controller.ts`
+  - `src/payments/payments.module.ts`
+  - `tests/withdrawal-concurrency-idempotency.spec.ts`
+  - `tests/bank-account-verification.spec.ts`
+  - `tests/run_all_suites.ts`
+- Verification:
+  - `npx tsc --noEmit` — PASS (0 errors)
+  - `npm run build` — PASS (0 errors)
+  - `npx tsx tests/bank-account-verification.spec.ts` — PASS (39/39 tests)
+  - `npx tsx tests/withdrawal-concurrency-idempotency.spec.ts` — PASS (12/12 tests)
 
 ### [2026-10-20] User Avatar URL & Order Minimum Value Enforcement
 - Status: COMPLETED

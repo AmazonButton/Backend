@@ -113,6 +113,9 @@ export class AdminController {
     return { success: true, data };
   }
 
+  /**
+   * @deprecated Endpoint này đã được đánh dấu deprecated để thay thế bằng cổng PayOS Payout tự động (/withdrawals/:id/payout).
+   */
   @Post('withdrawals/:id/transfer')
   async confirmTransfer(
     @Param('id') id: string,

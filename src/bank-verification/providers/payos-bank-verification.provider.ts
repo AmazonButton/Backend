@@ -74,6 +74,7 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
           bin: bankBin,
           accountNumber,
         }),
+        signal: AbortSignal.timeout(4000),
       });
 
       if (!response.ok) {

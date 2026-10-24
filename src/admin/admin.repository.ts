@@ -244,25 +244,37 @@ export class AdminRepository {
 
   async rejectWithdrawalTransaction(withdrawal: any, reason: string, adminUserId?: bigint) {
     return this.prisma.$transaction(async (tx) => {
-      const wallet = await tx.storeWallet.findUnique({
-        where: { walletId: withdrawal.walletId },
-      });
+      const [wallet] = await tx.$queryRaw<Array<{
+        wallet_id: bigint;
+        balance: any;
+        frozen_balance: any;
+      }>>`
+        SELECT wallet_id, balance, frozen_balance
+        FROM store_wallets
+        WHERE wallet_id = ${withdrawal.walletId}
+        FOR UPDATE
+      `;
       if (!wallet) throw new Error('Ví không tồn tại');
 
       const refundAmount = Number(withdrawal.amount);
       const balanceBefore = Number(wallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
+      const currentFrozen = Number(wallet.frozen_balance || 0);
+      const frozenAfter = Math.max(0, currentFrozen - refundAmount);
 
       await tx.storeWallet.update({
-        where: { walletId: wallet.walletId },
-        data: { balance: balanceAfter },
+        where: { walletId: wallet.wallet_id },
+        data: {
+          balance: balanceAfter,
+          frozenBalance: frozenAfter,
+        },
       });
 
       await tx.walletTransaction.create({
         data: {
-          walletId: wallet.walletId,
+          walletId: wallet.wallet_id,
           amount: refundAmount,
-          type: 'REFUND',
+          type: 'WITHDRAWAL_REFUND',
           balanceBefore,
           balanceAfter,
           referenceId: withdrawal.withdrawalCode,
@@ -328,8 +340,15 @@ export class AdminRepository {
       }
 
       // Lock wallet row
-      const [wallet] = await tx.$queryRaw<Array<{ wallet_id: bigint; balance: any }>>`
-        SELECT wallet_id, balance FROM store_wallets WHERE wallet_id = ${lockedWithdrawal.wallet_id} FOR UPDATE
+      const [wallet] = await tx.$queryRaw<Array<{
+        wallet_id: bigint;
+        balance: any;
+        frozen_balance: any;
+      }>>`
+        SELECT wallet_id, balance, frozen_balance
+        FROM store_wallets
+        WHERE wallet_id = ${lockedWithdrawal.wallet_id}
+        FOR UPDATE
       `;
 
       if (!wallet) return null;
@@ -337,10 +356,15 @@ export class AdminRepository {
       const refundAmount = Number(lockedWithdrawal.amount);
       const balanceBefore = Number(wallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
+      const currentFrozen = Number(wallet.frozen_balance || 0);
+      const frozenAfter = Math.max(0, currentFrozen - refundAmount);
 
       await tx.storeWallet.update({
         where: { walletId: wallet.wallet_id },
-        data: { balance: balanceAfter },
+        data: {
+          balance: balanceAfter,
+          frozenBalance: frozenAfter,
+        },
       });
 
       await tx.walletTransaction.create({

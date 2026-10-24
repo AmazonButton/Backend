@@ -83,6 +83,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'frontend-contract-and-notifications.spec.ts')],
   },
+  {
+    name: '16. Withdrawal Concurrency, Idempotency & Payout Engine Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'withdrawal-concurrency-idempotency.spec.ts')],
+  },
 ];
 
 async function main() {

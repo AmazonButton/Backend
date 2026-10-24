@@ -264,11 +264,12 @@ export class StoreWalletService {
         const [lockedWallet] = await tx.$queryRaw<Array<{
           wallet_id: bigint;
           balance: any;
+          frozen_balance: any;
           bank_name: string | null;
           bank_account_number: string | null;
           bank_account_holder: string | null;
         }>>`
-          SELECT wallet_id, balance, bank_name, bank_account_number, bank_account_holder
+          SELECT wallet_id, balance, frozen_balance, bank_name, bank_account_number, bank_account_holder
           FROM store_wallets
           WHERE wallet_id = ${wallet.walletId}
           FOR UPDATE
@@ -277,6 +278,7 @@ export class StoreWalletService {
         if (!lockedWallet) throw new NotFoundException('Ví không tồn tại');
 
         const currentBalance = Number(lockedWallet.balance);
+        const currentFrozen = Number(lockedWallet.frozen_balance || 0);
         if (currentBalance < amount) {
           throw new BadRequestException(
             `Số dư không đủ. Số dư khả dụng hiện tại: ${currentBalance.toLocaleString()} VND`,
@@ -284,9 +286,13 @@ export class StoreWalletService {
         }
 
         const balanceAfter = currentBalance - amount;
+        const frozenAfter = currentFrozen + amount;
         await tx.storeWallet.update({
           where: { walletId: wallet.walletId },
-          data: { balance: balanceAfter },
+          data: {
+            balance: balanceAfter,
+            frozenBalance: frozenAfter,
+          },
         });
 
         const newWithdrawal = await tx.storeWithdrawal.create({
@@ -298,10 +304,17 @@ export class StoreWalletService {
             amount,
             fee,
             netAmount,
+            bankAccountId: verifiedAccount.id,
             bankCode: verifiedAccount.bankCode || dto.bankCode || '970422',
             bankName: verifiedAccount.bankName,
             bankAccountNumber: verifiedPlainAcc,
             bankAccountHolder: verifiedAccount.accountName,
+            bankAccountEncrypted: verifiedAccount.accountNumberEncrypted,
+            bankAccountHash: verifiedAccount.accountNumberHash,
+            bankAccountMasked: CryptoVaultUtil.maskAccountNumber(verifiedPlainAcc),
+            bankAccountNameSnapshot: verifiedAccount.accountName,
+            bankBinSnapshot: verifiedAccount.bankBin,
+            bankNameSnapshot: verifiedAccount.bankName,
             status: 'PENDING',
             provider: 'PAYOS',
             providerReferenceId: withdrawalCode,
@@ -316,7 +329,7 @@ export class StoreWalletService {
             balanceBefore: currentBalance,
             balanceAfter,
             referenceId: withdrawalCode,
-            description: `Yêu cầu rút tiền về ${dto.bankName || lockedWallet.bank_name || 'Ngân hàng'} - ${dto.bankAccountNumber || lockedWallet.bank_account_number || ''}`,
+            description: `Yêu cầu rút tiền #${withdrawalCode} về ${verifiedAccount.bankName} (${CryptoVaultUtil.maskAccountNumber(verifiedPlainAcc)})`,
           },
         });
 
@@ -458,8 +471,9 @@ export class StoreWalletService {
       const [lockedWallet] = await tx.$queryRaw<Array<{
         wallet_id: bigint;
         balance: any;
+        frozen_balance: any;
       }>>`
-        SELECT wallet_id, balance
+        SELECT wallet_id, balance, frozen_balance
         FROM store_wallets
         WHERE wallet_id = ${lockedWithdrawal.wallet_id}
         FOR UPDATE
@@ -470,10 +484,15 @@ export class StoreWalletService {
       const refundAmount = Number(lockedWithdrawal.amount);
       const balanceBefore = Number(lockedWallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
+      const currentFrozen = Number(lockedWallet.frozen_balance || 0);
+      const frozenAfter = Math.max(0, currentFrozen - refundAmount);
 
       await tx.storeWallet.update({
         where: { walletId: lockedWithdrawal.wallet_id },
-        data: { balance: balanceAfter },
+        data: {
+          balance: balanceAfter,
+          frozenBalance: frozenAfter,
+        },
       });
 
       await tx.walletTransaction.create({
@@ -540,12 +559,50 @@ export class StoreWalletService {
     const txState = payoutInfo?.data?.transactions?.[0]?.state;
 
     if (approvalState === 'SUCCEEDED' || txState === 'SUCCEEDED' || approvalState === 'COMPLETED') {
-      return this.prisma.storeWithdrawal.update({
-        where: { withdrawalId: rawId },
-        data: {
-          status: 'SUCCEEDED',
-          processedAt: new Date(),
-        },
+      return this.prisma.$transaction(async (tx) => {
+        const [lockedWithdrawal] = await tx.$queryRaw<Array<{
+          withdrawal_id: bigint;
+          status: string;
+          amount: any;
+          wallet_id: bigint;
+        }>>`
+          SELECT withdrawal_id, status, amount, wallet_id
+          FROM store_withdrawals
+          WHERE withdrawal_id = ${rawId}
+          FOR UPDATE
+        `;
+
+        if (!lockedWithdrawal || lockedWithdrawal.status === 'SUCCEEDED') {
+          return tx.storeWithdrawal.findUnique({ where: { withdrawalId: rawId } });
+        }
+
+        const [lockedWallet] = await tx.$queryRaw<Array<{
+          wallet_id: bigint;
+          frozen_balance: any;
+        }>>`
+          SELECT wallet_id, frozen_balance
+          FROM store_wallets
+          WHERE wallet_id = ${lockedWithdrawal.wallet_id}
+          FOR UPDATE
+        `;
+
+        if (lockedWallet) {
+          const currentFrozen = Number(lockedWallet.frozen_balance || 0);
+          const frozenAfter = Math.max(0, currentFrozen - Number(lockedWithdrawal.amount));
+
+          await tx.storeWallet.update({
+            where: { walletId: lockedWallet.wallet_id },
+            data: { frozenBalance: frozenAfter },
+          });
+        }
+
+        return tx.storeWithdrawal.update({
+          where: { withdrawalId: rawId },
+          data: {
+            status: 'SUCCEEDED',
+            processedAt: new Date(),
+          },
+        });
       });
     }
 
