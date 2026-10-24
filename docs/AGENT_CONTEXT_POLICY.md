@@ -8,8 +8,8 @@ Tài liệu này quy định cách các agent duy trì bối cảnh dự án gi�
 
 Trước khi bắt đầu task, agent phải đọc theo thứ tự:
 
-1. `AGENTS.md` — quy tắc bắt buộc của repository.
-2. `SESSION_HANDOFF.md` — trạng thái, kiến trúc, test và công việc gần nhất.
+1. [`AGENTS.md`](file:///f:/Learning/SEM9-FPTu/backend/AGENTS.md) — quy tắc bắt buộc của repository.
+2. [`SESSION_HANDOFF.md`](file:///f:/Learning/SEM9-FPTu/backend/SESSION_HANDOFF.md) — trạng thái, kiến trúc, test và công việc gần nhất.
 3. Các tài liệu BRD/Rules/skill liên quan trực tiếp đến task.
 
 ## Cập nhật sau khi hoàn thành task

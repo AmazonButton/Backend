@@ -976,8 +976,10 @@ async function runBankVerificationTests() {
       withdrawalRes !== null &&
         Number(withdrawalRes.amount) === 100000 &&
         withdrawalRes.status === 'PENDING' &&
-        withdrawalRes.bankAccountNumber.length >= 6,
-      '5.2 Withdrawal permitted and created successfully when store bank account is OWNERSHIP_VERIFIED',
+        withdrawalRes.bankAccountNumber === null &&
+        withdrawalRes.bankAccountEncrypted !== null &&
+        withdrawalRes.bankAccountMasked?.startsWith('******'),
+      '5.2 Verified withdrawal created with encrypted and masked bank snapshot, without plaintext storage',
     );
 
     if (withdrawalRes?.withdrawalId) {

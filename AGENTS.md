@@ -38,16 +38,20 @@ Full Specifications & Standards:
 10. **Password Hashing**: Use `argon2` or `bcrypt` with salt rounds >= 12. Never store or handle plaintext passwords.
 11. **Pagination & Query Caps**: Pagination query must use `?page=1&pageSize=20`. Limit `pageSize` to maximum 100.
 12. **Transaction & Concurrency Safety**: Multi-table updates must run in explicit transactions (`BEGIN ... COMMIT / ROLLBACK`). Use row-locking (`SELECT FOR UPDATE`) for inventory/balance mutations.
+13. **Zero Plaintext Financial Storage**: All bank accounts must be encrypted with AES-256-GCM (`accountNumberEncrypted`), hashed with SHA-256 for lookup (`accountNumberHash`), and masked for display (`bankAccountMasked`, e.g. `******1234`). Never persist plaintext bank account numbers in database rows, audit logs, or error responses.
+14. **Single-Path Automated Payout & Webhook Verification**: Store withdrawals must strictly follow automated PayOS Payout (`POST /api/v1/admin/withdrawals/:id/payout`). Manual transfer route (`/withdrawals/:id/transfer`) is permanently disabled with `MANUAL_TRANSFER_DEPRECATED`. Webhooks must verify timing-safe HMAC (`crypto.timingSafeEqual`) on canonical query strings and raw body buffers.
+15. **Multi-Instance Session & Token Revocation**: Logout (`POST /api/v1/auth/logout`) must invalidate Access Tokens via distributed PostgreSQL `revoked_tokens` table + memory blacklist (`iat <= lastLogout`), and revoke Refresh Tokens via `is_revoked = true` in table `refresh_tokens`.
 
 ## 3. Skills Available for Workflows
-Consult and run the following skills located in `Skills/` and `.agents/skills/`:
-- [`secure-api-scaffolding`](file:///f:/Learning/SEM9-FPTu/backend/Skills/secure-api-scaffolding/SKILL.md): Scaffold new Express modules and middleware pipelines.
-- [`api-standard-design-and-dto`](file:///f:/Learning/SEM9-FPTu/backend/Skills/api-standard-design-and-dto/SKILL.md): Build REST endpoints, uniform response envelopes, pagination, and DTO mappers.
-- [`auth-rbac-implementation`](file:///f:/Learning/SEM9-FPTu/backend/Skills/auth-rbac-implementation/SKILL.md): Implement secure JWT, Refresh Token rotation, and RBAC / Ownership guards.
-- [`secure-database-postgres`](file:///f:/Learning/SEM9-FPTu/backend/Skills/secure-database-postgres/SKILL.md): Setup connection pool, migrations, and parameterized repository pattern.
-- [`db-migration-and-concurrency`](file:///f:/Learning/SEM9-FPTu/backend/Skills/db-migration-and-concurrency/SKILL.md): Manage database migrations, constraints, row locking (`SELECT FOR UPDATE`), and Idempotency keys.
-- [`caching-and-background-jobs`](file:///f:/Learning/SEM9-FPTu/backend/Skills/caching-and-background-jobs/SKILL.md): Implement Cache-Aside with Redis, cache invalidation, and async queues with BullMQ.
-- [`server-lifecycle-and-health`](file:///f:/Learning/SEM9-FPTu/backend/Skills/server-lifecycle-and-health/SKILL.md): Setup /healthz & /readyz probes, graceful shutdown, and Swagger generation via Zod.
-- [`secure-file-upload-and-storage`](file:///f:/Learning/SEM9-FPTu/backend/Skills/secure-file-upload-and-storage/SKILL.md): Handle multipart uploads safely with magic bytes, SVG sanitization, and S3 Presigned URLs.
-- [`advanced-auth-and-webhooks`](file:///f:/Learning/SEM9-FPTu/backend/Skills/advanced-auth-and-webhooks/SKILL.md): Implement anti-enumeration forgot/reset password flow and timing-safe webhook HMAC verification.
-- [`backend-security-audit`](file:///f:/Learning/SEM9-FPTu/backend/Skills/backend-security-audit/SKILL.md): Audit backend code against the 42-point security checklist and OWASP standards.
+Consult and run the following skills located in `.agents/skills/`:
+- [`secure-api-scaffolding`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/secure-api-scaffolding/SKILL.md): Scaffold new Express modules and middleware pipelines.
+- [`api-standard-design-and-dto`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/api-standard-design-and-dto/SKILL.md): Build REST endpoints, uniform response envelopes, pagination, and DTO mappers.
+- [`auth-rbac-implementation`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/auth-rbac-implementation/SKILL.md): Implement secure JWT, Refresh Token rotation, and RBAC / Ownership guards.
+- [`secure-database-postgres`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/secure-database-postgres/SKILL.md): Setup connection pool, migrations, and parameterized repository pattern.
+- [`db-migration-and-concurrency`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/db-migration-and-concurrency/SKILL.md): Manage database migrations, constraints, row locking (`SELECT FOR UPDATE`), and Idempotency keys.
+- [`caching-and-background-jobs`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/caching-and-background-jobs/SKILL.md): Implement Cache-Aside with Redis, cache invalidation, and async queues with BullMQ.
+- [`server-lifecycle-and-health`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/server-lifecycle-and-health/SKILL.md): Setup /healthz & /readyz probes, graceful shutdown, and Swagger generation via Zod.
+- [`secure-file-upload-and-storage`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/secure-file-upload-and-storage/SKILL.md): Handle multipart uploads safely with magic bytes, SVG sanitization, and S3 Presigned URLs.
+- [`advanced-auth-and-webhooks`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/advanced-auth-and-webhooks/SKILL.md): Implement anti-enumeration forgot/reset password flow and timing-safe webhook HMAC verification.
+- [`backend-security-audit`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/backend-security-audit/SKILL.md): Audit backend code against the 42-point security checklist and OWASP standards.
+- [`security-audit`](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/cloudflare-security-audit/SKILL.md): Cloudflare Security Audit skill for vulnerability review, API protocol safety, and pen-testing.
