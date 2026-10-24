@@ -1,7 +1,8 @@
 import { MediaService } from '../media/media.service';
-﻿import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Inject, Logger } from '@nestjs/common';
+import { StoreSubscriptionsService } from '../store-subscriptions/store-subscriptions.service';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Inject, Logger, Optional } from '@nestjs/common';
 import { ProductsRepository, ProductImageInput } from './products.repository';
+import { EventsGateway } from '../websocket/events.gateway';
 
 @Injectable()
 export class ProductsService {
@@ -9,7 +10,8 @@ export class ProductsService {
   constructor(
     @Inject(ProductsRepository) private readonly productsRepo: ProductsRepository,
     @Inject(StoreSubscriptionsService) private readonly subscriptionsService: StoreSubscriptionsService,
-    @Inject(MediaService) private readonly mediaService: MediaService
+    @Inject(MediaService) private readonly mediaService: MediaService,
+    @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
   ) {}
 
   private extractPublicIdFromUrl(url?: string): string | undefined {
@@ -72,10 +74,14 @@ export class ProductsService {
       ...p,
       id: p.productId.toString(),
       productId: p.productId.toString(),
+      name: p.productName || p.name || '',
+      productName: p.productName || p.name || '',
       sku: p.productCode || p.sku || ('SKU-' + p.productId.toString()),
       storeId: p.storeId ? p.storeId.toString() : null,
       categoryId: p.categoryId ? p.categoryId.toString() : null,
-      basePrice: Number(p.basePrice),
+      basePrice: Number(p.basePrice || 0),
+      price: Number(p.basePrice || 0),
+      stock: p.inventory ? Number(p.inventory.quantityOnHand || 0) : (p.stock !== undefined ? Number(p.stock) : 0),
       imageUrl: thumbUrl,
       thumbnailUrl: thumbUrl,
       images: p.images?.map((img: any) => ({
@@ -179,7 +185,21 @@ export class ProductsService {
       initialStock: initialStock !== undefined ? initialStock : stock || 50,
       images: imageInputs,
     });
-    return this.formatProduct(created);
+    const formatted = this.formatProduct(created);
+    this.eventsGateway?.emitToStore(targetStoreId.toString(), 'PRODUCT_CREATED', {
+      product: formatted,
+      storeId: targetStoreId.toString(),
+    });
+    this.eventsGateway?.emitGlobal('PRODUCT_CREATED', {
+      product: formatted,
+      storeId: targetStoreId.toString(),
+    });
+    this.eventsGateway?.emitGlobal('CATALOG_UPDATED', {
+      action: 'CREATE',
+      product: formatted,
+      storeId: targetStoreId.toString(),
+    });
+    return formatted;
   }
 
   async update(id: string | number | bigint, body: any, user?: any) {
@@ -263,7 +283,21 @@ export class ProductsService {
       }
     }
 
-    return this.formatProduct(updated);
+    const formatted = this.formatProduct(updated);
+    this.eventsGateway?.emitToStore(existing.storeId.toString(), 'PRODUCT_UPDATED', {
+      product: formatted,
+      storeId: existing.storeId.toString(),
+    });
+    this.eventsGateway?.emitGlobal('PRODUCT_UPDATED', {
+      product: formatted,
+      storeId: existing.storeId.toString(),
+    });
+    this.eventsGateway?.emitGlobal('CATALOG_UPDATED', {
+      action: 'UPDATE',
+      product: formatted,
+      storeId: existing.storeId.toString(),
+    });
+    return formatted;
   }
 
   async updateStock(
@@ -292,77 +326,77 @@ export class ProductsService {
       throw new BadRequestException('Số lượng tồn kho phải là số không âm');
     }
 
-    return this.productsRepo.updateInventoryStock(
+    const res = await this.productsRepo.updateInventoryStock(
       targetProductId,
       existing.storeId,
       stock,
       body.lowStockThreshold,
     );
+
+    this.eventsGateway?.emitToStore(existing.storeId.toString(), 'PRODUCT_STOCK_CHANGED', {
+      productId: targetProductId.toString(),
+      storeId: existing.storeId.toString(),
+      availableStock: stock,
+    });
+    this.eventsGateway?.emitGlobal('PRODUCT_STOCK_CHANGED', {
+      productId: targetProductId.toString(),
+      storeId: existing.storeId.toString(),
+      availableStock: stock,
+    });
+    this.eventsGateway?.emitGlobal('CATALOG_UPDATED', {
+      action: 'STOCK',
+      productId: targetProductId.toString(),
+      storeId: existing.storeId.toString(),
+      availableStock: stock,
+    });
+
+    return res;
   }
-  async deleteProduct(id: string | number | bigint, user: any) {
-    const targetProductId = BigInt(id);
-    const existing = await this.productsRepo.findById(targetProductId);
-    if (!existing) {
-      throw new NotFoundException('Không tìm thấy sản phẩm');
-    }
 
-    // Tenant / Ownership isolation
-    const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
-    if (!isAdmin) {
-      if (!user?.storeId || existing.storeId.toString() !== user.storeId.toString()) {
-        throw new ForbiddenException({
-          success: false,
-          code: 'ACCESS_DENIED',
-          message: 'Bạn không có quyền xóa sản phẩm của cửa hàng khác.',
-        });
-      }
-    }
+  async getStorefrontCatalog(params: { search?: string; storeId?: string; category?: string }) {
+    const items = await this.productsRepo.findStorefrontCatalog(params);
+    return items.map((p: any) => {
+      const thumb = p.images?.find((img: any) => img.isThumbnail) || p.images?.[0];
+      const imageUrl = thumb?.imageUrl || '';
+      const availableStock = Number(p.inventory?.quantityOnHand || 0);
+      const reservedStock = Number(p.inventory?.reservedQuantity || 0);
 
-    // Check active orders
-    const activeOrderCount = await this.productsRepo.countActiveOrdersWithProduct(targetProductId);
-    if (activeOrderCount > 0) {
-      throw new BadRequestException({
-        success: false,
-        code: 'PRODUCT_IN_ACTIVE_ORDERS',
-        message: 'Không thể xóa sản phẩm đang có trong các đơn hàng đang xử lý.',
-      });
-    }
-
-    // Check active button mappings
-    const activeButtonCount = await this.productsRepo.countActiveButtonMappings(targetProductId);
-    if (activeButtonCount > 0) {
-      throw new BadRequestException({
-        success: false,
-        code: 'PRODUCT_MAPPED_TO_ACTIVE_BUTTON',
-        message: 'Không thể xóa sản phẩm đang được gán cho thiết bị nút bấm đang hoạt động.',
-      });
-    }
-
-    // Cloudinary Asset Lifecycle: Destroy store assets if ref count will become 0
-    const oldImages = await this.productsRepo.findProductImages(targetProductId);
-    const storePrefix = existing.storeId ? `stores/${existing.storeId.toString()}/` : 'stores/';
-
-    for (const img of oldImages) {
-      const pubId = img.cloudinaryPublicId;
-      if (pubId && pubId.startsWith(storePrefix)) {
-        const remainingCount = await this.productsRepo.countImageReferences(pubId);
-        if (remainingCount <= 1) {
-          try {
-            await this.mediaService.deleteAsset(pubId);
-            this.logger.log(`[Cloudinary Lifecycle] Safely destroyed asset upon product deletion: ${pubId}`);
-          } catch (err: any) {
-            this.logger.warn(`Failed to destroy Cloudinary asset ${pubId}: ${err.message}`);
-          }
-        }
-      }
-    }
-
-    const updated = await this.productsRepo.softDeleteProduct(targetProductId);
-
-    return {
-      productId: updated.productId.toString(),
-      productName: updated.productName,
-      status: updated.status,
-    };
+      return {
+        id: p.productId.toString(),
+        productId: p.productId.toString(),
+        storeId: p.storeId.toString(),
+        name: p.productName,
+        productName: p.productName,
+        productCode: p.productCode,
+        sku: p.productCode,
+        brand: p.brand || '',
+        description: p.description || '',
+        category: p.category?.categoryName || 'Khác',
+        categoryId: p.categoryId ? p.categoryId.toString() : null,
+        unit: 'Sản phẩm',
+        price: Number(p.basePrice),
+        basePrice: Number(p.basePrice),
+        stock: availableStock,
+        reservedStock,
+        availableStock,
+        imageUrl,
+        thumbnailUrl: imageUrl,
+        images: p.images?.map((img: any) => ({
+          imageId: img.imageId.toString(),
+          productId: img.productId.toString(),
+          imageUrl: img.imageUrl,
+          isThumbnail: img.isThumbnail,
+          displayOrder: img.displayOrder,
+        })) || [],
+        store: {
+          id: p.store.storeId.toString(),
+          storeId: p.store.storeId.toString(),
+          name: p.store.name,
+          code: p.store.code,
+          address: p.store.address,
+          phone: p.store.phone,
+        },
+      };
+    });
   }
 }

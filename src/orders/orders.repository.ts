@@ -264,6 +264,9 @@ export class OrdersRepository {
         button: true,
         customer: { include: { user: true } },
         store: true,
+        paymentTransactions: {
+          select: { status: true, paymentMethod: true, paidAt: true },
+        },
       },
       orderBy: { orderDate: 'desc' },
     });

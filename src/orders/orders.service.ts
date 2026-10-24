@@ -346,23 +346,37 @@ export class OrdersService {
     }
 
     // Cancellation window validation (BRD-ORD-CANCEL)
+    const isButtonOrder = !!(order as any).buttonId;
     const cancelWindowSeconds = Number((order as any).button?.cancelWindowSeconds || 60);
     const elapsedSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
 
     const isPrivilegedStaff =
       user && ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER'].includes(user.role);
 
-    // If caller is CUSTOMER or unprivileged, enforce strict 60s window and PENDING status
+    // If caller is CUSTOMER or unprivileged
     if (!isPrivilegedStaff) {
-      if (order.orderStatus !== 'PENDING') {
-        throw new BadRequestException(
-          `Khách hàng chỉ có thể hủy đơn hàng khi đơn ở trạng thái PENDING. Trạng thái hiện tại: ${order.orderStatus}`,
-        );
-      }
-      if (elapsedSeconds > cancelWindowSeconds) {
-        throw new BadRequestException(
-          `Đã hết thời gian cho phép hủy đơn hàng (${cancelWindowSeconds} giây kể từ khi đặt đơn). Cửa sổ hủy đã kết thúc.`,
-        );
+      const isUnpaid =
+        order.paymentStatus === 'UNPAID' ||
+        (order.paymentStatus !== 'PAID' && order.paymentMethod !== 'COD' && order.paymentMethod !== 'CASH_ON_DELIVERY');
+
+      if (isButtonOrder && !isUnpaid) {
+        if (order.orderStatus !== 'PENDING') {
+          throw new BadRequestException(
+            `Khách hàng chỉ có thể hủy đơn hàng từ nút bấm khi đơn ở trạng thái PENDING. Trạng thái hiện tại: ${order.orderStatus}`,
+          );
+        }
+        if (elapsedSeconds > cancelWindowSeconds) {
+          throw new BadRequestException(
+            `Đã hết thời gian cho phép hủy đơn hàng từ nút bấm (${cancelWindowSeconds} giây kể từ khi đặt đơn). Cửa sổ hủy đã kết thúc.`,
+          );
+        }
+      } else {
+        // Storefront orders or unpaid orders can be cancelled while PENDING or CONFIRMED (before being prepared/shipped)
+        if (!['PENDING', 'CONFIRMED'].includes(order.orderStatus)) {
+          throw new BadRequestException(
+            `Đơn hàng đã được xử lý (${order.orderStatus}), không thể tự hủy. Vui lòng liên hệ cửa hàng để được hỗ trợ.`,
+          );
+        }
       }
     }
 
@@ -385,19 +399,16 @@ export class OrdersService {
 
     const updated = await this.ordersRepo.cancelOrderAtomicTx(targetOrderId, reason, user?.userId || user?.id);
     const formattedOrder = toOrderResponseDto(updated);
-    const cancelPayload = { order: formattedOrder, reason, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
+    const cancelPayload = { order: formattedOrder, reason, storeId: order.storeId.toString(), customerId: order.customerId ? order.customerId.toString() : null };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_CANCELLED', cancelPayload);
-    this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_CANCELLED', cancelPayload);
+    if (order.customerId) {
+      this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_CANCELLED', cancelPayload);
+    }
 
     return formattedOrder;
   }
 
   async updateOrderStatus(orderId: string | number | bigint, newStatus: string, user?: any) {
-    let normalizedStatus = typeof newStatus === 'string' ? newStatus.trim().toUpperCase() : newStatus;
-    if (normalizedStatus === 'OUT_FOR_DELIVERY') {
-      normalizedStatus = 'READY_FOR_DELIVERY';
-    }
-
     const targetOrderId = BigInt(orderId);
     const order = await this.ordersRepo.findOrderById(targetOrderId);
 
@@ -414,51 +425,53 @@ export class OrdersService {
     }
 
     // Idempotent check: if already at target status, return directly
-    if (order.orderStatus === normalizedStatus) {
+    if (order.orderStatus === newStatus) {
       return toOrderResponseDto(order);
     }
 
     // Validate transition graph according to BRD
     const allowedNext = ALLOWED_ORDER_TRANSITIONS[order.orderStatus] || [];
-    if (!allowedNext.includes(normalizedStatus)) {
+    if (!allowedNext.includes(newStatus)) {
       throw new BadRequestException(
-        `Không thể chuyển trạng thái đơn hàng từ ${order.orderStatus} sang ${normalizedStatus}`,
+        `Không thể chuyển trạng thái đơn hàng từ ${order.orderStatus} sang ${newStatus}`,
       );
     }
 
     let updated: any;
-    if (normalizedStatus === 'COMPLETED') {
+    if (newStatus === 'COMPLETED') {
       updated = await this.ordersRepo.completeOrderAtomicTx(targetOrderId);
-    } else if (['CANCELLED', 'REJECTED'].includes(normalizedStatus)) {
+    } else if (['CANCELLED', 'REJECTED'].includes(newStatus)) {
       updated = await this.ordersRepo.cancelOrderAtomicTx(
         targetOrderId,
-        normalizedStatus === 'REJECTED' ? 'Cửa hàng từ chối tiếp nhận đơn' : 'Cập nhật hủy đơn',
+        newStatus === 'REJECTED' ? 'Cửa hàng từ chối tiếp nhận đơn' : 'Cập nhật hủy đơn',
         user?.userId || user?.id,
-        normalizedStatus as 'CANCELLED' | 'REJECTED',
+        newStatus as 'CANCELLED' | 'REJECTED',
       );
     } else {
       updated = await this.ordersRepo.transitionOrderStatusAtomicTx(
         targetOrderId,
-        normalizedStatus,
+        newStatus,
         user?.userId || user?.id,
-        `Chuyển trạng thái sang ${normalizedStatus}`,
+        `Chuyển trạng thái sang ${newStatus}`,
       );
     }
 
     const formattedOrder = toOrderResponseDto(updated);
-    const statusPayload = { order: formattedOrder, storeId: order.storeId.toString(), customerId: order.customerId.toString() };
+    const statusPayload = { order: formattedOrder, storeId: order.storeId.toString(), customerId: order.customerId ? order.customerId.toString() : null };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
-    this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
+    if (order.customerId) {
+      this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_STATUS_CHANGED', statusPayload);
+    }
 
     // Send FCM Push Notification
     if (this.notificationsService) {
       const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
-      this.notificationsService.sendOrderStatusChanged(formattedOrder, customerUserId, normalizedStatus).catch((err) => {
+      this.notificationsService.sendOrderStatusChanged(formattedOrder, customerUserId, newStatus).catch((err) => {
         this.logger.warn(`Failed to send order status changed push notification: ${err.message}`);
       });
     }
 
-    if (normalizedStatus === 'READY_FOR_DELIVERY') {
+    if (newStatus === 'READY_FOR_DELIVERY') {
       const readyPayload = {
         orderId: formattedOrder.orderId,
         orderCode: formattedOrder.orderCode,

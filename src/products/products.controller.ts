@@ -24,12 +24,26 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 
 @ApiTags('Products & Inventory')
-@ApiBearerAuth('JWT-auth')
-@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('products')
 export class ProductsController {
   constructor(@Inject(ProductsService) private readonly productsService: ProductsService) {}
 
+  @Get('storefront/catalog')
+  @ApiOperation({ summary: 'Xem danh mục sản phẩm công khai cho storefront (Không yêu cầu đăng nhập)' })
+  async getStorefrontCatalog(
+    @Query('search') search?: string,
+    @Query('storeId') storeId?: string,
+    @Query('category') category?: string,
+  ) {
+    const data = await this.productsService.getStorefrontCatalog({ search, storeId, category });
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Get()
   @ApiOperation({ summary: 'Xem danh sách sản phẩm và tồn kho' })
   async list(
@@ -50,6 +64,8 @@ export class ProductsController {
     };
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Get(':id')
   @ApiOperation({ summary: 'Xem chi tiet san pham va danh sach anh' })
   async getById(
@@ -63,7 +79,9 @@ export class ProductsController {
     };
   }
 
-  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post()
   @ApiOperation({ summary: 'Tạo sản phẩm mới (STORE_OWNER hoặc SYSTEM_ADMIN)' })
   async create(@Request() req: any, @Body() body: CreateProductDto) {
@@ -71,7 +89,9 @@ export class ProductsController {
     return { success: true, message: 'Tạo sản phẩm thành công!', data };
   }
 
-  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Put(':id')
   @ApiOperation({ summary: 'Cập nhật thông tin và giá sản phẩm (STORE_OWNER hoặc SYSTEM_ADMIN)' })
   async update(@Param('id') id: string, @Body() body: UpdateProductDto, @Request() req: any) {
@@ -79,6 +99,8 @@ export class ProductsController {
     return { success: true, message: 'Cập nhật sản phẩm thành công!', data };
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('STORE_OWNER', 'STAFF_INVENTORY', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/inventory')
   @ApiOperation({ summary: 'Cập nhật số lượng tồn kho (STAFF_INVENTORY hoặc STORE_OWNER)' })
@@ -90,14 +112,14 @@ export class ProductsController {
     const data = await this.productsService.updateStock(id, body, req.user);
     return { success: true, message: 'Cập nhật tồn kho thành công!', data };
   }
-  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Delete(':id')
-  @ApiOperation({ summary: 'Xóa hoặc vô hiệu hóa sản phẩm' })
-  async deleteProduct(
-    @Param('id') id: string,
-    @Request() req: any,
-  ) {
-    const data = await this.productsService.deleteProduct(id, req.user);
-    return { success: true, message: 'Xóa sản phẩm thành công!', data };
+  @ApiOperation({ summary: 'Vô hiệu hóa (ngừng kinh doanh) sản phẩm thay vì xóa cứng (Soft delete)' })
+  async remove(@Param('id') id: string, @Request() req: any) {
+    const data = await this.productsService.update(id, { status: 'INACTIVE' }, req.user);
+    return { success: true, message: 'Đã chuyển sản phẩm sang trạng thái ngừng kinh doanh!', data };
   }
 }

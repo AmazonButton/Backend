@@ -1,4 +1,4 @@
-﻿import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ProductImageInput {
@@ -214,37 +214,61 @@ export class ProductsRepository {
     });
   }
 
-  async countActiveOrdersWithProduct(productId: bigint): Promise<number> {
-    return this.prisma.orderItem.count({
-      where: {
-        productId,
-        order: {
-          orderStatus: {
-            in: ['PENDING', 'CONFIRMED', 'PREPARING', 'READY_FOR_DELIVERY', 'OUT_FOR_DELIVERY', 'DELIVERING'],
+  async findStorefrontCatalog(params: { search?: string; storeId?: string; category?: string }) {
+    const whereClause: any = {
+      status: 'ACTIVE',
+      store: {
+        status: 'ACTIVE',
+      },
+    };
+
+    if (params.storeId) {
+      try {
+        whereClause.storeId = BigInt(params.storeId);
+      } catch (_) {}
+    }
+
+    if (params.category && params.category !== 'Tất cả') {
+      whereClause.category = {
+        categoryName: {
+          equals: params.category,
+          mode: 'insensitive',
+        },
+      };
+    }
+
+    if (params.search && params.search.trim().length > 0) {
+      const words = params.search.trim().split(/\s+/).filter(Boolean);
+      whereClause.AND = words.map((w) => ({
+        OR: [
+          { productName: { contains: w, mode: 'insensitive' } },
+          { brand: { contains: w, mode: 'insensitive' } },
+          { description: { contains: w, mode: 'insensitive' } },
+          { productCode: { contains: w, mode: 'insensitive' } },
+        ],
+      }));
+    }
+
+    return this.prisma.product.findMany({
+      where: whereClause,
+      include: {
+        store: {
+          select: {
+            storeId: true,
+            name: true,
+            code: true,
+            address: true,
+            phone: true,
           },
         },
-      },
-    });
-  }
-
-  async countActiveButtonMappings(productId: bigint): Promise<number> {
-    return this.prisma.buttonProduct.count({
-      where: {
-        productId,
-        button: {
-          status: 'ACTIVE',
+        category: true,
+        inventory: true,
+        images: {
+          orderBy: { displayOrder: 'asc' },
         },
       },
-    });
-  }
-
-  async softDeleteProduct(productId: bigint) {
-    return this.prisma.product.update({
-      where: { productId },
-      data: {
-        status: 'INACTIVE',
-        updatedAt: new Date(),
-      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
     });
   }
 }
