@@ -23,3 +23,43 @@ END $$;
 CREATE INDEX IF NOT EXISTS "idx_store_withdrawals_acc_hash" ON "store_withdrawals"("bank_account_hash");
 CREATE INDEX IF NOT EXISTS "idx_store_withdrawals_provider_ref" ON "store_withdrawals"("provider_reference_id");
 CREATE INDEX IF NOT EXISTS "idx_store_bank_accounts_acc_hash" ON "store_bank_accounts"("account_number_hash");
+
+-- 4. Fix trigger function fn_sync_inventory_on_order_status_change column names
+CREATE OR REPLACE FUNCTION fn_sync_inventory_on_order_status_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+    v_changed_by bigint;
+BEGIN
+    IF OLD.order_status = NEW.order_status THEN
+        RETURN NEW;
+    END IF;
+
+    v_changed_by := fn_current_user_id();
+
+    INSERT INTO public.order_status_history (
+        order_id,
+        old_status,
+        new_status,
+        changed_by_user_id,
+        reason,
+        changed_at
+    ) VALUES (
+        NEW.order_id,
+        OLD.order_status,
+        NEW.order_status,
+        v_changed_by,
+        CASE
+            WHEN NEW.order_status = 'CANCELLED' THEN 'Khách hàng hoặc hệ thống hủy đơn'
+            WHEN NEW.order_status = 'REJECTED' THEN 'Cửa hàng từ chối đơn hàng'
+            WHEN NEW.order_status = 'COMPLETED' THEN 'Hoàn tất đơn hàng thành công'
+            ELSE 'Cập nhật trạng thái đơn hàng'
+        END,
+        NOW()
+    );
+
+    RETURN NEW;
+END;
+$function$;
+

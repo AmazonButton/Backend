@@ -3,7 +3,8 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
+const rawBaseUrl = process.env.BASE_URL || 'http://localhost:3000';
+const BASE_URL = rawBaseUrl.replace(/\/api\/v1\/?$/, '');
 const API_URL = `${BASE_URL}/api/v1`;
 
 function logTest(name: string, passed: boolean, detail?: string) {

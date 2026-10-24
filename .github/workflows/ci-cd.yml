@@ -112,6 +112,7 @@ jobs:
       BANK_VERIFICATION_WEBHOOK_SECRET: ci_test_bank_webhook_secret_key_12345
       PLATFORM_BANK_ACCOUNT_NUMBER: "999888777666"
       PLATFORM_BANK_BIN: "970422"
+      FIREBASE_PROJECT_ID: iot-button-e59d7
 
     steps:
       - name: Checkout Code
@@ -157,7 +158,7 @@ jobs:
         run: |
           npx --yes wait-on -t 60000 http://localhost:3000/healthz || (echo "=== SERVER LOG ON FAILURE ===" && cat server.log && exit 1)
 
-      - name: Run All 15 Integration Test Suites
+      - name: Run All 16 Integration Test Suites
         run: npm run test:all
 
       - name: Stop Background Server

@@ -933,11 +933,11 @@ BEGIN
 
     INSERT INTO public.order_status_history (
         order_id,
-        from_status,
-        to_status,
-        changed_by,
+        old_status,
+        new_status,
+        changed_by_user_id,
         reason,
-        created_at
+        changed_at
     ) VALUES (
         NEW.order_id,
         OLD.order_status,
