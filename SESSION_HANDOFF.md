@@ -488,3 +488,14 @@ When starting a new conversation, prompt the agent with:
    - Render deploy dep-dbe4076q1p3s73f8t700 finished with status live.
    - Verified live handshake via PowerShell Invoke-RestMethod: returned HTTP 200 { code: '00', desc: 'success', data: { webhookUrl: 'https://backend-fae8.onrender.com/api/v1/payments/payos/webhook' } }.
    - Verified live test ping (orderCode 123): returned HTTP 200 { code: '00', desc: 'success', message: 'Test webhook acknowledged' }.
+
+---
+
+### K. Didit eKYC Verification & Webhook Live Verification
+1. **Body Size Limit Enhancement:**
+   - Didit KYC payloads with AML, OCR, and Liveness analysis exceed 20KB.
+   - Updated src/main.ts: added dedicated 1MB limit for /api/v1/webhooks while retaining strict 10KB limit on standard REST routes (RULE-14).
+2. **Webhook Verification:**
+   - Destination URL: https://backend-fae8.onrender.com/api/v1/webhooks/didit
+   - Configured DIDIT_WEBHOOK_SECRET on Render.
+   - Test webhook dispatched from Didit Business Console (status.updated, signature X-Signature-V2): received HTTP 200 OK (Response Status: 200).
