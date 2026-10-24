@@ -25,7 +25,17 @@ async function bootstrap() {
   // Enable shutdown hooks for graceful termination
   app.enableShutdownHooks();
 
-  // Express body size limit with rawBody retention for webhooks - 10kb project standard
+  // Express body size limit with rawBody retention for webhooks
+  // Webhooks (Didit eKYC dossiers with AML/OCR) can reach ~50kb; standard routes keep strict 10kb limit (RULE-14)
+  app.use(
+    '/api/v1/webhooks',
+    express.json({
+      limit: '1mb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(
     express.json({
       limit: '10kb',
