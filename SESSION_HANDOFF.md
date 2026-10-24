@@ -459,4 +459,16 @@ When starting a new conversation, prompt the agent with:
    - `npx tsc --noEmit` passed with 0 errors.
    - `npm run build` compiled successfully.
 
+---
+
+### I. Fix Build Failure in AuthService (GoogleLoginDto & resolveUserRole)
+1. **Root Cause:**
+   - Commit `cf8ef6c` introduced references to `GoogleLoginDto` and `this.resolveUserRole(user)` in `googleLogin` within [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts), but omitted importing `GoogleLoginDto` and forgot to implement `resolveUserRole`.
+   - Result: Render build failed on TypeScript compilation (`Cannot find name 'GoogleLoginDto'`, `Property 'resolveUserRole' does not exist on type 'AuthService'`).
+2. **Resolution:**
+   - Imported `GoogleLoginDto` from `./dto/auth.dto`.
+   - Implemented `public resolveUserRole(user: any): { role: string; storeId: string | null }` in `AuthService` with support for `SUPER_ADMIN`, `STORE_OWNER`, and store staff roles.
+   - Verified with `npx tsc --noEmit` (0 errors) and `npm run build` (success).
+
+
 

@@ -23,6 +23,7 @@ import {
   VerifyEmailDto,
   ResendVerificationDto,
   UpdateProfileDto,
+  GoogleLoginDto,
 } from './dto/auth.dto';
 import { RegisterByPhoneDto } from './dto/register-by-phone.dto';
 import { LoginByPhoneDto } from './dto/login-by-phone.dto';
@@ -48,6 +49,33 @@ export class AuthService {
   private hashOtp(otpCode: string, purpose: 'EMAIL_VERIFICATION' | 'PASSWORD_RESET'): string {
     const pepper = this.getOtpPepper();
     return crypto.createHmac('sha256', pepper).update(`${otpCode.trim()}:${purpose}`).digest('hex');
+  }
+
+  public resolveUserRole(user: any): { role: string; storeId: string | null } {
+    let role = 'CUSTOMER';
+    let storeId: string | null = null;
+
+    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
+      .split(',')
+      .map((e) => e.trim().toLowerCase());
+    const isSuperAdmin =
+      user.storeStaffs?.some(
+        (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
+      ) ||
+      superAdminEmails.includes((user.email || '').toLowerCase()) ||
+      user.username === 'admin';
+
+    if (isSuperAdmin) {
+      role = 'SUPER_ADMIN';
+    } else if (user.ownedStores && user.ownedStores.length > 0) {
+      role = 'STORE_OWNER';
+      storeId = user.ownedStores[0].storeId.toString();
+    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
+      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+      storeId = user.storeStaffs[0].storeId.toString();
+    }
+
+    return { role, storeId };
   }
 
   constructor(
