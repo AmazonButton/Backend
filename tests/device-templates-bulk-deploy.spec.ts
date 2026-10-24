@@ -152,11 +152,20 @@ async function runDeviceTemplateAndBulkDeployTests() {
       }
 
       if (!store1Product) {
-        const cat = (await prisma.category.findFirst({ where: { storeId: sId1 } })) || (await prisma.category.findFirst());
+        let cat1 = await prisma.category.findFirst({ where: { storeId: sId1 } });
+        if (!cat1) {
+          cat1 = await prisma.category.create({
+            data: {
+              storeId: sId1,
+              categoryName: `Store 1 Cat ${Date.now()}`,
+              status: 'ACTIVE',
+            },
+          });
+        }
         store1Product = await prisma.product.create({
           data: {
             storeId: sId1,
-            categoryId: cat ? cat.categoryId : 1n,
+            categoryId: cat1.categoryId,
             productCode: `PRD-S1-${Date.now().toString().slice(-4)}`,
             productName: 'Store 1 Item Test',
             basePrice: 50000,
@@ -176,11 +185,20 @@ async function runDeviceTemplateAndBulkDeployTests() {
       if (!otherStoreProduct) {
         // Create a temporary product for Store 2 to test cross-store isolation
         const sId2 = store2Id && /^\d+$/.test(store2Id) ? BigInt(store2Id) : 2n;
-        const cat = await prisma.category.findFirst();
+        let cat2 = await prisma.category.findFirst({ where: { storeId: sId2 } });
+        if (!cat2) {
+          cat2 = await prisma.category.create({
+            data: {
+              storeId: sId2,
+              categoryName: `Store 2 Cat ${Date.now()}`,
+              status: 'ACTIVE',
+            },
+          });
+        }
         otherStoreProduct = await prisma.product.create({
           data: {
             storeId: sId2,
-            categoryId: cat ? cat.categoryId : 1n,
+            categoryId: cat2.categoryId,
             productCode: `PRD-T2-${Date.now().toString().slice(-4)}`,
             productName: 'Other Store Item Test',
             basePrice: 50000,
