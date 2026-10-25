@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -57,15 +57,34 @@ export class ProductDiscountsRepository {
     endAt: Date;
     status?: string;
   }) {
-    return this.prisma.productDiscount.create({
-      data: {
-        productId: data.productId,
-        discountPercent: data.discountPercent != null ? data.discountPercent : null,
-        discountAmount: data.discountAmount != null ? data.discountAmount : null,
-        startAt: data.startAt,
-        endAt: data.endAt,
-        status: data.status || 'ACTIVE',
-      },
+    return this.prisma.$transaction(async (tx) => {
+      // Row-lock product to serialize concurrent discount creations
+      await tx.$queryRaw`SELECT product_id FROM products WHERE product_id = ${data.productId} FOR UPDATE`;
+
+      if ((data.status || 'ACTIVE') === 'ACTIVE') {
+        const overlapCount = await tx.productDiscount.count({
+          where: {
+            productId: data.productId,
+            status: 'ACTIVE',
+            startAt: { lt: data.endAt },
+            endAt: { gt: data.startAt },
+          },
+        });
+        if (overlapCount > 0) {
+          throw new BadRequestException('Khoảng thời gian giảm giá bị trùng lặp với một chương trình giảm giá đang hoạt động khác của sản phẩm này');
+        }
+      }
+
+      return tx.productDiscount.create({
+        data: {
+          productId: data.productId,
+          discountPercent: data.discountPercent != null ? data.discountPercent : null,
+          discountAmount: data.discountAmount != null ? data.discountAmount : null,
+          startAt: data.startAt,
+          endAt: data.endAt,
+          status: data.status || 'ACTIVE',
+        },
+      });
     });
   }
 
@@ -79,16 +98,47 @@ export class ProductDiscountsRepository {
       status?: string;
     },
   ) {
-    const payload: any = {};
-    if (data.discountPercent !== undefined) payload.discountPercent = data.discountPercent;
-    if (data.discountAmount !== undefined) payload.discountAmount = data.discountAmount;
-    if (data.startAt !== undefined) payload.startAt = data.startAt;
-    if (data.endAt !== undefined) payload.endAt = data.endAt;
-    if (data.status !== undefined) payload.status = data.status;
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.productDiscount.findUnique({
+        where: { discountId },
+      });
+      if (!current) {
+        throw new NotFoundException('Không tìm thấy chương trình giảm giá');
+      }
 
-    return this.prisma.productDiscount.update({
-      where: { discountId },
-      data: payload,
+      // Row-lock product to serialize concurrent updates
+      await tx.$queryRaw`SELECT product_id FROM products WHERE product_id = ${current.productId} FOR UPDATE`;
+
+      const start = data.startAt || current.startAt;
+      const end = data.endAt || current.endAt;
+      const status = data.status || current.status;
+
+      if (status === 'ACTIVE') {
+        const overlapCount = await tx.productDiscount.count({
+          where: {
+            productId: current.productId,
+            status: 'ACTIVE',
+            startAt: { lt: end },
+            endAt: { gt: start },
+            discountId: { not: discountId },
+          },
+        });
+
+        if (overlapCount > 0) {
+          throw new BadRequestException('Khoảng thời gian giảm giá bị trùng lặp với một chương trình giảm giá đang hoạt động khác của sản phẩm này');
+        }
+      }
+
+      return tx.productDiscount.update({
+        where: { discountId },
+        data: {
+          ...(data.discountPercent !== undefined ? { discountPercent: data.discountPercent } : {}),
+          ...(data.discountAmount !== undefined ? { discountAmount: data.discountAmount } : {}),
+          ...(data.startAt ? { startAt: data.startAt } : {}),
+          ...(data.endAt ? { endAt: data.endAt } : {}),
+          ...(data.status ? { status: data.status } : {}),
+        },
+      });
     });
   }
 
@@ -110,7 +160,11 @@ export class ProductDiscountsRepository {
         userId,
         status: 'ACTIVE',
       },
+      include: {
+        role: true,
+      },
     });
-    return !!staff;
+    if (!staff) return false;
+    return ['STORE_OWNER', 'STORE_MANAGER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN'].includes(staff.role?.roleCode);
   }
 }

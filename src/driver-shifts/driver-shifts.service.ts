@@ -134,8 +134,10 @@ export class DriverShiftsService {
       throw new NotFoundException('Ca làm việc không tồn tại');
     }
 
-    if (user.storeId && shift.storeId.toString() !== user.storeId.toString() && !['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
-      throw new ForbiddenException('Ca làm việc không thuộc cửa hàng bạn quản lý');
+    if (!['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      if (!user.storeId || shift.storeId.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException('Ca làm việc không thuộc cửa hàng bạn quản lý');
+      }
     }
 
     if (shift.status === 'HANDED_OVER') {
@@ -249,8 +251,8 @@ export class DriverShiftsService {
 
   async getStoreShifts(storeId: string | number | bigint, user: any, query?: any) {
     const targetStoreId = BigInt(storeId);
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      if (user.storeId && BigInt(user.storeId) !== targetStoreId) {
+    if (user && !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      if (!user.storeId || BigInt(user.storeId) !== targetStoreId) {
         throw new ForbiddenException({
           success: false,
           code: 'ACCESS_DENIED',

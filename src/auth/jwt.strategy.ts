@@ -45,7 +45,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         include: {
           customerProfile: true,
           ownedStores: true,
-          storeStaffs: { include: { role: true, store: true } },
+          storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
         },
       });
 
@@ -74,8 +74,24 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         storeId = user.ownedStores[0].storeId.toString();
         role = 'STORE_OWNER';
       } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-        storeId = user.storeStaffs[0].storeId.toString();
-        role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
+        // If payload had a storeId, ensure it matches an active membership
+        const activeMembership = payload.storeId
+          ? user.storeStaffs.find((s: any) => s.storeId.toString() === payload.storeId.toString())
+          : user.storeStaffs[0];
+
+        if (activeMembership) {
+          storeId = activeMembership.storeId.toString();
+          role = activeMembership.role?.roleCode || 'STORE_STAFF';
+        } else {
+          storeId = null;
+          role = 'CUSTOMER';
+        }
+      } else {
+        // Revoke any stale store role/storeId from token
+        storeId = null;
+        if (!isSuperAdmin) {
+          role = 'CUSTOMER';
+        }
       }
 
       return {

@@ -587,7 +587,27 @@ export class PaymentsService {
     };
   }
 
-  async getPaymentLinkInformation(orderCodeOrId: number | string) {
+    private async verifyPaymentRequestOwnership(orderCodeOrId: number | string, user: any) {
+    if (!user) {
+      return;
+    }
+    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      return;
+    }
+    const tx: any = await this.paymentsRepo.findTransactionByPaymentLinkIdOrOrder(String(orderCodeOrId));
+    if (tx) {
+      const isCustomerOwner = tx.order?.customer?.userId && BigInt(tx.order.customer.userId) === BigInt(user.userId || user.id);
+      const isStoreOwner = user.storeId && tx.order?.storeId && BigInt(tx.order.storeId) === BigInt(user.storeId);
+      if (!isCustomerOwner && !isStoreOwner) {
+        throw new ForbiddenException('Bạn không có quyền truy cập hoặc thao tác yêu cầu thanh toán này');
+      }
+    }
+  }
+
+  async getPaymentLinkInformation(orderCodeOrId: number | string, user?: any) {
+    if (user) {
+      await this.verifyPaymentRequestOwnership(orderCodeOrId, user);
+    }
     const clientId = process.env.PAYOS_CLIENT_ID?.trim();
     const apiKey = process.env.PAYOS_API_KEY?.trim();
     if (!clientId || !apiKey) {
@@ -626,7 +646,10 @@ export class PaymentsService {
     }
   }
 
-  async cancelPaymentLink(orderCodeOrId: number | string, cancellationReason?: string) {
+  async cancelPaymentLink(orderCodeOrId: number | string, cancellationReason?: string, user?: any) {
+    if (user) {
+      await this.verifyPaymentRequestOwnership(orderCodeOrId, user);
+    }
     const clientId = process.env.PAYOS_CLIENT_ID?.trim();
     const apiKey = process.env.PAYOS_API_KEY?.trim();
     if (!clientId || !apiKey) {

@@ -25,7 +25,7 @@ export class PaymentsController {
   async changePaymentMethod(
     @Param('orderId') orderId: string,
     @Body() body: ChangePaymentMethodDto,
-    @Request() req: any,
+    @Request() req?: any,
   ) {
     return this.paymentsService.changeOrderPaymentMethod(orderId, body, req.user);
   }
@@ -46,15 +46,15 @@ export class PaymentsController {
 
     @UseGuards(JwtAuthGuard)
   @Get('payos/payment-requests/:id')
-  async getPaymentLinkInfo(@Param('id') id: string) {
-    const res = await this.paymentsService.getPaymentLinkInformation(id);
+  async getPaymentLinkInfo(@Param('id') id: string, @Request() req: any = {}) {
+    const res = await this.paymentsService.getPaymentLinkInformation(id, req?.user);
     return { success: true, data: res?.data || res };
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('payos/payment-requests/:id/cancel')
-  async cancelPaymentLink(@Param('id') id: string, @Body() body?: CancelPaymentLinkDto) {
-    const res = await this.paymentsService.cancelPaymentLink(id, body?.cancellationReason);
+  async cancelPaymentLink(@Param('id') id: string, @Body() body?: CancelPaymentLinkDto, @Request() req: any = {}) {
+    const res = await this.paymentsService.cancelPaymentLink(id, body?.cancellationReason, req.user);
     return { success: true, message: 'Đã hủy link thanh toán thành công', data: res?.data || res };
   }
 

@@ -441,11 +441,20 @@ export class ProductsService {
     return this.update(id, { status: 'INACTIVE' }, user);
   }
 
-  async getPriceHistory(productIdStr: string, query?: PaginationQueryDto) {
+  async getPriceHistory(productIdStr: string, query?: PaginationQueryDto, user?: any) {
     const productId = BigInt(productIdStr);
     const existing = await this.productsRepo.findStoreIdOnly(productId);
     if (!existing) {
       throw new NotFoundException('Sản phẩm không tồn tại');
+    }
+    if (user && !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      if (!user.storeId || BigInt(user.storeId) !== existing.storeId) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xem lịch sử giá của cửa hàng khác.',
+        });
+      }
     }
     const result = await this.productsRepo.findPriceHistory(productId, {
       page: query?.page ? Number(query.page) : 1,
@@ -461,8 +470,8 @@ export class ProductsService {
 
   async getStoreInventory(storeIdStr: string, query?: PaginationQueryDto, user?: any) {
     const storeId = BigInt(storeIdStr);
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      if (user.storeId && BigInt(user.storeId) !== storeId) {
+    if (user && !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      if (!user.storeId || BigInt(user.storeId) !== storeId) {
         throw new ForbiddenException({
           success: false,
           code: 'ACCESS_DENIED',
@@ -487,8 +496,8 @@ export class ProductsService {
 
   async getStoreLowStockInventory(storeIdStr: string, query?: PaginationQueryDto, user?: any) {
     const storeId = BigInt(storeIdStr);
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      if (user.storeId && BigInt(user.storeId) !== storeId) {
+    if (user && !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+      if (!user.storeId || BigInt(user.storeId) !== storeId) {
         throw new ForbiddenException({
           success: false,
           code: 'ACCESS_DENIED',

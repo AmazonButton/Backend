@@ -272,4 +272,22 @@ export class PaymentsRepository {
     });
   }
 
+  async findTransactionByPaymentLinkIdOrOrder(orderCodeOrId: string) {
+    const numId = !isNaN(Number(orderCodeOrId)) ? Number(orderCodeOrId) : undefined;
+    return this.prisma.paymentTransaction.findFirst({
+      where: {
+        OR: [
+          { paymentLinkId: orderCodeOrId },
+          { transactionCode: orderCodeOrId },
+          ...(numId ? [{ order: { orderCode: orderCodeOrId } }] : []),
+        ],
+      },
+      include: {
+        order: {
+          include: { customer: true },
+        },
+      },
+    });
+  }
+
 }

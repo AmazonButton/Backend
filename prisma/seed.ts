@@ -4,6 +4,9 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('❌ Seeding is strictly prohibited in PRODUCTION environment!');
+  }
   console.log('🌱 Seeding Multi-Store IoT Button Platform (BRD V2.1) data...');
   const passwordHash = await bcrypt.hash('Password123!', 12);
 
@@ -404,10 +407,7 @@ async function main() {
   console.log('\n======================================================');
   console.log('✅ DATABASE SEED COMPLETED SUCCESSFULLY!');
   console.log('======================================================');
-  console.log('🔑 Credentials:');
-  console.log('   - Super Admin: admin@smartorder.local / Password123!');
-  console.log('   - Store Owner: store@smartorder.local / Password123!');
-  console.log('   - Customer:    customer@smartorder.local / Password123!');
+  console.log('🔒 Test fixtures populated with encrypted credentials (passwords not logged).');
   console.log('🔘 IoT Test Buttons:');
   console.log('   - BTN-8829-WTR (Store 1: La Vie 19L x 2)');
   console.log('   - BTN-7711-GAS (Store 1: Gas Petrolimex 12kg x 1)');

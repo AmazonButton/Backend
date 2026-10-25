@@ -300,10 +300,13 @@ export class AuthService {
       }
     }
 
-    const email = (verifiedUser?.email || dto.email)?.trim().toLowerCase();
-    if (!email) {
-      throw new BadRequestException('Không thể xác thực thông tin tài khoản Google hoặc thiếu địa chỉ email.');
+    if (!rawToken) {
+      throw new BadRequestException('Token xác thực Google/OAuth là bắt buộc.');
     }
+    if (!verifiedUser?.email) {
+      throw new UnauthorizedException('Không thể xác thực thông tin tài khoản Google từ OAuth token cung cấp.');
+    }
+    const email = verifiedUser.email.trim().toLowerCase();
 
     const fullName = dto.fullName?.trim() || verifiedUser?.name || email.split('@')[0];
     const rawAvatarUrl = dto.avatarUrl || verifiedUser?.picture || null;
@@ -314,7 +317,7 @@ export class AuthService {
         ? rawAvatarUrl
         : null;
 
-    const candidateAuthId = verifiedUser?.id || dto.googleId;
+    const candidateAuthId = verifiedUser?.id;
     const authId =
       candidateAuthId &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateAuthId)

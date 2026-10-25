@@ -113,9 +113,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(`driver:${payload.userId}`);
 
       const targetStoreIds = new Set<string>();
-      if (payload.storeId) {
-        targetStoreIds.add(payload.storeId.toString());
-      }
 
       // Query database for all stores owned by this user or where they are active staff
       if (this.prisma) {
@@ -137,6 +134,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
           for (const s of staffStores) {
             targetStoreIds.add(s.storeId.toString());
+          }
+          if (payload.storeId && !targetStoreIds.has(payload.storeId.toString())) {
+            client.data.user.storeId = null;
           }
         } catch (storeQueryErr: any) {
           this.logger.warn(`⚠️ [WS] Failed to fetch stores for user ${payload.userId}: ${storeQueryErr.message}`);

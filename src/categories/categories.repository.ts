@@ -90,7 +90,11 @@ export class CategoriesRepository {
         userId,
         status: 'ACTIVE',
       },
+      include: {
+        role: true,
+      },
     });
-    return !!staff;
+    if (!staff) return false;
+    return ['STORE_OWNER', 'STORE_MANAGER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN'].includes(staff.role?.roleCode);
   }
 }

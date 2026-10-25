@@ -1155,6 +1155,15 @@ export class OrdersRepository {
 
       const shippingFee = 0;
       const totalAmount = Math.max(0, subtotalAmount - discountAmount + shippingFee);
+
+      // Enforce platform minimum order value (2,000 VND)
+      if (totalAmount < MIN_ORDER_TOTAL_VND) {
+        throw new BadRequestException({
+          errorCode: 'ORDER_TOTAL_BELOW_MINIMUM',
+          message: 'Giá trị đơn hàng tối thiểu là 2.000 VND',
+        });
+      }
+
       const commissionRate = store.commissionRate ? Number(store.commissionRate) : 8.0;
       const commissionAmount = Math.round(((totalAmount * commissionRate) / 100) * 100) / 100;
       const netAmount = Math.max(0, totalAmount - commissionAmount);

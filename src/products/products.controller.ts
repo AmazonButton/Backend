@@ -73,8 +73,9 @@ export class ProductsController {
   async getPriceHistory(
     @Param('id') id: string,
     @Query() query: PaginationQueryDto,
+    @Request() req: any,
   ) {
-    const res = await this.productsService.getPriceHistory(id, query);
+    const res = await this.productsService.getPriceHistory(id, query, req.user);
     return buildPaginatedResponse(
       res.items,
       res.total,

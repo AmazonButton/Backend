@@ -21,7 +21,16 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('Yêu cầu đăng nhập để truy cập tài nguyên này');
     }
 
-    if (user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN' || requiredRoles.includes(user.role)) {
+    if (user.role === 'SUPER_ADMIN') {
+      return true;
+    }
+
+    // SYSTEM_ADMIN can manage operational endpoints, but cannot bypass routes exclusively designated for SUPER_ADMIN
+    if (user.role === 'SYSTEM_ADMIN' && !requiredRoles.includes('SUPER_ADMIN')) {
+      return true;
+    }
+
+    if (requiredRoles.includes(user.role)) {
       return true;
     }
 

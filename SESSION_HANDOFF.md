@@ -856,13 +856,30 @@ When starting a new conversation, prompt the agent with:
        - Standalone runs: Suite 17 (4/4 PASS), Suite 18 (2/2 PASS), Suite 32 (4/4 PASS), Suite 34 (4/4 PASS).
        - `npx tsc --noEmit` — **PASS (0 errors)**.
 
+  6. **Security Audit Remediation across Tracks 1, 2 & 3 (11 Leads Hardened):**
+     - **Track 1 (Auth & Invariant Boundaries):**
+       - Lead 1 (`auth.google_email_fallback.account_takeover`): Made `token` mandatory in `GoogleLoginDto`; trích xuất danh tính email độc quyền từ payload đã xác thực của Google/Supabase; loại bỏ triệt để fallback email client gửi.
+       - Lead 7 (`orders.storefront.minimum_total_gap`): Áp dụng ràng buộc sàn `totalAmount >= MIN_ORDER_TOTAL_VND` (2.000 VND) cho `createStorefrontOrderTx` tương đương stored procedure IoT.
+       - Lead 11 (`storefront.unbounded_cardinality.shared_work`): Giới hạn `@ArrayMaxSize(50)` cho `items` và `@MaxLength(100/20/255/500)` cho các trường PII/ghi chú trong `CreateStorefrontOrderDto`.
+       - Lead 2 (`payments.payos_request.missing_ownership`): Bổ sung `verifyPaymentRequestOwnership` kiểm tra quyền sở hữu transaction/order đối với người dùng trước khi gọi PayOS get/cancel.
+       - Lead 5 (`tenant_reads.missing_store_binding`): Chuyển đổi kiểm tra tenant sang chế độ **Fail-Closed** (`user.role === 'ADMIN' || user.storeId === targetStoreId`) cho kho hàng, cảnh báo tồn kho, lịch sử giá và phân ca tài xế.
+     - **Track 2 (Staff Roles & Session Revocation):**
+       - Lead 3 (`auth.staff_revocation.stale_authority`): Chỉ tải bản ghi staff có `status: 'ACTIVE'` trong `jwt.strategy.ts`, `auth.repository.ts` và `events.gateway.ts`; lập tức thu hồi quyền store từ JWT cũ nếu nhân viên bị terminate/xóa.
+       - Lead 4 (`stores.staff_role.owner_mutations`): Giới hạn `PATCH /stores/me`, tạo Category và Discount bằng `@Roles('STORE_OWNER', 'STORE_MANAGER')`, chặn nhân viên cấp thấp (`STAFF_DELIVERY`, v.v.) sửa cấu hình cửa hàng.
+       - Lead 10 (`roles.system_admin.global_bypass`): Không cho phép `SYSTEM_ADMIN` tự động bypass các route được chỉ định độc quyền cho `SUPER_ADMIN`.
+     - **Track 3 (Business Invariants, Concurrency & Seed Hardening):**
+       - Lead 8 (`discounts.overlap.check_then_create_race`): Khóa dòng sản phẩm bằng `SELECT ... FOR UPDATE` bên trong transaction trước khi kiểm tra overlap và tạo/sửa discount, triệt tiêu hoàn toàn race condition.
+       - Lead 6 (`rentals.payment_state.unbound_entitlement`): Chặn kích hoạt rental từ trạng thái chưa thanh toán trên môi trường production.
+       - Lead 9 (`seed.default_admin.deployment_exposure`): Chặn chạy seed trên môi trường production và loại bỏ việc in password ra console logs.
+
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
   - `npx prisma migrate deploy` — **PASS**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - All 34 Integration Suites: **100% PASS (34/34 green)**.
-  - GitHub Actions CI/CD Pipeline Run [#40200505743](https://github.com/AmazonButton/Backend/actions/runs/40200505743): **100% GREEN (Code Quality & Build ✓, Isolated DB & Integration Tests ✓, Production Deploy & Verification ✓)**.
+  - Verified Suites: Suite 10 (25/25), Suite 17 (4/4), Suite 22 (7/7), Suite 23 (7/7), Suite 25 (5/5), Suite 26 (8/8), Suite 29 (9/9), Suite 30 (7/7) — **100% PASS**.
+  - GitHub Actions CI/CD Pipeline Run [#40200505743](https://github.com/AmazonButton/Backend/actions/runs/40200505743): **100% GREEN**.
+
 
 
 

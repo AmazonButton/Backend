@@ -111,13 +111,9 @@ export class RefreshTokenDto {
 }
 
 export class GoogleLoginDto {
-  @IsOptional()
-  @IsString()
-  token?: string;
-
-  @IsOptional()
-  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
-  email?: string;
+  @IsNotEmpty({ message: 'Token xác thực Google/OAuth là bắt buộc' })
+  @IsString({ message: 'Token phải là chuỗi ký tự' })
+  token: string;
 
   @IsOptional()
   @IsString()
@@ -126,10 +122,6 @@ export class GoogleLoginDto {
   @IsOptional()
   @IsString()
   avatarUrl?: string;
-
-  @IsOptional()
-  @IsString()
-  googleId?: string;
 
   @IsOptional()
   @IsString()
