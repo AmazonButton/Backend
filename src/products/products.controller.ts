@@ -22,6 +22,8 @@ import { ProductQueryDto } from './dto/query-product.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { buildPaginatedResponse } from '../common/utils/pagination.helper';
 
 @ApiTags('Products & Inventory')
 @Controller('products')
@@ -62,6 +64,24 @@ export class ProductsController {
       data: res.data,
       ...(res.pagination ? { pagination: res.pagination } : {}),
     };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get(':id/price-history')
+  @ApiOperation({ summary: 'Lịch sử thay đổi giá sản phẩm' })
+  async getPriceHistory(
+    @Param('id') id: string,
+    @Query() query: PaginationQueryDto,
+  ) {
+    const res = await this.productsService.getPriceHistory(id, query);
+    return buildPaginatedResponse(
+      res.items,
+      res.total,
+      res.page,
+      res.pageSize,
+      'Lấy lịch sử thay đổi giá thành công',
+    );
   }
 
   @ApiBearerAuth('JWT-auth')

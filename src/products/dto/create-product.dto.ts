@@ -1,39 +1,67 @@
-﻿import { IsNotEmpty, IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize, ValidateNested } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ProductImageDto, IsImageArray } from './product-image.dto';
 
 export class CreateProductDto {
-  @IsNotEmpty({ message: 'Tên sản phẩm không được để trống' })
+  @IsOptional()
   @IsString()
-  name: string;
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  productName?: string;
 
   @IsOptional()
   @IsString()
   brand?: string;
 
-  @IsNotEmpty({ message: 'Mã SKU không được để trống' })
+  @IsOptional()
   @IsString()
-  sku: string;
+  sku?: string;
+
+  @IsOptional()
+  @IsString()
+  productCode?: string;
+
+  @IsOptional()
+  @IsString({ message: 'categoryId phải là chuỗi hoặc ID hợp lệ' })
+  categoryId?: string;
 
   @IsOptional()
   @IsString()
   category?: string;
 
-  @IsNotEmpty({ message: 'Đơn vị tính không được để trống' })
+  @IsOptional()
   @IsString()
-  unit: string;
+  description?: string;
 
-  @IsNotEmpty({ message: 'Giá sản phẩm không được để trống' })
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber({}, { message: 'Giá phải là số hợp lệ' })
   @Min(0, { message: 'Giá không được âm' })
-  price: number;
+  price?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Giá phải là số hợp lệ' })
+  @Min(0, { message: 'Giá không được âm' })
+  basePrice?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber({}, { message: 'Số lượng tồn kho phải là số' })
   @Min(0)
   stock?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Số lượng tồn kho ban đầu phải là số' })
+  @Min(0)
+  initialStock?: number;
 
   @IsOptional()
   @IsUrl({}, { message: 'imageUrl phải là một URL hợp lệ' })

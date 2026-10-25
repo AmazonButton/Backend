@@ -1,4 +1,4 @@
-﻿import { IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize, ValidateNested } from 'class-validator';
+import { IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ProductImageDto, IsImageArray } from './product-image.dto';
 
@@ -22,6 +22,10 @@ export class UpdateProductDto {
   @IsOptional()
   @IsString()
   category?: string;
+
+  @IsOptional()
+  @IsString()
+  categoryId?: string;
 
   @IsOptional()
   @IsString()

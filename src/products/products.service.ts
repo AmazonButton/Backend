@@ -3,6 +3,9 @@ import { StoreSubscriptionsService } from '../store-subscriptions/store-subscrip
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Inject, Logger, Optional } from '@nestjs/common';
 import { ProductsRepository, ProductImageInput } from './products.repository';
 import { EventsGateway } from '../websocket/events.gateway';
+import { PriceHistoryResponseDto } from './dto/price-history-response.dto';
+import { InventoryResponseDto } from './dto/inventory-response.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 
 @Injectable()
 export class ProductsService {
@@ -171,6 +174,13 @@ export class ProductsService {
       throw new BadRequestException('Tên sản phẩm và giá gốc không được để trống');
     }
 
+    if (categoryId) {
+      const cat = await this.productsRepo.findCategoryById(BigInt(categoryId), targetStoreId);
+      if (!cat) {
+        throw new BadRequestException('Danh mục không tồn tại hoặc không thuộc cửa hàng này');
+      }
+    }
+
     const imageInputs = this.parseImageInputs(body);
 
     const created = await this.productsRepo.create({
@@ -254,6 +264,13 @@ export class ProductsService {
       ? await this.productsRepo.findProductImages(targetProductId)
       : [];
 
+    if (body.categoryId) {
+      const cat = await this.productsRepo.findCategoryById(BigInt(body.categoryId), existing.storeId);
+      if (!cat) {
+        throw new BadRequestException('Danh mục không tồn tại hoặc không thuộc cửa hàng này');
+      }
+    }
+
     // 2. Perform DB update
     const updated = await this.productsRepo.update(
       targetProductId,
@@ -263,6 +280,7 @@ export class ProductsService {
         ...(finalPrice !== undefined ? { basePrice: finalPrice } : {}),
         ...(status ? { status } : {}),
         ...(description !== undefined ? { description } : {}),
+        ...(body.categoryId ? { categoryId: BigInt(body.categoryId) } : {}),
       },
       imageInputs,
     );
@@ -421,6 +439,76 @@ export class ProductsService {
       });
     }
     return this.update(id, { status: 'INACTIVE' }, user);
+  }
+
+  async getPriceHistory(productIdStr: string, query?: PaginationQueryDto) {
+    const productId = BigInt(productIdStr);
+    const existing = await this.productsRepo.findStoreIdOnly(productId);
+    if (!existing) {
+      throw new NotFoundException('Sản phẩm không tồn tại');
+    }
+    const result = await this.productsRepo.findPriceHistory(productId, {
+      page: query?.page ? Number(query.page) : 1,
+      pageSize: query?.pageSize ? Number(query.pageSize) : 20,
+    });
+    return {
+      items: result.items.map((h) => PriceHistoryResponseDto.fromEntity(h)),
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+    };
+  }
+
+  async getStoreInventory(storeIdStr: string, query?: PaginationQueryDto, user?: any) {
+    const storeId = BigInt(storeIdStr);
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (user.storeId && BigInt(user.storeId) !== storeId) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xem kho hàng của cửa hàng khác.',
+        });
+      }
+    }
+
+    const result = await this.productsRepo.findStoreInventory(storeId, {
+      page: query?.page ? Number(query.page) : 1,
+      pageSize: query?.pageSize ? Number(query.pageSize) : 20,
+      lowStockOnly: false,
+    });
+
+    return {
+      items: result.items.map((i) => InventoryResponseDto.fromEntity(i)),
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+    };
+  }
+
+  async getStoreLowStockInventory(storeIdStr: string, query?: PaginationQueryDto, user?: any) {
+    const storeId = BigInt(storeIdStr);
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (user.storeId && BigInt(user.storeId) !== storeId) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xem cảnh báo tồn kho của cửa hàng khác.',
+        });
+      }
+    }
+
+    const result = await this.productsRepo.findStoreInventory(storeId, {
+      page: query?.page ? Number(query.page) : 1,
+      pageSize: query?.pageSize ? Number(query.pageSize) : 20,
+      lowStockOnly: true,
+    });
+
+    return {
+      items: result.items.map((i) => InventoryResponseDto.fromEntity(i)),
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+    };
   }
 }
 

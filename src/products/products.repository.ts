@@ -62,6 +62,15 @@ export class ProductsRepository {
     });
   }
 
+  async findCategoryById(categoryId: bigint, storeId: bigint) {
+    return this.prisma.category.findFirst({
+      where: {
+        categoryId,
+        storeId,
+      },
+    });
+  }
+
   async create(data: {
     storeId: bigint;
     productName: string;
@@ -287,6 +296,107 @@ export class ProductsRepository {
       },
     });
     return !!activeItem;
+  }
+
+  async findPriceHistory(productId: bigint, pagination?: { page?: number; pageSize?: number }) {
+    const page = pagination?.page && pagination.page > 0 ? Number(pagination.page) : 1;
+    const pageSize = pagination?.pageSize && pagination.pageSize > 0 ? Math.min(100, Number(pagination.pageSize)) : 20;
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await Promise.all([
+      this.prisma.productPriceHistory.findMany({
+        where: { productId },
+        include: {
+          changedByUser: {
+            select: {
+              userId: true,
+              fullName: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: { changedAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.productPriceHistory.count({ where: { productId } }),
+    ]);
+
+    return { items, total, page, pageSize };
+  }
+
+  async findStoreInventory(
+    storeId: bigint,
+    options?: { page?: number; pageSize?: number; lowStockOnly?: boolean },
+  ) {
+    const page = options?.page && options.page > 0 ? Number(options.page) : 1;
+    const pageSize = options?.pageSize && options.pageSize > 0 ? Math.min(100, Number(options.pageSize)) : 20;
+    const skip = (page - 1) * pageSize;
+
+    if (options?.lowStockOnly) {
+      const totalRes: any[] = await this.prisma.$queryRaw`
+        SELECT COUNT(*)::int as total
+        FROM inventory
+        WHERE store_id = ${storeId}
+          AND quantity_on_hand <= min_stock_alert
+      `;
+      const total = Number(totalRes[0]?.total || 0);
+
+      const items: any[] = await this.prisma.$queryRaw`
+        SELECT 
+          i.inventory_id as "inventoryId",
+          i.store_id as "storeId",
+          i.product_id as "productId",
+          p.product_name as "productName",
+          p.product_code as "productCode",
+          i.quantity_on_hand as "quantityOnHand",
+          i.reserved_quantity as "reservedQuantity",
+          i.min_stock_alert as "minStockAlert",
+          i.updated_at as "updatedAt"
+        FROM inventory i
+        JOIN product p ON p.product_id = i.product_id
+        WHERE i.store_id = ${storeId}
+          AND i.quantity_on_hand <= i.min_stock_alert
+        ORDER BY i.quantity_on_hand ASC, i.updated_at DESC
+        LIMIT ${pageSize} OFFSET ${skip}
+      `;
+
+      return { items, total, page, pageSize };
+    }
+
+    const where = { storeId };
+    const [rawItems, total] = await Promise.all([
+      this.prisma.inventory.findMany({
+        where,
+        include: {
+          product: {
+            select: {
+              productId: true,
+              productName: true,
+              productCode: true,
+            },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.inventory.count({ where }),
+    ]);
+
+    const items = rawItems.map((inv) => ({
+      inventoryId: inv.inventoryId,
+      storeId: inv.storeId,
+      productId: inv.productId,
+      productName: inv.product?.productName || '',
+      productCode: inv.product?.productCode || '',
+      quantityOnHand: inv.quantityOnHand,
+      reservedQuantity: inv.reservedQuantity,
+      minStockAlert: inv.minStockAlert,
+      updatedAt: inv.updatedAt,
+    }));
+
+    return { items, total, page, pageSize };
   }
 }
 
