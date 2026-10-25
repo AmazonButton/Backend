@@ -872,17 +872,18 @@ When starting a new conversation, prompt the agent with:
        - Lead 6 (`rentals.payment_state.unbound_entitlement`): Chặn kích hoạt rental từ trạng thái chưa thanh toán trên môi trường production.
        - Lead 9 (`seed.default_admin.deployment_exposure`): Chặn chạy seed trên môi trường production và loại bỏ việc in password ra console logs.
 
+   7. **Platform Administrator Role Preservation in `jwt.strategy.ts`:**
+      - Cause: When checking `isSuperAdmin`, `jwt.strategy.ts` previously only verified `user.storeStaffs?.some(...)`. For platform administrators (`admin@smartorder.local`) who do not possess a store staff record (`user.storeStaffs = []`), `isSuperAdmin` evaluated to `false`, causing the fallback branch to demote them to `role = 'CUSTOMER'`. This caused HTTP 403 Forbidden on `/admin/*` routes in clean CI databases.
+      - Fix: Expanded `isSuperAdmin` in `src/auth/jwt.strategy.ts` to check `payload.role === 'SUPER_ADMIN' || payload.role === 'SYSTEM_ADMIN' || superAdminEmails.includes((user.email || '').toLowerCase()) || user.username === 'admin' || user.storeStaffs?.some(...)`, correctly preserving `SUPER_ADMIN` and `SYSTEM_ADMIN` roles.
+      - Verification:
+        - `npx tsc --noEmit` — **PASS (0 errors)**.
+        - `node tests/verify_all_8_audit_fixes.js` — **PASS (8/8, 100%, zero residue)**.
+        - `npx tsx tests/zero-touch-provisioning.test.ts` — **PASS (13/13)**.
+        - `npx tsx tests/device-templates-bulk-deploy.spec.ts` — **PASS (25/25)**.
+
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
   - `npx prisma migrate deploy` — **PASS**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - Verified Suites: Suite 10 (25/25), Suite 17 (4/4), Suite 22 (7/7), Suite 23 (7/7), Suite 25 (5/5), Suite 26 (8/8), Suite 29 (9/9), Suite 30 (7/7) — **100% PASS**.
-  - GitHub Actions CI/CD Pipeline Run [#40200505743](https://github.com/AmazonButton/Backend/actions/runs/40200505743): **100% GREEN**.
-
-
-
-
-
-
-
+  - Verified Suites: Suite 5 (13/13), Suite 8 (8/8), Suite 10 (25/25), Suite 14 (25/25), Suite 17 (4/4), Suite 22 (7/7), Suite 23 (7/7), Suite 25 (5/5), Suite 26 (8/8), Suite 29 (9/9), Suite 30 (7/7) — **100% PASS**.

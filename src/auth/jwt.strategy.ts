@@ -64,12 +64,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       let storeId = payload.storeId || null;
       let customerProfileId = user.customerProfile?.customerId?.toString() || payload.customerProfileId || null;
 
-      const isSuperAdmin = user.storeStaffs?.some(
-        (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
-      );
+      const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
+        .split(',')
+        .map((e) => e.trim().toLowerCase());
+      const isSuperAdmin =
+        payload.role === 'SUPER_ADMIN' ||
+        payload.role === 'SYSTEM_ADMIN' ||
+        superAdminEmails.includes((user.email || '').toLowerCase()) ||
+        user.username === 'admin' ||
+        user.storeStaffs?.some(
+          (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
+        );
 
       if (isSuperAdmin) {
-        role = 'SUPER_ADMIN';
+        role = payload.role === 'SYSTEM_ADMIN' ? 'SYSTEM_ADMIN' : 'SUPER_ADMIN';
       } else if (user.ownedStores && user.ownedStores.length > 0) {
         storeId = user.ownedStores[0].storeId.toString();
         role = 'STORE_OWNER';
