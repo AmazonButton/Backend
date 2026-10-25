@@ -74,6 +74,45 @@ export class DriversService {
     };
   }
 
+  async getMyDeliverySummary(user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const driverId = BigInt(user.userId || user.id);
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const [completedOrders, pendingOrders] = await Promise.all([
+      this.prisma.order.findMany({
+        where: {
+          assignedDriverId: driverId,
+          orderStatus: { in: ['DELIVERED', 'COMPLETED'] },
+          updatedAt: { gte: startOfDay },
+        },
+      }),
+      this.prisma.order.findMany({
+        where: {
+          assignedDriverId: driverId,
+          orderStatus: { in: ['ASSIGNED', 'PICKED_UP', 'SHIPPING', 'DELIVERING'] },
+        },
+      }),
+    ]);
+
+    let totalCashCollected = 0;
+    for (const o of completedOrders) {
+      if (o.paymentMethod === 'COD' || o.paymentMethod === 'CASH') {
+        totalCashCollected += Number(o.totalAmount || 0);
+      }
+    }
+
+    return {
+      driverId: driverId.toString(),
+      todayCompletedDeliveries: completedOrders.length,
+      todayPendingDeliveries: pendingOrders.length,
+      todayCashCollected: totalCashCollected,
+      summaryDate: startOfDay.toISOString().split('T')[0],
+    };
+  }
+
   async getOnlineDrivers(storeId: string | number | bigint, user: any) {
     const targetStoreId = BigInt(storeId);
     if (user && user.storeId && user.storeId.toString() !== targetStoreId.toString() && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {

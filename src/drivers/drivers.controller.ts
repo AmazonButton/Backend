@@ -24,6 +24,13 @@ export class DriversController {
     return { success: true, data };
   }
 
+  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Get('me/delivery-summary')
+  async getMyDeliverySummary(@Request() req: any) {
+    const data = await this.driversService.getMyDeliverySummary(req.user);
+    return { success: true, message: 'Lấy thống kê giao hàng hôm nay thành công', data };
+  }
+
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Get('store/:storeId/online')
   async getOnlineDrivers(@Param('storeId') storeId: string, @Request() req: any) {

@@ -222,6 +222,80 @@ export class DriverShiftsService {
     };
   }
 
+    async getShiftById(id: string | number | bigint, user: any) {
+    const shiftId = BigInt(id);
+    const shift = await this.prisma.driverShift.findUnique({
+      where: { shiftId },
+      include: {
+        driver: { select: { userId: true, fullName: true, phone: true } },
+      },
+    });
+    if (!shift) {
+      throw new NotFoundException('Không tìm thấy thông tin ca làm việc');
+    }
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      const isMyShift = shift.driverId === BigInt(user.userId || user.id);
+      const isMyStore = user.storeId && shift.storeId === BigInt(user.storeId);
+      if (!isMyShift && !isMyStore) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xem thông tin ca làm việc này.',
+        });
+      }
+    }
+    return this.formatShiftWithLiveStats(shift);
+  }
+
+  async getStoreShifts(storeId: string | number | bigint, user: any, query?: any) {
+    const targetStoreId = BigInt(storeId);
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (user.storeId && BigInt(user.storeId) !== targetStoreId) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xem danh sách ca làm việc của cửa hàng khác.',
+        });
+      }
+    }
+
+    const where: any = { storeId: targetStoreId };
+    if (query?.status) {
+      where.status = query.status;
+    }
+    if (query?.fromDate || query?.toDate) {
+      where.startedAt = {};
+      if (query.fromDate) where.startedAt.gte = new Date(query.fromDate);
+      if (query.toDate) where.startedAt.lte = new Date(query.toDate);
+    }
+
+    const page = Math.max(1, Number(query?.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query?.pageSize) || Number(query?.limit) || 20));
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await Promise.all([
+      this.prisma.driverShift.findMany({
+        where,
+        include: {
+          driver: { select: { userId: true, fullName: true, phone: true } },
+        },
+        orderBy: { startedAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.driverShift.count({ where }),
+    ]);
+
+    const formatted = await Promise.all(items.map((s) => this.formatShiftWithLiveStats(s)));
+
+    return {
+      items: formatted,
+      total,
+      page,
+      pageSize,
+    };
+  }
+
   private async formatShiftWithLiveStats(shift: any) {
     if (shift.status === 'OPEN') {
       const stats = await this.computeLiveShiftStats(shift.driverId, shift.storeId, shift.startedAt, new Date());
