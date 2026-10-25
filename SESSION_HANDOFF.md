@@ -845,11 +845,14 @@ When starting a new conversation, prompt the agent with:
   5. **CI Isolated Database Compatibility Remediation (Suites 17, 18, 32, 34):**
      - Cause:
        - Suites 17 & 18 called `prisma.inventory.update` on a freshly created product where no inventory row existed yet, throwing `P2025: Record to update not found`.
+       - Fresh isolated CI database had `orders.customer_id` defined as `NOT NULL` from baseline migration, while `schema.prisma` defined `customerId BigInt?` and guest storefront checkout (`createStorefrontOrderTx`) passes `customerId: null`, throwing PostgreSQL error `23502 (null value in column "customer_id" violates not-null constraint)`.
        - Suites 32 & 34 created test orders without explicit `customerId`, violating PostgreSQL `NOT NULL` constraint on `orders.customer_id` (`P2011`).
      - Fix:
        - Replaced `prisma.inventory.update` with `prisma.inventory.upsert` in `tests/storefront-checkout-refactor.spec.ts` and `tests/inventory-concurrency-race.spec.ts`.
+       - Created database migration `prisma/migrations/20261025140000_make_order_customer_id_nullable/migration.sql` to execute `ALTER TABLE "orders" ALTER COLUMN "customer_id" DROP NOT NULL;`, aligning the database schema with `schema.prisma` and allowing guest checkout orders cleanly.
        - Ensured customer profile and passed `customerId: testCustomer.customerId` to order creations in `tests/driver-shifts-monitoring.spec.ts` and `tests/analytics-window-filters.spec.ts`.
      - Verification:
+       - `npx prisma migrate deploy` — **PASS (applied 20261025140000_make_order_customer_id_nullable)**.
        - Standalone runs: Suite 17 (4/4 PASS), Suite 18 (2/2 PASS), Suite 32 (4/4 PASS), Suite 34 (4/4 PASS).
        - `npx tsc --noEmit` — **PASS (0 errors)**.
 
