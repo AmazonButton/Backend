@@ -1,9 +1,14 @@
+import { ProductDiscountsModule } from './product-discounts/product-discounts.module';
+import { CategoriesModule } from './categories/categories.module';
+import { CustomerAddressesModule } from './customer-addresses/customer-addresses.module';
 import { IdentityVerificationsModule } from './identity-verifications/identity-verifications.module';
 import { DriversModule } from './drivers/drivers.module';
 import { DriverShiftsModule } from './driver-shifts/driver-shifts.module';
 import { StoresModule } from './stores/stores.module';
 import { StoreSubscriptionsModule } from './store-subscriptions/store-subscriptions.module';
 import { StoreWalletModule } from './store-wallet/store-wallet.module';
+import { StoreStaffModule } from './store-staff/store-staff.module';
+import { StoreCustomersModule } from './store-customers/store-customers.module';
 import { RentalsModule } from './rentals/rentals.module';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -27,6 +32,11 @@ import { AppController } from './app.controller';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    ProductDiscountsModule,
+    CategoriesModule,
+    CustomerAddressesModule,
+    StoreStaffModule,
+    StoreCustomersModule,
     StoreSubscriptionsModule,
     StoreWalletModule,
     RentalsModule,
