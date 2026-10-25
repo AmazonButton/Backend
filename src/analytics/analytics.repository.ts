@@ -5,8 +5,14 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AnalyticsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async getDashboardData(storeId?: bigint) {
+  async getDashboardData(storeId?: bigint, dateRange?: { fromDate?: Date; toDate?: Date }) {
     const whereStore: any = storeId ? { storeId } : {};
+
+    if (dateRange?.fromDate || dateRange?.toDate) {
+      whereStore.orderDate = {};
+      if (dateRange.fromDate) whereStore.orderDate.gte = dateRange.fromDate;
+      if (dateRange.toDate) whereStore.orderDate.lte = dateRange.toDate;
+    }
 
     const [orders, buttons, products] = await Promise.all([
       this.prisma.order.findMany({
@@ -15,11 +21,11 @@ export class AnalyticsRepository {
         orderBy: { orderDate: 'asc' },
       }),
       this.prisma.ioTButton.findMany({
-        where: whereStore,
+        where: storeId ? { storeId } : {},
         include: { buttonProducts: { include: { product: true } } },
       }),
       this.prisma.product.findMany({
-        where: whereStore,
+        where: storeId ? { storeId } : {},
       }),
     ]);
 
