@@ -53,9 +53,16 @@ async function runStorefrontCheckoutRefactorSuite() {
       },
     });
 
-    await prisma.inventory.update({
+    await prisma.inventory.upsert({
       where: { productId: testProduct.productId },
-      data: {
+      create: {
+        storeId: testStore.storeId,
+        productId: testProduct.productId,
+        quantityOnHand: 20,
+        reservedQuantity: 0,
+        minStockAlert: 2,
+      },
+      update: {
         quantityOnHand: 20,
         reservedQuantity: 0,
         minStockAlert: 2,

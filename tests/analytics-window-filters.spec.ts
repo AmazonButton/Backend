@@ -104,7 +104,24 @@ async function runAnalyticsWindowFiltersSuite() {
       { expiresIn: '1h' },
     );
 
-    // 3. Seed orders for Store A across dates
+    // 3. Ensure customer profile and seed orders for Store A across dates
+    let testCustomer = await prisma.customerProfile.findFirst();
+    if (!testCustomer) {
+      const custUser = await prisma.user.create({
+        data: {
+          username: `cust_an_${Date.now()}`,
+          fullName: 'Customer Analytics Test',
+          email: `cust_an_${Date.now()}@test.com`,
+          status: 'ACTIVE',
+        },
+      });
+      testCustomer = await prisma.customerProfile.create({
+        data: {
+          userId: custUser.userId,
+        },
+      });
+    }
+
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000);
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 3600 * 1000);
     const today = new Date();
@@ -113,6 +130,7 @@ async function runAnalyticsWindowFiltersSuite() {
       data: {
         orderCode: `ORD_AN_1_${Date.now()}`,
         storeId: storeA.storeId,
+        customerId: testCustomer.customerId,
         orderStatus: 'DELIVERED',
         paymentStatus: 'PAID',
         paymentMethod: 'COD',
@@ -131,6 +149,7 @@ async function runAnalyticsWindowFiltersSuite() {
       data: {
         orderCode: `ORD_AN_2_${Date.now()}`,
         storeId: storeA.storeId,
+        customerId: testCustomer.customerId,
         orderStatus: 'DELIVERED',
         paymentStatus: 'PAID',
         paymentMethod: 'COD',
@@ -149,6 +168,7 @@ async function runAnalyticsWindowFiltersSuite() {
       data: {
         orderCode: `ORD_AN_3_${Date.now()}`,
         storeId: storeA.storeId,
+        customerId: testCustomer.customerId,
         orderStatus: 'DELIVERED',
         paymentStatus: 'PAID',
         paymentMethod: 'COD',
@@ -168,6 +188,7 @@ async function runAnalyticsWindowFiltersSuite() {
       data: {
         orderCode: `ORD_AN_B1_${Date.now()}`,
         storeId: storeB.storeId,
+        customerId: testCustomer.customerId,
         orderStatus: 'DELIVERED',
         paymentStatus: 'PAID',
         paymentMethod: 'COD',

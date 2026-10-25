@@ -52,9 +52,16 @@ async function runInventoryConcurrencyRaceSuite() {
       },
     });
 
-    await prisma.inventory.update({
+    await prisma.inventory.upsert({
       where: { productId: testProduct.productId },
-      data: {
+      create: {
+        storeId: testStore.storeId,
+        productId: testProduct.productId,
+        quantityOnHand: 1, // Only 1 left!
+        reservedQuantity: 0,
+        minStockAlert: 1,
+      },
+      update: {
         quantityOnHand: 1, // Only 1 left!
         reservedQuantity: 0,
         minStockAlert: 1,

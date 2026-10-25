@@ -842,11 +842,23 @@ When starting a new conversation, prompt the agent with:
      - Fix: Expanded teardown in `tests/api.test.ts` to purge by both `orderId` and `orderCode`, and verified zero test-generated residue.
      - Verification: Standalone run passed **16/16 PASS (Delta: 0, code 0)**.
 
+  5. **CI Isolated Database Compatibility Remediation (Suites 17, 18, 32, 34):**
+     - Cause:
+       - Suites 17 & 18 called `prisma.inventory.update` on a freshly created product where no inventory row existed yet, throwing `P2025: Record to update not found`.
+       - Suites 32 & 34 created test orders without explicit `customerId`, violating PostgreSQL `NOT NULL` constraint on `orders.customer_id` (`P2011`).
+     - Fix:
+       - Replaced `prisma.inventory.update` with `prisma.inventory.upsert` in `tests/storefront-checkout-refactor.spec.ts` and `tests/inventory-concurrency-race.spec.ts`.
+       - Ensured customer profile and passed `customerId: testCustomer.customerId` to order creations in `tests/driver-shifts-monitoring.spec.ts` and `tests/analytics-window-filters.spec.ts`.
+     - Verification:
+       - Standalone runs: Suite 17 (4/4 PASS), Suite 18 (2/2 PASS), Suite 32 (4/4 PASS), Suite 34 (4/4 PASS).
+       - `npx tsc --noEmit` — **PASS (0 errors)**.
+
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
   - All 34 Integration Suites: **100% PASS (34/34 green)**.
+
 
 
 

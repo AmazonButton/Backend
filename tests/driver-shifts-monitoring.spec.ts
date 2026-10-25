@@ -141,11 +141,29 @@ async function runDriverShiftsMonitoringSuite() {
     const startShiftBody: any = await startShiftRes.json();
     shiftA = startShiftBody.data;
 
-    // 5. Create test orders assigned to Driver A
+    // 5. Ensure customer profile and create test orders assigned to Driver A
+    let testCustomer = await prisma.customerProfile.findFirst();
+    if (!testCustomer) {
+      const custUser = await prisma.user.create({
+        data: {
+          username: `cust_shf_${Date.now()}`,
+          fullName: 'Customer Shift Test',
+          email: `cust_shf_${Date.now()}@test.com`,
+          status: 'ACTIVE',
+        },
+      });
+      testCustomer = await prisma.customerProfile.create({
+        data: {
+          userId: custUser.userId,
+        },
+      });
+    }
+
     order1 = await prisma.order.create({
       data: {
         orderCode: `ORD_SHF_1_${Date.now()}`,
         storeId: storeA.storeId,
+        customerId: testCustomer.customerId,
         orderStatus: 'DELIVERED',
         paymentStatus: 'PAID',
         paymentMethod: 'COD',
@@ -164,6 +182,7 @@ async function runDriverShiftsMonitoringSuite() {
       data: {
         orderCode: `ORD_SHF_2_${Date.now()}`,
         storeId: storeA.storeId,
+        customerId: testCustomer.customerId,
         orderStatus: 'DELIVERED',
         paymentStatus: 'PAID',
         paymentMethod: 'COD',
@@ -182,6 +201,7 @@ async function runDriverShiftsMonitoringSuite() {
       data: {
         orderCode: `ORD_SHF_3_${Date.now()}`,
         storeId: storeA.storeId,
+        customerId: testCustomer.customerId,
         orderStatus: 'SHIPPING',
         paymentStatus: 'UNPAID',
         paymentMethod: 'COD',
