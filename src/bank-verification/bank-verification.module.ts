@@ -4,6 +4,7 @@ import { PaymentsModule } from '../payments/payments.module';
 import { BanksController } from './banks.controller';
 import { StoreBankAccountsController } from './store-bank-accounts.controller';
 import { BankVerificationWebhookController } from './bank-verification-webhook.controller';
+import { BankVerificationPollingController } from './bank-verification-polling.controller';
 import { BankVerificationService } from './bank-verification.service';
 import { BankVerificationRepository } from './bank-verification.repository';
 import { BankVerificationWebhookGuard } from './guards/bank-verification-webhook.guard';
@@ -17,6 +18,7 @@ import { BANK_VERIFICATION_PROVIDER_TOKEN } from './providers/bank-verification.
     BanksController,
     StoreBankAccountsController,
     BankVerificationWebhookController,
+    BankVerificationPollingController,
   ],
   providers: [
     BankVerificationService,

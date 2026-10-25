@@ -17,6 +17,47 @@ export class StoreSubscriptionsRepository {
     return this.prisma.subscriptionPlan.count();
   }
 
+  async listActivePlans() {
+    return this.prisma.subscriptionPlan.findMany({
+      where: { isActive: true },
+      orderBy: { price: 'asc' },
+    });
+  }
+
+  async findStoreSubscriptions(
+    storeId: bigint,
+    options: { skip: number; take: number; status?: string },
+  ) {
+    const where: any = { storeId };
+    if (options.status) {
+      where.status = options.status;
+    }
+
+    const [total, items] = await Promise.all([
+      this.prisma.storeSubscription.count({ where }),
+      this.prisma.storeSubscription.findMany({
+        where,
+        skip: options.skip,
+        take: options.take,
+        include: { plan: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    return { total, items };
+  }
+
+  async findStoreSubscriptionById(subscriptionId: bigint, storeId?: bigint) {
+    const where: any = { subscriptionId };
+    if (storeId) {
+      where.storeId = storeId;
+    }
+    return this.prisma.storeSubscription.findFirst({
+      where,
+      include: { plan: true },
+    });
+  }
+
   async countStoreProducts(storeId: bigint): Promise<number> {
     return this.prisma.product.count({
       where: { storeId, status: { not: 'DELETED' } },

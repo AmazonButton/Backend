@@ -103,13 +103,16 @@ async function runBankVerificationTests() {
     });
     cleanupStoreIds.push(testStore.storeId);
 
-    let staffRole = await prisma.role.findFirst({ where: { roleCode: 'STAFF' } });
-    if (!staffRole) {
-      staffRole = await prisma.role.findFirst();
-    }
+    let staffRole = await prisma.role.findFirst({
+      where: {
+        roleCode: {
+          in: ['STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_DELIVERY', 'STAFF_BUTTON', 'STORE_MANAGER'],
+        },
+      },
+    });
     if (!staffRole) {
       staffRole = await prisma.role.create({
-        data: { roleCode: 'STAFF', roleName: 'Staff Member' },
+        data: { roleCode: 'STAFF_ORDER', roleName: 'Order Staff' },
       });
     }
 

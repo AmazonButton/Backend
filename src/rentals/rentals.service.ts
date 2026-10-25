@@ -1,7 +1,15 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+} from '@nestjs/common';
 import { RentalsRepository } from './rentals.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRentalOrderDto } from './dto/rentals.dto';
+import { RentalResponseDto } from './dto/rental-response.dto';
+import { RentalExtensionDto } from './dto/rental-extension.dto';
 
 @Injectable()
 export class RentalsService {
@@ -37,7 +45,7 @@ export class RentalsService {
     const endDate = new Date(startDate.getTime() + months * 30 * 24 * 60 * 60 * 1000);
     const rentalCode = `RNT-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    return this.rentalsRepo.createRental({
+    const created = await this.rentalsRepo.createRental({
       rentalCode,
       customerId: rawCustomerId,
       packageId: rawPackageId,
@@ -48,11 +56,114 @@ export class RentalsService {
       endDate,
       status: 'PENDING_PAYMENT',
     });
+
+    return RentalResponseDto.fromEntity(created);
   }
 
   async listCustomerRentals(customerId: string | number | bigint) {
     const rawCustomerId = BigInt(customerId);
-    return this.rentalsRepo.listCustomerRentals(rawCustomerId);
+    const items = await this.rentalsRepo.listCustomerRentals(rawCustomerId);
+    return items.map(RentalResponseDto.fromEntity);
+  }
+
+  private async verifyRentalOwnership(rentalId: bigint, user: any) {
+    const rental = await this.rentalsRepo.findRentalById(rentalId);
+    if (!rental) {
+      throw new NotFoundException('Hợp đồng thuê không tồn tại');
+    }
+
+    const role = user?.role || user?.roleCode;
+    const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'SYSTEM_ADMIN';
+    if (isAdmin) {
+      return rental;
+    }
+
+    const currentCustomerProfileId = user?.customerProfileId?.toString();
+    const currentUserId = (user?.userId || user?.id || user?.sub)?.toString();
+
+    const isCustomerMatch =
+      rental.customerId.toString() === currentCustomerProfileId ||
+      rental.customer?.userId?.toString() === currentUserId;
+
+    if (!isCustomerMatch) {
+      throw new ForbiddenException('Bạn không có quyền truy cập vào hợp đồng thuê này');
+    }
+
+    return rental;
+  }
+
+  async getRentalDetail(rentalIdStr: string | bigint, user: any): Promise<RentalResponseDto> {
+    const rentalId = BigInt(rentalIdStr);
+    const rental = await this.verifyRentalOwnership(rentalId, user);
+    return RentalResponseDto.fromEntity(rental);
+  }
+
+  async createRentalPaymentRequest(rentalIdStr: string | bigint, user: any) {
+    const rentalId = BigInt(rentalIdStr);
+    const rental = await this.verifyRentalOwnership(rentalId, user);
+
+    const amount = Number(rental.totalRentAmount);
+    const txCode = `PAY-RNT-${rental.rentalCode}-${Date.now().toString().slice(-4)}`;
+    const paymentLinkId = `pl_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const checkoutUrl = `https://pay.payos.vn/web/${paymentLinkId}`;
+    const qrCode = `vietqr://pay?bin=970422&acc=1029384756&amount=${amount}&desc=${txCode}`;
+
+    const tx = await this.rentalsRepo.createRentalPaymentTransaction({
+      rentalId,
+      amount,
+      provider: 'PAYOS',
+      paymentMethod: 'QR',
+      transactionCode: txCode,
+      status: 'PENDING',
+      paymentLinkId,
+      checkoutUrl,
+      qrCode,
+    });
+
+    return {
+      paymentTransactionId: tx.paymentTransactionId.toString(),
+      rentalId: rentalId.toString(),
+      rentalCode: rental.rentalCode,
+      amount,
+      transactionCode: txCode,
+      paymentLinkId,
+      checkoutUrl,
+      qrCode,
+      status: 'PENDING',
+    };
+  }
+
+  async extendRentalContract(
+    rentalIdStr: string | bigint,
+    dto: RentalExtensionDto,
+    user: any,
+  ): Promise<RentalResponseDto> {
+    const rentalId = BigInt(rentalIdStr);
+    const rental = await this.verifyRentalOwnership(rentalId, user);
+
+    const months = dto.additionalMonths;
+    const monthlyPrice = Number(rental.package?.monthlyPrice || 0);
+    const additionalAmount = monthlyPrice * months;
+
+    const currentEnd = new Date(rental.endDate);
+    const newEnd = new Date(currentEnd.getTime() + months * 30 * 24 * 60 * 60 * 1000);
+
+    const updated = await this.rentalsRepo.extendRental(
+      rentalId,
+      newEnd,
+      months,
+      additionalAmount,
+    );
+
+    return RentalResponseDto.fromEntity(updated);
+  }
+
+  async requestRentalReturn(rentalIdStr: string | bigint, user: any): Promise<RentalResponseDto> {
+    const rentalId = BigInt(rentalIdStr);
+    await this.verifyRentalOwnership(rentalId, user);
+
+    const updated = await this.rentalsRepo.updateRentalStatus(rentalId, 'RETURN_REQUESTED');
+    return RentalResponseDto.fromEntity(updated);
   }
 
   async activateRental(rentalId: string | number | bigint) {
@@ -60,10 +171,41 @@ export class RentalsService {
     const rental = await this.rentalsRepo.findRentalById(rawRentalId);
     if (!rental) throw new NotFoundException('Không tìm thấy hợp đồng thuê');
 
-    if (rental.status !== 'PAID' && rental.status !== 'ACTIVE') {
-      throw new BadRequestException('Hợp đồng thuê chưa hoàn tất thanh toán (PENDING_PAYMENT), không thể kích hoạt');
+    if (rental.status !== 'PAID' && rental.status !== 'ACTIVE' && rental.status !== 'PENDING_PAYMENT') {
+      throw new BadRequestException('Trạng thái hợp đồng thuê không hợp lệ để kích hoạt');
     }
 
-    return this.rentalsRepo.updateRentalStatus(rawRentalId, 'ACTIVE');
+    const updated = await this.rentalsRepo.updateRentalStatus(rawRentalId, 'ACTIVE');
+    return RentalResponseDto.fromEntity(updated);
+  }
+
+  async listAllRentalsAdmin(query: { page?: number; pageSize?: number; status?: string }) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
+    const skip = (page - 1) * pageSize;
+
+    const { total, items } = await this.rentalsRepo.listAllRentalsAdmin({
+      skip,
+      take: pageSize,
+      status: query.status,
+    });
+
+    return {
+      items: items.map(RentalResponseDto.fromEntity),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async updateRentalStatusAdmin(rentalIdStr: string | bigint, status: string): Promise<RentalResponseDto> {
+    const rentalId = BigInt(rentalIdStr);
+    const rental = await this.rentalsRepo.findRentalById(rentalId);
+    if (!rental) {
+      throw new NotFoundException('Không tìm thấy hợp đồng thuê');
+    }
+
+    const updated = await this.rentalsRepo.updateRentalStatus(rentalId, status);
+    return RentalResponseDto.fromEntity(updated);
   }
 }

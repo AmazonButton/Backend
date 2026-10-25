@@ -82,8 +82,8 @@ async function testStoreWallet() {
     }
 
     // 5. Verify WalletTransaction Audit Ledger
-    const transactions = await walletService.listTransactions(store.storeId);
-    const foundTx = transactions.find((t: any) => t.referenceId === testOrderCode);
+    const transactions: any = await walletService.listTransactions(store.storeId);
+    const foundTx = (transactions.items || transactions).find((t: any) => t.referenceId === testOrderCode);
     if (
       foundTx &&
       Number(foundTx.amount) === revenueAmount &&

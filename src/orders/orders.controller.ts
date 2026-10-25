@@ -17,6 +17,7 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { DeliverOrderDto } from './dto/deliver-order.dto';
 import { DeliveryFailureDto } from './dto/delivery-failure.dto';
 import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
+import { OrderQueryDto } from './dto/order-query.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -27,16 +28,69 @@ export class OrdersController {
   constructor(@Inject(OrdersService) private readonly ordersService: OrdersService) {}
 
   @Get()
-  async list(@Request() req: any, @Query('status') status?: string) {
-    const data = await this.ordersService.list(req.user, status);
-    return { success: true, data };
+  async list(@Request() req: any, @Query() query: OrderQueryDto) {
+    const result = await this.ordersService.list(req.user, query);
+    return {
+      success: true,
+      message: 'Lấy danh sách đơn hàng thành công',
+      data: result.orders,
+      pagination: result.pagination,
+    };
+  }
+
+  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Get('delivery-queue')
+  async getDeliveryQueue(
+    @Request() req: any,
+    @Query('page') page?: number,
+    @Query('pageSize') pageSize?: number,
+  ) {
+    const result = await this.ordersService.getDeliveryQueue(
+      req.user,
+      page ? Number(page) : 1,
+      pageSize ? Number(pageSize) : 20,
+    );
+    return {
+      success: true,
+      message: 'Lấy danh sách hàng đợi giao hàng thành công',
+      data: result.orders,
+      pagination: result.pagination,
+    };
   }
 
   @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Get('driver/my-orders')
   async getDriverOrders(@Request() req: any, @Query() query: DriverOrdersQueryDto) {
     const data = await this.ordersService.getDriverOrders(req.user, query);
-    return { success: true, ...data };
+    const page = data.pagination?.page || query.page || 1;
+    const pageSize = query.pageSize || query.limit || data.pagination?.limit || 20;
+    const totalItems = data.pagination?.total || 0;
+    const totalPages = Math.ceil(totalItems / pageSize);
+
+    return {
+      success: true,
+      message: 'Lấy danh sách đơn hàng tài xế thành công',
+      data: data.orders,
+      pagination: {
+        page,
+        pageSize,
+        totalItems,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+      summary: data.summary,
+    };
+  }
+
+  @Get(':id/timeline')
+  async getTimeline(@Param('id') id: string, @Request() req: any) {
+    const data = await this.ordersService.getTimeline(id, req.user);
+    return {
+      success: true,
+      message: 'Lấy dòng thời gian đơn hàng thành công',
+      data,
+    };
   }
 
   @Get(':id')

@@ -381,20 +381,22 @@ model OrderStatusHistory {
 }
 
 model PaymentTransaction {
-  paymentTransactionId BigInt    @id @default(autoincrement()) @map("payment_transaction_id")
-  orderId              BigInt    @map("order_id")
-  order                Order     @relation(fields: [orderId], references: [orderId], onDelete: Restrict)
+  paymentTransactionId BigInt        @id @default(autoincrement()) @map("payment_transaction_id")
+  orderId              BigInt?       @map("order_id")
+  order                Order?        @relation(fields: [orderId], references: [orderId], onDelete: Restrict)
+  rentalId             BigInt?       @map("rental_id")
+  rental               ButtonRental? @relation(fields: [rentalId], references: [rentalId], onDelete: Restrict)
   provider             String
-  transactionCode      String?   @map("transaction_code")
-  amount               Decimal   @db.Decimal(15, 2)
-  paymentMethod        String    @map("payment_method")
-  paymentLinkId        String?   @map("payment_link_id")
-  checkoutUrl          String?   @map("checkout_url")
-  qrCode               String?   @map("qr_code")
-  status               String    @default("PENDING")
-  paidAt               DateTime? @map("paid_at")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+  transactionCode      String?       @map("transaction_code")
+  amount               Decimal       @db.Decimal(15, 2)
+  paymentMethod        String        @map("payment_method")
+  paymentLinkId        String?       @map("payment_link_id")
+  checkoutUrl          String?       @map("checkout_url")
+  qrCode               String?       @map("qr_code")
+  status               String        @default("PENDING")
+  paidAt               DateTime?     @map("paid_at")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @default(now()) @updatedAt @map("updated_at")
 
   @@map("payment_transaction")
 }
@@ -520,7 +522,8 @@ model ButtonRental {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at")
 
-  buttons IoTButton[]
+  buttons  IoTButton[]
+  payments PaymentTransaction[]
 
   @@map("button_rentals")
 }

@@ -164,6 +164,44 @@ export class BankVerificationRepository {
     });
   }
 
+  async findVerificationTransactionById(id: bigint) {
+    return this.prisma.bankAccountVerificationTransaction.findUnique({
+      where: { id },
+      include: {
+        bankAccount: {
+          include: { store: true },
+        },
+      },
+    });
+  }
+
+  async listVerificationTransactionsByStore(
+    storeId: bigint,
+    options: { skip: number; take: number; status?: string },
+  ) {
+    const where: any = {
+      bankAccount: { storeId },
+    };
+    if (options.status) {
+      where.status = options.status;
+    }
+
+    const [total, items] = await Promise.all([
+      this.prisma.bankAccountVerificationTransaction.count({ where }),
+      this.prisma.bankAccountVerificationTransaction.findMany({
+        where,
+        skip: options.skip,
+        take: options.take,
+        include: {
+          bankAccount: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    return { total, items };
+  }
+
   /**
    * Khóa dòng dữ liệu (SELECT FOR UPDATE) và xử lý xác minh giao dịch nguyên tử trong transaction
    * Kiểm tra nghiêm ngặt: số tiền, mã đối soát, tài khoản nhận, và tài khoản gửi

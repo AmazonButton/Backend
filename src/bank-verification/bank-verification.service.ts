@@ -497,4 +497,78 @@ export class BankVerificationService implements OnModuleInit {
 
     return store;
   }
+
+  formatVerificationTransaction(tx: any) {
+    let masked = '******';
+    if (tx.bankAccount?.accountNumberEncrypted) {
+      try {
+        const plain = CryptoVaultUtil.decryptAccountNumber(tx.bankAccount.accountNumberEncrypted);
+        masked = CryptoVaultUtil.maskAccountNumber(plain);
+      } catch {
+        masked = '******';
+      }
+    }
+
+    return {
+      id: tx.id.toString(),
+      verificationId: tx.id.toString(),
+      bankAccountId: tx.bankAccountId.toString(),
+      storeId: tx.bankAccount?.storeId?.toString() || '',
+      bankBin: tx.bankAccount?.bankBin || '',
+      bankCode: tx.bankAccount?.bankCode || null,
+      bankName: tx.bankAccount?.bankName || '',
+      accountNumberMasked: masked,
+      accountName: tx.bankAccount?.accountName || '',
+      referenceCode: tx.referenceCode,
+      expectedAmount: Number(tx.expectedAmount),
+      actualAmount: tx.actualAmount ? Number(tx.actualAmount) : null,
+      status: tx.status,
+      refundStatus: tx.refundStatus,
+      expiresAt: tx.expiresAt,
+      verifiedAt: tx.verifiedAt || null,
+      createdAt: tx.createdAt,
+      updatedAt: tx.updatedAt,
+    };
+  }
+
+  async getVerificationTransactionById(id: bigint | string, userId: bigint, userRole?: string) {
+    const rawId = BigInt(id);
+    const tx = await this.repository.findVerificationTransactionById(rawId);
+    if (!tx) {
+      throw new NotFoundException('Giao dịch xác minh không tồn tại');
+    }
+
+    if (tx.bankAccount?.storeId) {
+      await this.verifyStoreOwnership(userId, tx.bankAccount.storeId, userRole);
+    }
+
+    return this.formatVerificationTransaction(tx);
+  }
+
+  async listStoreVerificationTransactions(
+    storeId: bigint | string,
+    query: { page?: number; pageSize?: number; status?: string },
+    userId: bigint,
+    userRole?: string,
+  ) {
+    const rawStoreId = BigInt(storeId);
+    await this.verifyStoreOwnership(userId, rawStoreId, userRole);
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
+    const skip = (page - 1) * pageSize;
+
+    const { total, items } = await this.repository.listVerificationTransactionsByStore(rawStoreId, {
+      skip,
+      take: pageSize,
+      status: query.status,
+    });
+
+    return {
+      items: items.map((tx) => this.formatVerificationTransaction(tx)),
+      total,
+      page,
+      pageSize,
+    };
+  }
 }

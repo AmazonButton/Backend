@@ -1,5 +1,6 @@
-﻿import { PrismaService } from '../src/prisma/prisma.service';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { StoresService } from '../src/stores/stores.service';
+import { StoresRepository } from '../src/stores/stores.repository';
 import { DevicesService } from '../src/devices/devices.service';
 import { DevicesRepository } from '../src/devices/devices.repository';
 import { OrdersService } from '../src/orders/orders.service';
@@ -15,7 +16,8 @@ async function runMarketplaceV22Tests() {
   const prisma = new PrismaService();
   await prisma.$connect();
 
-  const storesService = new StoresService(prisma);
+  const storesRepo = new StoresRepository(prisma);
+  const storesService = new StoresService(prisma, storesRepo);
   const devicesRepo = new DevicesRepository(prisma);
   const mockEventsGateway = {
     emitToCustomer: () => {},

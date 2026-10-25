@@ -30,5 +30,12 @@ export class DriverOrdersQueryDto {
   @IsInt()
   @Min(1)
   @Max(100)
+  pageSize?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
   limit?: number = 20;
 }

@@ -145,7 +145,7 @@ async function testFullMarketplaceE2E() {
 
     // Simulate payment completion: PENDING_PAYMENT -> PAID
     await prisma.buttonRental.update({
-      where: { rentalId: rentalContract.rentalId },
+      where: { rentalId: BigInt(rentalContract.rentalId) },
       data: { status: 'PAID' },
     });
 
@@ -166,8 +166,8 @@ async function testFullMarketplaceE2E() {
       Number(creditedWallet.balance) === 1200000
     );
 
-    const txLogs = await walletService.listTransactions(store.storeId);
-    const orderTx = txLogs.find((t: any) => t.referenceId === e2eOrderCode);
+    const txLogs: any = await walletService.listTransactions(store.storeId);
+    const orderTx = (txLogs.items || txLogs).find((t: any) => t.referenceId === e2eOrderCode);
     assert(
       'WalletTransaction audit log recorded with correct ORDER_REVENUE type and balance trace',
       !!orderTx && Number(orderTx.amount) === orderRevenue && orderTx.type === 'ORDER_REVENUE'

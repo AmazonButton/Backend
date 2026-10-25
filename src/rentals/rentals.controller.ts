@@ -1,6 +1,16 @@
-import { ForbiddenException, Controller, Get, Post, Body, UseGuards, Request, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UseGuards,
+  Request,
+  Param,
+  ForbiddenException,
+} from '@nestjs/common';
 import { RentalsService } from './rentals.service';
 import { CreateRentalOrderDto } from './dto/rentals.dto';
+import { RentalExtensionDto } from './dto/rental-extension.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -35,6 +45,54 @@ export class RentalsController {
     }
     const data = await this.rentalsService.listCustomerRentals(customerProfileId);
     return { success: true, data };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id')
+  async getRentalDetail(@Param('id') id: string, @Request() req: any) {
+    const data = await this.rentalsService.getRentalDetail(id, req.user);
+    return {
+      success: true,
+      message: 'Lấy thông tin hợp đồng thuê thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/payment-requests')
+  async createPaymentRequest(@Param('id') id: string, @Request() req: any) {
+    const data = await this.rentalsService.createRentalPaymentRequest(id, req.user);
+    return {
+      success: true,
+      message: 'Tạo yêu cầu thanh toán hợp đồng thuê thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/extensions')
+  async extendRental(
+    @Param('id') id: string,
+    @Body() body: RentalExtensionDto,
+    @Request() req: any,
+  ) {
+    const data = await this.rentalsService.extendRentalContract(id, body, req.user);
+    return {
+      success: true,
+      message: 'Gia hạn hợp đồng thuê thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/return-requests')
+  async requestReturn(@Param('id') id: string, @Request() req: any) {
+    const data = await this.rentalsService.requestRentalReturn(id, req.user);
+    return {
+      success: true,
+      message: 'Gửi yêu cầu trả nút IoT thành công',
+      data,
+    };
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

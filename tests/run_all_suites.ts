@@ -88,6 +88,96 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'withdrawal-concurrency-idempotency.spec.ts')],
   },
+  {
+    name: '17. Storefront Checkout 6-Layer Architecture Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'storefront-checkout-refactor.spec.ts')],
+  },
+  {
+    name: '18. Inventory Concurrency & Row-Level Locking Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'inventory-concurrency-race.spec.ts')],
+  },
+  {
+    name: '19. Product DTO & Category Ownership Boundary Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'product-contract-validation.spec.ts')],
+  },
+  {
+    name: '20. Canonical Pagination Envelope & Limit Caps Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'canonical-pagination-envelope.spec.ts')],
+  },
+  {
+    name: '21. Customer Addresses CRUD & Default Management Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'customer-addresses-crud.spec.ts')],
+  },
+  {
+    name: '22. Category Hierarchy & Graph Cycle Detection Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'categories-management.spec.ts')],
+  },
+  {
+    name: '23. Product Discounts CRUD & Time Window Exclusivity Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'product-discounts-crud.spec.ts')],
+  },
+  {
+    name: '24. Order Filter, Date Range & Status Timeline Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'order-filter-and-timeline.spec.ts')],
+  },
+  {
+    name: '25. Store Self-Management & Profile Update Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'store-self-management.spec.ts')],
+  },
+  {
+    name: '26. Store Staff Management & Anti-Role-Escalation Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'store-staff-management.spec.ts')],
+  },
+  {
+    name: '27. Store Subscription Public Catalog & History Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'subscription-catalog-history.spec.ts')],
+  },
+  {
+    name: '28. Bank Account Verification Polling Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'bank-verification-polling.spec.ts')],
+  },
+  {
+    name: '29. Button Rental Payment Linking & Lifecycle Expansion Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'rentals-lifecycle-e2e.spec.ts')],
+  },
+  {
+    name: '30. Product Price History & Inventory Read Views Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'price-history-and-inventory.spec.ts')],
+  },
+  {
+    name: '31. Store Wallet & Withdrawal Pagination, Filter & Detail Views Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'wallet-pagination-detail.spec.ts')],
+  },
+  {
+    name: '32. Driver Shifts Monitoring & Delivery Summary Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'driver-shifts-monitoring.spec.ts')],
+  },
+  {
+    name: '33. Store-Customer Relationship CRM Module Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'store-customers-management.spec.ts')],
+  },
+  {
+    name: '34. Analytics Date Range & Grouping Filters Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'analytics-window-filters.spec.ts')],
+  },
 ];
 
 async function main() {

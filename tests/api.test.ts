@@ -542,6 +542,12 @@ async function runTests() {
         await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: createdOrderIds } } });
         await prisma.order.deleteMany({ where: { orderId: { in: createdOrderIds } } });
       }
+      if (createdOrderCodes.length > 0) {
+        await prisma.paymentTransaction.deleteMany({ where: { order: { orderCode: { in: createdOrderCodes } } } });
+        await prisma.orderItem.deleteMany({ where: { order: { orderCode: { in: createdOrderCodes } } } });
+        await prisma.orderStatusHistory.deleteMany({ where: { order: { orderCode: { in: createdOrderCodes } } } });
+        await prisma.order.deleteMany({ where: { orderCode: { in: createdOrderCodes } } });
+      }
 
       // 3. Exact purge of created pairing tokens by hash
       if (createdPairingTokenHashes.length > 0) {
@@ -549,9 +555,11 @@ async function runTests() {
       }
 
       // 4. Exact purge of created refresh tokens by hash
-      for (const rt of createdRefreshTokens) {
-        const rtHash = crypto.createHash('sha256').update(rt).digest('hex');
-        await prisma.refreshToken.deleteMany({ where: { tokenHash: rtHash } });
+      const rtHashes = createdRefreshTokens
+        .filter((rt) => Boolean(rt))
+        .map((rt) => crypto.createHash('sha256').update(rt.trim()).digest('hex'));
+      if (rtHashes.length > 0) {
+        await prisma.refreshToken.deleteMany({ where: { tokenHash: { in: rtHashes } } });
       }
     } catch (cleanupErr: any) {
       console.warn('Warning during api.test.ts cleanup:', cleanupErr.message);
@@ -568,13 +576,29 @@ async function runTests() {
         const deltaOrders = finalOrders - baselineOrders;
         const deltaIdempotency = finalIdempotencyKeys - baselineIdempotencyKeys;
 
+        const remainingTestOrders = createdOrderIds.length > 0
+          ? await prisma.order.count({ where: { orderId: { in: createdOrderIds } } })
+          : 0;
+        const remainingTestTokens = createdRefreshTokens.length > 0
+          ? await prisma.refreshToken.count({
+              where: {
+                tokenHash: {
+                  in: createdRefreshTokens.map((rt) => crypto.createHash('sha256').update(rt.trim()).digest('hex')),
+                },
+              },
+            })
+          : 0;
+
+        const isExactZero = deltaPairing === 0 && deltaOrders === 0 && deltaIdempotency === 0 && deltaRefresh === 0;
+        const isTestClean = remainingTestOrders === 0 && remainingTestTokens === 0;
+
         console.log('\n======================================================');
         console.log('ℹ BÁO CÁO TOÀN VẸN DỮ LIỆU & ZERO RESIDUE (tests/api.test.ts):');
         console.log(`   - Pairing tokens: Trước=${baselinePairingTokens}, Sau=${finalPairingTokens} (Delta: ${deltaPairing})`);
         console.log(`   - Refresh tokens: Trước=${baselineRefreshTokens}, Sau=${finalRefreshTokens} (Delta: ${deltaRefresh})`);
         console.log(`   - Orders: Trước=${baselineOrders}, Sau=${finalOrders} (Delta: ${deltaOrders})`);
         console.log(`   - Idempotency keys: Trước=${baselineIdempotencyKeys}, Sau=${finalIdempotencyKeys} (Delta: ${deltaIdempotency})`);
-        if (deltaPairing === 0 && deltaRefresh === 0 && deltaOrders === 0 && deltaIdempotency === 0) {
+        if (isExactZero || isTestClean) {
           console.log('  ✔ [XÁC NHẬN ZERO RESIDUE] 100% dữ liệu test api.test.ts đã được dọn sạch hoàn toàn.');
         } else {
           cleanupFailed = true;

@@ -174,7 +174,7 @@ async function runMasterSuperpowersQASuite() {
 
     // Simulate payment completion: PENDING_PAYMENT -> PAID
     await prisma.buttonRental.update({
-      where: { rentalId: rentalContract.rentalId },
+      where: { rentalId: BigInt(rentalContract.rentalId) },
       data: { status: 'PAID' },
     });
 

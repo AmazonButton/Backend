@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { StoreSubscriptionsRepository } from './store-subscriptions.repository';
 import { StoreWalletService } from '../store-wallet/store-wallet.service';
+import { SubscriptionPlanResponseDto } from './dto/subscription-plan-response.dto';
+import { StoreSubscriptionResponseDto } from './dto/store-subscription-response.dto';
 
 @Injectable()
 export class StoreSubscriptionsService {
@@ -70,5 +72,43 @@ export class StoreSubscriptionsService {
     }
 
     return true;
+  }
+
+  async listPlans(): Promise<SubscriptionPlanResponseDto[]> {
+    const plans = await this.subscriptionsRepo.listActivePlans();
+    return plans.map(SubscriptionPlanResponseDto.fromEntity);
+  }
+
+  async listStoreSubscriptions(
+    storeId: bigint,
+    query: { page?: number; pageSize?: number; status?: string },
+  ) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
+    const skip = (page - 1) * pageSize;
+
+    const { total, items } = await this.subscriptionsRepo.findStoreSubscriptions(storeId, {
+      skip,
+      take: pageSize,
+      status: query.status,
+    });
+
+    return {
+      items: items.map(StoreSubscriptionResponseDto.fromEntity),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async getStoreSubscriptionById(
+    subscriptionId: bigint,
+    storeId: bigint,
+  ): Promise<StoreSubscriptionResponseDto> {
+    const sub = await this.subscriptionsRepo.findStoreSubscriptionById(subscriptionId, storeId);
+    if (!sub) {
+      throw new NotFoundException('Gói đăng ký không tồn tại hoặc không thuộc cửa hàng này');
+    }
+    return StoreSubscriptionResponseDto.fromEntity(sub);
   }
 }

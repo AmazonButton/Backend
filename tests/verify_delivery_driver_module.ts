@@ -287,7 +287,7 @@ async function run() {
     trackedOrderIds.push(orderStoreB.orderId);
 
     const driverOrders = await ordersService.list(driverA1Session);
-    const visibleOrderIds = driverOrders.map((o: any) => o.orderId);
+    const visibleOrderIds = ((driverOrders as any).orders || driverOrders).map((o: any) => o.orderId);
     if (visibleOrderIds.includes(order1.orderId.toString()) && !visibleOrderIds.includes(orderStoreB.orderId.toString())) {
       console.log('  ✔ [PASS] Driver sees orders strictly belonging to their store (BOLA isolated)');
       passed++;
