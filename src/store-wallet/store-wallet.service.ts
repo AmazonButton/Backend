@@ -8,7 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { UpdateBankAccountDto } from './dto/wallet.dto';
+import { UpdateBankAccountDto, TransactionQueryDto, WithdrawalQueryDto } from './dto/wallet.dto';
 import { RequestWithdrawalDto } from './dto/withdrawal.dto';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
@@ -148,16 +148,40 @@ export class StoreWalletService {
     });
   }
 
-  async listTransactions(storeId: string | number | bigint) {
+  async listTransactions(storeId: string | number | bigint, query?: TransactionQueryDto) {
     const rawStoreId = BigInt(storeId);
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
 
-    const txs = await this.prisma.walletTransaction.findMany({
-      where: { walletId: wallet.walletId },
-      orderBy: { createdAt: 'desc' },
-    });
+    const where: any = { walletId: wallet.walletId };
+    if (query?.type) {
+      where.type = query.type;
+    }
+    if (query?.fromDate || query?.toDate) {
+      where.createdAt = {};
+      if (query.fromDate) where.createdAt.gte = new Date(query.fromDate);
+      if (query.toDate) where.createdAt.lte = new Date(query.toDate);
+    }
 
-    return WalletMapper.toTransactionDtoList(txs);
+    const page = Math.max(1, Number(query?.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query?.pageSize) || Number(query?.limit) || 20));
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await Promise.all([
+      this.prisma.walletTransaction.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.walletTransaction.count({ where }),
+    ]);
+
+    return {
+      items: WalletMapper.toTransactionDtoList(items),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   /**
@@ -626,19 +650,43 @@ export class StoreWalletService {
     return withdrawal;
   }
 
-  async listWithdrawals(storeId: string | number | bigint) {
+  async listWithdrawals(storeId: string | number | bigint, query?: WithdrawalQueryDto) {
     const rawStoreId = BigInt(storeId);
     const wallet = await this.getOrCreateStoreWallet(rawStoreId);
 
-    const withdrawals = await this.prisma.storeWithdrawal.findMany({
-      where: { walletId: wallet.walletId },
-      orderBy: { requestedAt: 'desc' },
-    });
+    const where: any = { walletId: wallet.walletId };
+    if (query?.status) {
+      where.status = query.status;
+    }
+    if (query?.fromDate || query?.toDate) {
+      where.requestedAt = {};
+      if (query.fromDate) where.requestedAt.gte = new Date(query.fromDate);
+      if (query.toDate) where.requestedAt.lte = new Date(query.toDate);
+    }
 
-    return WalletMapper.toWithdrawalDtoList(withdrawals);
+    const page = Math.max(1, Number(query?.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query?.pageSize) || Number(query?.limit) || 20));
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await Promise.all([
+      this.prisma.storeWithdrawal.findMany({
+        where,
+        orderBy: { requestedAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.storeWithdrawal.count({ where }),
+    ]);
+
+    return {
+      items: WalletMapper.toWithdrawalDtoList(items),
+      total,
+      page,
+      pageSize,
+    };
   }
 
-  async getWithdrawal(withdrawalId: string | number | bigint) {
+  async getWithdrawal(withdrawalId: string | number | bigint, storeId?: string | number | bigint) {
     const rawId = BigInt(withdrawalId);
     const withdrawal = await this.prisma.storeWithdrawal.findUnique({
       where: { withdrawalId: rawId },
@@ -646,7 +694,18 @@ export class StoreWalletService {
     });
 
     if (!withdrawal) {
-      throw new NotFoundException('Kh�ng t�m th?y th�ng tin r�t ti?n');
+      throw new NotFoundException('Không tìm thấy thông tin rút tiền');
+    }
+
+    if (storeId) {
+      const rawStoreId = BigInt(storeId);
+      if (withdrawal.storeId && withdrawal.storeId !== rawStoreId) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xem thông tin rút tiền của cửa hàng khác.',
+        });
+      }
     }
 
     return WalletMapper.toWithdrawalDto(withdrawal);

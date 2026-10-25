@@ -212,6 +212,15 @@ export class AdminService {
 
   async listWithdrawals() {
     return this.listAllWithdrawals();
+  }
+
+  async getWithdrawalById(withdrawalId: string | number | bigint) {
+    const rawWithdrawalId = BigInt(withdrawalId);
+    const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    if (!withdrawal) {
+      throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    }
+    return withdrawal;
   }
 
   async confirmWithdrawalTransfer(_withdrawalId: string | number | bigint, _transferEvidenceUrl?: string, _adminUser?: any) {

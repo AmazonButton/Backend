@@ -114,6 +114,12 @@ export class AdminController {
     return { success: true, data: WalletMapper.toWithdrawalDtoList(data) };
   }
 
+  @Get('withdrawals/:id')
+  async getWithdrawalById(@Param('id') id: string) {
+    const data = await this.adminService.getWithdrawalById(id);
+    return { success: true, message: 'Lấy chi tiết yêu cầu rút tiền thành công', data: WalletMapper.toWithdrawalDto(data) };
+  }
+
   /**
    * @deprecated Endpoint này đã bị vô hiệu hóa để bảo đảm tính toàn vẹn tài chính. Mọi khoản rút tiền phải qua PayOS Payout (/withdrawals/:id/payout).
    */
