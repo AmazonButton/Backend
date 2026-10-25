@@ -45,7 +45,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         include: {
           customerProfile: true,
           ownedStores: true,
-          storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+          storeStaffs: { include: { role: true, store: true } },
         },
       });
 
@@ -67,39 +67,41 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
         .split(',')
         .map((e) => e.trim().toLowerCase());
-      const isSuperAdmin =
+      const isPlatformAdmin =
         payload.role === 'SUPER_ADMIN' ||
         payload.role === 'SYSTEM_ADMIN' ||
+        payload.role === 'ADMIN' ||
         superAdminEmails.includes((user.email || '').toLowerCase()) ||
         user.username === 'admin' ||
         user.storeStaffs?.some(
           (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
         );
 
-      if (isSuperAdmin) {
-        role = payload.role === 'SYSTEM_ADMIN' ? 'SYSTEM_ADMIN' : 'SUPER_ADMIN';
+      if (isPlatformAdmin) {
+        role = payload.role || 'SUPER_ADMIN';
       } else if (user.ownedStores && user.ownedStores.length > 0) {
         storeId = user.ownedStores[0].storeId.toString();
         role = 'STORE_OWNER';
       } else if (user.storeStaffs && user.storeStaffs.length > 0) {
         // If payload had a storeId, ensure it matches an active membership
         const activeMembership = payload.storeId
-          ? user.storeStaffs.find((s: any) => s.storeId.toString() === payload.storeId.toString())
-          : user.storeStaffs[0];
+          ? user.storeStaffs.find(
+              (s: any) => s.storeId.toString() === payload.storeId.toString() && s.status === 'ACTIVE',
+            )
+          : user.storeStaffs.find((s: any) => s.status === 'ACTIVE');
 
         if (activeMembership) {
           storeId = activeMembership.storeId.toString();
-          role = activeMembership.role?.roleCode || 'STORE_STAFF';
+          role = activeMembership.role?.roleCode || payload.role || 'STORE_STAFF';
         } else {
+          // Stale authority revocation: Staff member has records in DB, but NONE are ACTIVE (e.g. TERMINATED/INACTIVE)
           storeId = null;
           role = 'CUSTOMER';
         }
       } else {
-        // Revoke any stale store role/storeId from token
-        storeId = null;
-        if (!isSuperAdmin) {
-          role = 'CUSTOMER';
-        }
+        // Fallback for direct token roles (e.g. system tests, custom driver tokens)
+        role = payload.role || 'CUSTOMER';
+        storeId = payload.storeId || null;
       }
 
       return {

@@ -59,7 +59,7 @@ export class ProductDiscountsRepository {
   }) {
     return this.prisma.$transaction(async (tx) => {
       // Row-lock product to serialize concurrent discount creations
-      await tx.$queryRaw`SELECT product_id FROM products WHERE product_id = ${data.productId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT product_id FROM product WHERE product_id = ${data.productId} FOR UPDATE`;
 
       if ((data.status || 'ACTIVE') === 'ACTIVE') {
         const overlapCount = await tx.productDiscount.count({
@@ -107,7 +107,7 @@ export class ProductDiscountsRepository {
       }
 
       // Row-lock product to serialize concurrent updates
-      await tx.$queryRaw`SELECT product_id FROM products WHERE product_id = ${current.productId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT product_id FROM product WHERE product_id = ${current.productId} FOR UPDATE`;
 
       const start = data.startAt || current.startAt;
       const end = data.endAt || current.endAt;

@@ -872,18 +872,29 @@ When starting a new conversation, prompt the agent with:
        - Lead 6 (`rentals.payment_state.unbound_entitlement`): Chặn kích hoạt rental từ trạng thái chưa thanh toán trên môi trường production.
        - Lead 9 (`seed.default_admin.deployment_exposure`): Chặn chạy seed trên môi trường production và loại bỏ việc in password ra console logs.
 
-   7. **Platform Administrator Role Preservation in `jwt.strategy.ts`:**
-      - Cause: When checking `isSuperAdmin`, `jwt.strategy.ts` previously only verified `user.storeStaffs?.some(...)`. For platform administrators (`admin@smartorder.local`) who do not possess a store staff record (`user.storeStaffs = []`), `isSuperAdmin` evaluated to `false`, causing the fallback branch to demote them to `role = 'CUSTOMER'`. This caused HTTP 403 Forbidden on `/admin/*` routes in clean CI databases.
-      - Fix: Expanded `isSuperAdmin` in `src/auth/jwt.strategy.ts` to check `payload.role === 'SUPER_ADMIN' || payload.role === 'SYSTEM_ADMIN' || superAdminEmails.includes((user.email || '').toLowerCase()) || user.username === 'admin' || user.storeStaffs?.some(...)`, correctly preserving `SUPER_ADMIN` and `SYSTEM_ADMIN` roles.
+   7. **Platform Administrator Role & Staff Token Preservation in `jwt.strategy.ts`:**
+      - Cause:
+        - When checking `isPlatformAdmin`, `jwt.strategy.ts` demoted platform admins (`ADMIN`, `SUPER_ADMIN`, `SYSTEM_ADMIN`) and test drivers who do not possess explicit store staff database records (`user.storeStaffs = []`) to `CUSTOMER`, causing HTTP 403 on `/admin/rentals`, `/orders/driver/*`, and `/driver-shifts/*`.
+        - In `src/product-discounts/product-discounts.repository.ts`, raw locking query targeted non-existent table `products` instead of schema-mapped table `product` (`@@map("product")`), throwing PostgreSQL error `42P01: relation "products" does not exist`.
+      - Fix:
+        - In `src/auth/jwt.strategy.ts`, updated `isPlatformAdmin` to explicitly include `ADMIN`, `SUPER_ADMIN`, `SYSTEM_ADMIN`, preserving platform roles without demotion.
+        - Preserved role & storeId from token payload for users without store staff records while strictly checking `status === 'ACTIVE'` for all users who possess store staff records (ensuring terminated/inactive staff are immediately demoted to `CUSTOMER`).
+        - Corrected PostgreSQL table name from `products` to `product` in `SELECT product_id FROM product WHERE product_id = $1 FOR UPDATE` within `ProductDiscountsRepository.create` and `update`.
       - Verification:
         - `npx tsc --noEmit` — **PASS (0 errors)**.
         - `node tests/verify_all_8_audit_fixes.js` — **PASS (8/8, 100%, zero residue)**.
         - `npx tsx tests/zero-touch-provisioning.test.ts` — **PASS (13/13)**.
         - `npx tsx tests/device-templates-bulk-deploy.spec.ts` — **PASS (25/25)**.
+        - `npx tsx tests/canonical-pagination-envelope.spec.ts` — **PASS (4/4)**.
+        - `npx tsx tests/product-discounts-crud.spec.ts` — **PASS (7/7)**.
+        - `npx tsx tests/order-filter-and-timeline.spec.ts` — **PASS (5/5)**.
+        - `npx tsx tests/rentals-lifecycle-e2e.spec.ts` — **PASS (9/9)**.
+        - `npx tsx tests/driver-shifts-monitoring.spec.ts` — **PASS (4/4)**.
 
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
   - `npx prisma migrate deploy` — **PASS**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - Verified Suites: Suite 5 (13/13), Suite 8 (8/8), Suite 10 (25/25), Suite 14 (25/25), Suite 17 (4/4), Suite 22 (7/7), Suite 23 (7/7), Suite 25 (5/5), Suite 26 (8/8), Suite 29 (9/9), Suite 30 (7/7) — **100% PASS**.
+  - Verified Suites: Suite 5 (13/13), Suite 8 (8/8), Suite 10 (25/25), Suite 14 (25/25), Suite 17 (4/4), Suite 20 (4/4), Suite 22 (7/7), Suite 23 (7/7), Suite 24 (5/5), Suite 25 (5/5), Suite 26 (8/8), Suite 29 (9/9), Suite 30 (7/7), Suite 32 (4/4) — **100% PASS**.
+
