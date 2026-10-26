@@ -91,7 +91,6 @@ export class AuthController {
     return this.authService.refresh(body.refreshToken, ip, userAgent);
   }
 
-  @UseGuards(JwtAuthGuard)
   @HttpCode(200)
   @Post('logout')
   async logout(@Request() req: any, @Body() body: { refreshToken?: string; fcmToken?: string }) {
