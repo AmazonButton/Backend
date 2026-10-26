@@ -53,6 +53,7 @@ model User {
   fcmTokens                    UserFcmToken[]
   identityVerificationSessions IdentityVerificationSession[]
   notifications                Notification[]
+  apiIdempotencyKeys           ApiIdempotencyKey[]
 
   @@map("users")
 }
@@ -205,6 +206,8 @@ model Product {
 
   @@unique([storeId, productCode], name: "uq_product_store_code")
   @@unique([storeId, productId], name: "uq_product_store_pair")
+  @@index([storeId, status, basePrice], map: "idx_product_store_status_price")
+  @@index([storeId, categoryId, status], map: "idx_product_store_cat_status")
   @@map("product")
 }
 
@@ -346,6 +349,10 @@ model Order {
   iotIdempotencyKeys  IotIdempotencyKey[]
 
   @@unique([buttonId, iotRequestId], map: "uq_orders_button_request")
+  @@index([storeId, orderStatus, createdAt(sort: Desc)], map: "idx_orders_store_status_created")
+  @@index([customerId, orderStatus, createdAt(sort: Desc)], map: "idx_orders_customer_status_created")
+  @@index([assignedDriverId, orderStatus], map: "idx_orders_driver_status")
+  @@index([orderDate(sort: Desc)], map: "idx_orders_order_date")
   @@map("orders")
 }
 
@@ -398,6 +405,9 @@ model PaymentTransaction {
   createdAt            DateTime      @default(now()) @map("created_at")
   updatedAt            DateTime      @default(now()) @updatedAt @map("updated_at")
 
+  @@index([orderId, status], map: "idx_payment_tx_order_status")
+  @@index([rentalId, status], map: "idx_payment_tx_rental_status")
+  @@index([createdAt(sort: Desc)], map: "idx_payment_tx_created_at")
   @@map("payment_transaction")
 }
 
@@ -525,6 +535,8 @@ model ButtonRental {
   buttons  IoTButton[]
   payments PaymentTransaction[]
 
+  @@index([customerId, status], map: "idx_button_rentals_customer_status")
+  @@index([packageId, status], map: "idx_button_rentals_package_status")
   @@map("button_rentals")
 }
 
@@ -602,6 +614,7 @@ model StoreWithdrawal {
 
   @@index([bankAccountHash], map: "idx_store_withdrawals_acc_hash")
   @@index([providerReferenceId], map: "idx_store_withdrawals_provider_ref")
+  @@index([storeId, status, createdAt(sort: Desc)], map: "idx_store_withdrawals_store_status_created")
   @@unique([storeId, idempotencyKey], map: "uq_store_withdrawals_store_idempotency")
   @@map("store_withdrawals")
 }
@@ -762,6 +775,8 @@ model DriverShift {
   driver          User  @relation("DriverShifts", fields: [driverId], references: [userId], onDelete: Restrict)
   confirmedByUser User? @relation("ConfirmedShifts", fields: [confirmedByUserId], references: [userId], onDelete: SetNull)
 
+  @@index([storeId, status, startedAt(sort: Desc)], map: "idx_driver_shifts_store_status_started")
+  @@index([driverId, status], map: "idx_driver_shifts_driver_status")
   @@map("driver_shifts")
 }
 
@@ -870,4 +885,24 @@ model Notification {
   @@index([userId, readAt], map: "idx_notifications_user_read")
   @@index([userId, createdAt], map: "idx_notifications_user_created")
   @@map("notifications")
+}
+
+model ApiIdempotencyKey {
+  id             BigInt    @id @default(autoincrement()) @map("id")
+  idempotencyKey String    @map("idempotency_key") @db.VarChar(128)
+  route          String    @map("route") @db.VarChar(255)
+  userId         BigInt?   @map("user_id")
+  user           User?     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  requestHash    String    @map("request_hash") @db.Char(64)
+  statusCode     Int?      @map("status_code")
+  responseBody   Json?     @map("response_body")
+  status         String    @default("PROCESSING") @map("status") @db.VarChar(20)
+  lockedUntil    DateTime  @map("locked_until") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([idempotencyKey, route], name: "uq_api_idempotency_key_route")
+  @@index([expiresAt], map: "idx_api_idempotency_expires_at")
+  @@map("api_idempotency_keys")
 }

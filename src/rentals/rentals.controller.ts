@@ -14,7 +14,11 @@ import { RentalExtensionDto } from './dto/rental-extension.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UseInterceptors } from '@nestjs/common';
+import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
+import { Idempotent } from '../common/idempotency/idempotency.decorator';
 
+@UseInterceptors(IdempotencyInterceptor)
 @Controller('rentals')
 export class RentalsController {
   constructor(private readonly rentalsService: RentalsService) {}
@@ -27,6 +31,7 @@ export class RentalsController {
 
   @UseGuards(JwtAuthGuard)
   @Post('order')
+  @Idempotent({ required: false, ttlSeconds: 86400 })
   async createRentalOrder(@Request() req: any, @Body() body: CreateRentalOrderDto) {
     const customerProfileId = req.user.customerProfileId;
     if (!customerProfileId) {
@@ -71,6 +76,7 @@ export class RentalsController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':id/extensions')
+  @Idempotent({ required: false, ttlSeconds: 86400 })
   async extendRental(
     @Param('id') id: string,
     @Body() body: RentalExtensionDto,

@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 36/36 test suites verified passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), zero plaintext bank storage enforced, manual transfer route decommissioned, canonical payout webhook signature verified, distributed session/token revocation active, P0 payout refund/active payment/secrets invariants deployed, and Phase 1 database transactions & concurrency invariants fully implemented.
+> **Status:** All 40/40 test suites verified passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), zero plaintext bank storage enforced, manual transfer route decommissioned, canonical payout webhook signature verified, distributed session/token revocation active, P0 payout refund/active payment/secrets invariants deployed, Phase 1 database transactions & concurrency invariants fully implemented, Phase 2 universal idempotency platform active across storefront/payments/rentals, Phase 3 asynchronous queues with backoff retry & DLQ deployed, Phase 4 composite query indexes active on PostgreSQL, and Phase 5 health probes & graceful drain shutdown operational.
 
 ---
 
@@ -12,7 +12,7 @@
 - Check TypeScript types: `npx tsc --noEmit`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (36 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run All Tests (40 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
 - Individual Suite Commands:
   - Suite 1 (Firebase Phone Auth): `npx tsx tests/firebase-phone-auth.spec.ts`
   - Suite 2 (FCM Notifications): `npx tsx tests/notifications-fcm.spec.ts`
@@ -50,6 +50,10 @@
   - Suite 34 (Analytics Date Range & Grouping Filters): `npx tsx tests/store-analytics-filters.spec.ts`
   - Suite 35 (P0 Security, Payout Refund & Concurrency Invariants): `npx tsx tests/p0-security-and-concurrency.spec.ts`
   - Suite 36 (Phase 1 Database Transactions & Concurrency Invariants): `npx tsx tests/phase1-transactions-concurrency.spec.ts`
+  - Suite 37 (Phase 2 Universal Idempotency Platform): `npx tsx tests/phase2-idempotency-platform.spec.ts`
+  - Suite 38 (Phase 3 Asynchronous Queues, Backoff Retry & DLQ): `npx tsx tests/phase3-queues-retry-dlq.spec.ts`
+  - Suite 39 (Phase 4 Database Index & Query Optimization): `npx tsx tests/phase4-index-query-optimization.spec.ts`
+  - Suite 40 (Phase 5 Health Probes & Graceful Shutdown): `npx tsx tests/phase5-graceful-shutdown-health.spec.ts`
 
 ---
 
@@ -939,11 +943,58 @@ When starting a new conversation, prompt the agent with:
       - **Suite 36 (`tests/phase1-transactions-concurrency.spec.ts`):**
         - Verified 16/16 assertions passing: TX-02 atomic rollback, TX-03 serialized rental extensions, TX-04 atomic default bank switch, and CC-03 transient conflict retry.
 
+   10. **[2026-10-26] Phase 2 Universal Idempotency Platform (IDEM-01, IDEM-02, IDEM-03):**
+      - **IDEM-01 (Database Idempotency Model & Migration):**
+        - Migration: [`prisma/migrations/20261026140000_add_api_idempotency_keys/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261026140000_add_api_idempotency_keys/migration.sql).
+        - Created table `api_idempotency_keys` with `idempotency_key`, `route`, `user_id`, `request_hash`, `status_code`, `response_body` (JSONB), `status`, `locked_until`, and `expires_at`.
+        - Enforced unique index `uq_api_idempotency_key_route` and index `idx_api_idempotency_expires_at`.
+      - **IDEM-02 (Universal Idempotency Engine & Interceptor):**
+        - Created [`src/common/idempotency/idempotency.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/idempotency/idempotency.repository.ts) with row-locking atomic acquisition and cached response replay.
+        - Created [`src/common/idempotency/idempotency.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/idempotency/idempotency.service.ts) with deterministic recursive key-sorted SHA-256 body hashing, IETF key validation (1..128 chars, `^[A-Za-z0-9._:-]+$`), `ConflictException` (409) for concurrent requests, and `UnprocessableEntityException` (422) for payload tampering.
+        - Created [`src/common/idempotency/idempotency.interceptor.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/idempotency/idempotency.interceptor.ts) and decorator `@Idempotent()` in [`src/common/idempotency/idempotency.decorator.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/idempotency/idempotency.decorator.ts).
+      - **IDEM-03 (Cross-Scope Endpoint Integration):**
+        - Storefront checkout: [`src/orders/storefront.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/orders/storefront.controller.ts).
+        - Payment creation: [`src/payments/payments.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.controller.ts).
+        - Rental creation & extension: [`src/rentals/rentals.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.controller.ts).
+      - **Suite 37 (`tests/phase2-idempotency-platform.spec.ts`):**
+        - Verified 18/18 assertions passing: format validation, recursive hashing, in-flight 409 lock, mismatch 422 defense, cache replay, expired lock recovery, and payment/rental scope deduplication.
+
+   11. **[2026-10-26] Phase 3 Asynchronous Queues, Exponential Retry & DLQ:**
+      - **Queue Engine & Dead-Letter Queue (DLQ):**
+        - Created [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts) with worker polling loop, configurable `attempts`, and exponential backoff (`delay * 2^(attempt-1)`).
+        - Integrated Dead-Letter Queue (DLQ) isolating permanently failed jobs after retry exhaustion with error stack trace, failure reason, and status `'DEAD'`.
+        - Created DLQ admin utilities: `getDeadLetterJobs()`, `retryDeadLetterJob()`, `clearDeadLetterJobs()`, and `getQueueStats()`.
+        - Created [`src/common/queues/queue.module.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.module.ts) and registered in `AppModule`.
+        - Integrated non-blocking `enqueueMail` into [`src/mail/mail.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/mail/mail.service.ts).
+      - **Suite 38 (`tests/phase3-queues-retry-dlq.spec.ts`):**
+        - Verified 19/19 assertions passing: non-blocking enqueue (<20ms), async processing, 3-attempt exponential retry, DLQ isolation on exhaustion, DLQ replay/recovery, and queue statistics.
+
+   12. **[2026-10-26] Phase 4 Database Index & Query Optimization:**
+      - **Composite Indexes Applied:**
+        - Migration: [`prisma/migrations/20261026150000_production_query_composite_indexes/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261026150000_production_query_composite_indexes/migration.sql).
+        - `orders`: `idx_orders_store_status_created` (`store_id`, `order_status`, `created_at DESC`), `idx_orders_customer_status_created`, `idx_orders_driver_status`, `idx_orders_order_date`.
+        - `payment_transaction`: `idx_payment_tx_order_status`, `idx_payment_tx_rental_status`, `idx_payment_tx_created_at`.
+        - `store_withdrawals`: `idx_store_withdrawals_store_status_created` (`store_id`, `status`, `created_at DESC`).
+        - `button_rentals`: `idx_button_rentals_customer_status`, `idx_button_rentals_package_status`.
+        - `product`: `idx_product_store_status_price` (`store_id`, `status`, `base_price`), `idx_product_store_cat_status`.
+        - `driver_shifts`: `idx_driver_shifts_store_status_started` (`store_id`, `status`, `started_at DESC`), `idx_driver_shifts_driver_status`.
+      - **Suite 39 (`tests/phase4-index-query-optimization.spec.ts`):**
+        - Verified 15/15 assertions passing: verified all composite indexes live in PostgreSQL schema catalog (`pg_indexes`) and EXPLAIN query plan executed cleanly.
+
+   13. **[2026-10-26] Phase 5 Health Probes & Graceful Drain Shutdown (OP-01, OP-02):**
+      - **Liveness & Readiness Probes:**
+        - In [`src/app.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/app.controller.ts): enhanced `/healthz` with process uptime metrics; enhanced `/readyz` with deep PostgreSQL query probe and Queue engine checks with fail-closed 503 behavior on database outage.
+      - **Graceful Shutdown & Connection Draining:**
+        - In [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts): registered explicit OS signal handlers for `SIGTERM` and `SIGINT` with 15-second bounded shutdown timeout, connection draining, and clean Prisma/Queue disposal via `app.close()`.
+      - **Suite 40 (`tests/phase5-graceful-shutdown-health.spec.ts`):**
+        - Verified 12/12 assertions passing: `/healthz` liveness, `/readyz` deep dependency checks, 503 fail-closed simulation on DB failure, and signal handler registrations.
+
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
-  - `npx prisma migrate deploy` — **PASS (23 migrations applied)**
+  - `npx prisma migrate deploy` — **PASS (25 migrations applied)**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - Verified Suites: Suite 14 (16/16), Suite 35 (10/10), Suite 36 (16/16) — **100% PASS**.
+  - Verified Suites: Suite 14 (16/16), Suite 35 (10/10), Suite 36 (16/16), Suite 37 (18/18), Suite 38 (19/19), Suite 39 (15/15), Suite 40 (12/12) — **100% PASS (96/96 assertions across all production phases)**.
+
 
 

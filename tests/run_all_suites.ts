@@ -188,6 +188,26 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'phase1-transactions-concurrency.spec.ts')],
   },
+  {
+    name: '37. Phase 2 Universal Idempotency Platform Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'phase2-idempotency-platform.spec.ts')],
+  },
+  {
+    name: '38. Phase 3 Asynchronous Queues, Backoff Retry & DLQ Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'phase3-queues-retry-dlq.spec.ts')],
+  },
+  {
+    name: '39. Phase 4 Database Index & Query Optimization Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'phase4-index-query-optimization.spec.ts')],
+  },
+  {
+    name: '40. Phase 5 Health Probes & Graceful Shutdown Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'phase5-graceful-shutdown-health.spec.ts')],
+  },
 ];
 
 async function main() {

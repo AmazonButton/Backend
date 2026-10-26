@@ -9,11 +9,14 @@ import {
   HttpCode,
   UsePipes,
   ValidationPipe,
+  UseInterceptors,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentLinkDto, PayosWebhookDto, CancelPaymentLinkDto } from './dto/payment.dto';
 import { ChangePaymentMethodDto } from './dto/change-payment-method.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
+import { Idempotent } from '../common/idempotency/idempotency.decorator';
 
 @Controller('payments')
 export class PaymentsController {
@@ -31,7 +34,9 @@ export class PaymentsController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('payos/create-link')
+  @Idempotent({ required: false, ttlSeconds: 86400 })
   createLink(@Body() body: CreatePaymentLinkDto, @Request() req: any) {
     const userId = req.user?.userId ? BigInt(req.user.userId) : undefined;
     return this.paymentsService.createPayosPaymentLink(body, userId);

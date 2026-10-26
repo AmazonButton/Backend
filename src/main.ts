@@ -153,6 +153,32 @@ async function bootstrap() {
   const port = process.env.PORT || 5000;
   await app.listen(port, '0.0.0.0');
 
+  // Explicit OS Signal handlers for Graceful Shutdown and connection draining
+  let isShuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`\n📢 Received ${signal}. Starting graceful shutdown and draining connections...`);
+
+    const timeout = setTimeout(() => {
+      console.error('⚠️ Could not close connections in time (15s timeout), forcefully shutting down.');
+      process.exit(1);
+    }, 15000);
+    timeout.unref();
+
+    try {
+      await app.close();
+      console.log('✅ NestJS server, Database, and Queue instances closed cleanly.');
+      process.exit(0);
+    } catch (err) {
+      console.error('❌ Error during graceful shutdown:', err);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
   console.log(`=======================================================`);
   console.log(`🚀 SMART ORDER BUTTON — NESTJS CLOUD & REALTIME CORE`);
   console.log(`📡 NestJS Server running on http://localhost:${port}/api/v1`);

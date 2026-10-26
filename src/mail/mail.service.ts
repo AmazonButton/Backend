@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { QueueService } from '../common/queues/queue.service';
 
 @Injectable()
 export class MailService {
@@ -12,8 +13,34 @@ export class MailService {
     return email.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*');
   }
 
-  constructor() {
+  constructor(
+    @Optional() @Inject(QueueService) private readonly queueService?: QueueService,
+  ) {
     this.initTransporter();
+    this.initQueueProcessor();
+  }
+
+  private initQueueProcessor() {
+    if (this.queueService) {
+      this.queueService.registerProcessor('mail-queue', async (job) => {
+        return this.sendMail(job.data);
+      });
+    }
+  }
+
+  /**
+   * Enqueue email for asynchronous background dispatch with automatic exponential retry and DLQ.
+   */
+  async enqueueMail(options: { to: string; subject: string; text: string; html: string }): Promise<string> {
+    if (this.queueService) {
+      return this.queueService.enqueueJob('mail-queue', 'send-email', options, {
+        attempts: 3,
+        backoffDelayMs: 1000,
+        backoffType: 'exponential',
+      });
+    }
+    await this.sendMail(options);
+    return 'direct-dispatch';
   }
 
   private initTransporter() {

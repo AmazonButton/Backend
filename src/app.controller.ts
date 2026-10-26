@@ -1,40 +1,66 @@
-import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, Inject, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from './prisma/prisma.service';
+import { QueueService } from './common/queues/queue.service';
 
 @Controller()
 export class AppController {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(QueueService) private readonly queueService?: QueueService,
   ) {}
 
   /**
-   * Kubernetes / Docker Liveness probe: returns immediate UP status
+   * Kubernetes / Docker Liveness probe: returns immediate UP status & process uptime
    */
   @Get('healthz')
   getLiveness() {
     return {
       status: 'UP',
+      uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     };
   }
 
   /**
-   * Kubernetes / Docker Readiness probe: verifies DB connectivity without leaking sensitive schema details
+   * Kubernetes / Docker Readiness probe: verifies DB & Queue dependency readiness
    */
   @Get('readyz')
   async getReadiness() {
+    const checks: Record<string, string> = {
+      database: 'DOWN',
+      queue: 'DOWN',
+    };
+
+    let isDbHealthy = false;
     try {
       await this.prisma.$queryRaw`SELECT 1`;
-      return {
-        status: 'READY',
-        timestamp: new Date().toISOString(),
-      };
+      checks.database = 'UP';
+      isDbHealthy = true;
     } catch {
+      checks.database = 'DOWN';
+    }
+
+    if (this.queueService) {
+      checks.queue = 'UP';
+    } else {
+      checks.queue = 'STANDALONE';
+    }
+
+    if (!isDbHealthy) {
       throw new ServiceUnavailableException({
-        status: 'DOWN',
+        status: 'UNREADY',
+        checks,
+        timestamp: new Date().toISOString(),
         message: 'Hệ thống cơ sở dữ liệu tạm thời chưa sẵn sàng nhận lưu lượng truy cập',
       });
     }
+
+    return {
+      status: 'READY',
+      checks,
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**

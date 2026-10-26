@@ -27,11 +27,15 @@ import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { BankVerificationModule } from './bank-verification/bank-verification.module';
+import { IdempotencyModule } from './common/idempotency/idempotency.module';
+import { QueueModule } from './common/queues/queue.module';
 import { AppController } from './app.controller';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    QueueModule,
+    IdempotencyModule,
     ProductDiscountsModule,
     CategoriesModule,
     CustomerAddressesModule,
