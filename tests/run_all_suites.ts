@@ -183,6 +183,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'p0-security-and-concurrency.spec.ts')],
   },
+  {
+    name: '36. Phase 1 Database Transactions & Concurrency Invariants Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'phase1-transactions-concurrency.spec.ts')],
+  },
 ];
 
 async function main() {

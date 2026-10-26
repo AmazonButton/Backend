@@ -235,28 +235,17 @@ export class ProductsService {
     const finalProductName = productName || name;
     const finalPrice = basePrice !== undefined ? parseFloat(basePrice.toString()) : price !== undefined ? parseFloat(price.toString()) : undefined;
 
-    // Track price change history if price is being updated
-    if (finalPrice !== undefined && Number(existing.basePrice) !== finalPrice) {
-      try {
-        await this.productsRepo.recordPriceHistory({
-          productId: targetProductId,
+    // Prepare price change history if price is being updated
+    const hasPriceChange = finalPrice !== undefined && Number(existing.basePrice) !== finalPrice;
+    const priceHistory = hasPriceChange
+      ? {
           oldPrice: Number(existing.basePrice),
           newPrice: finalPrice,
           changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
-        });
-      } catch (err: any) {
-        this.logger.warn(`Failed to record price history for product ${targetProductId}: ${err.message}`);
-      }
-    }
+        }
+      : undefined;
 
-    if (body.stock !== undefined && !isNaN(Number(body.stock))) {
-      try {
-        await this.productsRepo.updateInventoryStock(targetProductId, existing.storeId, Number(body.stock));
-      } catch (stockErr: any) {
-        this.logger.warn(`Failed to update stock for product ${targetProductId}: ${stockErr.message}`);
-      }
-    }
-
+    const stock = body.stock !== undefined && !isNaN(Number(body.stock)) ? Number(body.stock) : undefined;
     const imageInputs = this.parseImageInputs(body);
 
     // 1. Capture existing images before update for Cloudinary asset lifecycle
@@ -271,10 +260,11 @@ export class ProductsService {
       }
     }
 
-    // 2. Perform DB update
-    const updated = await this.productsRepo.update(
-      targetProductId,
-      {
+    // 2. Perform Atomic DB update (Product, Inventory, Price History, and Images in single transaction)
+    const updated = await this.productsRepo.updateProductAtomicTx({
+      productId: targetProductId,
+      storeId: existing.storeId,
+      data: {
         ...(finalProductName ? { productName: finalProductName } : {}),
         ...(brand ? { brand } : {}),
         ...(finalPrice !== undefined ? { basePrice: finalPrice } : {}),
@@ -282,8 +272,10 @@ export class ProductsService {
         ...(description !== undefined ? { description } : {}),
         ...(body.categoryId ? { categoryId: BigInt(body.categoryId) } : {}),
       },
-      imageInputs,
-    );
+      images: imageInputs,
+      priceHistory,
+      stock,
+    });
 
     // 3. Cloudinary Asset Lifecycle: Destroy removed store assets if reference count is 0
     if (imageInputs !== undefined && oldImages.length > 0) {

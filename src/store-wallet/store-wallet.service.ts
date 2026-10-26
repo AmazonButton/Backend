@@ -13,33 +13,24 @@ import { RequestWithdrawalDto } from './dto/withdrawal.dto';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 import { WalletMapper } from './mappers/wallet.mapper';
+import { StoreWalletRepository } from './store-wallet.repository';
 
 @Injectable()
 export class StoreWalletService {
   private readonly logger = new Logger(StoreWalletService.name);
+  private readonly repo: StoreWalletRepository;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
-  ) {}
+    @Optional() @Inject(StoreWalletRepository) walletRepo?: StoreWalletRepository,
+  ) {
+    this.repo = walletRepo || new StoreWalletRepository(this.prisma);
+  }
 
   async getOrCreateStoreWallet(storeId: string | number | bigint) {
     const rawStoreId = BigInt(storeId);
-    let wallet = await this.prisma.storeWallet.findUnique({
-      where: { storeId: rawStoreId },
-    });
-
-    if (!wallet) {
-      wallet = await this.prisma.storeWallet.create({
-        data: {
-          storeId: rawStoreId,
-          balance: 0,
-          frozenBalance: 0,
-        },
-      });
-    }
-
-    return wallet;
+    return this.repo.getOrCreateStoreWallet(rawStoreId);
   }
 
   async updateBankAccount(storeId: string | number | bigint, dto: UpdateBankAccountDto) {
@@ -50,45 +41,13 @@ export class StoreWalletService {
     const accHash = CryptoVaultUtil.hashAccountNumber(cleanAcc);
     const accEncrypted = CryptoVaultUtil.encryptAccountNumber(cleanAcc);
 
-    // Bỏ isDefault ở các tài khoản cũ
-    await this.prisma.storeBankAccount.updateMany({
-      where: { storeId: rawStoreId },
-      data: { isDefault: false },
-    });
-
-    // Tạo / cập nhật tài khoản mới với trạng thái PENDING (bắt buộc xác minh lại)
-    await this.prisma.storeBankAccount.upsert({
-      where: {
-        uq_store_bank_account_store_acc_hash: {
-          storeId: rawStoreId,
-          accountNumberHash: accHash,
-        },
-      },
-      create: {
-        storeId: rawStoreId,
-        bankBin: '970422', // default BIN
-        bankName: dto.bankName,
-        accountNumberEncrypted: accEncrypted,
-        accountNumberHash: accHash,
-        accountName: dto.bankAccountHolder,
-        verificationStatus: 'PENDING',
-        isDefault: true,
-      },
-      update: {
-        bankName: dto.bankName,
-        accountName: dto.bankAccountHolder,
-        accountNumberEncrypted: accEncrypted,
-        isDefault: true,
-      },
-    });
-
-    const updated = await this.prisma.storeWallet.update({
-      where: { storeId: rawStoreId },
-      data: {
-        bankName: dto.bankName,
-        bankAccountNumber: CryptoVaultUtil.maskAccountNumber(cleanAcc),
-        bankAccountHolder: dto.bankAccountHolder,
-      },
+    const updated = await this.repo.updateBankAccountAtomicTx({
+      storeId: rawStoreId,
+      bankName: dto.bankName,
+      bankAccountHolder: dto.bankAccountHolder,
+      accountNumberHash: accHash,
+      accountNumberEncrypted: accEncrypted,
+      cleanAcc,
     });
 
     return WalletMapper.toWalletDto(updated);
@@ -546,6 +505,59 @@ export class StoreWalletService {
         },
       });
     });
+  }
+
+  /**
+   * Process PayOS Payout Webhook atomically via StoreWalletRepository
+   */
+  async processPayoutWebhook(data: any, desc?: string): Promise<{ success: boolean; message: string }> {
+    const referenceId = data?.referenceId;
+    if (!referenceId) {
+      this.logger.warn('Webhook PayOS Payout thiếu referenceId');
+      return { success: true, message: 'Đã nhận webhook (thiếu referenceId)' };
+    }
+
+    const withdrawal = await this.repo.findWithdrawalByCodeOrRef(referenceId);
+    if (!withdrawal) {
+      this.logger.warn(`Không tìm thấy yêu cầu rút tiền với ref: ${referenceId}`);
+      return { success: true, message: 'Không tìm thấy yêu cầu rút tiền tương ứng' };
+    }
+
+    const rawState =
+      data.state ||
+      data.approvalState ||
+      data.transactions?.[0]?.state ||
+      '';
+
+    const isSucceeded = ['SUCCEEDED', 'COMPLETED', 'PAID'].includes(rawState.toUpperCase());
+    const isFailed = ['FAILED', 'REJECTED', 'CANCELLED'].includes(rawState.toUpperCase());
+
+    if (isSucceeded && withdrawal.status === 'SUCCEEDED') {
+      return { success: true, message: 'Yêu cầu rút tiền đã ở trạng thái hoàn thành trước đó' };
+    }
+    if (isFailed && withdrawal.status === 'FAILED') {
+      return { success: true, message: 'Yêu cầu rút tiền đã được xử lý hoàn tiền trước đó' };
+    }
+
+    if (withdrawal.status === 'SUCCEEDED') {
+      this.logger.warn(`Bỏ qua webhook FAILED cho yêu cầu #${withdrawal.withdrawalCode} đã SUCCEEDED`);
+      return { success: true, message: 'Không thể chuyển đổi trạng thái đã thành công' };
+    }
+
+    if (isSucceeded) {
+      await this.repo.finalizePayoutSuccessTx(withdrawal.withdrawalId);
+      this.logger.log(`Hoàn tất chi tiền thành công cho yêu cầu #${withdrawal.withdrawalCode}`);
+      return { success: true, message: 'Đã hoàn tất chi tiền thành công' };
+    }
+
+    if (isFailed) {
+      const failReason = desc || 'PayOS Payout thông báo thất bại';
+      await this.refundFailedWithdrawal(withdrawal.withdrawalId, failReason);
+      this.logger.log(`Đã hoàn tiền tự động cho yêu cầu rút thất bại #${withdrawal.withdrawalCode}`);
+      return { success: true, message: 'Đã hoàn tiền yêu cầu rút thất bại' };
+    }
+
+    return { success: true, message: 'Webhook đã được ghi nhận' };
   }
 
   /**

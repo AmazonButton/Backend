@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -95,33 +95,101 @@ export class RentalsRepository {
     });
   }
 
+  async extendRentalAtomicTx(params: {
+    rentalId: bigint;
+    additionalMonths: number;
+    additionalAmount: number;
+    createPaymentTx?: boolean;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Lock the rental row with SELECT FOR UPDATE to prevent race conditions
+      const [lockedRental] = await tx.$queryRaw<Array<{
+        rental_id: bigint;
+        rental_code: string;
+        status: string;
+        end_date: Date;
+        months_rented: number;
+        total_rent_amount: any;
+      }>>`
+        SELECT rental_id, rental_code, status, end_date, months_rented, total_rent_amount
+        FROM button_rentals
+        WHERE rental_id = ${params.rentalId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRental) {
+        throw new NotFoundException('Hợp đồng thuê không tồn tại');
+      }
+
+      if (['TERMINATED', 'CANCELLED'].includes(lockedRental.status)) {
+        throw new BadRequestException('Không thể gia hạn hợp đồng thuê đã kết thúc hoặc hủy');
+      }
+
+      // 2. Calculate new expiration and amount on freshly locked state
+      const currentEnd = new Date(lockedRental.end_date);
+      const newEndDate = new Date(currentEnd.getTime() + params.additionalMonths * 30 * 24 * 60 * 60 * 1000);
+      const newMonthsRented = Number(lockedRental.months_rented) + params.additionalMonths;
+      const newTotalAmount = Number(lockedRental.total_rent_amount) + params.additionalAmount;
+
+      // 3. Atomically update button_rental
+      const updatedRental = await tx.buttonRental.update({
+        where: { rentalId: params.rentalId },
+        data: {
+          endDate: newEndDate,
+          monthsRented: newMonthsRented,
+          totalRentAmount: new Decimal(newTotalAmount),
+          updatedAt: new Date(),
+        },
+        include: {
+          package: true,
+          buttons: true,
+          customer: {
+            include: { user: true },
+          },
+          payments: { orderBy: { createdAt: 'desc' } },
+        },
+      });
+
+      // 4. Optionally generate payment transaction in same transaction
+      if (params.createPaymentTx) {
+        // Cancel prior pending payment for this rental to satisfy uq_payment_active_per_rental
+        await tx.paymentTransaction.updateMany({
+          where: { rentalId: params.rentalId, status: 'PENDING' },
+          data: { status: 'CANCELLED' },
+        });
+
+        const txCode = `EXT-RNT-${lockedRental.rental_code}-${Date.now().toString().slice(-4)}`;
+        const paymentLinkId = `pl_ext_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+        await tx.paymentTransaction.create({
+          data: {
+            rentalId: params.rentalId,
+            amount: new Decimal(params.additionalAmount),
+            provider: 'PAYOS',
+            paymentMethod: 'QR',
+            transactionCode: txCode,
+            status: 'PENDING',
+            paymentLinkId,
+            checkoutUrl: `https://pay.payos.vn/web/${paymentLinkId}`,
+            qrCode: `vietqr://pay?bin=970422&acc=1029384756&amount=${params.additionalAmount}&desc=${txCode}`,
+          },
+        });
+      }
+
+      return updatedRental;
+    });
+  }
+
   async extendRental(
     rentalId: bigint,
     newEndDate: Date,
     additionalMonths: number,
     additionalAmount: number,
   ) {
-    const current = await this.prisma.buttonRental.findUnique({
-      where: { rentalId },
-    });
-    if (!current) throw new Error('Hợp đồng thuê không tồn tại');
-
-    return this.prisma.buttonRental.update({
-      where: { rentalId },
-      data: {
-        endDate: newEndDate,
-        monthsRented: current.monthsRented + additionalMonths,
-        totalRentAmount: new Decimal(Number(current.totalRentAmount) + additionalAmount),
-        updatedAt: new Date(),
-      },
-      include: {
-        package: true,
-        buttons: true,
-        customer: {
-          include: { user: true },
-        },
-        payments: { orderBy: { createdAt: 'desc' } },
-      },
+    return this.extendRentalAtomicTx({
+      rentalId,
+      additionalMonths,
+      additionalAmount,
+      createPaymentTx: false,
     });
   }
 

@@ -1,5 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Decimal } from '@prisma/client/runtime/library';
 
 export interface ProductImageInput {
   imageUrl: string;
@@ -133,35 +134,81 @@ export class ProductsRepository {
     });
   }
 
-  async update(productId: bigint, data: any, images?: ProductImageInput[]) {
+  async updateProductAtomicTx(params: {
+    productId: bigint;
+    storeId: bigint;
+    data: any;
+    images?: ProductImageInput[];
+    priceHistory?: {
+      oldPrice: number;
+      newPrice: number;
+      changedByUserId?: bigint;
+    };
+    stock?: number;
+  }) {
     return this.prisma.$transaction(async (tx) => {
+      // 1. Lock the product row with SELECT FOR UPDATE to prevent race conditions
+      await tx.$queryRaw`
+        SELECT product_id FROM product WHERE product_id = ${params.productId} FOR UPDATE
+      `;
+
+      // 2. Insert price history if price has changed
+      if (params.priceHistory) {
+        await tx.productPriceHistory.create({
+          data: {
+            productId: params.productId,
+            oldPrice: new Decimal(params.priceHistory.oldPrice),
+            newPrice: new Decimal(params.priceHistory.newPrice),
+            ...(params.priceHistory.changedByUserId
+              ? { changedByUserId: params.priceHistory.changedByUserId }
+              : {}),
+          },
+        });
+      }
+
+      // 3. Update inventory stock atomically
+      if (params.stock !== undefined && !isNaN(params.stock)) {
+        await tx.inventory.upsert({
+          where: { productId: params.productId },
+          update: { quantityOnHand: params.stock },
+          create: {
+            storeId: params.storeId,
+            productId: params.productId,
+            quantityOnHand: params.stock,
+            reservedQuantity: 0,
+            minStockAlert: 5,
+          },
+        });
+      }
+
+      // 4. Update product entity
       const product = await tx.product.update({
-        where: { productId },
-        data,
+        where: { productId: params.productId },
+        data: params.data,
         include: {
           inventory: true,
           category: true,
         },
       });
 
-      if (images !== undefined) {
-        // Clear previous images and insert updated list
-        await tx.productImage.deleteMany({ where: { productId } });
-        if (images.length > 0) {
+      // 5. Update images if specified
+      if (params.images !== undefined) {
+        await tx.productImage.deleteMany({ where: { productId: params.productId } });
+        if (params.images.length > 0) {
           await tx.productImage.createMany({
-          data: images.map((img, idx) => ({
-            productId,
-            imageUrl: img.imageUrl,
-            cloudinaryPublicId: img.cloudinaryPublicId || null,
-            isThumbnail: img.isThumbnail !== undefined ? img.isThumbnail : idx === 0,
-            displayOrder: img.displayOrder !== undefined ? img.displayOrder : idx,
+            data: params.images.map((img, idx) => ({
+              productId: params.productId,
+              imageUrl: img.imageUrl,
+              cloudinaryPublicId: img.cloudinaryPublicId || null,
+              isThumbnail: img.isThumbnail !== undefined ? img.isThumbnail : idx === 0,
+              displayOrder: img.displayOrder !== undefined ? img.displayOrder : idx,
             })),
           });
         }
       }
 
       const currentImages = await tx.productImage.findMany({
-        where: { productId },
+        where: { productId: params.productId },
         orderBy: { displayOrder: 'asc' },
       });
 
@@ -169,6 +216,15 @@ export class ProductsRepository {
         ...product,
         images: currentImages,
       };
+    });
+  }
+
+  async update(productId: bigint, data: any, images?: ProductImageInput[]) {
+    return this.updateProductAtomicTx({
+      productId,
+      storeId: BigInt(0),
+      data,
+      images,
     });
   }
 

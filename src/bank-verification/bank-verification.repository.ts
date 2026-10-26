@@ -133,6 +133,11 @@ export class BankVerificationRepository {
 
   async setDefaultBankAccount(storeId: bigint, bankAccountId: bigint) {
     return this.prisma.$transaction(async (tx) => {
+      // Lock store row with SELECT FOR UPDATE to prevent race conditions during default switch
+      await tx.$queryRaw`
+        SELECT store_id FROM store WHERE store_id = ${storeId} FOR UPDATE
+      `;
+
       await tx.storeBankAccount.updateMany({
         where: { storeId },
         data: { isDefault: false },

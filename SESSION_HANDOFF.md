@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 35/35 test suites verified passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), zero plaintext bank storage enforced, manual transfer route decommissioned, canonical payout webhook signature verified, distributed session/token revocation active, and P0 payout refund/active payment/secrets invariants deployed.
+> **Status:** All 36/36 test suites verified passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), zero plaintext bank storage enforced, manual transfer route decommissioned, canonical payout webhook signature verified, distributed session/token revocation active, P0 payout refund/active payment/secrets invariants deployed, and Phase 1 database transactions & concurrency invariants fully implemented.
 
 ---
 
@@ -12,7 +12,7 @@
 - Check TypeScript types: `npx tsc --noEmit`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (35 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run All Tests (36 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
 - Individual Suite Commands:
   - Suite 1 (Firebase Phone Auth): `npx tsx tests/firebase-phone-auth.spec.ts`
   - Suite 2 (FCM Notifications): `npx tsx tests/notifications-fcm.spec.ts`
@@ -49,6 +49,7 @@
   - Suite 33 (Store-Customer Relationship CRM Module): `npx tsx tests/store-customer-crm.spec.ts`
   - Suite 34 (Analytics Date Range & Grouping Filters): `npx tsx tests/store-analytics-filters.spec.ts`
   - Suite 35 (P0 Security, Payout Refund & Concurrency Invariants): `npx tsx tests/p0-security-and-concurrency.spec.ts`
+  - Suite 36 (Phase 1 Database Transactions & Concurrency Invariants): `npx tsx tests/phase1-transactions-concurrency.spec.ts`
 
 ---
 
@@ -915,10 +916,34 @@ When starting a new conversation, prompt the agent with:
       - **Suite 35 (`tests/p0-security-and-concurrency.spec.ts`):**
         - Verified 10/10 assertions passing: payout failure refund, refund idempotency, active payment unique index enforcement, default bank account constraint enforcement, and crypto vault fail-fast validation.
 
+   9. **[2026-10-26] Phase 1 Database Transactions & Concurrency Invariants (TX-02, TX-03, TX-04, TX-06, CC-03):**
+      - **TX-02 (Atomic Product Update, Stock & Price History):**
+        - Added `updateProductAtomicTx` in [`src/products/products.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/products/products.repository.ts) acquiring row-level lock (`SELECT product_id FROM product WHERE product_id = $1 FOR UPDATE`).
+        - Bundled product core update, inventory upsert, price history recording (`oldPrice` vs `newPrice`), and image replacement into a single transaction rollback boundary.
+        - Refactored [`src/products/products.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/products/products.service.ts) to delegate completely to `updateProductAtomicTx`.
+      - **TX-03 (Atomic Rental Extension with Non-Terminal Concurrency Lock):**
+        - Added `extendRentalAtomicTx` in [`src/rentals/rentals.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.repository.ts) with `SELECT rental_id, status FROM button_rentals WHERE rental_id = $1 FOR UPDATE`.
+        - Rejects extension if rental status is in terminal state (`TERMINATED`, `CANCELLED`).
+        - Atomically recalculates `monthsRented`, `endDate`, and `totalRentAmount`.
+        - Satisfies `uq_payment_active_per_rental` by canceling prior `PENDING` payment before creating new extension payment.
+      - **TX-04 (Store Default Bank Account Switching Invariant):**
+        - In [`src/bank-verification/bank-verification.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/bank-verification.repository.ts) and [`src/store-wallet/store-wallet.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.repository.ts): added explicit store locking (`SELECT store_id FROM store WHERE store_id = $1 FOR UPDATE`).
+        - Reset prior default account and activated new default account within an atomic transaction, guaranteeing zero race conditions against `uq_default_bank_account_per_store`.
+      - **TX-06 (6-Layer DB Isolation & Repository Separation):**
+        - Created [`src/store-wallet/store-wallet.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.repository.ts) encapsulating wallet queries, encrypted bank update, and payout finalization.
+        - Refactored [`src/store-wallet/store-wallet.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.service.ts) to delegate to repository and exposed `processPayoutWebhook`.
+        - Refactored [`src/payments/payout-webhook.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payout-webhook.controller.ts): removed direct Prisma query execution; controller only validates headers/signature and delegates business handling to `StoreWalletService`.
+      - **CC-03 (Deadlock & Transient Concurrency Retry Utility):**
+        - Created [`src/common/utils/transaction-retry.util.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/utils/transaction-retry.util.ts) detecting transient conflict codes (`P2034`, `40P01`, `40001`, `deadlock detected`, `could not serialize access`).
+        - Provides `runWithTransactionRetry` with exponential backoff and randomized jitter (full jitter) to break deadlock collisions.
+      - **Suite 36 (`tests/phase1-transactions-concurrency.spec.ts`):**
+        - Verified 16/16 assertions passing: TX-02 atomic rollback, TX-03 serialized rental extensions, TX-04 atomic default bank switch, and CC-03 transient conflict retry.
+
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
   - `npx prisma migrate deploy` — **PASS (23 migrations applied)**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - Verified Suites: Suite 14 (16/16), Suite 35 (10/10) — **100% PASS**.
+  - Verified Suites: Suite 14 (16/16), Suite 35 (10/10), Suite 36 (16/16) — **100% PASS**.
+
 
