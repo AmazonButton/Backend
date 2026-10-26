@@ -75,8 +75,11 @@ async function runPhase3QueueSuite() {
       },
     );
 
-    // Wait for retries to complete (60ms, 120ms + poll delays)
-    await new Promise((r) => setTimeout(r, 450));
+    // Wait for retries to complete (accounting for exponential backoff + jitter)
+    const startRetryWait = Date.now();
+    while (retryAttempts < 3 && Date.now() - startRetryWait < 1500) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
 
     assert(retryAttempts === 3, `Job retried across failed attempts: expected 3, got ${retryAttempts}`);
 
