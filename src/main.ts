@@ -18,6 +18,7 @@ async function bootstrap() {
     'OTP_PEPPER',
     'BANK_ACCOUNT_ENCRYPTION_KEY',
     'BANK_ACCOUNT_HASH_SALT',
+    ...(process.env.NODE_ENV === 'production' ? ['GOOGLE_CLIENT_ID'] : []),
   ];
   for (const envVar of requiredEnvVars) {
     if (!process.env[envVar]) {
@@ -31,15 +32,13 @@ async function bootstrap() {
   // Configure trust proxy for secure req.ip resolution behind reverse proxies (configurable via TRUST_PROXY env)
   const trustProxyEnv = process.env.TRUST_PROXY;
   if (trustProxyEnv) {
-    const parsed =
-      trustProxyEnv === 'true'
-        ? true
-        : trustProxyEnv === 'false'
-        ? false
-        : isNaN(Number(trustProxyEnv))
-        ? trustProxyEnv
-        : Number(trustProxyEnv);
-    (app.getHttpAdapter().getInstance() as any).set('trust proxy', parsed);
+    if (trustProxyEnv === 'true') {
+      console.warn('⚠️ WARNING: TRUST_PROXY=true trusts all proxy hops. Use an explicit hop count (e.g. 1) or trusted CIDRs in production.');
+      (app.getHttpAdapter().getInstance() as any).set('trust proxy', true);
+    } else {
+      const parsed = isNaN(Number(trustProxyEnv)) ? trustProxyEnv : Number(trustProxyEnv);
+      (app.getHttpAdapter().getInstance() as any).set('trust proxy', parsed);
+    }
   } else if (process.env.NODE_ENV === 'production') {
     (app.getHttpAdapter().getInstance() as any).set('trust proxy', 1);
   }

@@ -29,10 +29,12 @@ import { RegisterByPhoneDto } from './dto/register-by-phone.dto';
 import { LoginByPhoneDto } from './dto/login-by-phone.dto';
 import { FirebasePhoneService } from './firebase-phone.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly googleOAuthClient = new OAuth2Client();
   private resendCooldowns = new Map<string, number>();
 
   private getOtpPepper(): string {
@@ -256,84 +258,85 @@ export class AuthService {
     if (rawToken) {
       const expectedAud = process.env.GOOGLE_CLIENT_ID;
 
-      // 1. Try Google OAuth 2.0 access token via tokeninfo + userinfo verification
-      try {
-        const tokenInfoRes = await fetch(
-          `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(rawToken)}`,
-        );
-        if (tokenInfoRes.ok) {
-          const tData: any = await tokenInfoRes.json();
-          const isEmailVerified =
-            tData.verified_email === true ||
-            tData.verified_email === 'true' ||
-            tData.email_verified === 'true' ||
-            tData.email_verified === true;
-          const tokenAud = tData.audience || tData.issued_to;
-          const audValid = expectedAud
-            ? tokenAud === expectedAud
-            : process.env.NODE_ENV !== 'production';
-
-          if (tData.email && isEmailVerified && audValid) {
-            verifiedUser = {
-              email: tData.email,
-              name: tData.email.split('@')[0],
-              id: tData.user_id || tData.sub,
-            };
-            try {
-              const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                headers: { Authorization: `Bearer ${rawToken}` },
-              });
-              if (googleRes.ok) {
-                const gData: any = await googleRes.json();
-                if (gData.name) verifiedUser.name = gData.name;
-                if (gData.picture) verifiedUser.picture = gData.picture;
-              }
-            } catch (_) {}
-          }
+      // Helper: Fetch with strict 5-second timeout and guaranteed timer cleanup
+      const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 5000) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          return await fetch(url, { ...options, signal: controller.signal });
+        } finally {
+          clearTimeout(timer);
         }
-      } catch (_) {}
+      };
 
-      // 2. Try Google ID Token verification (tokeninfo endpoint)
+      // 1. Primary: Verify Google ID token via google-auth-library
+      // Cryptographically checks RSA signature against Google's public certs, expiry, and audience locally
+      try {
+        const ticket = await this.googleOAuthClient.verifyIdToken({
+          idToken: rawToken,
+          audience: expectedAud || undefined,
+        });
+        const payload = ticket.getPayload();
+        const isEmailVerified =
+          payload?.email_verified === true || (payload as any)?.email_verified === 'true';
+
+        if (payload?.email && isEmailVerified) {
+          verifiedUser = {
+            email: payload.email,
+            name: payload.name || payload.email.split('@')[0],
+            picture: payload.picture,
+            id: payload.sub,
+          };
+        }
+      } catch (err: any) {
+        this.logger.debug(`google-auth-library ID token verification failed/skipped: ${err?.message}`);
+      }
+
+      // 2. Secondary: If token is a Google OAuth2 Access Token, query tokeninfo and userinfo with timeout
       if (!verifiedUser) {
         try {
-          const idTokenRes = await fetch(
-            `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(rawToken)}`,
+          const tokenInfoRes = await fetchWithTimeout(
+            `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(rawToken)}`,
           );
-          if (idTokenRes.ok) {
-            const tokenData: any = await idTokenRes.json();
-            const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
+          if (tokenInfoRes.ok) {
+            const tData: any = await tokenInfoRes.json();
             const isEmailVerified =
-              tokenData.email_verified === 'true' || tokenData.email_verified === true;
-            const isNotExpired =
-              tokenData.exp && Number(tokenData.exp) * 1000 > Date.now();
+              tData.verified_email === true ||
+              tData.verified_email === 'true' ||
+              tData.email_verified === 'true' ||
+              tData.email_verified === true;
+            const tokenAud = tData.audience || tData.issued_to;
             const audValid = expectedAud
-              ? tokenData.aud === expectedAud
+              ? tokenAud === expectedAud
               : process.env.NODE_ENV !== 'production';
 
-            if (
-              tokenData.email &&
-              validIssuers.includes(tokenData.iss) &&
-              isEmailVerified &&
-              isNotExpired &&
-              audValid
-            ) {
+            if (tData.email && isEmailVerified && audValid) {
               verifiedUser = {
-                email: tokenData.email,
-                name: tokenData.name,
-                picture: tokenData.picture,
-                id: tokenData.sub,
+                email: tData.email,
+                name: tData.email.split('@')[0],
+                id: tData.user_id || tData.sub,
               };
+              try {
+                const googleRes = await fetchWithTimeout('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${rawToken}` },
+                });
+                if (googleRes.ok) {
+                  const gData: any = await googleRes.json();
+                  if (gData.name) verifiedUser.name = gData.name;
+                  if (gData.picture) verifiedUser.picture = gData.picture;
+                }
+              } catch (_) {}
             }
           }
         } catch (_) {}
       }
 
-      // 3. Fallback to Supabase Auth API if not verified via Google UserInfo
+      // 3. Fallback to Supabase Auth API if not verified via Google
       if (!verifiedUser) {
         const supabaseUrl = process.env.SUPABASE_URL || 'https://gultdgalicgqhvquxizs.supabase.co';
         const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
         try {
-          const sRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+          const sRes = await fetchWithTimeout(`${supabaseUrl}/auth/v1/user`, {
             headers: {
               Authorization: `Bearer ${rawToken}`,
               apikey: anonKey,

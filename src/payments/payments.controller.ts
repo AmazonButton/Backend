@@ -36,7 +36,7 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(IdempotencyInterceptor)
   @Post('payos/create-link')
-  @Idempotent({ required: false, ttlSeconds: 86400 })
+  @Idempotent({ required: true, ttlSeconds: 86400 })
   createLink(@Body() body: CreatePaymentLinkDto, @Request() req: any) {
     const userId = req.user?.userId ? BigInt(req.user.userId) : undefined;
     return this.paymentsService.createPayosPaymentLink(body, userId);

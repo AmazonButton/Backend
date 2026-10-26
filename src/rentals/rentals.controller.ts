@@ -31,7 +31,7 @@ export class RentalsController {
 
   @UseGuards(JwtAuthGuard)
   @Post('order')
-  @Idempotent({ required: false, ttlSeconds: 86400 })
+  @Idempotent({ required: true, ttlSeconds: 86400 })
   async createRentalOrder(@Request() req: any, @Body() body: CreateRentalOrderDto) {
     const customerProfileId = req.user.customerProfileId;
     if (!customerProfileId) {
@@ -65,6 +65,7 @@ export class RentalsController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':id/payment-requests')
+  @Idempotent({ required: true, ttlSeconds: 86400 })
   async createPaymentRequest(@Param('id') id: string, @Request() req: any) {
     const data = await this.rentalsService.createRentalPaymentRequest(id, req.user);
     return {
@@ -76,7 +77,7 @@ export class RentalsController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':id/extensions')
-  @Idempotent({ required: false, ttlSeconds: 86400 })
+  @Idempotent({ required: true, ttlSeconds: 86400 })
   async extendRental(
     @Param('id') id: string,
     @Body() body: RentalExtensionDto,

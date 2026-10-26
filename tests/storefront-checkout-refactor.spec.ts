@@ -91,7 +91,10 @@ async function runStorefrontCheckoutRefactorSuite() {
 
     const res = await fetch(`${BASE_URL}/storefront/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `ORD-TEST-1-${Date.now()}`,
+      },
       body: JSON.stringify(orderPayload),
     });
 
@@ -138,7 +141,10 @@ async function runStorefrontCheckoutRefactorSuite() {
     // -------------------------------------------------------------------------
     const invalidStoreRes = await fetch(`${BASE_URL}/storefront/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `ORD-TEST-2-${Date.now()}`,
+      },
       body: JSON.stringify({
         ...orderPayload,
         storeId: '99999999',
@@ -158,7 +164,10 @@ async function runStorefrontCheckoutRefactorSuite() {
     // -------------------------------------------------------------------------
     const excessiveRes = await fetch(`${BASE_URL}/storefront/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': `ORD-TEST-3-${Date.now()}`,
+      },
       body: JSON.stringify({
         ...orderPayload,
         items: [{ productId: testProduct.productId.toString(), quantity: 9999 }],

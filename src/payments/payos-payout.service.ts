@@ -126,7 +126,6 @@ export class PayOSPayoutService {
         body: JSON.stringify(params),
         signal: abortController.signal,
       });
-      clearTimeout(timeoutHandle);
 
       const result = await response.json();
 
@@ -143,9 +142,10 @@ export class PayOSPayoutService {
       return result;
     } catch (err: any) {
       if (err instanceof BadRequestException) throw err;
-      if (err instanceof BadRequestException) throw err;
       this.logger.error(`PayOS Payout request network error: ${err.message}`);
-      throw new InternalServerErrorException(`L?i k?t n?i t?i PayOS Payout API: ${err.message}`);
+      throw new InternalServerErrorException(`Lỗi kết nối tới PayOS Payout API: ${err.message}`);
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 
@@ -178,11 +178,12 @@ export class PayOSPayoutService {
         },
         signal: abortController.signal,
       });
-      clearTimeout(timeoutHandle);
       return await response.json();
     } catch (err: any) {
       this.logger.error(`PayOS getPayout error: ${err.message}`);
-      throw new InternalServerErrorException(`Kh�ng th? tra c?u payout: ${err.message}`);
+      throw new InternalServerErrorException(`Không thể tra cứu payout: ${err.message}`);
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 

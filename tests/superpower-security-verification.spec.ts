@@ -13,6 +13,10 @@ import { ProductsRepository } from '../src/products/products.repository';
 import { OptionalJwtAuthGuard } from '../src/common/guards/optional-jwt-auth.guard';
 import { LogoutJwtGuard } from '../src/auth/guards/logout-jwt.guard';
 import { AppController } from '../src/app.controller';
+import { StorefrontController } from '../src/orders/storefront.controller';
+import { PaymentsController } from '../src/payments/payments.controller';
+import { RentalsController } from '../src/rentals/rentals.controller';
+import { Reflector } from '@nestjs/core';
 import { of, throwError } from 'rxjs';
 import {
   BadRequestException,
@@ -22,7 +26,24 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 
-const prisma = new PrismaClient();
+const testDatabaseUrl = process.env.TEST_DATABASE_URL?.trim();
+if (!testDatabaseUrl) {
+  console.error(
+    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL environment variable is mandatory to run Suite 41!',
+  );
+  console.error(
+    'Refusing to run test suite against development, production, or default database.\n',
+  );
+  process.exit(1);
+}
+
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: testDatabaseUrl,
+    },
+  },
+});
 
 let passed = 0;
 let failed = 0;
@@ -45,12 +66,10 @@ async function runSuperpowersVerificationSuite() {
   console.log('🛡️ RUNNING SUPERPOWERS VERIFICATION & SECURITY AUDIT SUITE');
   console.log('================================================================\n');
 
-  // Database safety guard: Never run tests against production database without explicit TEST_DATABASE_URL
-  if (process.env.NODE_ENV === 'production' && !process.env.TEST_DATABASE_URL) {
-    throw new Error(
-      'Refusing to run test suite directly against production DATABASE_URL without explicit TEST_DATABASE_URL!',
-    );
-  }
+  // Purge any stale synthetic user residue from prior aborted runs
+  await prisma.user.deleteMany({
+    where: { username: { startsWith: 'sp_user_' } },
+  });
 
   const jwtSecret =
     process.env.JWT_SECRET || 'ci_test_jwt_secret_key_minimum_32_characters_long_for_security!';
@@ -193,6 +212,75 @@ async function runSuperpowersVerificationSuite() {
       invalidTokenCaught === true,
       'Unverified Google token or token substitution rejected with 401 Unauthorized',
     );
+
+    // 1.3 Deterministic Google ID Token Audience Verification (via OAuth2Client.verifyIdToken)
+    const expectedClientId = 'expected-production-client-id.apps.googleusercontent.com';
+    process.env.GOOGLE_CLIENT_ID = expectedClientId;
+
+    const originalVerifyIdToken = (authService as any).googleOAuthClient.verifyIdToken;
+    (authService as any).googleOAuthClient.verifyIdToken = async (opts: any) => {
+      if (opts.audience && opts.audience !== 'expected-production-client-id.apps.googleusercontent.com') {
+        throw new Error('Wrong recipient, payload audience != requiredAudience');
+      }
+      if (opts.idToken === 'token_with_wrong_audience') {
+        throw new Error('Token used with wrong audience');
+      }
+      if (opts.idToken === 'token_with_unverified_email') {
+        return {
+          getPayload: () => ({
+            email: 'unverified@amazonbutton.vn',
+            email_verified: false,
+            sub: 'google_111',
+          }),
+        };
+      }
+      if (opts.idToken === 'valid_id_token') {
+        return {
+          getPayload: () => ({
+            email: 'verified_google_user@amazonbutton.vn',
+            email_verified: true,
+            sub: 'google_222',
+            name: 'Verified Google User',
+          }),
+        };
+      }
+      throw new Error('Invalid token');
+    };
+
+    let wrongAudienceRejected = false;
+    try {
+      await authService.googleLogin({ token: 'token_with_wrong_audience' });
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        wrongAudienceRejected = true;
+      }
+    }
+    assert(
+      wrongAudienceRejected === true,
+      'Deterministic Google OAuth: Token with mismatched audience rejected with 401 Unauthorized',
+    );
+
+    let unverifiedEmailRejected = false;
+    try {
+      await authService.googleLogin({ token: 'token_with_unverified_email' });
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        unverifiedEmailRejected = true;
+      }
+    }
+    assert(
+      unverifiedEmailRejected === true,
+      'Deterministic Google OAuth: Token with email_verified=false rejected with 401 Unauthorized',
+    );
+
+    const validGoogleLoginRes = await authService.googleLogin({ token: 'valid_id_token' });
+    assert(
+      validGoogleLoginRes?.data?.user?.email === 'verified_google_user@amazonbutton.vn',
+      'Deterministic Google OAuth: Valid ID token with matching audience and verified email succeeds',
+    );
+
+    // Restore verifyIdToken and env
+    (authService as any).googleOAuthClient.verifyIdToken = originalVerifyIdToken;
 
     process.env.NODE_ENV = originalNodeEnv;
     process.env.GOOGLE_CLIENT_ID = originalGoogleClientId;
@@ -345,6 +433,38 @@ async function runSuperpowersVerificationSuite() {
     // 4. P0 SCOPED IDEMPOTENCY & LEASE LOCK TOKEN & INTERCEPTOR END-TO-END
     // ========================================================================
     console.log('\n--- 4. P0 Scoped Idempotency, Lease Lock Token & Interceptor End-to-End ---');
+
+    // 4.0 Real Controller Metadata Verification: Confirm all financial mutation endpoints mandate @Idempotent({ required: true, ttlSeconds: 86400 })
+    const realReflector = new Reflector();
+    const checkoutMeta = realReflector.get(IDEMPOTENCY_OPTIONS_KEY, StorefrontController.prototype.checkout);
+    assert(
+      checkoutMeta?.required === true && checkoutMeta?.ttlSeconds === 86400,
+      'Real StorefrontController.checkout enforces @Idempotent({ required: true, ttlSeconds: 86400 })',
+    );
+
+    const paymentLinkMeta = realReflector.get(IDEMPOTENCY_OPTIONS_KEY, PaymentsController.prototype.createLink);
+    assert(
+      paymentLinkMeta?.required === true && paymentLinkMeta?.ttlSeconds === 86400,
+      'Real PaymentsController.createLink enforces @Idempotent({ required: true, ttlSeconds: 86400 })',
+    );
+
+    const rentalOrderMeta = realReflector.get(IDEMPOTENCY_OPTIONS_KEY, RentalsController.prototype.createRentalOrder);
+    assert(
+      rentalOrderMeta?.required === true && rentalOrderMeta?.ttlSeconds === 86400,
+      'Real RentalsController.createRentalOrder enforces @Idempotent({ required: true, ttlSeconds: 86400 })',
+    );
+
+    const rentalPaymentReqMeta = realReflector.get(IDEMPOTENCY_OPTIONS_KEY, RentalsController.prototype.createPaymentRequest);
+    assert(
+      rentalPaymentReqMeta?.required === true && rentalPaymentReqMeta?.ttlSeconds === 86400,
+      'Real RentalsController.createPaymentRequest enforces @Idempotent({ required: true, ttlSeconds: 86400 })',
+    );
+
+    const rentalExtMeta = realReflector.get(IDEMPOTENCY_OPTIONS_KEY, RentalsController.prototype.extendRental);
+    assert(
+      rentalExtMeta?.required === true && rentalExtMeta?.ttlSeconds === 86400,
+      'Real RentalsController.extendRental enforces @Idempotent({ required: true, ttlSeconds: 86400 })',
+    );
 
     const sharedKey = `IDEMP-TOKEN-${uniqueRunId}`;
     cleanupIdempotencyKeys.push(sharedKey);
@@ -657,32 +777,42 @@ async function runSuperpowersVerificationSuite() {
 
   } finally {
     console.log('\n--- Cleaning up isolated test artifacts ---');
-    if (createdWalletId) {
-      await prisma.storeWallet.deleteMany({ where: { walletId: createdWalletId } }).catch(() => {});
+    try {
+      if (createdWalletId) {
+        await prisma.storeWallet.deleteMany({ where: { walletId: createdWalletId } });
+      }
+      for (const wId of cleanupWithdrawalIds) {
+        await prisma.storeWithdrawal.deleteMany({ where: { withdrawalId: wId } });
+      }
+      for (const pId of cleanupProductIds) {
+        await prisma.productPriceHistory.deleteMany({ where: { productId: pId } });
+        await prisma.product.deleteMany({ where: { productId: pId } });
+      }
+      if (createdStoreId) {
+        await prisma.store.deleteMany({ where: { storeId: createdStoreId } });
+      }
+      for (const key of cleanupIdempotencyKeys) {
+        await prisma.apiIdempotencyKey.deleteMany({ where: { idempotencyKey: key } });
+      }
+      if (createdUserId) {
+        await prisma.apiIdempotencyKey.deleteMany({ where: { userId: createdUserId } });
+        await prisma.user.deleteMany({ where: { userId: createdUserId } });
+      }
+      // Purge synthetic user residue with sp_user_ prefix
+      await prisma.user.deleteMany({
+        where: { username: { startsWith: 'sp_user_' } },
+      });
+      await prisma.deadLetterJob.deleteMany({
+        where: { queueName: 'superpower-dlq-test-queue' },
+      });
+    } catch (cleanupErr: any) {
+      console.error('❌ Teardown/Cleanup failed:', cleanupErr);
+      failed++;
+      throw new Error(`Suite cleanup failed: ${cleanupErr?.message}`);
+    } finally {
+      await queueService.onModuleDestroy().catch(() => {});
+      await prisma.$disconnect().catch(() => {});
     }
-    for (const wId of cleanupWithdrawalIds) {
-      await prisma.storeWithdrawal.deleteMany({ where: { withdrawalId: wId } }).catch(() => {});
-    }
-    for (const pId of cleanupProductIds) {
-      await prisma.productPriceHistory.deleteMany({ where: { productId: pId } }).catch(() => {});
-      await prisma.product.deleteMany({ where: { productId: pId } }).catch(() => {});
-    }
-    if (createdStoreId) {
-      await prisma.store.deleteMany({ where: { storeId: createdStoreId } }).catch(() => {});
-    }
-    for (const key of cleanupIdempotencyKeys) {
-      await prisma.apiIdempotencyKey.deleteMany({ where: { idempotencyKey: key } }).catch(() => {});
-    }
-    if (createdUserId) {
-      await prisma.apiIdempotencyKey.deleteMany({ where: { userId: createdUserId } }).catch(() => {});
-      await prisma.user.deleteMany({ where: { userId: createdUserId } }).catch(() => {});
-    }
-    await prisma.deadLetterJob.deleteMany({
-      where: { queueName: 'superpower-dlq-test-queue' },
-    }).catch(() => {});
-
-    await queueService.onModuleDestroy().catch(() => {});
-    await prisma.$disconnect().catch(() => {});
   }
 
   console.log('\n================================================================');

@@ -22,7 +22,7 @@ export class StorefrontController {
   ) {}
 
   @Post()
-  @Idempotent({ required: false, ttlSeconds: 86400 })
+  @Idempotent({ required: true, ttlSeconds: 86400 })
   async checkout(@Request() req: any, @Body() body: CreateStorefrontOrderDto) {
     return this.ordersService.createStorefrontOrder(body, req.user?.userId);
   }

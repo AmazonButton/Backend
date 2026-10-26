@@ -91,12 +91,18 @@ async function runInventoryConcurrencyRaceSuite() {
     const [res1, res2] = await Promise.all([
       fetch(`${BASE_URL}/storefront/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `RACE-1-${Date.now()}`,
+        },
         body: JSON.stringify(orderPayload),
       }),
       fetch(`${BASE_URL}/storefront/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `RACE-2-${Date.now()}`,
+        },
         body: JSON.stringify(orderPayload),
       }),
     ]);
