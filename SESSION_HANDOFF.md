@@ -1064,12 +1064,21 @@ When starting a new conversation, prompt the agent with:
 - **Verification Matrix:**
   - `git diff --check` — **PASS**
   - `npx prisma validate` — **PASS**
+  - `npx prisma generate` — **PASS (Generated Prisma Client v5.22.0)**
   - `npx prisma migrate status` — **PASS (29 migrations found, database schema is up to date)**
-  - `npx tsc --noEmit` — **PASS (0 errors)**
-  - `npm run build` — **PASS (0 errors)**
-  - Suite 37 Phase 2 Idempotency Platform (`tests/phase2-idempotency-platform.spec.ts`) — **PASS (22/22 assertions passed)**
-  - Suite 38 Phase 3 Queues & DLQ (`tests/phase3-queues-retry-dlq.spec.ts`) — **PASS (19/19 assertions passed)**
-  - Suite 41 Safety Guards:
-    - Without `TEST_DATABASE_URL`: **PASS (Exits with code 1)**
-    - With identical `DATABASE_URL`: **PASS (Exits with code 1)**
-    - With Supabase cloud URL: **PASS (Exits with code 1, blocks destructive fixtures)**
+  - `npx tsc --noEmit` — **PASS (0 errors, strict typechecking verified)**
+  - `npm run build` — **PASS (0 errors, NestJS production build completed successfully)**
+  - Suite 41 & Suite 37 Security Guards:
+    - Without `TEST_DATABASE_URL`: **PASS (Refuses execution with code 1, prevents cloud DB execution)**
+    - With identical `DATABASE_URL`: **PASS (Refuses execution with code 1, prevents primary DB mutation)**
+    - With non-whitelisted remote URL: **PASS (Refuses execution with code 1, protects staging/prod clouds)**
+  - Financial Idempotency Contract:
+    - Real controller metadata via NestJS `Reflector` verified on `StorefrontController.checkout`, `PaymentsController.createLink`, `RentalsController.createRentalOrder`, `RentalsController.createPaymentRequest`, `RentalsController.extendRental`, `StoreWalletController.requestWithdrawal` (`required: true, ttlSeconds: 86400`).
+  - Google OAuth Anti-Takeover:
+    - Cryptographic ID token verification via `OAuth2Client.verifyIdToken({ idToken, audience })`.
+    - `PROVIDER_SUBJECT_MISMATCH` blocks account linking when user email is already bound to a different Google `sub`.
+    - External HTTP requests enforce 5000ms `AbortController` timeouts with guaranteed cleanup in `finally`.
+  - Authoritative PostgreSQL DLQ:
+    - Retrying jobs claim state in DB and assign deterministic `replayJobId = dlq-replay:<id>`.
+    - Stale retrying jobs automatically reclaimed via `reconcileStaleRetryingJobs(timeoutMs)` back to `DEAD`.
+    - Synthetic test residue (`sp_user_*`) purged automatically on startup and teardown.

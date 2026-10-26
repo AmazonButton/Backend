@@ -56,6 +56,7 @@ model User {
   identityVerificationSessions IdentityVerificationSession[]
   notifications                Notification[]
   apiIdempotencyKeys           ApiIdempotencyKey[]
+  authIdentities               UserAuthIdentity[]
 
   @@unique([authProvider, providerSubject], map: "uq_users_auth_provider_subject")
   @@map("users")
@@ -924,11 +925,29 @@ model DeadLetterJob {
   failedReason String?   @map("failed_reason") @db.Text
   stacktrace   String[]  @default([]) @map("stacktrace")
   status       String    @default("DEAD") @map("status") @db.VarChar(32)
+  replayJobId  String?   @map("replay_job_id") @db.VarChar(128)
   failedAt     DateTime  @default(now()) @map("failed_at") @db.Timestamptz(6)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([queueName], map: "idx_dead_letter_queue_name")
   @@index([status], map: "idx_dead_letter_status")
+  @@index([replayJobId], map: "idx_dead_letter_replay_job_id")
   @@map("dead_letter_jobs")
 }
+
+model UserAuthIdentity {
+  id              String   @id @default(uuid()) @map("id") @db.Uuid
+  userId          BigInt   @map("user_id")
+  provider        String   @map("provider") @db.VarChar(32)
+  providerSubject String   @map("provider_subject") @db.VarChar(255)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([provider, providerSubject], name: "uq_user_auth_identities_provider_subject", map: "uq_user_auth_identities_provider_subject")
+  @@index([userId], map: "idx_user_auth_identities_user_id")
+  @@map("user_auth_identities")
+}
+

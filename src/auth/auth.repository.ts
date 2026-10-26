@@ -284,20 +284,76 @@ export class AuthRepository {
   }
 
   async findByProviderSubject(authProvider: string, providerSubject: string) {
+    // 1. Check user_auth_identities table first
+    const identity = await this.prisma.userAuthIdentity.findUnique({
+      where: {
+        uq_user_auth_identities_provider_subject: {
+          provider: authProvider,
+          providerSubject,
+        },
+      },
+      include: {
+        user: {
+          include: {
+            customerProfile: { include: { addresses: true } },
+            ownedStores: true,
+            storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+            authIdentities: true,
+          },
+        },
+      },
+    });
+    if (identity?.user) return identity.user;
+
+    // 2. Fallback to direct columns on user for backwards compatibility
     return this.prisma.user.findFirst({
       where: { authProvider, providerSubject },
       include: {
         customerProfile: { include: { addresses: true } },
         ownedStores: true,
         storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+        authIdentities: true,
       },
     });
   }
 
+  async findIdentityForUserAndProvider(userId: bigint, provider: string) {
+    return this.prisma.userAuthIdentity.findFirst({
+      where: { userId, provider },
+    });
+  }
+
   async linkProviderSubject(userId: bigint, authProvider: string, providerSubject: string) {
-    return this.prisma.user.update({
-      where: { userId },
-      data: { authProvider, providerSubject },
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Upsert into user_auth_identities table
+      await tx.userAuthIdentity.upsert({
+        where: {
+          uq_user_auth_identities_provider_subject: {
+            provider: authProvider,
+            providerSubject,
+          },
+        },
+        create: {
+          userId,
+          provider: authProvider,
+          providerSubject,
+        },
+        update: {
+          userId,
+        },
+      });
+
+      // 2. Sync to direct user columns and return updated user object
+      return tx.user.update({
+        where: { userId },
+        data: { authProvider, providerSubject },
+        include: {
+          customerProfile: { include: { addresses: true } },
+          ownedStores: true,
+          storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+          authIdentities: true,
+        },
+      });
     });
   }
 

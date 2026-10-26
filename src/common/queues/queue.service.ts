@@ -23,6 +23,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   private isShuttingDown = false;
   private workerInterval: NodeJS.Timeout | null = null;
+  private reconciliationInterval: NodeJS.Timeout | null = null;
   private activeConcurrency = 0;
   private readonly MAX_CONCURRENCY = 10;
 
@@ -31,6 +32,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     await this.initRedisAndBullMQ();
     this.startWorkerLoop();
+    this.startReconciliationScheduler();
   }
 
   async onModuleDestroy() {
@@ -38,6 +40,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     if (this.workerInterval) {
       clearInterval(this.workerInterval);
       this.workerInterval = null;
+    }
+    if (this.reconciliationInterval) {
+      clearInterval(this.reconciliationInterval);
+      this.reconciliationInterval = null;
     }
 
     // Gracefully close BullMQ workers
@@ -95,6 +101,44 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     return true; // Resilient in-memory mode is ready in dev/test
+  }
+
+  private startReconciliationScheduler() {
+    if (!this.prisma) return;
+    // Immediate startup reconciliation
+    this.reconcileStaleRetryingJobs().catch((err) => {
+      this.logger.error(`Initial startup DLQ reconciliation encountered error: ${err.message}`);
+    });
+
+    // Run periodic check every 60 seconds
+    this.reconciliationInterval = setInterval(() => {
+      if (!this.isShuttingDown) {
+        this.reconcileStaleRetryingJobs().catch((err) => {
+          this.logger.error(`Periodic DLQ reconciliation encountered error: ${err.message}`);
+        });
+      }
+    }, 60000);
+  }
+
+  private async handleJobCompletion(job: QueueJob) {
+    if (job.id.startsWith('dlq-replay:')) {
+      const dlqId = job.id.replace('dlq-replay:', '');
+      if (this.prisma) {
+        try {
+          await this.prisma.deadLetterJob.update({
+            where: { id: dlqId },
+            data: {
+              status: 'RESOLVED',
+              failedReason: null,
+            },
+          });
+          this.logger.log(`DLQ job ${dlqId} (replay ${job.id}) processed successfully and marked RESOLVED in DB.`);
+        } catch (dbErr: any) {
+          this.logger.error(`Failed to mark DLQ job ${dlqId} as RESOLVED: ${dbErr.message}`);
+        }
+      }
+      this.deadLetterStore.delete(dlqId);
+    }
   }
 
   private maskUrl(url: string): string {
@@ -226,6 +270,19 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           concurrency: 5,
         },
       );
+
+      worker.on('completed', async (bullJob) => {
+        if (!bullJob) return;
+        await this.handleJobCompletion({
+          id: bullJob.id || '',
+          queueName,
+          jobName: bullJob.name,
+          data: bullJob.data,
+          opts: { attempts: bullJob.opts.attempts },
+          attemptsMade: bullJob.attemptsMade,
+          createdAt: new Date(bullJob.timestamp),
+        });
+      });
 
       worker.on('failed', async (bullJob, err) => {
         if (!bullJob) return;
@@ -368,6 +425,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           this.activeConcurrency = Math.max(0, this.activeConcurrency - 1);
           const stat = this.stats.get(queueName);
           if (stat) stat.completed++;
+          await this.handleJobCompletion(job);
         } catch (err: any) {
           this.processingJobs.delete(job.id);
           this.activeConcurrency = Math.max(0, this.activeConcurrency - 1);
@@ -431,6 +489,38 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async moveToDeadLetterQueue(job: QueueJob, error: any) {
+    // If this failed job was a DLQ replay job, update the existing DLQ record rather than creating an orphan
+    if (job.id.startsWith('dlq-replay:')) {
+      const originalDlqId = job.id.replace('dlq-replay:', '');
+      const failureReason = `REPLAY_FAILED: ${error?.message || 'Unknown processing failure'}`;
+      if (this.prisma) {
+        try {
+          await this.prisma.deadLetterJob.update({
+            where: { id: originalDlqId },
+            data: {
+              status: 'DEAD',
+              attemptsMade: { increment: job.attemptsMade },
+              failedReason: failureReason,
+              failedAt: new Date(),
+            },
+          });
+          this.logger.warn(
+            `🚨 [DLQ ALERT] Replayed DLQ job ${originalDlqId} (${job.jobName}) failed again and was restored to DEAD status in DB.`,
+          );
+          return;
+        } catch (dbErr: any) {
+          this.logger.error(`Failed to restore DLQ job ${originalDlqId} to DEAD in DB: ${dbErr.message}`);
+        }
+      }
+      const deadJob = this.deadLetterStore.get(originalDlqId);
+      if (deadJob) {
+        deadJob.status = 'DEAD';
+        deadJob.failedReason = failureReason;
+        deadJob.failedAt = new Date();
+      }
+      return;
+    }
+
     const dlqId = `dlq_${job.id}`;
     const safeData = this.sanitizePayload(job.data);
     const deadJob: DeadLetterJob = {
@@ -444,6 +534,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       stacktrace: error?.stack ? [error.stack] : [],
       failedAt: new Date(),
       status: 'DEAD',
+      replayJobId: null,
     };
 
     this.deadLetterStore.set(dlqId, deadJob);
@@ -494,6 +585,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         maxAttempts: r.maxAttempts,
         failedReason: r.failedReason || '',
         status: r.status,
+        replayJobId: r.replayJobId,
         failedAt: r.failedAt || r.createdAt,
       }));
     }
@@ -507,6 +599,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Re-enqueue a job from DLQ back into the active waiting queue.
    * Atomically claims the job in DB first (marking status as RETRYING) before enqueueing.
+   * Uses deterministic jobId 'dlq-replay:${dlqId}' to ensure deduplication.
+   * Transitions status to RETRY_QUEUED on successful enqueue (only moves to RESOLVED on completion).
    * If enqueueing fails, cleanly rolls back status to DEAD with the enqueue failure reason.
    */
   async retryDeadLetterJob(dlqId: string): Promise<boolean> {
@@ -523,7 +617,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           data: { status: 'RETRYING' },
         });
         if (claimResult.count === 0) {
-          this.logger.warn(`DLQ job ${dlqId} could not be claimed from DB (already RETRYING or not found)`);
+          this.logger.warn(`DLQ job ${dlqId} could not be claimed from DB (already RETRYING/RETRY_QUEUED or not found)`);
           return false;
         }
 
@@ -542,7 +636,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
     } else {
       const deadJob = this.deadLetterStore.get(dlqId);
-      if (!deadJob || deadJob.status === 'RETRYING') {
+      if (!deadJob || deadJob.status === 'RETRYING' || deadJob.status === 'RETRY_QUEUED') {
         return false;
       }
       deadJob.status = 'RETRYING';
@@ -556,9 +650,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
-    // Now safely re-enqueue with rollback on failure
+    // Now safely re-enqueue with deterministic replayJobId
+    const replayJobId = `dlq-replay:${dlqId}`;
     try {
       const enqueuedJobId = await this.enqueueJob(queueName, jobName, jobData, {
+        jobId: replayJobId,
         attempts: maxAttempts,
         backoffDelayMs: 1000,
       });
@@ -567,13 +663,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         await this.prisma.deadLetterJob.update({
           where: { id: dlqId },
           data: {
-            status: 'RESOLVED',
+            status: 'RETRY_QUEUED',
+            replayJobId,
           },
         });
       }
 
-      this.deadLetterStore.delete(dlqId);
-      this.logger.log(`Job ${dlqId} safely claimed and re-enqueued as ${enqueuedJobId} from DLQ into active queue [${queueName}] (status: RESOLVED)`);
+      const deadJob = this.deadLetterStore.get(dlqId);
+      if (deadJob) {
+        deadJob.status = 'RETRY_QUEUED';
+        deadJob.replayJobId = replayJobId;
+      }
+
+      this.logger.log(
+        `Job ${dlqId} safely claimed and enqueued as ${replayJobId} from DLQ into active queue [${queueName}] (status: RETRY_QUEUED)`,
+      );
       return true;
     } catch (enqueueErr: any) {
       this.logger.error(`Failed to re-enqueue DLQ job ${dlqId}: ${enqueueErr.message}`);
@@ -603,8 +707,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Reconciles stale DLQ jobs stuck in RETRYING state for longer than timeoutMs (default: 10m).
+   * Reconciles stale DLQ jobs stuck in RETRYING or RETRY_QUEUED state for longer than timeoutMs (default: 10m).
    * Restores status to DEAD with a timeout reason so they can be reclaimed.
+   * Throws DB errors rather than masking as 0 so monitoring is alerted.
    */
   async reconcileStaleRetryingJobs(timeoutMs = 600000): Promise<number> {
     if (!this.prisma) return 0;
@@ -612,21 +717,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       const cutoff = new Date(Date.now() - timeoutMs);
       const result = await this.prisma.deadLetterJob.updateMany({
         where: {
-          status: 'RETRYING',
+          status: { in: ['RETRYING', 'RETRY_QUEUED'] },
           updatedAt: { lt: cutoff },
         },
         data: {
           status: 'DEAD',
-          failedReason: 'RETRY_TIMEOUT_RECONCILED: Stale RETRYING lease expired',
+          failedReason: 'RETRY_TIMEOUT_RECONCILED: Stale RETRYING/RETRY_QUEUED lease expired',
         },
       });
       if (result.count > 0) {
-        this.logger.warn(`Reconciled ${result.count} stale RETRYING DLQ jobs back to DEAD`);
+        this.logger.warn(`Reconciled ${result.count} stale RETRYING/RETRY_QUEUED DLQ jobs back to DEAD`);
       }
       return result.count;
     } catch (err: any) {
-      this.logger.error(`Failed to reconcile stale RETRYING DLQ jobs: ${err.message}`);
-      return 0;
+      this.logger.error(`Failed to reconcile stale RETRYING/RETRY_QUEUED DLQ jobs: ${err.message}`, err.stack);
+      throw err;
     }
   }
 

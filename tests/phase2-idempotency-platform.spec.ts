@@ -1,11 +1,11 @@
-import { PrismaClient } from '@prisma/client';
 import { IdempotencyService } from '../src/common/idempotency/idempotency.service';
 import { IdempotencyRepository } from '../src/common/idempotency/idempotency.repository';
-import { PrismaService } from '../src/prisma/prisma.service';
 import { BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import { getSafeTestPrismaClient, getSafeTestPrismaService } from './test-db-guard';
 
-const prisma = new PrismaClient();
-const prismaService = new PrismaService();
+const suiteName = 'SUITE 37: Phase 2 Universal Idempotency Platform (IDEM-01/02/03)';
+const prisma = getSafeTestPrismaClient(suiteName);
+const prismaService = getSafeTestPrismaService(suiteName);
 const idempotencyRepo = new IdempotencyRepository(prismaService);
 const idempotencyService = new IdempotencyService(idempotencyRepo);
 

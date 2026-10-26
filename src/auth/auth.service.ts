@@ -414,6 +414,28 @@ export class AuthService {
     if (!user) {
       const existingUser = await this.authRepo.findUserWithAuthRelations(email);
       if (existingUser) {
+        // Anti-takeover check: Reject linking if account is already linked to a DIFFERENT Google subject
+        const existingIdentity = await this.authRepo.findIdentityForUserAndProvider(existingUser.userId, 'GOOGLE');
+        const directMismatch =
+          existingUser.authProvider === 'GOOGLE' &&
+          existingUser.providerSubject &&
+          existingUser.providerSubject !== googleSub;
+        const identityMismatch =
+          existingIdentity &&
+          existingIdentity.providerSubject !== googleSub;
+
+        if (directMismatch || identityMismatch) {
+          this.logger.warn(
+            `Account linking rejected: User ${existingUser.userId} (${email}) already bound to Google subject ${existingUser.providerSubject || existingIdentity?.providerSubject}, rejected new subject ${googleSub}`,
+          );
+          throw new ConflictException({
+            success: false,
+            code: 'PROVIDER_SUBJECT_MISMATCH',
+            message:
+              'Tài khoản này đã được liên kết với một định danh Google khác. Để bảo mật tài khoản, không thể tự động chuyển đổi sang danh tính mới. Vui lòng liên hệ hỗ trợ hoặc sử dụng đúng tài khoản ban đầu.',
+          });
+        }
+
         // Evaluate domain authority per Google Identity Services Security Guidance:
         // Google is strictly authoritative for @gmail.com and @googlemail.com,
         // OR when the verified ID token includes an "hd" (hosted domain) claim matching the email domain.
@@ -439,7 +461,7 @@ export class AuthService {
         // Authoritative domain: safely link Google provider subject
         user = existingUser;
         if (googleSub) {
-          await this.authRepo.linkProviderSubject(user.userId, 'GOOGLE', googleSub);
+          user = (await this.authRepo.linkProviderSubject(user.userId, 'GOOGLE', googleSub)) as any;
         }
         if (authId && !user.authId) {
           await this.authRepo.updateAuthId(user.userId, authId);
@@ -531,6 +553,10 @@ export class AuthService {
             ownedStores: [],
             storeStaffs: [],
           } as any;
+        }
+
+        if (googleSub && user?.userId) {
+          user = (await this.authRepo.linkProviderSubject(user.userId, 'GOOGLE', googleSub)) as any;
         }
       }
     } else {

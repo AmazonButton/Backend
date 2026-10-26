@@ -26,62 +26,11 @@ import {
   UnauthorizedException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { assertSafeTestDatabaseUrl, getSafeTestPrismaClient } from './test-db-guard';
 
-const testDatabaseUrl = process.env.TEST_DATABASE_URL?.trim();
-const defaultDatabaseUrl = process.env.DATABASE_URL?.trim();
-
-if (!testDatabaseUrl) {
-  console.error(
-    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL environment variable is mandatory to run Suite 41!',
-  );
-  console.error(
-    'Refusing to run test suite against development, production, or default database.\n',
-  );
-  process.exit(1);
-}
-
-// 1. Fail-fast if TEST_DATABASE_URL matches DATABASE_URL
-if (defaultDatabaseUrl && testDatabaseUrl === defaultDatabaseUrl) {
-  console.error(
-    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL cannot match the primary DATABASE_URL!',
-  );
-  console.error(
-    'Suite 41 requires an isolated dedicated test database to prevent data contamination.\n',
-  );
-  process.exit(1);
-}
-
-// 2. Fail-fast if TEST_DATABASE_URL points to Supabase production/cloud pooler
-if (testDatabaseUrl.includes('supabase.co') || testDatabaseUrl.includes('supabase.com')) {
-  console.error(
-    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL points to Supabase production/remote cloud database!',
-  );
-  console.error(
-    'Refusing to execute destructive test fixtures against cloud infrastructure.\n',
-  );
-  process.exit(1);
-}
-
-// 3. Test URL marker allowlist check
-const hasTestMarker =
-  testDatabaseUrl.toLowerCase().includes('test') ||
-  testDatabaseUrl.toLowerCase().includes('localhost') ||
-  testDatabaseUrl.toLowerCase().includes('127.0.0.1');
-
-if (!hasTestMarker) {
-  console.error(
-    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL lacks required test marker (must contain "test", "localhost", or "127.0.0.1")!',
-  );
-  process.exit(1);
-}
-
-const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: testDatabaseUrl,
-    },
-  },
-});
+const suiteName = 'Suite 41: Superpower Security Verification';
+const testDatabaseUrl = assertSafeTestDatabaseUrl(suiteName);
+const prisma = getSafeTestPrismaClient(suiteName);
 
 let passed = 0;
 let failed = 0;
@@ -146,6 +95,17 @@ async function runSuperpowersVerificationSuite() {
           avatarUrl: null,
         };
       }
+      if (email === 'bound_user@gmail.com') {
+        return {
+          userId: BigInt(889),
+          email,
+          role: 'CUSTOMER',
+          authId: null,
+          authProvider: 'GOOGLE',
+          providerSubject: 'original_google_sub_111111',
+          avatarUrl: null,
+        };
+      }
       return null;
     },
     createGoogleUserTx: async (userData: any, profileData: any) => ({
@@ -187,6 +147,11 @@ async function runSuperpowersVerificationSuite() {
     // --------------------------------------------------------------------------
     // ISOLATED TEST ENTITIES (Strictly zero pollution of existing production stores)
     // --------------------------------------------------------------------------
+    // Purge any synthetic user residue from previous runs before starting
+    await prisma.user.deleteMany({
+      where: { username: { startsWith: 'sp_user_' } },
+    });
+
     const uniqueRunId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
     const testUser = await prisma.user.create({
@@ -320,6 +285,16 @@ async function runSuperpowersVerificationSuite() {
             }),
           };
         }
+        if (opts.idToken === 'token_subject_mismatch_attempt') {
+          return {
+            getPayload: () => ({
+              email: 'bound_user@gmail.com',
+              email_verified: true,
+              sub: 'attacker_sub_999999',
+              name: 'Hijacker',
+            }),
+          };
+        }
         if (opts.idToken === 'valid_workspace_token') {
           return {
             getPayload: () => ({
@@ -375,6 +350,23 @@ async function runSuperpowersVerificationSuite() {
       assert(
         thirdPartyLinkBlocked === true,
         'Deterministic Google OAuth: Third-party email linking without hd blocked with 409 (prevents account takeover)',
+      );
+
+      // Subject Mismatch Guard: Account bound to one Google subject cannot be hijacked by another Google subject
+      let subjectMismatchBlocked = false;
+      try {
+        await authService.googleLogin({ token: 'token_subject_mismatch_attempt' });
+      } catch (err: any) {
+        if (
+          err instanceof ConflictException &&
+          err.getResponse()?.['code'] === 'PROVIDER_SUBJECT_MISMATCH'
+        ) {
+          subjectMismatchBlocked = true;
+        }
+      }
+      assert(
+        subjectMismatchBlocked === true,
+        'Deterministic Google OAuth: Linking account already bound to a different Google sub is blocked with 409 PROVIDER_SUBJECT_MISMATCH',
       );
 
       // Valid Gmail token succeeds and preserves full numeric Google sub
@@ -830,20 +822,66 @@ async function runSuperpowersVerificationSuite() {
       'Sensitive fields (otp, password) and 6-digit OTPs inside HTML/text masked in DLQ (******)',
     );
 
-    // 6.2 Atomic replay: Replay claims status RETRYING in DB before re-enqueueing
+    // 6.2 Atomic replay: Replay claims status RETRY_QUEUED in DB before re-enqueueing
     if (dlqRecord) {
       const replaySuccess = await queueService.retryDeadLetterJob(dlqRecord.id);
       assert(
         replaySuccess === true,
-        'retryDeadLetterJob() atomically claims job in DB and restores to active queue',
+        'retryDeadLetterJob() atomically claims job in DB and transitions to RETRY_QUEUED with replayJobId',
       );
 
-      // Attempting to retry second time immediately returns false (already RETRYING)
+      const updatedDbRecord = await prisma.deadLetterJob.findUnique({
+        where: { id: dlqRecord.id },
+      });
+      assert(
+        updatedDbRecord?.status === 'RETRY_QUEUED' || updatedDbRecord?.status === 'RESOLVED',
+        'retryDeadLetterJob() preserves authoritative state transition in DB (RETRY_QUEUED or RESOLVED)',
+      );
+      assert(
+        updatedDbRecord?.replayJobId === `dlq-replay:${dlqRecord.id}`,
+        'retryDeadLetterJob() sets deterministic replayJobId (dlq-replay:id) in DB to guarantee deduplication',
+      );
+
+      // Attempting to retry second time immediately returns false (already RETRY_QUEUED)
       const secondReplay = await queueService.retryDeadLetterJob(dlqRecord.id);
       assert(
         secondReplay === false,
         'Duplicate retry of claimed DLQ job rejected to prevent double replay',
       );
+
+      // 6.3 Stale Reconciliation: Stale RETRY_QUEUED jobs restored to DEAD
+      const staleJobId = `dlq_stale_${uniqueRunId}`;
+      await prisma.deadLetterJob.create({
+        data: {
+          id: staleJobId,
+          queueName: 'superpower-dlq-test-queue',
+          jobName: 'stale-test-job',
+          payload: { orderId: 'STALE-1' },
+          attemptsMade: 1,
+          maxAttempts: 1,
+          failedReason: 'Stale retry test',
+          status: 'RETRY_QUEUED',
+          updatedAt: new Date(Date.now() - 700000), // 11.6 minutes old (> 10m cutoff)
+          failedAt: new Date(),
+        },
+      });
+
+      const reconciledCount = await queueService.reconcileStaleRetryingJobs(600000);
+      assert(
+        reconciledCount >= 1,
+        'reconcileStaleRetryingJobs() detects expired leases and reconciles count',
+      );
+
+      const reconciledJob = await prisma.deadLetterJob.findUnique({
+        where: { id: staleJobId },
+      });
+      assert(
+        reconciledJob?.status === 'DEAD' &&
+          reconciledJob?.failedReason?.includes('RETRY_TIMEOUT_RECONCILED'),
+        'Stale RETRY_QUEUED job safely reclaimed and restored to DEAD status with timeout reason',
+      );
+
+      await prisma.deadLetterJob.deleteMany({ where: { id: staleJobId } });
     }
 
     // ========================================================================
@@ -920,6 +958,10 @@ async function runSuperpowersVerificationSuite() {
         await prisma.apiIdempotencyKey.deleteMany({ where: { userId: createdUserId } });
         await prisma.user.deleteMany({ where: { userId: createdUserId } });
       }
+      // Purge any synthetic sp_user_* residue from test run
+      await prisma.user.deleteMany({
+        where: { username: { startsWith: 'sp_user_' } },
+      });
       await prisma.deadLetterJob.deleteMany({
         where: { queueName: 'superpower-dlq-test-queue' },
       });

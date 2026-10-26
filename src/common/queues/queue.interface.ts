@@ -17,7 +17,8 @@ export interface DeadLetterJob {
   failedReason: string;
   stacktrace?: string[];
   failedAt: Date;
-  status: 'DEAD' | 'RETRYING' | 'RESOLVED';
+  status: 'DEAD' | 'RETRYING' | 'RETRY_QUEUED' | 'RESOLVED';
+  replayJobId?: string | null;
 }
 
 export interface QueueJob<T = any> {
