@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
 import {
   RegisterDto,
@@ -91,13 +92,13 @@ export class AuthController {
     return this.authService.refresh(body.refreshToken, ip, userAgent);
   }
 
+  @UseGuards(AuthRateLimitGuard, OptionalJwtAuthGuard)
   @HttpCode(200)
   @Post('logout')
   async logout(@Request() req: any, @Body() body: { refreshToken?: string; fcmToken?: string }) {
     const authHeader = req.headers['authorization']?.toString();
     const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : undefined;
-    const userId = req.user?.id || req.user?.userId;
-    return this.authService.logout(userId, body?.refreshToken, accessToken, body?.fcmToken);
+    return this.authService.logout(req.user, body?.refreshToken, accessToken, body?.fcmToken);
   }
 
   @UseGuards(JwtAuthGuard)

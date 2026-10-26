@@ -69,14 +69,43 @@ async function runPhase5HealthAndShutdownSuite() {
     assert(errorResponse?.status === 'UNREADY', 'Unready response status indicates UNREADY');
     assert(errorResponse?.checks?.database === 'DOWN', 'Checks cleanly identifies database as DOWN');
 
+    // Test Queue Dependency Failure
+    const brokenQueueServiceMock = {
+      isReady: async () => false,
+    } as any;
+    const brokenQueueController = new AppController(prisma, brokenQueueServiceMock);
+    let queueFailureException: any = null;
+    try {
+      await brokenQueueController.getReadiness();
+    } catch (err: any) {
+      queueFailureException = err;
+    }
+    assert(queueFailureException instanceof ServiceUnavailableException, 'Queue dependency failure throws ServiceUnavailableException (503)');
+    const queueErrorResponse: any = queueFailureException?.getResponse();
+    assert(queueErrorResponse?.checks?.queue === 'DOWN', 'Checks cleanly identifies queue as DOWN when isReady is false');
+
+    // Test Server Draining State (Zero Downtime Kubernetes Rolling Update Invariant)
+    AppController.isDraining = true;
+    let drainingException: any = null;
+    try {
+      await appController.getReadiness();
+    } catch (err: any) {
+      drainingException = err;
+    }
+    AppController.isDraining = false; // Reset back to false for further requests
+    assert(drainingException instanceof ServiceUnavailableException, 'Readiness probe immediately returns 503 when server starts draining');
+    const drainingResponse: any = drainingException?.getResponse();
+    assert(drainingResponse?.checks?.server === 'DRAINING', 'Readiness probe exports server: DRAINING check');
+
     // -------------------------------------------------------------
     // SECTION 4: Signal Registration & Graceful Teardown Verification
     // -------------------------------------------------------------
     console.log('\n--- 4. Graceful Shutdown & Signal Handlers ---');
-    const sigtermListeners = process.listeners('SIGTERM');
-    assert(sigtermListeners.length >= 0, 'SIGTERM listeners properly accessible');
-    const sigintListeners = process.listeners('SIGINT');
-    assert(sigintListeners.length >= 0, 'SIGINT listeners properly accessible');
+    // Verify QueueService.onModuleDestroy drains and stops worker loop
+    await queueService.onModuleDestroy();
+    const isReadyAfterDestroy = await queueService.isReady();
+    assert(isReadyAfterDestroy === false, 'QueueService.isReady returns false after onModuleDestroy');
+    assert((queueService as any).workerInterval === null, 'Worker polling interval cleared on destroy');
 
   } finally {
     queueService.onModuleDestroy();

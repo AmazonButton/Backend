@@ -233,6 +233,65 @@ async function runPhase2IdempotencySuite() {
     });
     assert(rentAcquire2.state === 'CACHED', 'Rental extension re-submission returns cached extension without double charge');
 
+    // -------------------------------------------------------------
+    // SECTION 5: Multi-Tenant & Resource Scope Isolation (P0 Fix Verification)
+    // -------------------------------------------------------------
+    console.log('\n--- 5. Actor & Resource Parameter Isolation (Anti Cross-Tenant Leakage) ---');
+
+    const sharedKey = `IDEMP-CROSS-${timestamp}`;
+    testKeysToClean.push(sharedKey);
+
+    // 5.1 Cross-user isolation: User 1 and User 2 use same idempotencyKey
+    const user1Acquire = await idempotencyService.acquire({
+      idempotencyKey: sharedKey,
+      route: '/api/v1/orders',
+      actualPath: '/api/v1/orders',
+      method: 'POST',
+      actorScope: 'user:101',
+      body: { amount: 100000 },
+    });
+    assert(user1Acquire.state === 'ACQUIRED', 'User 1 acquires key in user:101 scope');
+    if (user1Acquire.state === 'ACQUIRED') {
+      await idempotencyService.finalizeSuccess(user1Acquire.recordId, 201, { orderId: 'ORD-101' });
+    }
+
+    const user2Acquire = await idempotencyService.acquire({
+      idempotencyKey: sharedKey,
+      route: '/api/v1/orders',
+      actualPath: '/api/v1/orders',
+      method: 'POST',
+      actorScope: 'user:102',
+      body: { amount: 100000 },
+    });
+    assert(user2Acquire.state === 'ACQUIRED', 'User 2 with same key acquires independent lock in user:102 scope (No cross-user response leakage!)');
+
+    // 5.2 Resource parameter isolation: /rentals/1 vs /rentals/2
+    const paramKey = `IDEMP-PARAM-${timestamp}`;
+    testKeysToClean.push(paramKey);
+
+    const rental1Acquire = await idempotencyService.acquire({
+      idempotencyKey: paramKey,
+      route: '/api/v1/rentals/:id/extensions',
+      actualPath: '/api/v1/rentals/1/extensions',
+      method: 'POST',
+      actorScope: 'public',
+      body: { months: 1 },
+    });
+    assert(rental1Acquire.state === 'ACQUIRED', 'Rental 1 acquires key on actual path /rentals/1/extensions');
+    if (rental1Acquire.state === 'ACQUIRED') {
+      await idempotencyService.finalizeSuccess(rental1Acquire.recordId, 200, { rentalId: '1' });
+    }
+
+    const rental2Acquire = await idempotencyService.acquire({
+      idempotencyKey: paramKey,
+      route: '/api/v1/rentals/:id/extensions',
+      actualPath: '/api/v1/rentals/2/extensions',
+      method: 'POST',
+      actorScope: 'public',
+      body: { months: 1 },
+    });
+    assert(rental2Acquire.state === 'ACQUIRED', 'Rental 2 with same key acquires independent lock on distinct actual path (No cross-resource collision!)');
+
   } finally {
     // Cleanup test records
     console.log('\n--- Cleaning up Phase 2 test artifacts ---');

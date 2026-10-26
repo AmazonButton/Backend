@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  BadGatewayException,
   Inject,
   Optional,
   Logger,
@@ -13,6 +14,7 @@ import { RequestWithdrawalDto } from './dto/withdrawal.dto';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 import { WalletMapper } from './mappers/wallet.mapper';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 import { StoreWalletRepository } from './store-wallet.repository';
 
 @Injectable()
@@ -402,10 +404,32 @@ export class StoreWalletService {
     } catch (err: any) {
       this.logger.error(`PayOS Payout failed for withdrawal #${withdrawal.withdrawalCode}: ${err.message}`);
 
-      // TX-01: Auto-Refund số dư về ví và chuyển withdrawal sang FAILED nguyên khối trong cùng transaction
-      await this.refundFailedWithdrawal(rawId, err.message || 'Lỗi gọi cổng PayOS Payout');
+      // Distinguish between confirmed failure (e.g. invalid account / bad request from PayOS)
+      // vs unknown network connection / timeout error where payout status is uncertain.
+      const isConfirmedFailure =
+        err instanceof BadRequestException ||
+        err?.status === 400 ||
+        err?.response?.code === 'PAYOS_PAYOUT_FAILED' ||
+        err?.message?.includes('PAYOS_PAYOUT_FAILED');
 
-      throw new BadRequestException(`Tạo chi tiền PayOS thất bại: ${err.message || 'Lỗi cổng PayOS'}`);
+      if (isConfirmedFailure) {
+        // Confirmed rejection by provider: Auto-Refund số dư về ví và chuyển withdrawal sang FAILED
+        await this.refundFailedWithdrawal(rawId, err.message || 'PayOS xác nhận từ chối chi tiền');
+        throw new BadRequestException(`Tạo chi tiền PayOS thất bại: ${err.message || 'Lỗi cổng PayOS'}`);
+      } else {
+        // Unknown connection / network timeout: DO NOT refund immediately to avoid double spending!
+        // Keep status as PROCESSING with failureReason
+        await this.prisma.storeWithdrawal.update({
+          where: { withdrawalId: rawId },
+          data: {
+            status: 'PROCESSING',
+            failureReason: `PENDING_RECONCILIATION: Lỗi kết nối tới cổng (${err.message}). Chờ webhook xác nhận.`.slice(0, 255),
+          },
+        });
+        throw new BadGatewayException(
+          `Kết nối tới cổng chi tiền gián đoạn (${err.message}). Yêu cầu được giữ ở trạng thái chờ đối soát (PROCESSING). Không hoàn tiền tự động ngay để tránh chi kép.`,
+        );
+      }
     }
   }
 
@@ -535,13 +559,18 @@ export class StoreWalletService {
     if (isSucceeded && withdrawal.status === 'SUCCEEDED') {
       return { success: true, message: 'Yêu cầu rút tiền đã ở trạng thái hoàn thành trước đó' };
     }
-    if (isFailed && withdrawal.status === 'FAILED') {
+    if (isFailed && (withdrawal.status === 'FAILED' || withdrawal.status === 'FAILED_CONFIRMED')) {
       return { success: true, message: 'Yêu cầu rút tiền đã được xử lý hoàn tiền trước đó' };
     }
 
     if (withdrawal.status === 'SUCCEEDED') {
       this.logger.warn(`Bỏ qua webhook FAILED cho yêu cầu #${withdrawal.withdrawalCode} đã SUCCEEDED`);
       return { success: true, message: 'Không thể chuyển đổi trạng thái đã thành công' };
+    }
+
+    if (withdrawal.status === 'FAILED' || withdrawal.status === 'FAILED_CONFIRMED') {
+      this.logger.error(`🚨 Bỏ qua webhook SUCCEEDED cho yêu cầu #${withdrawal.withdrawalCode} đã FAILED và hoàn tiền trước đó để tránh chi kép.`);
+      return { success: true, message: 'Yêu cầu đã ở trạng thái FAILED/Refunded, bỏ qua hoàn tất tự động để tránh chi kép' };
     }
 
     if (isSucceeded) {

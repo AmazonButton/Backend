@@ -1,6 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 
 export interface ProductImageInput {
   imageUrl: string;

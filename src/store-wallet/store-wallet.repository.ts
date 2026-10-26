@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 
 @Injectable()
 export class StoreWalletRepository {
@@ -133,7 +134,15 @@ export class StoreWalletRepository {
         FOR UPDATE
       `;
 
-      if (!lockedWithdrawal || lockedWithdrawal.status === 'SUCCEEDED') return;
+      if (!lockedWithdrawal) return;
+      if (lockedWithdrawal.status === 'SUCCEEDED') return;
+
+      // CRITICAL TERMINAL GUARD: Never allow FAILED/refunded withdrawal to be marked SUCCEEDED
+      if (lockedWithdrawal.status === 'FAILED' || lockedWithdrawal.status === 'FAILED_CONFIRMED') {
+        throw new ConflictException(
+          `CRITICAL_PAYOUT_CONFLICT: Cannot finalize payout #${lockedWithdrawal.withdrawal_id} as SUCCEEDED because it was already refunded as ${lockedWithdrawal.status}. Reconciliation required.`,
+        );
+      }
 
       const [lockedWallet] = await tx.$queryRaw<Array<{
         wallet_id: bigint;

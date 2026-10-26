@@ -1,4 +1,5 @@
 export interface JobOptions {
+  jobId?: string;
   attempts?: number;
   backoffDelayMs?: number;
   backoffType?: 'fixed' | 'exponential';

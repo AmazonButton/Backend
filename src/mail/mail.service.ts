@@ -1,9 +1,9 @@
-import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject, OnModuleDestroy } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { QueueService } from '../common/queues/queue.service';
 
 @Injectable()
-export class MailService {
+export class MailService implements OnModuleDestroy {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter | null = null;
   private isConfigured = false;
@@ -18,6 +18,15 @@ export class MailService {
   ) {
     this.initTransporter();
     this.initQueueProcessor();
+  }
+
+  onModuleDestroy() {
+    if (this.transporter) {
+      try {
+        this.transporter.close();
+      } catch (_) {}
+      this.transporter = null;
+    }
   }
 
   private initQueueProcessor() {
@@ -87,7 +96,7 @@ export class MailService {
     `;
   }
 
-  async sendMail(options: { to: string; subject: string; text: string; html: string }): Promise<boolean> {
+  async sendMail(options: { to: string; subject: string; text: string; html: string }, throwOnError = false): Promise<boolean> {
     // Mask OTP digits in all environment logs
     const maskedText = options.text.replace(/\b\d{6}\b/g, '******');
 

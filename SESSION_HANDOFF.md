@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 40/40 test suites verified passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), zero plaintext bank storage enforced, manual transfer route decommissioned, canonical payout webhook signature verified, distributed session/token revocation active, P0 payout refund/active payment/secrets invariants deployed, Phase 1 database transactions & concurrency invariants fully implemented, Phase 2 universal idempotency platform active across storefront/payments/rentals, Phase 3 asynchronous queues with backoff retry & DLQ deployed, Phase 4 composite query indexes active on PostgreSQL, and Phase 5 health probes & graceful drain shutdown operational.
+> **Status:** Verified clean build (`npm run build`), TypeScript compilation (`npx tsc --noEmit`), Prisma 27 migrations up-to-date (`npx prisma migrate status`), and all P0/P1 senior review fixes verified across Suites 35–40 (99/99 assertions passing). Production ready with: immutable terminal payout state machine, multi-tenant & resource-scoped idempotency platform (`uq_api_idempotency_scoped`), cryptographic JWT signature verification on logout (forged token DoS eliminated), real BullMQ + Redis integration with masked logging and PostgreSQL `dead_letter_jobs` table, async email retries & DLQ, deadlock transaction retry helper integration (`runWithTransactionRetry`), atomic price history row locking, and Kubernetes zero-downtime draining probe.
 
 ---
 
@@ -995,6 +995,3 @@ When starting a new conversation, prompt the agent with:
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
   - Verified Suites: Suite 14 (16/16), Suite 35 (10/10), Suite 36 (16/16), Suite 37 (18/18), Suite 38 (19/19), Suite 39 (15/15), Suite 40 (12/12) — **100% PASS (96/96 assertions across all production phases)**.
-
-
-

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 
 export interface AtomicWebhookVerificationResult {
   success: boolean;

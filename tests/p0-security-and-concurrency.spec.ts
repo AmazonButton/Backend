@@ -155,6 +155,20 @@ async function runP0SecurityAndConcurrencyTests() {
       'Idempotency guard: duplicate refund invocation does not duplicate funds or ledger entries',
     );
 
+    // Test P0 Terminal Guard: A FAILED/refunded withdrawal must NEVER be finalized as SUCCEEDED
+    let terminalConflictCaught = false;
+    try {
+      await (walletService as any).repo.finalizePayoutSuccessTx(testWithdrawal.withdrawalId);
+    } catch (err: any) {
+      if (err?.message?.includes('CRITICAL_PAYOUT_CONFLICT') || err?.status === 409) {
+        terminalConflictCaught = true;
+      }
+    }
+    assert(
+      terminalConflictCaught === true,
+      'P0 Terminal State Guard: finalizePayoutSuccessTx on refunded/FAILED withdrawal blocked with ConflictException',
+    );
+
     // ========================================================================
     // TEST 2: CC-01 Active Payment Constraint (uq_payment_active_per_order)
     // ========================================================================

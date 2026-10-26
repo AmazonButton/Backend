@@ -39,13 +39,24 @@ export class IdempotencyService {
   }
 
   /**
-   * Computes a deterministic SHA-256 hash of the request body.
-   * Recursively sorts object keys so { a: 1, b: 2 } and { b: 2, a: 1 } yield identical hashes.
+   * Computes a deterministic SHA-256 hash of the complete request:
+   * method, actual path, query parameters, and recursive key-sorted body.
    */
-  computeRequestHash(body: any): string {
-    if (body === undefined || body === null) {
-      return crypto.createHash('sha256').update('').digest('hex');
-    }
+  computeRequestHash(params: {
+    method?: string;
+    path?: string;
+    query?: any;
+    body?: any;
+  } | any): string {
+    const isParamObject =
+      params &&
+      typeof params === 'object' &&
+      ('method' in params || 'path' in params || 'body' in params);
+
+    const method = (isParamObject ? params.method || 'POST' : 'POST').toUpperCase();
+    const path = isParamObject ? params.path || '/' : '/';
+    const query = isParamObject ? params.query || {} : {};
+    const body = isParamObject ? params.body : params;
 
     const sortObject = (item: any): any => {
       if (item === null || typeof item !== 'object') {
@@ -62,7 +73,14 @@ export class IdempotencyService {
         }, {});
     };
 
-    const canonicalJson = JSON.stringify(sortObject(body), (_, v) =>
+    const signature = {
+      method,
+      path,
+      query: sortObject(query),
+      body: sortObject(body ?? null),
+    };
+
+    const canonicalJson = JSON.stringify(signature, (_, v) =>
       typeof v === 'bigint' ? v.toString() : v,
     );
 
@@ -71,13 +89,16 @@ export class IdempotencyService {
 
   /**
    * Attempts to acquire an idempotency lock for the current request.
-   * Throws ConflictException (409) if request is already in-flight.
-   * Throws UnprocessableEntityException (422) if key is reused with mismatched payload.
+   * Scoped by actorScope, method, actualPath to guarantee zero cross-user/resource leakage.
    */
   async acquire(params: {
     idempotencyKey: string;
+    actorScope?: string;
+    method?: string;
+    actualPath?: string;
     route: string;
     userId?: bigint | null;
+    query?: any;
     body: any;
     lockTimeoutMs?: number;
     ttlSeconds?: number;
@@ -90,10 +111,22 @@ export class IdempotencyService {
       throw new BadRequestException('Khóa idempotency không hợp lệ');
     }
 
-    const requestHash = this.computeRequestHash(params.body);
+    const method = (params.method || 'POST').toUpperCase();
+    const actualPath = params.actualPath || params.route || '/';
+    const actorScope = params.actorScope || (params.userId ? `user:${params.userId}` : 'public');
+
+    const requestHash = this.computeRequestHash({
+      method,
+      path: actualPath,
+      query: params.query,
+      body: params.body,
+    });
 
     const result: IdempotencyAcquireResult = await this.repository.acquireKeyAtomic({
+      actorScope,
       idempotencyKey: validKey,
+      method,
+      actualPath,
       route: params.route,
       userId: params.userId,
       requestHash,

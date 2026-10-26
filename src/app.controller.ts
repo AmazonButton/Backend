@@ -4,6 +4,8 @@ import { QueueService } from './common/queues/queue.service';
 
 @Controller()
 export class AppController {
+  public static isDraining = false;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Optional() @Inject(QueueService) private readonly queueService?: QueueService,
@@ -26,6 +28,15 @@ export class AppController {
    */
   @Get('readyz')
   async getReadiness() {
+    if (AppController.isDraining) {
+      throw new ServiceUnavailableException({
+        status: 'UNREADY',
+        checks: { server: 'DRAINING' },
+        timestamp: new Date().toISOString(),
+        message: 'Máy chủ đang trong tiến trình dừng dịch vụ (Draining). Không nhận thêm lưu lượng truy cập mới.',
+      });
+    }
+
     const checks: Record<string, string> = {
       database: 'DOWN',
       queue: 'DOWN',
@@ -40,18 +51,26 @@ export class AppController {
       checks.database = 'DOWN';
     }
 
+    let isQueueHealthy = false;
     if (this.queueService) {
-      checks.queue = 'UP';
+      const ready = await this.queueService.isReady();
+      if (ready) {
+        checks.queue = 'UP';
+        isQueueHealthy = true;
+      } else {
+        checks.queue = 'DOWN';
+      }
     } else {
       checks.queue = 'STANDALONE';
+      isQueueHealthy = true;
     }
 
-    if (!isDbHealthy) {
+    if (!isDbHealthy || !isQueueHealthy) {
       throw new ServiceUnavailableException({
         status: 'UNREADY',
         checks,
         timestamp: new Date().toISOString(),
-        message: 'Hệ thống cơ sở dữ liệu tạm thời chưa sẵn sàng nhận lưu lượng truy cập',
+        message: 'Hệ thống phụ thuộc (cơ sở dữ liệu hoặc hàng đợi) tạm thời chưa sẵn sàng nhận lưu lượng truy cập',
       });
     }
 

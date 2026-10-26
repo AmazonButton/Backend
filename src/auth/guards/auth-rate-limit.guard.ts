@@ -47,6 +47,9 @@ export class AuthRateLimitGuard implements CanActivate {
     } else if (path.includes('check-email') || path.includes('check-username')) {
       maxRequests = 100;
       windowMs = 60 * 1000;
+    } else if (path.includes('logout')) {
+      maxRequests = 20;
+      windowMs = 60 * 1000;
     }
 
     const key = `${ip}:${path}`;

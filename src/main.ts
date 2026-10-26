@@ -9,6 +9,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { AppController } from './app.controller';
 
 async function bootstrap() {
   // Boot-time env validation: crash early if critical secrets are missing
@@ -158,6 +159,7 @@ async function bootstrap() {
   const gracefulShutdown = async (signal: string) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    AppController.isDraining = true;
     console.log(`\n📢 Received ${signal}. Starting graceful shutdown and draining connections...`);
 
     const timeout = setTimeout(() => {

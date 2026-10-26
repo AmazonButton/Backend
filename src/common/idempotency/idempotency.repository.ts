@@ -14,10 +14,14 @@ export class IdempotencyRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   /**
-   * Atomically acquires an idempotency key using row-level locking or conditional upsert.
+   * Atomically acquires an idempotency key using actor-scoped row-level locking or conditional upsert.
+   * Scoped by (actorScope, idempotencyKey, method, actualPath) to prevent cross-user/resource collisions.
    */
   async acquireKeyAtomic(params: {
+    actorScope: string;
     idempotencyKey: string;
+    method: string;
+    actualPath: string;
     route: string;
     userId?: bigint | null;
     requestHash: string;
@@ -26,18 +30,22 @@ export class IdempotencyRepository {
   }): Promise<IdempotencyAcquireResult> {
     const lockMs = params.lockTimeoutMs ?? 30000;
     const ttlSec = params.ttlSeconds ?? 86400; // 24 hours default
+    const normalizedMethod = (params.method || 'POST').toUpperCase();
+    const normalizedPath = params.actualPath || params.route || '/';
+    const actorScope = params.actorScope || 'public';
 
     return this.prisma.$transaction(async (tx) => {
       const now = new Date();
       const lockedUntil = new Date(now.getTime() + lockMs);
       const expiresAt = new Date(now.getTime() + ttlSec * 1000);
 
-      // 1. Lock existing record for update
+      // 1. Lock existing record for update with full security scope
       const existing = await tx.$queryRaw<Array<{
         id: bigint;
         idempotency_key: string;
-        route: string;
-        user_id: bigint | null;
+        method: string;
+        actual_path: string;
+        actor_scope: string;
         request_hash: string;
         status_code: number | null;
         response_body: any;
@@ -45,16 +53,38 @@ export class IdempotencyRepository {
         locked_until: Date;
         expires_at: Date;
       }>>`
-        SELECT id, idempotency_key, route, user_id, request_hash, status_code, response_body, status, locked_until, expires_at
+        SELECT id, idempotency_key, method, actual_path, actor_scope, request_hash, status_code, response_body, status, locked_until, expires_at
         FROM api_idempotency_keys
-        WHERE idempotency_key = ${params.idempotencyKey} AND route = ${params.route}
+        WHERE actor_scope = ${actorScope}
+          AND idempotency_key = ${params.idempotencyKey}
+          AND method = ${normalizedMethod}
+          AND actual_path = ${normalizedPath}
         FOR UPDATE
       `;
 
       if (existing && existing.length > 0) {
         const row = existing[0];
 
-        // Verify request payload hash integrity
+        // 1a. Check expiration: if expired, permit clean new execution
+        if (new Date(row.expires_at).getTime() <= now.getTime()) {
+          this.logger.log(
+            `Idempotency key expired for [${actorScope}] ${normalizedMethod} ${normalizedPath}. Refreshing key entry.`,
+          );
+          await tx.$executeRaw`
+            UPDATE api_idempotency_keys
+            SET request_hash = ${params.requestHash},
+                status = 'PROCESSING',
+                status_code = NULL,
+                response_body = NULL,
+                locked_until = ${lockedUntil},
+                expires_at = ${expiresAt},
+                updated_at = ${now}
+            WHERE id = ${row.id}
+          `;
+          return { state: 'ACQUIRED', recordId: row.id };
+        }
+
+        // 1b. Verify request payload hash integrity
         if (row.request_hash.trim() !== params.requestHash.trim()) {
           return {
             state: 'MISMATCH',
@@ -63,7 +93,7 @@ export class IdempotencyRepository {
           };
         }
 
-        // If completed, return cached response
+        // 1c. If completed, return cached response
         if (row.status === 'COMPLETED') {
           return {
             state: 'CACHED',
@@ -72,7 +102,7 @@ export class IdempotencyRepository {
           };
         }
 
-        // If still processing, check lock expiration
+        // 1d. If still processing, check lock expiration
         if (row.status === 'PROCESSING') {
           if (new Date(row.locked_until).getTime() > now.getTime()) {
             return {
@@ -82,7 +112,7 @@ export class IdempotencyRepository {
           }
           // Lock expired (crash recovery) - reacquire
           this.logger.warn(
-            `Recovering expired lock for idempotency key: ${params.idempotencyKey} on route: ${params.route}`,
+            `Recovering expired lock for idempotency key: ${params.idempotencyKey} on [${actorScope}] ${normalizedMethod} ${normalizedPath}`,
           );
           await tx.$executeRaw`
             UPDATE api_idempotency_keys
@@ -95,7 +125,7 @@ export class IdempotencyRepository {
           return { state: 'ACQUIRED', recordId: row.id };
         }
 
-        // If previously failed, re-attempt
+        // 1e. If previously failed, re-attempt
         await tx.$executeRaw`
           UPDATE api_idempotency_keys
           SET status = 'PROCESSING',
@@ -110,7 +140,10 @@ export class IdempotencyRepository {
       // 2. Insert new idempotency entry
       const insertResult = await tx.$queryRaw<Array<{ id: bigint }>>`
         INSERT INTO api_idempotency_keys (
+          actor_scope,
           idempotency_key,
+          method,
+          actual_path,
           route,
           user_id,
           request_hash,
@@ -120,7 +153,10 @@ export class IdempotencyRepository {
           created_at,
           updated_at
         ) VALUES (
+          ${actorScope},
           ${params.idempotencyKey},
+          ${normalizedMethod},
+          ${normalizedPath},
           ${params.route},
           ${params.userId ?? null},
           ${params.requestHash},
@@ -130,7 +166,7 @@ export class IdempotencyRepository {
           ${now},
           ${now}
         )
-        ON CONFLICT (idempotency_key, route) DO NOTHING
+        ON CONFLICT (actor_scope, idempotency_key, method, actual_path) DO NOTHING
         RETURNING id
       `;
 
@@ -146,10 +182,14 @@ export class IdempotencyRepository {
         response_body: any;
         status: string;
         locked_until: Date;
+        expires_at: Date;
       }>>`
-        SELECT id, request_hash, status_code, response_body, status, locked_until
+        SELECT id, request_hash, status_code, response_body, status, locked_until, expires_at
         FROM api_idempotency_keys
-        WHERE idempotency_key = ${params.idempotencyKey} AND route = ${params.route}
+        WHERE actor_scope = ${actorScope}
+          AND idempotency_key = ${params.idempotencyKey}
+          AND method = ${normalizedMethod}
+          AND actual_path = ${normalizedPath}
         FOR UPDATE
       `;
 
@@ -185,9 +225,12 @@ export class IdempotencyRepository {
    * Finalize an acquired idempotency key with successful execution result.
    */
   async finalizeSuccess(recordId: bigint, statusCode: number, responseBody: any): Promise<void> {
-    const serializedBody = responseBody !== undefined ? JSON.stringify(responseBody, (_, v) =>
-      typeof v === 'bigint' ? v.toString() : v
-    ) : null;
+    const serializedBody =
+      responseBody !== undefined
+        ? JSON.stringify(responseBody, (_, v) =>
+            typeof v === 'bigint' ? v.toString() : v,
+          )
+        : null;
 
     await this.prisma.$executeRaw`
       UPDATE api_idempotency_keys

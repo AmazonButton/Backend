@@ -890,6 +890,9 @@ model Notification {
 model ApiIdempotencyKey {
   id             BigInt    @id @default(autoincrement()) @map("id")
   idempotencyKey String    @map("idempotency_key") @db.VarChar(128)
+  method         String    @default("POST") @map("method") @db.VarChar(10)
+  actualPath     String    @default("/") @map("actual_path") @db.VarChar(255)
+  actorScope     String    @default("public") @map("actor_scope") @db.VarChar(128)
   route          String    @map("route") @db.VarChar(255)
   userId         BigInt?   @map("user_id")
   user           User?     @relation(fields: [userId], references: [userId], onDelete: Cascade)
@@ -902,7 +905,26 @@ model ApiIdempotencyKey {
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@unique([idempotencyKey, route], name: "uq_api_idempotency_key_route")
+  @@unique([actorScope, idempotencyKey, method, actualPath], name: "uq_api_idempotency_scoped")
   @@index([expiresAt], map: "idx_api_idempotency_expires_at")
   @@map("api_idempotency_keys")
+}
+
+model DeadLetterJob {
+  id           String    @id @default(uuid()) @map("id") @db.VarChar(64)
+  queueName    String    @map("queue_name") @db.VarChar(64)
+  jobName      String    @map("job_name") @db.VarChar(128)
+  payload      Json      @map("payload")
+  attemptsMade Int       @default(0) @map("attempts_made")
+  maxAttempts  Int       @default(3) @map("max_attempts")
+  failedReason String?   @map("failed_reason") @db.Text
+  stacktrace   String[]  @default([]) @map("stacktrace")
+  status       String    @default("DEAD") @map("status") @db.VarChar(32)
+  failedAt     DateTime  @default(now()) @map("failed_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([queueName], map: "idx_dead_letter_queue_name")
+  @@index([status], map: "idx_dead_letter_status")
+  @@map("dead_letter_jobs")
 }
