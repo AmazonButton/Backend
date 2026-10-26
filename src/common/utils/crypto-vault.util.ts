@@ -2,7 +2,13 @@ import * as crypto from 'crypto';
 
 export class CryptoVaultUtil {
   private static getKeyBuffer(): Buffer {
-    const rawKey = process.env.BANK_ACCOUNT_ENCRYPTION_KEY || 'default_super_secure_32_byte_key_0123456789abcdef';
+    const rawKey = process.env.BANK_ACCOUNT_ENCRYPTION_KEY;
+    if (!rawKey) {
+      if (process.env.NODE_ENV === 'test') {
+        return crypto.createHash('sha256').update('test_super_secure_bank_encryption_key_32_bytes!').digest();
+      }
+      throw new Error('FATAL SECURITY ERROR: BANK_ACCOUNT_ENCRYPTION_KEY environment variable is missing.');
+    }
     if (/^[0-9a-fA-F]{64}$/.test(rawKey)) {
       return Buffer.from(rawKey, 'hex');
     }
@@ -10,7 +16,14 @@ export class CryptoVaultUtil {
   }
 
   private static getSalt(): string {
-    return process.env.BANK_ACCOUNT_HASH_SALT || 'salt_for_bank_account_hashing_sec';
+    const salt = process.env.BANK_ACCOUNT_HASH_SALT;
+    if (!salt) {
+      if (process.env.NODE_ENV === 'test') {
+        return 'test_salt_bank_account_hash_sec_32chars';
+      }
+      throw new Error('FATAL SECURITY ERROR: BANK_ACCOUNT_HASH_SALT environment variable is missing.');
+    }
+    return salt;
   }
 
   /**

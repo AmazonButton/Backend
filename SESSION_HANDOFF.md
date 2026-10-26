@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** All 34/34 test suites verified passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), zero plaintext bank storage enforced, manual transfer route decommissioned, canonical payout webhook signature verified, and distributed session/token revocation active.
+> **Status:** All 35/35 test suites verified passing (`npm run test:all`), TypeScript compile clean (`npx tsc --noEmit`), Build clean (`npm run build`), zero plaintext bank storage enforced, manual transfer route decommissioned, canonical payout webhook signature verified, distributed session/token revocation active, and P0 payout refund/active payment/secrets invariants deployed.
 
 ---
 
@@ -12,7 +12,7 @@
 - Check TypeScript types: `npx tsc --noEmit`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (34 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run All Tests (35 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
 - Individual Suite Commands:
   - Suite 1 (Firebase Phone Auth): `npx tsx tests/firebase-phone-auth.spec.ts`
   - Suite 2 (FCM Notifications): `npx tsx tests/notifications-fcm.spec.ts`
@@ -48,6 +48,7 @@
   - Suite 32 (Driver Shifts Monitoring & Delivery Summary): `npx tsx tests/store-driver-shifts.spec.ts`
   - Suite 33 (Store-Customer Relationship CRM Module): `npx tsx tests/store-customer-crm.spec.ts`
   - Suite 34 (Analytics Date Range & Grouping Filters): `npx tsx tests/store-analytics-filters.spec.ts`
+  - Suite 35 (P0 Security, Payout Refund & Concurrency Invariants): `npx tsx tests/p0-security-and-concurrency.spec.ts`
 
 ---
 
@@ -891,11 +892,33 @@ When starting a new conversation, prompt the agent with:
         - `npx tsx tests/rentals-lifecycle-e2e.spec.ts` — **PASS (9/9)**.
         - `npx tsx tests/driver-shifts-monitoring.spec.ts` — **PASS (4/4)**.
 
+   8. **[2026-10-26] Phase 0 Production Readiness Hardening (TX-01, CC-01, SEC-01):**
+      - **TX-01 (Payout Failure Automatic Refund Invariant):**
+        - In [`src/store-wallet/store-wallet.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.service.ts): eliminated premature `FAILED` update prior to `refundFailedWithdrawal`.
+        - Delegated status transition to `FAILED` strictly inside `refundFailedWithdrawal` under `SELECT ... FOR UPDATE` row locking.
+        - Replaced restrictive check with monotonic guard `if (lockedWithdrawal.status === 'SUCCEEDED') return ...` to guarantee recovery of unrefunded withdrawals.
+        - Enforced check ensuring no duplicate `WITHDRAWAL_REFUND` ledger transaction exists before crediting store wallet balance.
+        - Sanitized error code string before persisting to `failureReason` and transaction ledger `description`.
+      - **CC-01 (Database Constraints & Active Payment Invariants):**
+        - Migration: [`prisma/migrations/20261026090000_concurrency_constraints_and_active_payment_invariants/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261026090000_concurrency_constraints_and_active_payment_invariants/migration.sql) (applied cleanly via `npx prisma migrate deploy`).
+        - Added partial unique index `uq_payment_active_per_order` on `payment_transaction(order_id)` WHERE `status IN ('PENDING', 'PAID') AND order_id IS NOT NULL`.
+        - Added partial unique index `uq_payment_active_per_rental` on `payment_transaction(rental_id)` WHERE `status IN ('PENDING', 'PAID') AND rental_id IS NOT NULL`.
+        - Added unique index `uq_payment_transaction_code` on `payment_transaction(transaction_code)` WHERE `transaction_code IS NOT NULL`.
+        - Added partial unique index `uq_default_bank_account_per_store` on `store_bank_accounts(store_id)` WHERE `is_default = true`.
+        - Added check constraint `chk_store_wallets_non_negative_balance` on `store_wallets(balance >= 0 AND frozen_balance >= 0)`.
+      - **SEC-01 (Secrets Hardening & Fail-Fast Lifecycle):**
+        - In [`src/common/utils/crypto-vault.util.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/utils/crypto-vault.util.ts): removed fallback encryption keys and salt. Enforced fail-fast (`throw new Error(...)`) in non-test environments when `BANK_ACCOUNT_ENCRYPTION_KEY` or `BANK_ACCOUNT_HASH_SALT` is missing.
+        - In [`src/auth/jwt.strategy.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/jwt.strategy.ts): removed fallback JWT secret `'sob_jwt_secret_dev_2026'` and enforced fail-fast.
+        - In [`src/websocket/events.gateway.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/websocket/events.gateway.ts): removed fallback JWT secret `'sob_jwt_secret_dev_2026'` and enforced fail-fast.
+        - In [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts): added boot-time validation for `BANK_ACCOUNT_ENCRYPTION_KEY` and `BANK_ACCOUNT_HASH_SALT` alongside `JWT_SECRET` and `OTP_PEPPER`.
+        - In [`.github/workflows/ci-cd.yml`](file:///f:/Learning/SEM9-FPTu/backend/.github/workflows/ci-cd.yml): added `BANK_ACCOUNT_ENCRYPTION_KEY` and `BANK_ACCOUNT_HASH_SALT` to the CI test environment; updated server readiness probe from `/healthz` to `/readyz` for true database readiness verification.
+      - **Suite 35 (`tests/p0-security-and-concurrency.spec.ts`):**
+        - Verified 10/10 assertions passing: payout failure refund, refund idempotency, active payment unique index enforcement, default bank account constraint enforcement, and crypto vault fail-fast validation.
+
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
-  - `npx prisma migrate deploy` — **PASS**
+  - `npx prisma migrate deploy` — **PASS (23 migrations applied)**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - Verified Suites: Suite 5 (13/13), Suite 8 (8/8), Suite 10 (25/25), Suite 14 (25/25), Suite 17 (4/4), Suite 20 (4/4), Suite 22 (7/7), Suite 23 (7/7), Suite 24 (5/5), Suite 25 (5/5), Suite 26 (8/8), Suite 29 (9/9), Suite 30 (7/7), Suite 32 (4/4) — **100% PASS**.
-  - GitHub Actions CI/CD Pipeline Run [#40217160647](https://github.com/AmazonButton/Backend/actions/runs/40217160647): **100% GREEN** (3/3 jobs: Code Quality & Build, Isolated DB & Integration Tests, Production Deploy & Verification).
+  - Verified Suites: Suite 14 (16/16), Suite 35 (10/10) — **100% PASS**.
 

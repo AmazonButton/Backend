@@ -10,7 +10,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET || 'sob_jwt_secret_dev_2026',
+      secretOrKey: (() => {
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+          if (process.env.NODE_ENV === 'test') {
+            return 'ci_test_jwt_secret_key_minimum_32_characters_long_for_security!';
+          }
+          throw new Error('FATAL: JWT_SECRET environment variable is required and must not be empty');
+        }
+        return secret;
+      })(),
       passReqToCallback: true,
     });
   }

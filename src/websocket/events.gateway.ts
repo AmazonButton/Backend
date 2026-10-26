@@ -12,6 +12,17 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { TokenBlacklist } from '../auth/token-blacklist';
 
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'test') {
+      return 'ci_test_jwt_secret_key_minimum_32_characters_long_for_security!';
+    }
+    throw new Error('FATAL: JWT_SECRET environment variable is required and must not be empty');
+  }
+  return secret;
+}
+
 @Injectable()
 @WebSocketGateway({
   cors: {
@@ -28,7 +39,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(EventsGateway.name);
   constructor(@Optional() private readonly prisma?: PrismaService) {}
   private readonly jwtService = new JwtService({
-    secret: process.env.JWT_SECRET || 'sob_jwt_secret_dev_2026',
+    secret: getJwtSecret(),
   });
 
   async handleConnection(client: Socket) {
@@ -50,7 +61,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      const secret = process.env.JWT_SECRET || 'sob_jwt_secret_dev_2026';
+      const secret = getJwtSecret();
       const payload: any = this.jwtService.verify(token, { secret });
       if (!payload || !payload.userId) {
         this.logger.warn(`⚠️ [WS] Invalid token payload for socket: ${client.id}`);

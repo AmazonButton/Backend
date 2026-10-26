@@ -116,6 +116,8 @@ jobs:
       CLOUDINARY_CLOUD_NAME: ci_test_cloud
       CLOUDINARY_API_KEY: ci_test_api_key
       CLOUDINARY_API_SECRET: ci_test_api_secret_32_characters_long!
+      BANK_ACCOUNT_ENCRYPTION_KEY: 5dad52bd291a3e8f96f284cd7fcdb72d96d5f114c00e642dea09e9da19d0363d
+      BANK_ACCOUNT_HASH_SALT: 9a532ece4926c8cf15015651729b0c1e
 
     steps:
       - name: Checkout Code
@@ -157,9 +159,9 @@ jobs:
           nohup npm run start:test > server.log 2>&1 &
           echo $! > server.pid
 
-      - name: Wait for Server Readiness (/healthz)
+      - name: Wait for Server Readiness (/readyz)
         run: |
-          npx --yes wait-on -t 60000 http://localhost:3000/healthz || (echo "=== SERVER LOG ON FAILURE ===" && cat server.log && exit 1)
+          npx --yes wait-on -t 60000 http://localhost:3000/readyz || (echo "=== SERVER LOG ON FAILURE ===" && cat server.log && exit 1)
 
       - name: Run All 16 Integration Test Suites
         run: npm run test:all

@@ -443,18 +443,8 @@ export class StoreWalletService {
     } catch (err: any) {
       this.logger.error(`PayOS Payout failed for withdrawal #${withdrawal.withdrawalCode}: ${err.message}`);
 
-      // Ghi nhận FAILED
-      await this.prisma.storeWithdrawal.update({
-        where: { withdrawalId: rawId },
-        data: {
-          status: 'FAILED',
-          failureReason: err.message || 'Lỗi gọi cổng PayOS Payout',
-          processedAt: new Date(),
-        },
-      });
-
-      // DB Transaction 2: Auto-Refund số dư về ví (Section 25)
-      await this.refundFailedWithdrawal(rawId, err.message || 'PayOS Payout API Error');
+      // TX-01: Auto-Refund số dư về ví và chuyển withdrawal sang FAILED nguyên khối trong cùng transaction
+      await this.refundFailedWithdrawal(rawId, err.message || 'Lỗi gọi cổng PayOS Payout');
 
       throw new BadRequestException(`Tạo chi tiền PayOS thất bại: ${err.message || 'Lỗi cổng PayOS'}`);
     }
@@ -482,8 +472,8 @@ export class StoreWalletService {
 
       if (!lockedWithdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
 
-      // 2. Only refund if status is PENDING or PROCESSING (Prevent double-refund if already FAILED/SUCCEEDED)
-      if (!['PENDING', 'PROCESSING'].includes(lockedWithdrawal.status)) {
+      // 2. Monotonic terminal guard: never refund a withdrawal that already SUCCEEDED
+      if (lockedWithdrawal.status === 'SUCCEEDED') {
         return tx.storeWithdrawal.findUnique({
           where: { withdrawalId: rawId },
         });
@@ -531,6 +521,10 @@ export class StoreWalletService {
         },
       });
 
+      const sanitizedReason = (reason || 'PayOS Payout API Error')
+        .replace(/[^\p{L}\p{N}\s_.,:-]/gu, '')
+        .slice(0, 255);
+
       await tx.walletTransaction.create({
         data: {
           walletId: lockedWithdrawal.wallet_id,
@@ -539,7 +533,7 @@ export class StoreWalletService {
           balanceBefore,
           balanceAfter,
           referenceId: lockedWithdrawal.withdrawal_code,
-          description: `Hoàn tiền yêu cầu rút #${lockedWithdrawal.withdrawal_code}: ${reason}`,
+          description: `Hoàn tiền yêu cầu rút #${lockedWithdrawal.withdrawal_code}: ${sanitizedReason}`,
         },
       });
 
@@ -547,7 +541,7 @@ export class StoreWalletService {
         where: { withdrawalId: rawId },
         data: {
           status: 'FAILED',
-          failureReason: reason,
+          failureReason: sanitizedReason,
           processedAt: new Date(),
         },
       });

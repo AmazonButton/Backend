@@ -12,7 +12,12 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   // Boot-time env validation: crash early if critical secrets are missing
-  const requiredEnvVars = ['JWT_SECRET', 'OTP_PEPPER'];
+  const requiredEnvVars = [
+    'JWT_SECRET',
+    'OTP_PEPPER',
+    'BANK_ACCOUNT_ENCRYPTION_KEY',
+    'BANK_ACCOUNT_HASH_SALT',
+  ];
   for (const envVar of requiredEnvVars) {
     if (!process.env[envVar]) {
       console.error(`❌ FATAL: Missing required environment variable: ${envVar}`);

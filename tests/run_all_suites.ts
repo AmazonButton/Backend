@@ -178,6 +178,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'analytics-window-filters.spec.ts')],
   },
+  {
+    name: '35. P0 Security, Payout Refund & Concurrency Invariants Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'p0-security-and-concurrency.spec.ts')],
+  },
 ];
 
 async function main() {
