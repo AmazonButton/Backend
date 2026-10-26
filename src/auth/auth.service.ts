@@ -254,22 +254,41 @@ export class AuthService {
     let verifiedUser: { email: string; name?: string; picture?: string; id?: string } | null = null;
 
     if (rawToken) {
-      // 1. Try Google UserInfo API (standard Google OAuth 2.0 access token)
+      const expectedAud = process.env.GOOGLE_CLIENT_ID;
+
+      // 1. Try Google OAuth 2.0 access token via tokeninfo + userinfo verification
       try {
-        const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: {
-            Authorization: `Bearer ${rawToken}`,
-          },
-        });
-        if (googleRes.ok) {
-          const gData: any = await googleRes.json();
-          if (gData.email) {
+        const tokenInfoRes = await fetch(
+          `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(rawToken)}`,
+        );
+        if (tokenInfoRes.ok) {
+          const tData: any = await tokenInfoRes.json();
+          const isEmailVerified =
+            tData.verified_email === true ||
+            tData.verified_email === 'true' ||
+            tData.email_verified === 'true' ||
+            tData.email_verified === true;
+          const tokenAud = tData.audience || tData.issued_to;
+          const audValid = expectedAud
+            ? tokenAud === expectedAud
+            : process.env.NODE_ENV !== 'production';
+
+          if (tData.email && isEmailVerified && audValid) {
             verifiedUser = {
-              email: gData.email,
-              name: gData.name || gData.given_name,
-              picture: gData.picture,
-              id: gData.sub,
+              email: tData.email,
+              name: tData.email.split('@')[0],
+              id: tData.user_id || tData.sub,
             };
+            try {
+              const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${rawToken}` },
+              });
+              if (googleRes.ok) {
+                const gData: any = await googleRes.json();
+                if (gData.name) verifiedUser.name = gData.name;
+                if (gData.picture) verifiedUser.picture = gData.picture;
+              }
+            } catch (_) {}
           }
         }
       } catch (_) {}
@@ -277,16 +296,27 @@ export class AuthService {
       // 2. Try Google ID Token verification (tokeninfo endpoint)
       if (!verifiedUser) {
         try {
-          const idTokenRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(rawToken)}`);
+          const idTokenRes = await fetch(
+            `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(rawToken)}`,
+          );
           if (idTokenRes.ok) {
             const tokenData: any = await idTokenRes.json();
             const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
-            const isEmailVerified = tokenData.email_verified === 'true' || tokenData.email_verified === true;
-            const isNotExpired = tokenData.exp && Number(tokenData.exp) * 1000 > Date.now();
-            const expectedAud = process.env.GOOGLE_CLIENT_ID;
-            const audValid = !expectedAud || tokenData.aud === expectedAud;
+            const isEmailVerified =
+              tokenData.email_verified === 'true' || tokenData.email_verified === true;
+            const isNotExpired =
+              tokenData.exp && Number(tokenData.exp) * 1000 > Date.now();
+            const audValid = expectedAud
+              ? tokenData.aud === expectedAud
+              : process.env.NODE_ENV !== 'production';
 
-            if (tokenData.email && validIssuers.includes(tokenData.iss) && isEmailVerified && isNotExpired && audValid) {
+            if (
+              tokenData.email &&
+              validIssuers.includes(tokenData.iss) &&
+              isEmailVerified &&
+              isNotExpired &&
+              audValid
+            ) {
               verifiedUser = {
                 email: tokenData.email,
                 name: tokenData.name,
@@ -311,7 +341,10 @@ export class AuthService {
           });
           if (sRes.ok) {
             const sData: any = await sRes.json();
-            if (sData.email) {
+            const isEmailVerified =
+              sData.email_confirmed_at != null ||
+              sData.user_metadata?.email_verified === true;
+            if (sData.email && isEmailVerified) {
               verifiedUser = {
                 email: sData.email,
                 name: sData.user_metadata?.full_name || sData.user_metadata?.name,

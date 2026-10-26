@@ -477,8 +477,32 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * List jobs currently stored in Dead-Letter Queue.
+   * PostgreSQL table dead_letter_jobs is the authoritative durable source of truth.
    */
-  getDeadLetterJobs(queueName?: string): DeadLetterJob[] {
+  async getDeadLetterJobs(queueName?: string): Promise<DeadLetterJob[]> {
+    if (this.prisma) {
+      try {
+        const rows = await this.prisma.deadLetterJob.findMany({
+          where: queueName ? { queueName } : {},
+          orderBy: { createdAt: 'desc' },
+        });
+        if (rows && rows.length > 0) {
+          return rows.map((r: any) => ({
+            id: r.id,
+            queueName: r.queueName,
+            jobName: r.jobName,
+            data: r.payload,
+            attemptsMade: r.attemptsMade,
+            maxAttempts: r.maxAttempts,
+            failedReason: r.failedReason || '',
+            status: r.status,
+            failedAt: r.createdAt,
+          }));
+        }
+      } catch (err: any) {
+        this.logger.error(`Error querying DB dead letter jobs: ${err.message}`);
+      }
+    }
     const all = Array.from(this.deadLetterStore.values());
     if (queueName) {
       return all.filter((j) => j.queueName === queueName);
@@ -488,16 +512,27 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Re-enqueue a job from DLQ back into the active waiting queue.
+   * Atomically claims the job in DB first (marking status as RETRYING) before enqueueing,
+   * guaranteeing that a failed DB update never results in duplicate job execution.
    */
   async retryDeadLetterJob(dlqId: string): Promise<boolean> {
-    let deadJob = this.deadLetterStore.get(dlqId);
-    let queueName = deadJob?.queueName;
-    let jobName = deadJob?.jobName;
-    let jobData = deadJob?.data;
-    let maxAttempts = deadJob?.maxAttempts || 3;
+    let queueName: string | undefined;
+    let jobName: string | undefined;
+    let jobData: any;
+    let maxAttempts = 3;
 
-    if (!deadJob && this.prisma) {
+    if (this.prisma) {
       try {
+        // Atomic status transition in DB from DEAD to RETRYING
+        const claimResult = await this.prisma.deadLetterJob.updateMany({
+          where: { id: dlqId, status: 'DEAD' },
+          data: { status: 'RETRYING' },
+        });
+        if (claimResult.count === 0) {
+          this.logger.warn(`DLQ job ${dlqId} could not be claimed from DB (already RETRYING or not found)`);
+          return false;
+        }
+
         const dbJob = await this.prisma.deadLetterJob.findUnique({
           where: { id: dlqId },
         });
@@ -507,52 +542,60 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           jobData = dbJob.payload;
           maxAttempts = dbJob.maxAttempts;
         }
-      } catch (_) {}
+      } catch (err: any) {
+        this.logger.error(`Failed to atomically claim DLQ job ${dlqId} in DB: ${err.message}`);
+        return false;
+      }
+    } else {
+      const deadJob = this.deadLetterStore.get(dlqId);
+      if (!deadJob || deadJob.status === 'RETRYING') {
+        return false;
+      }
+      deadJob.status = 'RETRYING';
+      queueName = deadJob.queueName;
+      jobName = deadJob.jobName;
+      jobData = deadJob.data;
+      maxAttempts = deadJob.maxAttempts || 3;
     }
 
     if (!queueName || !jobName) {
       return false;
     }
 
-    if (deadJob) {
-      deadJob.status = 'RETRYING';
-      this.deadLetterStore.delete(dlqId);
-    }
-
+    // Now safely re-enqueue
     await this.enqueueJob(queueName, jobName, jobData, {
       attempts: maxAttempts,
       backoffDelayMs: 1000,
     });
 
-    if (this.prisma) {
-      try {
-        await this.prisma.deadLetterJob.update({
-          where: { id: dlqId },
-          data: { status: 'RETRYING' },
-        });
-      } catch (_) {}
-    }
-    this.logger.log(`Job ${dlqId} re-enqueued from DLQ into active queue [${queueName}]`);
+    this.deadLetterStore.delete(dlqId);
+    this.logger.log(`Job ${dlqId} safely claimed and re-enqueued from DLQ into active queue [${queueName}]`);
     return true;
   }
 
   /**
-   * Clear jobs in DLQ.
+   * Clear jobs in DLQ. Awaits database deletion and returns the total deleted count.
    */
-  clearDeadLetterJobs(queueName?: string): number {
-    let count = 0;
+  async clearDeadLetterJobs(queueName?: string): Promise<number> {
+    let dbCount = 0;
+    if (this.prisma) {
+      try {
+        const result = await this.prisma.deadLetterJob.deleteMany({
+          where: queueName ? { queueName } : {},
+        });
+        dbCount = result.count;
+      } catch (err: any) {
+        this.logger.error(`Error clearing DB dead letter jobs: ${err.message}`);
+      }
+    }
+    let memoryCount = 0;
     for (const [id, job] of this.deadLetterStore.entries()) {
       if (!queueName || job.queueName === queueName) {
         this.deadLetterStore.delete(id);
-        count++;
+        memoryCount++;
       }
     }
-    if (this.prisma) {
-      this.prisma.deadLetterJob.deleteMany({
-        where: queueName ? { queueName } : {},
-      }).catch((err) => this.logger.error(`Error clearing DB dead letter jobs: ${err.message}`));
-    }
-    return count;
+    return Math.max(dbCount, memoryCount);
   }
 
   /**
@@ -569,7 +612,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     for (const name of allQueueNames) {
       const waiting = this.waitingQueues.get(name)?.length || 0;
       const stat = this.stats.get(name) || { completed: 0, failed: 0 };
-      const dlqCount = this.getDeadLetterJobs(name).length;
+      const dlqCount = Array.from(this.deadLetterStore.values()).filter(
+        (j) => j.queueName === name,
+      ).length;
 
       results.push({
         queueName: name,

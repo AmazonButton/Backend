@@ -1009,23 +1009,32 @@ When starting a new conversation, prompt the agent with:
          - Replay and clear operations in [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts) interact durably with the PostgreSQL `dead_letter_jobs` table across server restarts.
        - **P1-7 (Transaction Retry Integration):**
          - Wrapped operations in `runWithTransactionRetry` (`updateProductAtomicTx`, `extendRentalAtomicTx`, `finalizePayoutSuccessTx`, `updateBankAccountAtomicTx`, `setDefaultBankAccount`, `refundFailedWithdrawal`).
-       - **P1-8 & P1-9 (Idempotency Lease Lock Token & Proxy Trust):**
-         - Migration: [`prisma/migrations/20261026170000_add_idempotency_lock_token/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261026170000_add_idempotency_lock_token/migration.sql). Added `lock_token VARCHAR(64)` to `api_idempotency_keys`.
-         - Acquired lock assigns unique UUID `lockToken`. Finalize updates only where `(lock_token = ? OR lock_token IS NULL) AND status = 'PROCESSING'`, preventing race overwrites from expired leases.
-         - Configured `trust proxy` in [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts) and used trusted `req.ip`. Auto-synthesizes deterministic request hash when `Idempotency-Key` header is omitted to prevent double-click mutations.
-       - **P1-10 (Guard Separation: Storefront vs Logout):**
-         - Created [`src/auth/guards/logout-jwt.guard.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/guards/logout-jwt.guard.ts) allowing expired tokens with valid signature for session revocation.
-         - Hardened [`src/common/guards/optional-jwt-auth.guard.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/guards/optional-jwt-auth.guard.ts) to strictly return 401 on expired tokens, preventing guest ownership bugs during checkout.
-       - **P1-11 (Payout Accounting Deficit Guard & PayOS Timeout):**
-         - In [`src/store-wallet/store-wallet.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.repository.ts): throws `ConflictException` if `frozenBalance < amount` instead of clamping to 0.
-         - Added `AbortController` timeouts (10s create, 8s get) in [`src/payments/payos-payout.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payos-payout.service.ts).
-       - **P2-12 (Suite 41 Registration & Verification):**
+       - **P1-8 & P1-9 (Idempotency Lease Lock Token & Safe Request Handling):**
+         - Applied migration `prisma/migrations/20261026170000_add_idempotency_lock_token/migration.sql` (28/28 migrations up-to-date) and updated `ApiIdempotencyKey` model in `schema.prisma`.
+         - Mandatory `lockToken: string` enforced in both `finalizeSuccess` and `finalizeFailure` with `WHERE id = ? AND lock_token = ? AND status = 'PROCESSING'` (removed fallback `OR lock_token IS NULL`).
+         - In `idempotency.interceptor.ts`: eliminated auto-idempotency synthesis from request body. If key is omitted and not required, request passes through directly without caching, eliminating 24h order blocking and cross-guest order collisions.
+         - Unified IP resolution to trusted `req.ip` across auth controller, rate limit guards, and interceptors; configured `trust proxy` via `TRUST_PROXY` env with production default `1`.
+       - **P0-Google-OAuth (Strict Audience Binding & Tokeninfo Verification):**
+         - In [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts): validates access tokens via `tokeninfo?access_token=...` verifying `audience === GOOGLE_CLIENT_ID` and `email_verified === true`.
+         - Added `GOOGLE_CLIENT_ID` to `.env.example`.
+       - **P1-DLQ (PostgreSQL DLQ Source of Truth & Atomic Replay):**
+         - In [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts): `getDeadLetterJobs()` queries PostgreSQL `dead_letter_jobs` table.
+         - `clearDeadLetterJobs()` awaits database deletion.
+         - `retryDeadLetterJob()` atomically claims job in DB (`status = 'RETRYING'`) before enqueueing, preventing duplicate replays.
+       - **P2-Hardening (PayOS Timeouts & Product Lock):**
+         - In [`src/payments/payos-payout.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payos-payout.service.ts): timeout covers both `fetch` and `response.json()`, with `clearTimeout` in `finally`. Removed duplicate exception check.
+         - In [`src/products/products.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/products/products.repository.ts): immediately throws `NotFoundException` if product row is not found under `SELECT ... FOR UPDATE`.
+       - **P2-12 (Suite 41 Registration & Full Isolation):**
          - Registered Suite 41 (`41. Superpowers Security Verification & Hardening Suite`) in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
-         - Verified Suite 41 passing: 17/17 PASS.
+         - Wrapped entire test setup inside `try ... finally` with guaranteed teardown of test users, stores, wallets, and products.
+         - Added end-to-end tests for interceptor pass-through, missing key rejection, guest isolation, Google audience validation, and DLQ atomic replay.
+         - Verified Suite 41 passing: **26/26 PASS**.
 
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
-  - `npx prisma migrate deploy` — **PASS (26 migrations applied)**
+  - `npx prisma migrate status` — **PASS (28 migrations found, database schema is up to date)**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - Verified Suites: Suite 41 Superpowers Security Verification (17/17), Suite 35 (11/11), Suite 36 (16/16), Suite 37 (22/22), Suite 38 (19/19), Suite 39 (15/15), Suite 40 (16/16) — **100% PASS (116/116 assertions verified across all production & security suites)**.
+  - Suite 41 Superpowers Security Verification (`tests/superpower-security-verification.spec.ts`) — **PASS (26/26 assertions passed)**
+  - Suite 37 Phase 2 Idempotency Platform (`tests/phase2-idempotency-platform.spec.ts`) — **PASS (22/22 assertions passed)**
+  - Suite 38 Phase 3 Queues & DLQ (`tests/phase3-queues-retry-dlq.spec.ts`) — **PASS (19/19 assertions passed)**

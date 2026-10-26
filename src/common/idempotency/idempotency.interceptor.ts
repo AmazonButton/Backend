@@ -54,14 +54,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
           'Header X-Idempotency-Key là bắt buộc đối với thao tác này',
         );
       }
-      // Auto-synthesize deterministic key from payload hash to protect against concurrent duplicate clicks
-      const contentHash = this.idempotencyService.computeRequestHash({
-        method: req.method,
-        path: req.originalUrl?.split('?')[0] || req.path || '/',
-        query: req.query,
-        body: req.body,
-      });
-      rawKey = `auto_${contentHash.slice(0, 32)}`;
+      // If key is optional and client did not supply one, pass through directly.
+      // Never synthesize identity from payload hash to avoid duplicate order blocks & cross-guest response leaks.
+      return next.handle();
     }
 
     const method = (req.method || 'POST').toUpperCase();
@@ -112,7 +107,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
       res.setHeader('X-Idempotency-Status', 'EXECUTED');
     }
 
-    const recordId = acquisition.recordId;
+    const recordId = acquisition.recordId!;
+    const lockToken = acquisition.lockToken!;
 
     // Use concatMap to guarantee finalizeSuccess is 100% awaited BEFORE response is emitted
     return next.handle().pipe(
@@ -122,6 +118,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
           recordId,
           statusCode,
           data,
+          lockToken,
         );
         return data;
       }),
@@ -131,6 +128,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
           err?.status && typeof err.status === 'number' && err.status < 500;
         await this.idempotencyService.finalizeFailure(
           recordId,
+          lockToken,
           isClientError,
         );
         throw err;

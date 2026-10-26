@@ -232,8 +232,14 @@ export class IdempotencyRepository {
 
   /**
    * Finalize an acquired idempotency key with successful execution result.
+   * Strictly requires lockToken matching the active lease.
    */
-  async finalizeSuccess(recordId: bigint, statusCode: number, responseBody: any, lockToken?: string): Promise<boolean> {
+  async finalizeSuccess(
+    recordId: bigint,
+    statusCode: number,
+    responseBody: any,
+    lockToken: string,
+  ): Promise<boolean> {
     const serializedBody =
       responseBody !== undefined
         ? JSON.stringify(responseBody, (_, v) =>
@@ -241,48 +247,46 @@ export class IdempotencyRepository {
           )
         : null;
 
-    let updatedCount = 0;
-    if (lockToken) {
-      updatedCount = await this.prisma.$executeRaw`
-        UPDATE api_idempotency_keys
-        SET status = 'COMPLETED',
-            status_code = ${statusCode},
-            response_body = ${serializedBody}::jsonb,
-            updated_at = NOW()
-        WHERE id = ${recordId}
-          AND (lock_token = ${lockToken} OR lock_token IS NULL)
-          AND status = 'PROCESSING'
-      `;
-    } else {
-      updatedCount = await this.prisma.$executeRaw`
-        UPDATE api_idempotency_keys
-        SET status = 'COMPLETED',
-            status_code = ${statusCode},
-            response_body = ${serializedBody}::jsonb,
-            updated_at = NOW()
-        WHERE id = ${recordId}
-          AND status = 'PROCESSING'
-      `;
-    }
+    const updatedCount = await this.prisma.$executeRaw`
+      UPDATE api_idempotency_keys
+      SET status = 'COMPLETED',
+          status_code = ${statusCode},
+          response_body = ${serializedBody}::jsonb,
+          updated_at = NOW()
+      WHERE id = ${recordId}
+        AND lock_token = ${lockToken}
+        AND status = 'PROCESSING'
+    `;
     return updatedCount > 0;
   }
 
   /**
    * Finalize or remove a failed idempotency record to permit clean client retries.
+   * Strictly requires lockToken matching the active lease.
    */
-  async finalizeFailure(recordId: bigint, removeOnFailure = true): Promise<void> {
+  async finalizeFailure(
+    recordId: bigint,
+    lockToken: string,
+    removeOnFailure = true,
+  ): Promise<boolean> {
+    let affectedCount = 0;
     if (removeOnFailure) {
-      await this.prisma.$executeRaw`
+      affectedCount = await this.prisma.$executeRaw`
         DELETE FROM api_idempotency_keys
         WHERE id = ${recordId}
+          AND lock_token = ${lockToken}
+          AND status = 'PROCESSING'
       `;
     } else {
-      await this.prisma.$executeRaw`
+      affectedCount = await this.prisma.$executeRaw`
         UPDATE api_idempotency_keys
         SET status = 'FAILED',
             updated_at = NOW()
         WHERE id = ${recordId}
+          AND lock_token = ${lockToken}
+          AND status = 'PROCESSING'
       `;
     }
+    return affectedCount > 0;
   }
 }

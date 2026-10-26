@@ -900,6 +900,7 @@ model ApiIdempotencyKey {
   statusCode     Int?      @map("status_code")
   responseBody   Json?     @map("response_body")
   status         String    @default("PROCESSING") @map("status") @db.VarChar(20)
+  lockToken      String?   @map("lock_token") @db.VarChar(64)
   lockedUntil    DateTime  @map("locked_until") @db.Timestamptz(6)
   expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)

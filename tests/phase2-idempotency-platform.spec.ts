@@ -119,7 +119,7 @@ async function runPhase2IdempotencySuite() {
         message: 'Order created',
         data: { orderId: 'ORD-P2-888', totalAmount: 250000 },
       };
-      await idempotencyService.finalizeSuccess(firstAcquire.recordId, 201, mockResponse);
+      await idempotencyService.finalizeSuccess(firstAcquire.recordId, 201, mockResponse, firstAcquire.lockToken!);
 
       // 2.5 Subsequent request returns cached response directly
       const replayAcquire = await idempotencyService.acquire({
@@ -166,7 +166,7 @@ async function runPhase2IdempotencySuite() {
 
     // 3.2 Failure cleanup (e.g. client error) removes record to allow clean retry
     if (recoveredAcquire.state === 'ACQUIRED') {
-      await idempotencyService.finalizeFailure(recoveredAcquire.recordId, true);
+      await idempotencyService.finalizeFailure(recoveredAcquire.recordId, recoveredAcquire.lockToken!, true);
       const afterFailureAcquire = await idempotencyService.acquire({
         idempotencyKey: testKey2,
         route: testRoute,
@@ -174,7 +174,7 @@ async function runPhase2IdempotencySuite() {
       });
       assert(afterFailureAcquire.state === 'ACQUIRED', 'Client failure record deleted, allowing clean retry');
       if (afterFailureAcquire.state === 'ACQUIRED') {
-        await idempotencyService.finalizeFailure(afterFailureAcquire.recordId, true);
+        await idempotencyService.finalizeFailure(afterFailureAcquire.recordId, afterFailureAcquire.lockToken!, true);
       }
     }
 
@@ -198,7 +198,7 @@ async function runPhase2IdempotencySuite() {
       await idempotencyService.finalizeSuccess(payAcquire1.recordId, 200, {
         checkoutUrl: 'https://pay.payos.vn/web/12345',
         paymentLinkId: 'PL_888',
-      });
+      }, payAcquire1.lockToken!);
     }
 
     const payAcquire2 = await idempotencyService.acquire({
@@ -223,7 +223,7 @@ async function runPhase2IdempotencySuite() {
       await idempotencyService.finalizeSuccess(rentAcquire1.recordId, 200, {
         rentalId: '123',
         newMonthsRented: 3,
-      });
+      }, rentAcquire1.lockToken!);
     }
 
     const rentAcquire2 = await idempotencyService.acquire({
@@ -252,7 +252,7 @@ async function runPhase2IdempotencySuite() {
     });
     assert(user1Acquire.state === 'ACQUIRED', 'User 1 acquires key in user:101 scope');
     if (user1Acquire.state === 'ACQUIRED') {
-      await idempotencyService.finalizeSuccess(user1Acquire.recordId, 201, { orderId: 'ORD-101' });
+      await idempotencyService.finalizeSuccess(user1Acquire.recordId, 201, { orderId: 'ORD-101' }, user1Acquire.lockToken!);
     }
 
     const user2Acquire = await idempotencyService.acquire({
@@ -279,7 +279,7 @@ async function runPhase2IdempotencySuite() {
     });
     assert(rental1Acquire.state === 'ACQUIRED', 'Rental 1 acquires key on actual path /rentals/1/extensions');
     if (rental1Acquire.state === 'ACQUIRED') {
-      await idempotencyService.finalizeSuccess(rental1Acquire.recordId, 200, { rentalId: '1' });
+      await idempotencyService.finalizeSuccess(rental1Acquire.recordId, 200, { rentalId: '1' }, rental1Acquire.lockToken!);
     }
 
     const rental2Acquire = await idempotencyService.acquire({

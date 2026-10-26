@@ -84,13 +84,7 @@ export class BankLookupRateLimitGuard implements CanActivate, OnModuleDestroy {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const userId = request.user?.userId || request.user?.id || 'anonymous';
-    let ip = request.ip || request.socket?.remoteAddress || '127.0.0.1';
-
-    if (process.env.TRUST_PROXY === 'true' && request.headers['x-forwarded-for']) {
-      const raw = request.headers['x-forwarded-for'];
-      const first = Array.isArray(raw) ? raw[0] : raw.split(',')[0];
-      if (first) ip = first.trim();
-    }
+    const ip = request.ip || request.socket?.remoteAddress || '127.0.0.1';
 
     const maxRequests = Number(process.env.BANK_LOOKUP_RATE_LIMIT || 15); // Giới hạn 15 lần tra cứu/phút
     const windowSec = 60; // 60 giây TTL

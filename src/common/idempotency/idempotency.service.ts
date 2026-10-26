@@ -161,11 +161,20 @@ export class IdempotencyService {
     };
   }
 
-  async finalizeSuccess(recordId: bigint, statusCode: number, responseBody: any, lockToken?: string): Promise<boolean> {
+  async finalizeSuccess(
+    recordId: bigint,
+    statusCode: number,
+    responseBody: any,
+    lockToken: string,
+  ): Promise<boolean> {
     return this.repository.finalizeSuccess(recordId, statusCode, responseBody, lockToken);
   }
 
-  async finalizeFailure(recordId: bigint, removeOnFailure = true): Promise<void> {
-    await this.repository.finalizeFailure(recordId, removeOnFailure);
+  async finalizeFailure(
+    recordId: bigint,
+    lockToken: string,
+    removeOnFailure = true,
+  ): Promise<boolean> {
+    return this.repository.finalizeFailure(recordId, lockToken, removeOnFailure);
   }
 }

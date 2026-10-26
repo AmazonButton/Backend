@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
@@ -153,10 +153,10 @@ export class ProductsRepository {
         const lockedRows = await tx.$queryRaw<Array<{ product_id: bigint; base_price: any }>>`
           SELECT product_id, base_price FROM product WHERE product_id = ${params.productId} FOR UPDATE
         `;
-        const currentLockedBasePrice =
-          lockedRows && lockedRows.length > 0 && lockedRows[0].base_price !== null && lockedRows[0].base_price !== undefined
-            ? new Decimal(lockedRows[0].base_price)
-            : (params.priceHistory?.oldPrice !== undefined ? new Decimal(params.priceHistory.oldPrice) : new Decimal(0));
+        if (!lockedRows || lockedRows.length === 0) {
+          throw new NotFoundException(`Product #${params.productId} không tồn tại`);
+        }
+        const currentLockedBasePrice = new Decimal(lockedRows[0].base_price);
 
         // 2. Insert price history using the freshly locked base_price
         if (params.priceHistory) {

@@ -110,7 +110,7 @@ async function runPhase3QueueSuite() {
 
     assert(permanentFailAttempts === 2, `Exhausted all configured max attempts (2): got ${permanentFailAttempts}`);
 
-    const deadJobs = queueService.getDeadLetterJobs('test-dlq-queue');
+    const deadJobs = await queueService.getDeadLetterJobs('test-dlq-queue');
     assert(deadJobs.length === 1, 'Exhausted job cleanly transferred to Dead-Letter Queue (DLQ)');
 
     const deadJob = deadJobs[0];
@@ -145,7 +145,7 @@ async function runPhase3QueueSuite() {
     });
     await new Promise((r) => setTimeout(r, 100));
 
-    const recoveryDeadJobs = queueService.getDeadLetterJobs('test-recovery-queue');
+    const recoveryDeadJobs = await queueService.getDeadLetterJobs('test-recovery-queue');
     assert(recoveryDeadJobs.length === 1, 'Job in DLQ ready for admin replay');
 
     // Replay job with fixed handler
@@ -161,9 +161,10 @@ async function runPhase3QueueSuite() {
     assert(recoveredData !== null && recoveredData.accountId === 'ACC-123', 'Replayed job successfully executed');
 
     // Clear DLQ
-    const cleared = queueService.clearDeadLetterJobs();
+    const cleared = await queueService.clearDeadLetterJobs();
     assert(cleared >= 1, `Dead letter jobs cleared cleanly: ${cleared} removed`);
-    assert(queueService.getDeadLetterJobs().length === 0, 'DLQ is empty after clearing');
+    const remainingDeadJobs = await queueService.getDeadLetterJobs();
+    assert(remainingDeadJobs.length === 0, 'DLQ is empty after clearing');
 
     // -------------------------------------------------------------
     // SECTION 5: Queue Statistics Reporting

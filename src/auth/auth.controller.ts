@@ -49,10 +49,7 @@ export class AuthController {
   @HttpCode(200)
   @Post('google-login')
   googleLogin(@Body() body: GoogleLoginDto, @Request() req: any) {
-    const ip =
-      req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
-      req.ip ||
-      req.connection?.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
     const userAgent = req.headers['user-agent']?.toString();
     return this.authService.googleLogin(body, ip, userAgent);
   }
@@ -61,10 +58,7 @@ export class AuthController {
   @HttpCode(200)
   @Post('google')
   google(@Body() body: GoogleLoginDto, @Request() req: any) {
-    const ip =
-      req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
-      req.ip ||
-      req.connection?.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
     const userAgent = req.headers['user-agent']?.toString();
     return this.authService.googleLogin(body, ip, userAgent);
   }
@@ -73,10 +67,7 @@ export class AuthController {
   @HttpCode(200)
   @Post('login')
   login(@Body() body: LoginDto, @Request() req: any) {
-    const ip =
-      req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
-      req.ip ||
-      req.connection?.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
     const userAgent = req.headers['user-agent']?.toString();
     return this.authService.login(body, ip, userAgent);
   }
@@ -84,10 +75,7 @@ export class AuthController {
   @HttpCode(200)
   @Post('refresh')
   refresh(@Body() body: RefreshTokenDto, @Request() req: any) {
-    const ip =
-      req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
-      req.ip ||
-      req.connection?.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
     const userAgent = req.headers['user-agent']?.toString();
     return this.authService.refresh(body.refreshToken, ip, userAgent);
   }
@@ -208,7 +196,7 @@ export class AuthController {
   @HttpCode(200)
   @Post('login-by-phone')
   loginByPhone(@Body() dto: LoginByPhoneDto, @Request() req: any) {
-    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
     const userAgent = req.headers['user-agent'];
     return this.authService.loginByPhone(dto, ip, userAgent);
   }

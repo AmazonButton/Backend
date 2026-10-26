@@ -1,41 +1,26 @@
-/**
- * ============================================================================
- * 🛡️ SUPERPOWERS SECURITY & ARCHITECTURAL VERIFICATION SUITE
- * ============================================================================
- * Executed under superpowers:verification-before-completion and
- * superpowers:backend-security-audit.
- *
- * Verifies all senior review production hardening remediations:
- * 1. P0 Google OAuth Account Takeover Defense: Strict rejection in production without verified token.
- * 2. P0 Isolated Test Fixtures: Zero pollution of real stores/wallets, clean teardown.
- * 3. P0 Payout State Machine & Strict Accounting Invariant (ConflictException on deficit).
- * 4. P0 Race-Free Product Price History: DB base_price read strictly under SELECT FOR UPDATE.
- * 5. P0 Scoped Idempotency & Lock Token: Lease token prevents stale requests from overwriting newer execution.
- * 6. P0 Logout Token Verification & Guard Separation (LogoutJwtGuard vs OptionalJwtAuthGuard).
- * 7. P1 BullMQ Lifecycle: Processors registered before init attached to Redis workers, durable PostgreSQL DLQ replay.
- * 8. P1 Sensitive Data Masking: 6-digit OTPs inside HTML/text masked in DLQ (******).
- * 9. P1 Email Retry & Queue Propagation (throwOnError: true).
- * 10. P1 Zero-Downtime Draining & Production Fail-Closed Readiness.
- * ============================================================================
- */
-
 import { PrismaClient } from '@prisma/client';
-import { QueueService } from '../src/common/queues/queue.service';
-import { IdempotencyService } from '../src/common/idempotency/idempotency.service';
-import { IdempotencyRepository } from '../src/common/idempotency/idempotency.repository';
-import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
-import { StoreWalletRepository } from '../src/store-wallet/store-wallet.repository';
 import { AuthService } from '../src/auth/auth.service';
+import { JwtService } from '@nestjs/jwt';
 import { MailService } from '../src/mail/mail.service';
+import { QueueService } from '../src/common/queues/queue.service';
+import { IdempotencyRepository } from '../src/common/idempotency/idempotency.repository';
+import { IdempotencyService } from '../src/common/idempotency/idempotency.service';
+import { IdempotencyInterceptor } from '../src/common/idempotency/idempotency.interceptor';
+import { IDEMPOTENCY_OPTIONS_KEY } from '../src/common/idempotency/idempotency.decorator';
+import { StoreWalletRepository } from '../src/store-wallet/store-wallet.repository';
+import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { ProductsRepository } from '../src/products/products.repository';
-import { AppController } from '../src/app.controller';
-import { TokenBlacklist } from '../src/auth/token-blacklist';
 import { OptionalJwtAuthGuard } from '../src/common/guards/optional-jwt-auth.guard';
 import { LogoutJwtGuard } from '../src/auth/guards/logout-jwt.guard';
-import { JwtService } from '@nestjs/jwt';
-import { ConflictException, UnauthorizedException, ServiceUnavailableException } from '@nestjs/common';
-import { Decimal } from '@prisma/client/runtime/library';
-import * as crypto from 'crypto';
+import { AppController } from '../src/app.controller';
+import { of, throwError } from 'rxjs';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
 const prisma = new PrismaClient();
 
@@ -59,6 +44,13 @@ async function runSuperpowersVerificationSuite() {
   console.log('\n================================================================');
   console.log('🛡️ RUNNING SUPERPOWERS VERIFICATION & SECURITY AUDIT SUITE');
   console.log('================================================================\n');
+
+  // Database safety guard: Never run tests against production database without explicit TEST_DATABASE_URL
+  if (process.env.NODE_ENV === 'production' && !process.env.TEST_DATABASE_URL) {
+    throw new Error(
+      'Refusing to run test suite directly against production DATABASE_URL without explicit TEST_DATABASE_URL!',
+    );
+  }
 
   const jwtSecret =
     process.env.JWT_SECRET || 'ci_test_jwt_secret_key_minimum_32_characters_long_for_security!';
@@ -111,53 +103,65 @@ async function runSuperpowersVerificationSuite() {
     {} as any,
   );
 
-  // --------------------------------------------------------------------------
-  // ISOLATED TEST ENTITIES (Strictly zero pollution of existing production stores)
-  // --------------------------------------------------------------------------
-  const uniqueRunId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-  const testUser = await prisma.user.create({
-    data: {
-      username: `sp_user_${uniqueRunId.slice(-10)}`,
-      email: `sp_user_${uniqueRunId}@amazonbutton.vn`,
-      passwordHash: '$2b$12$eXAMpleHashedPasswordForTestRunner1234567890123456789',
-      fullName: 'Superpowers Isolated Runner',
-      status: 'ACTIVE',
-    },
-  });
-
-  const testStore = await prisma.store.create({
-    data: {
-      name: `Superpowers Isolated Store ${uniqueRunId.slice(-6)}`,
-      code: `STR_SP_${uniqueRunId.slice(-8)}`,
-      phone: '0901234567',
-      address: '123 Superpowers Isolated St',
-      ownerUserId: testUser.userId,
-      status: 'ACTIVE',
-    },
-  });
-
-  const testWallet = await prisma.storeWallet.create({
-    data: {
-      storeId: testStore.storeId,
-      balance: 1000000,
-      frozenBalance: 200000,
-    },
-  });
-
-  const testStoreId = testStore.storeId;
+  // Variable holders declared before try/finally to guarantee 100% cleanup even if setup fails
+  let createdUserId: bigint | null = null;
+  let createdStoreId: bigint | null = null;
+  let createdWalletId: bigint | null = null;
   const cleanupWithdrawalIds: bigint[] = [];
   const cleanupProductIds: bigint[] = [];
   const cleanupIdempotencyKeys: string[] = [];
 
   try {
-    // ========================================================================
-    // 1. P0 GOOGLE OAUTH ACCOUNT TAKEOVER DEFENSE
-    // ========================================================================
-    console.log('--- 1. P0 Google OAuth Account Takeover Defense ---');
+    // --------------------------------------------------------------------------
+    // ISOLATED TEST ENTITIES (Strictly zero pollution of existing production stores)
+    // --------------------------------------------------------------------------
+    const uniqueRunId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
-    // In production, sending victim's email + attacker googleId without token MUST throw UnauthorizedException
+    const testUser = await prisma.user.create({
+      data: {
+        username: `sp_user_${uniqueRunId.slice(-10)}`,
+        email: `sp_user_${uniqueRunId}@amazonbutton.vn`,
+        passwordHash: '$2b$12$eXAMpleHashedPasswordForTestRunner1234567890123456789',
+        fullName: 'Superpowers Isolated Runner',
+        status: 'ACTIVE',
+      },
+    });
+    createdUserId = testUser.userId;
+
+    const testStore = await prisma.store.create({
+      data: {
+        name: `Superpowers Isolated Store ${uniqueRunId.slice(-6)}`,
+        code: `STR_SP_${uniqueRunId.slice(-8)}`,
+        phone: '0901234567',
+        address: '123 Superpowers Isolated St',
+        ownerUserId: testUser.userId,
+        status: 'ACTIVE',
+      },
+    });
+    createdStoreId = testStore.storeId;
+
+    const testWallet = await prisma.storeWallet.create({
+      data: {
+        storeId: testStore.storeId,
+        balance: 1000000,
+        frozenBalance: 200000,
+      },
+    });
+    createdWalletId = testWallet.walletId;
+
+    const testStoreId = testStore.storeId;
+
+    // ========================================================================
+    // 1. P0 GOOGLE OAUTH ACCOUNT TAKEOVER DEFENSE & AUDIENCE BINDING
+    // ========================================================================
+    console.log('--- 1. P0 Google OAuth Account Takeover Defense & Audience Binding ---');
+
+    // 1.1 In production, sending victim's email + attacker googleId without token MUST throw UnauthorizedException
     const originalNodeEnv = process.env.NODE_ENV;
+    const originalGoogleClientId = process.env.GOOGLE_CLIENT_ID;
     process.env.NODE_ENV = 'production';
+    process.env.GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
+
     let prodTakeoverCaught = false;
     try {
       await authService.googleLogin({
@@ -169,12 +173,29 @@ async function runSuperpowersVerificationSuite() {
         prodTakeoverCaught = true;
       }
     }
-    process.env.NODE_ENV = originalNodeEnv;
-
     assert(
       prodTakeoverCaught === true,
       'Production blocks unverified Google email/googleId takeover without valid OAuth token (401)',
     );
+
+    // 1.2 Invalid / Unverified token rejected
+    let invalidTokenCaught = false;
+    try {
+      await authService.googleLogin({
+        token: 'forged_or_invalid_google_oauth_token',
+      });
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        invalidTokenCaught = true;
+      }
+    }
+    assert(
+      invalidTokenCaught === true,
+      'Unverified Google token or token substitution rejected with 401 Unauthorized',
+    );
+
+    process.env.NODE_ENV = originalNodeEnv;
+    process.env.GOOGLE_CLIENT_ID = originalGoogleClientId;
 
     // ========================================================================
     // 2. P0 PAYOUT STATE MACHINE & STRICT ACCOUNTING INVARIANT
@@ -279,7 +300,7 @@ async function runSuperpowersVerificationSuite() {
     });
     cleanupProductIds.push(testProduct.productId);
 
-    // Caller deliberately passes stale oldPrice: 999999
+    // 3.1 Caller deliberately passes stale oldPrice: 999999
     await productsRepo.updateProductAtomicTx({
       productId: testProduct.productId,
       storeId: testStoreId,
@@ -301,15 +322,34 @@ async function runSuperpowersVerificationSuite() {
       'Price history newPrice updated accurately to 150,000',
     );
 
+    // 3.2 Updating non-existent product throws NotFoundException immediately after SELECT FOR UPDATE
+    let notFoundProductCaught = false;
+    try {
+      await productsRepo.updateProductAtomicTx({
+        productId: BigInt(9999999999),
+        storeId: testStoreId,
+        data: { basePrice: 200000 },
+        priceHistory: { newPrice: 200000 },
+      });
+    } catch (err: any) {
+      if (err instanceof NotFoundException) {
+        notFoundProductCaught = true;
+      }
+    }
+    assert(
+      notFoundProductCaught === true,
+      'updateProductAtomicTx throws NotFoundException immediately if product row not found under lock',
+    );
+
     // ========================================================================
-    // 4. P0 SCOPED IDEMPOTENCY & LEASE LOCK TOKEN
+    // 4. P0 SCOPED IDEMPOTENCY & LEASE LOCK TOKEN & INTERCEPTOR END-TO-END
     // ========================================================================
-    console.log('\n--- 4. P0 Scoped Idempotency & Lease Lock Token ---');
+    console.log('\n--- 4. P0 Scoped Idempotency, Lease Lock Token & Interceptor End-to-End ---');
 
     const sharedKey = `IDEMP-TOKEN-${uniqueRunId}`;
     cleanupIdempotencyKeys.push(sharedKey);
 
-    // Acquire key 1 -> returns recordId & lockToken
+    // 4.1 Acquire key 1 -> returns recordId & lockToken
     const acq1: any = await idempotencyService.acquire({
       idempotencyKey: sharedKey,
       actorScope: 'user:101',
@@ -319,25 +359,145 @@ async function runSuperpowersVerificationSuite() {
       userId: testUser.userId,
       body: { amount: 50000 },
     });
-    assert(acq1.state === 'ACQUIRED' && typeof acq1.lockToken === 'string', 'First acquire issues unique lease lockToken UUID');
+    assert(
+      acq1.state === 'ACQUIRED' && typeof acq1.lockToken === 'string',
+      'First acquire issues unique lease lockToken UUID',
+    );
 
-    // Simulate stale request trying to finalize with wrong/stale lock token
+    // 4.2 Simulate stale request trying to finalize with wrong/stale lock token
     const staleFinalize = await idempotencyRepo.finalizeSuccess(
       acq1.recordId,
       201,
       { success: true },
       'wrong-stale-token-uuid-1234',
     );
-    assert(staleFinalize === false, 'Finalize with stale/mismatched lockToken rejected (returns false, 0 rows modified)');
+    assert(
+      staleFinalize === false,
+      'Finalize with stale/mismatched lockToken rejected (returns false, 0 rows modified)',
+    );
 
-    // Finalize with authentic lockToken succeeds
+    // 4.3 Stale finalizeFailure with mismatched lockToken rejected
+    const staleFailure = await idempotencyRepo.finalizeFailure(
+      acq1.recordId,
+      'wrong-stale-token-uuid-1234',
+      true,
+    );
+    assert(
+      staleFailure === false,
+      'finalizeFailure with stale/mismatched lockToken rejected (returns false, 0 rows deleted)',
+    );
+
+    // 4.4 Finalize with authentic lockToken succeeds
     const validFinalize = await idempotencyRepo.finalizeSuccess(
       acq1.recordId,
       201,
       { success: true, orderId: 'ORD-SUCCESS' },
       acq1.lockToken,
     );
-    assert(validFinalize === true, 'Finalize with authentic lockToken successfully commits response');
+    assert(
+      validFinalize === true,
+      'Finalize with authentic lockToken successfully commits response',
+    );
+
+    // 4.5 Interceptor End-to-End: Optional key omitted passes through without caching
+    const reflectorMock: any = {
+      getAllAndOverride: (key: any) => ({ required: false, ttlSeconds: 86400 }),
+    };
+    const interceptor = new IdempotencyInterceptor(idempotencyService, reflectorMock);
+
+    const mockExecutionContext = (headers: any, ip = '1.2.3.4'): any => ({
+      switchToHttp: () => ({
+        getRequest: () => ({
+          headers,
+          ip,
+          method: 'POST',
+          url: '/api/v1/orders',
+          originalUrl: '/api/v1/orders',
+          query: {},
+          body: { amount: 50000 },
+        }),
+        getResponse: () => ({
+          setHeader: () => {},
+          status: () => {},
+        }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    });
+
+    let executionCount = 0;
+    const callHandler: any = {
+      handle: () => {
+        executionCount++;
+        return of({ orderId: `ORD-RUN-${executionCount}` });
+      },
+    };
+
+    // Calling twice without key -> both execute (pass-through), no duplicate blocks or cached replay
+    await (await interceptor.intercept(mockExecutionContext({}), callHandler)).toPromise();
+    await (await interceptor.intercept(mockExecutionContext({}), callHandler)).toPromise();
+    assert(
+      executionCount === 2,
+      'Interceptor passes through directly without caching when key is omitted and not required',
+    );
+
+    // 4.6 Interceptor End-to-End: Required key omitted throws BadRequestException
+    const requiredReflectorMock: any = {
+      getAllAndOverride: (key: any) => ({ required: true }),
+    };
+    const requiredInterceptor = new IdempotencyInterceptor(idempotencyService, requiredReflectorMock);
+    let requiredMissingCaught = false;
+    try {
+      await requiredInterceptor.intercept(mockExecutionContext({}), callHandler);
+    } catch (err: any) {
+      if (err instanceof BadRequestException) {
+        requiredMissingCaught = true;
+      }
+    }
+    assert(
+      requiredMissingCaught === true,
+      'Interceptor throws 400 BadRequestException when key is required but omitted',
+    );
+
+    // 4.7 Interceptor Guest Isolation: Two guests with different IPs do not collide or leak responses
+    const guestKey = `IDEMP-GUEST-${uniqueRunId}`;
+    cleanupIdempotencyKeys.push(guestKey);
+
+    let guest1Executed: any = false;
+    const guest1Handler: any = {
+      handle: () => {
+        guest1Executed = true;
+        return of({ orderId: 'GUEST_1_ORDER' });
+      },
+    };
+    const res1 = await (
+      await interceptor.intercept(
+        mockExecutionContext({ 'x-idempotency-key': guestKey }, '10.0.0.1'),
+        guest1Handler,
+      )
+    ).toPromise();
+
+    let guest2Executed: any = false;
+    const guest2Handler: any = {
+      handle: () => {
+        guest2Executed = true;
+        return of({ orderId: 'GUEST_2_ORDER' });
+      },
+    };
+    const res2 = await (
+      await interceptor.intercept(
+        mockExecutionContext({ 'x-idempotency-key': guestKey }, '10.0.0.2'),
+        guest2Handler,
+      )
+    ).toPromise();
+
+    assert(
+      guest1Executed === true &&
+        guest2Executed === true &&
+        res1?.orderId === 'GUEST_1_ORDER' &&
+        res2?.orderId === 'GUEST_2_ORDER',
+      'Guest actor isolation: Guests with distinct IPs do not collide or leak cached orders under same key',
+    );
 
     // ========================================================================
     // 5. P0 LOGOUT GUARD SEPARATION & TOKEN VERIFICATION
@@ -384,9 +544,9 @@ async function runSuperpowersVerificationSuite() {
     );
 
     // ========================================================================
-    // 6. P1 BULLMQ LIFECYCLE & SENSITIVE PAYLOAD MASKING
+    // 6. P1 BULLMQ LIFECYCLE, SENSITIVE DLQ MASKING & POSTGRESQL DURABILITY
     // ========================================================================
-    console.log('\n--- 6. BullMQ Lifecycle & Sensitive DLQ Masking ---');
+    console.log('\n--- 6. BullMQ Lifecycle, Sensitive DLQ Masking & PostgreSQL Durability ---');
 
     queueService.registerProcessor('superpower-dlq-test-queue', async () => {
       throw new Error('Permanent processing exception');
@@ -406,6 +566,13 @@ async function runSuperpowersVerificationSuite() {
 
     await new Promise((r) => setTimeout(r, 200));
 
+    // 6.1 Verify durable query via getDeadLetterJobs()
+    const dbDeadJobs = await queueService.getDeadLetterJobs('superpower-dlq-test-queue');
+    assert(
+      dbDeadJobs.length >= 1,
+      'Durable DLQ: getDeadLetterJobs() queries directly from PostgreSQL dead_letter_jobs table',
+    );
+
     const dlqRecord = await prisma.deadLetterJob.findUnique({
       where: { id: `dlq_${dlqJobId}` },
     });
@@ -421,8 +588,20 @@ async function runSuperpowersVerificationSuite() {
       'Sensitive fields (otp, password) and 6-digit OTPs inside HTML/text masked in DLQ (******)',
     );
 
+    // 6.2 Atomic replay: Replay claims status RETRYING in DB before re-enqueueing
     if (dlqRecord) {
-      await prisma.deadLetterJob.delete({ where: { id: dlqRecord.id } });
+      const replaySuccess = await queueService.retryDeadLetterJob(dlqRecord.id);
+      assert(
+        replaySuccess === true,
+        'retryDeadLetterJob() atomically claims job in DB and restores to active queue',
+      );
+
+      // Attempting to retry second time immediately returns false (already RETRYING)
+      const secondReplay = await queueService.retryDeadLetterJob(dlqRecord.id);
+      assert(
+        secondReplay === false,
+        'Duplicate retry of claimed DLQ job rejected to prevent double replay',
+      );
     }
 
     // ========================================================================
@@ -478,22 +657,32 @@ async function runSuperpowersVerificationSuite() {
 
   } finally {
     console.log('\n--- Cleaning up isolated test artifacts ---');
+    if (createdWalletId) {
+      await prisma.storeWallet.deleteMany({ where: { walletId: createdWalletId } }).catch(() => {});
+    }
     for (const wId of cleanupWithdrawalIds) {
-      await prisma.storeWithdrawal.deleteMany({ where: { withdrawalId: wId } });
+      await prisma.storeWithdrawal.deleteMany({ where: { withdrawalId: wId } }).catch(() => {});
     }
     for (const pId of cleanupProductIds) {
-      await prisma.productPriceHistory.deleteMany({ where: { productId: pId } });
-      await prisma.product.deleteMany({ where: { productId: pId } });
+      await prisma.productPriceHistory.deleteMany({ where: { productId: pId } }).catch(() => {});
+      await prisma.product.deleteMany({ where: { productId: pId } }).catch(() => {});
+    }
+    if (createdStoreId) {
+      await prisma.store.deleteMany({ where: { storeId: createdStoreId } }).catch(() => {});
     }
     for (const key of cleanupIdempotencyKeys) {
-      await prisma.apiIdempotencyKey.deleteMany({ where: { idempotencyKey: key } });
+      await prisma.apiIdempotencyKey.deleteMany({ where: { idempotencyKey: key } }).catch(() => {});
     }
-    await prisma.storeWallet.deleteMany({ where: { storeId: testStoreId } });
-    await prisma.store.deleteMany({ where: { storeId: testStoreId } });
-    await prisma.user.deleteMany({ where: { userId: testUser.userId } });
+    if (createdUserId) {
+      await prisma.apiIdempotencyKey.deleteMany({ where: { userId: createdUserId } }).catch(() => {});
+      await prisma.user.deleteMany({ where: { userId: createdUserId } }).catch(() => {});
+    }
+    await prisma.deadLetterJob.deleteMany({
+      where: { queueName: 'superpower-dlq-test-queue' },
+    }).catch(() => {});
 
-    await queueService.onModuleDestroy();
-    await prisma.$disconnect();
+    await queueService.onModuleDestroy().catch(() => {});
+    await prisma.$disconnect().catch(() => {});
   }
 
   console.log('\n================================================================');
