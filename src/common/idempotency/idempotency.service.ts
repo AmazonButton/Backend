@@ -103,7 +103,7 @@ export class IdempotencyService {
     lockTimeoutMs?: number;
     ttlSeconds?: number;
   }): Promise<
-    | { state: 'ACQUIRED'; recordId: bigint }
+    | { state: 'ACQUIRED'; recordId: bigint; lockToken: string }
     | { state: 'CACHED'; statusCode: number; responseBody: any }
   > {
     const validKey = this.validateKey(params.idempotencyKey);
@@ -157,11 +157,12 @@ export class IdempotencyService {
     return {
       state: 'ACQUIRED',
       recordId: result.recordId,
+      lockToken: result.lockToken,
     };
   }
 
-  async finalizeSuccess(recordId: bigint, statusCode: number, responseBody: any): Promise<void> {
-    await this.repository.finalizeSuccess(recordId, statusCode, responseBody);
+  async finalizeSuccess(recordId: bigint, statusCode: number, responseBody: any, lockToken?: string): Promise<boolean> {
+    return this.repository.finalizeSuccess(recordId, statusCode, responseBody, lockToken);
   }
 
   async finalizeFailure(recordId: bigint, removeOnFailure = true): Promise<void> {

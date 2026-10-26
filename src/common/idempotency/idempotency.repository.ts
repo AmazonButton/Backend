@@ -1,8 +1,10 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
+import * as crypto from 'crypto';
+
 export type IdempotencyAcquireResult =
-  | { state: 'ACQUIRED'; recordId: bigint }
+  | { state: 'ACQUIRED'; recordId: bigint; lockToken: string }
   | { state: 'CACHED'; statusCode: number; responseBody: any }
   | { state: 'IN_FLIGHT'; lockedUntil: Date }
   | { state: 'MISMATCH'; expectedHash: string; actualHash: string };
@@ -33,6 +35,8 @@ export class IdempotencyRepository {
     const normalizedMethod = (params.method || 'POST').toUpperCase();
     const normalizedPath = params.actualPath || params.route || '/';
     const actorScope = params.actorScope || 'public';
+
+    const lockToken = crypto.randomUUID();
 
     return this.prisma.$transaction(async (tx) => {
       const now = new Date();
@@ -74,6 +78,7 @@ export class IdempotencyRepository {
             UPDATE api_idempotency_keys
             SET request_hash = ${params.requestHash},
                 status = 'PROCESSING',
+                lock_token = ${lockToken},
                 status_code = NULL,
                 response_body = NULL,
                 locked_until = ${lockedUntil},
@@ -81,7 +86,7 @@ export class IdempotencyRepository {
                 updated_at = ${now}
             WHERE id = ${row.id}
           `;
-          return { state: 'ACQUIRED', recordId: row.id };
+          return { state: 'ACQUIRED', recordId: row.id, lockToken };
         }
 
         // 1b. Verify request payload hash integrity
@@ -117,24 +122,26 @@ export class IdempotencyRepository {
           await tx.$executeRaw`
             UPDATE api_idempotency_keys
             SET status = 'PROCESSING',
+                lock_token = ${lockToken},
                 locked_until = ${lockedUntil},
                 expires_at = ${expiresAt},
                 updated_at = ${now}
             WHERE id = ${row.id}
           `;
-          return { state: 'ACQUIRED', recordId: row.id };
+          return { state: 'ACQUIRED', recordId: row.id, lockToken };
         }
 
         // 1e. If previously failed, re-attempt
         await tx.$executeRaw`
           UPDATE api_idempotency_keys
           SET status = 'PROCESSING',
+              lock_token = ${lockToken},
               locked_until = ${lockedUntil},
               expires_at = ${expiresAt},
               updated_at = ${now}
           WHERE id = ${row.id}
         `;
-        return { state: 'ACQUIRED', recordId: row.id };
+        return { state: 'ACQUIRED', recordId: row.id, lockToken };
       }
 
       // 2. Insert new idempotency entry
@@ -147,6 +154,7 @@ export class IdempotencyRepository {
           route,
           user_id,
           request_hash,
+          lock_token,
           status,
           locked_until,
           expires_at,
@@ -160,6 +168,7 @@ export class IdempotencyRepository {
           ${params.route},
           ${params.userId ?? null},
           ${params.requestHash},
+          ${lockToken},
           'PROCESSING',
           ${lockedUntil},
           ${expiresAt},
@@ -171,7 +180,7 @@ export class IdempotencyRepository {
       `;
 
       if (insertResult && insertResult.length > 0) {
-        return { state: 'ACQUIRED', recordId: insertResult[0].id };
+        return { state: 'ACQUIRED', recordId: insertResult[0].id, lockToken };
       }
 
       // Conflict occurred on insert - lock and re-evaluate
@@ -224,7 +233,7 @@ export class IdempotencyRepository {
   /**
    * Finalize an acquired idempotency key with successful execution result.
    */
-  async finalizeSuccess(recordId: bigint, statusCode: number, responseBody: any): Promise<void> {
+  async finalizeSuccess(recordId: bigint, statusCode: number, responseBody: any, lockToken?: string): Promise<boolean> {
     const serializedBody =
       responseBody !== undefined
         ? JSON.stringify(responseBody, (_, v) =>
@@ -232,14 +241,30 @@ export class IdempotencyRepository {
           )
         : null;
 
-    await this.prisma.$executeRaw`
-      UPDATE api_idempotency_keys
-      SET status = 'COMPLETED',
-          status_code = ${statusCode},
-          response_body = ${serializedBody}::jsonb,
-          updated_at = NOW()
-      WHERE id = ${recordId}
-    `;
+    let updatedCount = 0;
+    if (lockToken) {
+      updatedCount = await this.prisma.$executeRaw`
+        UPDATE api_idempotency_keys
+        SET status = 'COMPLETED',
+            status_code = ${statusCode},
+            response_body = ${serializedBody}::jsonb,
+            updated_at = NOW()
+        WHERE id = ${recordId}
+          AND (lock_token = ${lockToken} OR lock_token IS NULL)
+          AND status = 'PROCESSING'
+      `;
+    } else {
+      updatedCount = await this.prisma.$executeRaw`
+        UPDATE api_idempotency_keys
+        SET status = 'COMPLETED',
+            status_code = ${statusCode},
+            response_body = ${serializedBody}::jsonb,
+            updated_at = NOW()
+        WHERE id = ${recordId}
+          AND status = 'PROCESSING'
+      `;
+    }
+    return updatedCount > 0;
   }
 
   /**

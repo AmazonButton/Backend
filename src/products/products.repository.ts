@@ -141,31 +141,36 @@ export class ProductsRepository {
     data: any;
     images?: ProductImageInput[];
     priceHistory?: {
-      oldPrice: number;
+      oldPrice?: number;
       newPrice: number;
       changedByUserId?: bigint;
     };
     stock?: number;
   }) {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Lock the product row with SELECT FOR UPDATE to prevent race conditions
-      await tx.$queryRaw`
-        SELECT product_id FROM product WHERE product_id = ${params.productId} FOR UPDATE
-      `;
+    return runWithTransactionRetry(async () => {
+      return this.prisma.$transaction(async (tx) => {
+        // 1. Lock the product row with SELECT FOR UPDATE and read current committed base_price
+        const lockedRows = await tx.$queryRaw<Array<{ product_id: bigint; base_price: any }>>`
+          SELECT product_id, base_price FROM product WHERE product_id = ${params.productId} FOR UPDATE
+        `;
+        const currentLockedBasePrice =
+          lockedRows && lockedRows.length > 0 && lockedRows[0].base_price !== null && lockedRows[0].base_price !== undefined
+            ? new Decimal(lockedRows[0].base_price)
+            : (params.priceHistory?.oldPrice !== undefined ? new Decimal(params.priceHistory.oldPrice) : new Decimal(0));
 
-      // 2. Insert price history if price has changed
-      if (params.priceHistory) {
-        await tx.productPriceHistory.create({
-          data: {
-            productId: params.productId,
-            oldPrice: new Decimal(params.priceHistory.oldPrice),
-            newPrice: new Decimal(params.priceHistory.newPrice),
-            ...(params.priceHistory.changedByUserId
-              ? { changedByUserId: params.priceHistory.changedByUserId }
-              : {}),
-          },
-        });
-      }
+        // 2. Insert price history using the freshly locked base_price
+        if (params.priceHistory) {
+          await tx.productPriceHistory.create({
+            data: {
+              productId: params.productId,
+              oldPrice: currentLockedBasePrice,
+              newPrice: new Decimal(params.priceHistory.newPrice),
+              ...(params.priceHistory.changedByUserId
+                ? { changedByUserId: params.priceHistory.changedByUserId }
+                : {}),
+            },
+          });
+        }
 
       // 3. Update inventory stock atomically
       if (params.stock !== undefined && !isNaN(params.stock)) {
@@ -217,6 +222,7 @@ export class ProductsRepository {
         ...product,
         images: currentImages,
       };
+    });
     });
   }
 

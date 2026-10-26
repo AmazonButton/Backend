@@ -76,6 +76,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   async isReady(): Promise<boolean> {
     if (this.isShuttingDown) return false;
+
+    const isProduction = process.env.NODE_ENV === 'production';
+    const requireRedis = isProduction || process.env.REQUIRE_REDIS === 'true';
+
     if (this.redisClient && this.isBullMqActive) {
       try {
         const pingRes = await this.redisClient.ping();
@@ -84,7 +88,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         return false;
       }
     }
-    return true; // Resilient in-memory mode is ready
+
+    // In production, if Redis is missing or disconnected, fail closed!
+    if (requireRedis) {
+      return false;
+    }
+
+    return true; // Resilient in-memory mode is ready in dev/test
   }
 
   private maskUrl(url: string): string {
@@ -122,6 +132,32 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       this.isBullMqActive = true;
       this.logger.log(`BullMQ connected to Redis at ${safeUrl}`);
+
+      // Instantiate BullWorkers for all processors registered before onModuleInit
+      for (const [qName, handler] of this.processors.entries()) {
+        if (!this.bullWorkers.has(qName)) {
+          this.attachBullWorker(qName, handler);
+        }
+      }
+
+      this.redisClient.on('error', (err) => {
+        this.logger.warn(`Redis connection error (${safeUrl}): ${err.message}.`);
+        if (process.env.NODE_ENV === 'production') {
+          this.isBullMqActive = false;
+        }
+      });
+
+      this.redisClient.on('close', () => {
+        this.logger.warn('Redis connection closed.');
+        if (process.env.NODE_ENV === 'production') {
+          this.isBullMqActive = false;
+        }
+      });
+
+      this.redisClient.on('ready', () => {
+        this.logger.log('Redis connection re-established.');
+        this.isBullMqActive = true;
+      });
     } catch (err: any) {
       this.logger.warn(`Could not connect to Redis at ${safeUrl}: ${err.message}. Running in In-Memory fallback.`);
       if (this.redisClient) {
@@ -158,57 +194,62 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     // If BullMQ is active, instantiate true BullWorker
     if (this.isBullMqActive && this.redisClient) {
-      try {
-        const worker = new BullWorker(
-          queueName,
-          async (bullJob: BullJob) => {
-            const queueJob: QueueJob = {
+      this.attachBullWorker(queueName, handler);
+    } else {
+      this.logger.log(`In-Memory Worker registered for queue: [${queueName}]`);
+    }
+  }
+
+  private attachBullWorker(queueName: string, handler: (job: QueueJob) => Promise<any>) {
+    if (!this.redisClient) return;
+    try {
+      const worker = new BullWorker(
+        queueName,
+        async (bullJob: BullJob) => {
+          const queueJob: QueueJob = {
+            id: bullJob.id || `job_${Date.now()}`,
+            queueName,
+            jobName: bullJob.name,
+            data: bullJob.data,
+            opts: {
+              attempts: bullJob.opts.attempts,
+              backoffDelayMs: typeof bullJob.opts.backoff === 'object' ? bullJob.opts.backoff?.delay : 1000,
+              priority: bullJob.opts.priority,
+            },
+            attemptsMade: bullJob.attemptsMade,
+            createdAt: new Date(bullJob.timestamp),
+          };
+          return handler(queueJob);
+        },
+        {
+          connection: this.redisClient.duplicate({ maxRetriesPerRequest: null }),
+          concurrency: 5,
+        },
+      );
+
+      worker.on('failed', async (bullJob, err) => {
+        if (!bullJob) return;
+        const maxAttempts = bullJob.opts.attempts || 3;
+        if (bullJob.attemptsMade >= maxAttempts) {
+          await this.moveToDeadLetterQueue(
+            {
               id: bullJob.id || `job_${Date.now()}`,
               queueName,
               jobName: bullJob.name,
               data: bullJob.data,
-              opts: {
-                attempts: bullJob.opts.attempts,
-                backoffDelayMs: typeof bullJob.opts.backoff === 'object' ? bullJob.opts.backoff?.delay : 1000,
-                priority: bullJob.opts.priority,
-              },
+              opts: { attempts: maxAttempts },
               attemptsMade: bullJob.attemptsMade,
               createdAt: new Date(bullJob.timestamp),
-            };
-            return handler(queueJob);
-          },
-          {
-            connection: this.redisClient.duplicate({ maxRetriesPerRequest: null }),
-            concurrency: 5,
-          },
-        );
+            },
+            err,
+          );
+        }
+      });
 
-        worker.on('failed', async (bullJob, err) => {
-          if (!bullJob) return;
-          const maxAttempts = bullJob.opts.attempts || 3;
-          if (bullJob.attemptsMade >= maxAttempts) {
-            await this.moveToDeadLetterQueue(
-              {
-                id: bullJob.id || `job_${Date.now()}`,
-                queueName,
-                jobName: bullJob.name,
-                data: bullJob.data,
-                opts: { attempts: maxAttempts },
-                attemptsMade: bullJob.attemptsMade,
-                createdAt: new Date(bullJob.timestamp),
-              },
-              err,
-            );
-          }
-        });
-
-        this.bullWorkers.set(queueName, worker);
-        this.logger.log(`BullMQ Worker registered for queue: [${queueName}]`);
-      } catch (err: any) {
-        this.logger.error(`Failed to register BullMQ worker for [${queueName}]: ${err.message}`);
-      }
-    } else {
-      this.logger.log(`In-Memory Worker registered for queue: [${queueName}]`);
+      this.bullWorkers.set(queueName, worker);
+      this.logger.log(`BullMQ Worker registered for queue: [${queueName}]`);
+    } catch (err: any) {
+      this.logger.error(`Failed to register BullMQ worker for [${queueName}]: ${err.message}`);
     }
   }
 
@@ -360,7 +401,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private sanitizePayload(data: any): any {
-    if (!data || typeof data !== 'object') return data;
+    if (!data || typeof data !== 'object') {
+      if (typeof data === 'string') {
+        return data.replace(/\b\d{6}\b/g, '******');
+      }
+      return data;
+    }
     try {
       const sanitized = Array.isArray(data) ? [...data] : { ...data };
       for (const key of Object.keys(sanitized)) {
@@ -372,6 +418,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           lower.includes('privatekey')
         ) {
           sanitized[key] = '******';
+        } else if (typeof sanitized[key] === 'string') {
+          sanitized[key] = sanitized[key].replace(/\b\d{6}\b/g, '******');
         } else if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
           sanitized[key] = this.sanitizePayload(sanitized[key]);
         }
@@ -442,20 +490,40 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    * Re-enqueue a job from DLQ back into the active waiting queue.
    */
   async retryDeadLetterJob(dlqId: string): Promise<boolean> {
-    const deadJob = this.deadLetterStore.get(dlqId);
-    if (!deadJob) {
+    let deadJob = this.deadLetterStore.get(dlqId);
+    let queueName = deadJob?.queueName;
+    let jobName = deadJob?.jobName;
+    let jobData = deadJob?.data;
+    let maxAttempts = deadJob?.maxAttempts || 3;
+
+    if (!deadJob && this.prisma) {
+      try {
+        const dbJob = await this.prisma.deadLetterJob.findUnique({
+          where: { id: dlqId },
+        });
+        if (dbJob) {
+          queueName = dbJob.queueName;
+          jobName = dbJob.jobName;
+          jobData = dbJob.payload;
+          maxAttempts = dbJob.maxAttempts;
+        }
+      } catch (_) {}
+    }
+
+    if (!queueName || !jobName) {
       return false;
     }
 
-    deadJob.status = 'RETRYING';
-    const queueName = deadJob.queueName;
+    if (deadJob) {
+      deadJob.status = 'RETRYING';
+      this.deadLetterStore.delete(dlqId);
+    }
 
-    await this.enqueueJob(queueName, deadJob.jobName, deadJob.data, {
-      attempts: deadJob.maxAttempts,
+    await this.enqueueJob(queueName, jobName, jobData, {
+      attempts: maxAttempts,
       backoffDelayMs: 1000,
     });
 
-    this.deadLetterStore.delete(dlqId);
     if (this.prisma) {
       try {
         await this.prisma.deadLetterJob.update({
@@ -464,7 +532,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         });
       } catch (_) {}
     }
-    this.logger.log(`Job ${deadJob.id} re-enqueued from DLQ into active queue [${queueName}]`);
+    this.logger.log(`Job ${dlqId} re-enqueued from DLQ into active queue [${queueName}]`);
     return true;
   }
 
@@ -478,6 +546,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.deadLetterStore.delete(id);
         count++;
       }
+    }
+    if (this.prisma) {
+      this.prisma.deadLetterJob.deleteMany({
+        where: queueName ? { queueName } : {},
+      }).catch((err) => this.logger.error(`Error clearing DB dead letter jobs: ${err.message}`));
     }
     return count;
   }

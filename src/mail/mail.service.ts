@@ -32,7 +32,8 @@ export class MailService implements OnModuleDestroy {
   private initQueueProcessor() {
     if (this.queueService) {
       this.queueService.registerProcessor('mail-queue', async (job) => {
-        return this.sendMail(job.data);
+        // Enforce throwOnError: true so queue engines (BullMQ / In-Memory) can execute retry logic and route to DLQ on exhaustion
+        return this.sendMail(job.data, true);
       });
     }
   }
@@ -69,7 +70,7 @@ export class MailService implements OnModuleDestroy {
         socketTimeout: 5000,
       });
       this.isConfigured = true;
-      this.logger.log(`MailService initialized with SMTP host ${host}:${port} (User: ${user.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')})`);
+      this.logger.log(`MailService initialized with SMTP host ${host}:${port} (User: ${this.maskEmail(user)})`);
     } else {
       this.logger.warn('SMTP_USER or SMTP_PASSWORD not set. MailService operating in DEV FALLBACK MODE.');
     }
@@ -104,15 +105,17 @@ export class MailService implements OnModuleDestroy {
                           /@(smartorder\.local|smartorder\.test|localhost)$/i.test(options.to);
     const isTestEnv = process.env.NODE_ENV === 'test' || process.env.DISABLE_REAL_EMAIL === 'true';
 
-    // In test environment or for dummy test domains (like customer@smartorder.local),
-    // skip actual SMTP delivery to avoid mailer-daemon bounce loops and inbox spam.
+    // In production without configured SMTP: fail fast
     if (process.env.NODE_ENV === 'production' && (!this.isConfigured || !this.transporter)) {
       this.logger.error(`[CRITICAL] SMTP not configured in production. Cannot send email to ${this.maskEmail(options.to)}`);
+      if (throwOnError) {
+        throw new Error('SMTP not configured in production');
+      }
       return false;
     }
 
     if (!this.isConfigured || !this.transporter || isDummyDomain || isTestEnv) {
-      this.logger.log(`[SIMULATED EMAIL DISPATCH] TO: ${options.to.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')} | SUBJECT: ${options.subject}`);
+      this.logger.log(`[SIMULATED EMAIL DISPATCH] TO: ${this.maskEmail(options.to)} | SUBJECT: ${options.subject}`);
       this.logger.log(`[SIMULATED EMAIL CONTENT] ${maskedText}`);
       return true;
     }
@@ -133,10 +136,13 @@ export class MailService implements OnModuleDestroy {
       );
 
       await Promise.race([sendPromise, timeoutPromise]);
-      this.logger.log(`Email dispatched successfully to ${options.to.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*')}`);
+      this.logger.log(`Email dispatched successfully to ${this.maskEmail(options.to)}`);
       return true;
     } catch (err: any) {
       this.logger.warn(`Failed to send email to ${this.maskEmail(options.to)}: ${err.message}`);
+      if (throwOnError) {
+        throw err;
+      }
       return false;
     }
   }
@@ -144,22 +150,24 @@ export class MailService implements OnModuleDestroy {
   async sendRegistrationOtp(email: string, otp: string): Promise<boolean> {
     const title = 'Xác minh kích hoạt tài khoản';
     const message = 'Cảm ơn bạn đã đăng ký tài khoản tại Smart Order Platform. Dưới đây là mã OTP kích hoạt tài khoản của bạn:';
-    return this.sendMail({
+    await this.enqueueMail({
       to: email,
       subject: '[Smart Order] Mã OTP xác minh tài khoản',
       text: `${title} - ${message} Mã OTP: ${otp} (Hiệu lực: 15 phút)`,
       html: this.buildOtpTemplate(title, message, otp, 15),
     });
+    return true;
   }
 
   async sendPasswordResetOtp(email: string, otp: string): Promise<boolean> {
     const title = 'Yêu cầu đặt lại mật khẩu';
     const message = 'Hệ thống nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Vui lòng nhập mã OTP sau:';
-    return this.sendMail({
+    await this.enqueueMail({
       to: email,
       subject: '[Smart Order] Mã OTP đặt lại mật khẩu',
       text: `${title} - ${message} Mã OTP: ${otp} (Hiệu lực: 15 phút)`,
       html: this.buildOtpTemplate(title, message, otp, 15),
     });
+    return true;
   }
 }

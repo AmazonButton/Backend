@@ -274,7 +274,31 @@ export class AuthService {
         }
       } catch (_) {}
 
-      // 2. Fallback to Supabase Auth API if not verified via Google UserInfo
+      // 2. Try Google ID Token verification (tokeninfo endpoint)
+      if (!verifiedUser) {
+        try {
+          const idTokenRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(rawToken)}`);
+          if (idTokenRes.ok) {
+            const tokenData: any = await idTokenRes.json();
+            const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
+            const isEmailVerified = tokenData.email_verified === 'true' || tokenData.email_verified === true;
+            const isNotExpired = tokenData.exp && Number(tokenData.exp) * 1000 > Date.now();
+            const expectedAud = process.env.GOOGLE_CLIENT_ID;
+            const audValid = !expectedAud || tokenData.aud === expectedAud;
+
+            if (tokenData.email && validIssuers.includes(tokenData.iss) && isEmailVerified && isNotExpired && audValid) {
+              verifiedUser = {
+                email: tokenData.email,
+                name: tokenData.name,
+                picture: tokenData.picture,
+                id: tokenData.sub,
+              };
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 3. Fallback to Supabase Auth API if not verified via Google UserInfo
       if (!verifiedUser) {
         const supabaseUrl = process.env.SUPABASE_URL || 'https://gultdgalicgqhvquxizs.supabase.co';
         const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
@@ -300,8 +324,9 @@ export class AuthService {
       }
     }
 
-    // Support direct email and googleId in test mode or trusted direct login
-    if (!verifiedUser && dto.email && (dto.googleId || process.env.NODE_ENV === 'test')) {
+    // STRICT TEST-ONLY BYPASS: Only allowed when NODE_ENV === 'test' AND NOT production!
+    // Never trust client-provided email or googleId in production as verified identity.
+    if (!verifiedUser && process.env.NODE_ENV === 'test' && dto.email) {
       verifiedUser = {
         email: dto.email,
         name: dto.fullName,
@@ -310,10 +335,10 @@ export class AuthService {
       };
     }
 
-    if (!rawToken && !verifiedUser) {
-      throw new BadRequestException('Token xác thực Google/OAuth là bắt buộc.');
-    }
     if (!verifiedUser?.email) {
+      if (!rawToken) {
+        throw new UnauthorizedException('Token xác thực Google/OAuth là bắt buộc.');
+      }
       throw new UnauthorizedException('Không thể xác thực thông tin tài khoản Google từ OAuth token cung cấp.');
     }
     const email = verifiedUser.email.trim().toLowerCase();

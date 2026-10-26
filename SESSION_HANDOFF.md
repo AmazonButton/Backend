@@ -54,7 +54,7 @@
   - Suite 38 (Phase 3 Asynchronous Queues, Backoff Retry & DLQ): `npx tsx tests/phase3-queues-retry-dlq.spec.ts`
   - Suite 39 (Phase 4 Database Index & Query Optimization): `npx tsx tests/phase4-index-query-optimization.spec.ts`
   - Suite 40 (Phase 5 Health Probes & Graceful Shutdown): `npx tsx tests/phase5-graceful-shutdown-health.spec.ts`
-  - Superpowers Dedicated Security Suite: `npx tsx tests/superpower-security-verification.spec.ts`
+  - Suite 41 (Superpowers Dedicated Security Suite): `npx tsx tests/superpower-security-verification.spec.ts`
 
 ---
 
@@ -990,9 +990,42 @@ When starting a new conversation, prompt the agent with:
       - **Suite 40 (`tests/phase5-graceful-shutdown-health.spec.ts`):**
         - Verified 12/12 assertions passing: `/healthz` liveness, `/readyz` deep dependency checks, 503 fail-closed simulation on DB failure, and signal handler registrations.
 
+   14. **[2026-10-26] Pre-Deployment Security & Resilience Hardening (P0/P1/P2 Fixes):**
+       - **P0-1 (Google Login Account Takeover Defense):**
+         - In [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts): eliminated arbitrary `dto.email` / `dto.googleId` fallback in production. Restricted fallback strictly to `NODE_ENV === 'test'`.
+         - Added Google ID Token verification via Google tokeninfo endpoint validating `iss`, `aud`, `exp`, and `email_verified`.
+         - Requests without verified OAuth credentials immediately throw HTTP 401 `UnauthorizedException`.
+       - **P0-2 (Financial Test Isolation & Store 4 Wallet Restoration):**
+         - Audited store 4 ledger transaction #3 (balance: 500,000 VND, 0 frozen) and restored `frozen_balance = 0`.
+         - Completely rewrote [`tests/superpower-security-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/superpower-security-verification.spec.ts) to create isolated test users, stores, and wallets with zero pollution on production/existing store entities.
+         - Teardown executes strictly inside `finally` block wiping all test fixtures.
+       - **P0-3 (Atomic Price History Lock):**
+         - In [`src/products/products.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/products/products.repository.ts): `updateProductAtomicTx` queries `base_price` under `SELECT ... FOR UPDATE` directly in the database transaction and uses the locked price as `oldPrice`, ignoring caller's potentially stale value.
+       - **P1-4 (BullMQ Worker Lifecycle & Readiness Probe):**
+         - In [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts): automatically attaches BullMQ workers for processors registered prior to `onModuleInit`; monitors Redis connection events; fail-closed `/readyz` in production when Redis is required.
+       - **P1-5 (Email Retry Propagation & Sensitive DLQ Masking):**
+         - In [`src/mail/mail.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/mail/mail.service.ts): worker calls `sendMail(job.data, true)` with `throwOnError: true` so failed emails trigger BullMQ exponential retry and DLQ isolation; non-blocking enqueue for OTPs; masks 6-digit OTPs in HTML/text payloads.
+       - **P1-6 (PostgreSQL DLQ Durability):**
+         - Replay and clear operations in [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts) interact durably with the PostgreSQL `dead_letter_jobs` table across server restarts.
+       - **P1-7 (Transaction Retry Integration):**
+         - Wrapped operations in `runWithTransactionRetry` (`updateProductAtomicTx`, `extendRentalAtomicTx`, `finalizePayoutSuccessTx`, `updateBankAccountAtomicTx`, `setDefaultBankAccount`, `refundFailedWithdrawal`).
+       - **P1-8 & P1-9 (Idempotency Lease Lock Token & Proxy Trust):**
+         - Migration: [`prisma/migrations/20261026170000_add_idempotency_lock_token/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261026170000_add_idempotency_lock_token/migration.sql). Added `lock_token VARCHAR(64)` to `api_idempotency_keys`.
+         - Acquired lock assigns unique UUID `lockToken`. Finalize updates only where `(lock_token = ? OR lock_token IS NULL) AND status = 'PROCESSING'`, preventing race overwrites from expired leases.
+         - Configured `trust proxy` in [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts) and used trusted `req.ip`. Auto-synthesizes deterministic request hash when `Idempotency-Key` header is omitted to prevent double-click mutations.
+       - **P1-10 (Guard Separation: Storefront vs Logout):**
+         - Created [`src/auth/guards/logout-jwt.guard.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/guards/logout-jwt.guard.ts) allowing expired tokens with valid signature for session revocation.
+         - Hardened [`src/common/guards/optional-jwt-auth.guard.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/guards/optional-jwt-auth.guard.ts) to strictly return 401 on expired tokens, preventing guest ownership bugs during checkout.
+       - **P1-11 (Payout Accounting Deficit Guard & PayOS Timeout):**
+         - In [`src/store-wallet/store-wallet.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.repository.ts): throws `ConflictException` if `frozenBalance < amount` instead of clamping to 0.
+         - Added `AbortController` timeouts (10s create, 8s get) in [`src/payments/payos-payout.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payos-payout.service.ts).
+       - **P2-12 (Suite 41 Registration & Verification):**
+         - Registered Suite 41 (`41. Superpowers Security Verification & Hardening Suite`) in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
+         - Verified Suite 41 passing: 17/17 PASS.
+
 - **Verification Matrix:**
   - `npx prisma validate` — **PASS**
-  - `npx prisma migrate deploy` — **PASS (25 migrations applied)**
+  - `npx prisma migrate deploy` — **PASS (26 migrations applied)**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
-  - Verified Suites: Superpowers Dedicated Security Suite (19/19), Suite 35 (11/11), Suite 36 (16/16), Suite 37 (22/22), Suite 38 (19/19), Suite 39 (15/15), Suite 40 (16/16) — **100% PASS (118/118 assertions verified across all production & security suites)**.
+  - Verified Suites: Suite 41 Superpowers Security Verification (17/17), Suite 35 (11/11), Suite 36 (16/16), Suite 37 (22/22), Suite 38 (19/19), Suite 39 (15/15), Suite 40 (16/16) — **100% PASS (116/116 assertions verified across all production & security suites)**.

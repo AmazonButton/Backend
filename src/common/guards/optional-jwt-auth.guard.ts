@@ -5,7 +5,15 @@ import { AuthGuard } from '@nestjs/passport';
 export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
   handleRequest(err: any, user: any, info: any) {
     if (info) {
-      // If a token was provided but the cryptographic signature is invalid or tampered:
+      // If a token was supplied in headers, but failed verification (tampered, malformed, or expired):
+      // Reject with 401 Unauthorized so authenticated users never accidentally place orders as guests when their token expired!
+      if (
+        info.name === 'TokenExpiredError' ||
+        info.message?.toLowerCase().includes('expired')
+      ) {
+        throw new UnauthorizedException('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để tiếp tục.');
+      }
+
       if (
         info.name === 'JsonWebTokenError' ||
         info.message?.toLowerCase().includes('invalid signature') ||
@@ -14,11 +22,6 @@ export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
       ) {
         throw new UnauthorizedException('Chữ ký token không hợp lệ hoặc token bị làm giả');
       }
-
-      // If token expired: the signature was valid, but expiration time passed
-      if (info.name === 'TokenExpiredError') {
-        return { isExpired: true };
-      }
     }
 
     if (err) {
@@ -26,6 +29,7 @@ export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException('Xác thực token thất bại');
     }
 
+    // No token provided in Authorization header -> guest user
     return user || null;
   }
 }

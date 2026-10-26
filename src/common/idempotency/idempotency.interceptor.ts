@@ -42,7 +42,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
         [context.getHandler(), context.getClass()],
       ) || {};
 
-    const rawKey =
+    let rawKey =
       (req.headers?.['x-idempotency-key'] as string) ||
       (req.headers?.['idempotency-key'] as string) ||
       (req.body?.idempotencyKey as string) ||
@@ -54,7 +54,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
           'Header X-Idempotency-Key là bắt buộc đối với thao tác này',
         );
       }
-      return next.handle();
+      // Auto-synthesize deterministic key from payload hash to protect against concurrent duplicate clicks
+      const contentHash = this.idempotencyService.computeRequestHash({
+        method: req.method,
+        path: req.originalUrl?.split('?')[0] || req.path || '/',
+        query: req.query,
+        body: req.body,
+      });
+      rawKey = `auto_${contentHash.slice(0, 32)}`;
     }
 
     const method = (req.method || 'POST').toUpperCase();
@@ -69,10 +76,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
         ? `store:${req.user.storeId}:user:${uid}`
         : `user:${uid}`;
     } else {
-      const clientIp =
-        req.headers['x-forwarded-for']?.toString()?.split(',')[0]?.trim() ||
-        req.ip ||
-        'guest';
+      // Use Express trusted req.ip rather than spoofable raw x-forwarded-for header
+      const clientIp = req.ip || req.socket?.remoteAddress || 'guest';
       actorScope = `guest:${clientIp}`;
     }
 

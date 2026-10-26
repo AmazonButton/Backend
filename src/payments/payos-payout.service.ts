@@ -111,6 +111,8 @@ export class PayOSPayoutService {
       };
     }
 
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => abortController.abort(), 10000);
     try {
       const response = await fetch(`${this.baseUrl}/v1/payouts`, {
         method: 'POST',
@@ -122,7 +124,9 @@ export class PayOSPayoutService {
           'x-signature': signature,
         },
         body: JSON.stringify(params),
+        signal: abortController.signal,
       });
+      clearTimeout(timeoutHandle);
 
       const result = await response.json();
 
@@ -163,6 +167,8 @@ export class PayOSPayoutService {
       };
     }
 
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => abortController.abort(), 8000);
     try {
       const response = await fetch(`${this.baseUrl}/v1/payouts/${payoutId}`, {
         method: 'GET',
@@ -170,7 +176,9 @@ export class PayOSPayoutService {
           'x-client-id': clientId,
           'x-api-key': apiKey,
         },
+        signal: abortController.signal,
       });
+      clearTimeout(timeoutHandle);
       return await response.json();
     } catch (err: any) {
       this.logger.error(`PayOS getPayout error: ${err.message}`);

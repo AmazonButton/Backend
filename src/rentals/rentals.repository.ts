@@ -102,7 +102,8 @@ export class RentalsRepository {
     additionalAmount: number;
     createPaymentTx?: boolean;
   }) {
-    return this.prisma.$transaction(async (tx) => {
+    return runWithTransactionRetry(async () => {
+      return this.prisma.$transaction(async (tx) => {
       // 1. Lock the rental row with SELECT FOR UPDATE to prevent race conditions
       const [lockedRental] = await tx.$queryRaw<Array<{
         rental_id: bigint;
@@ -177,6 +178,7 @@ export class RentalsRepository {
       }
 
       return updatedRental;
+    });
     });
   }
 

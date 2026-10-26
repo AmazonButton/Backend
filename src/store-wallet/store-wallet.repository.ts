@@ -40,7 +40,8 @@ export class StoreWalletRepository {
     accountNumberEncrypted: string;
     cleanAcc?: string;
   }) {
-    return this.prisma.$transaction(async (tx) => {
+    return runWithTransactionRetry(async () => {
+      return this.prisma.$transaction(async (tx) => {
       // Lock store row with SELECT FOR UPDATE to serialize bank modifications for this store
       await tx.$queryRaw`
         SELECT store_id FROM store WHERE store_id = ${params.storeId} FOR UPDATE
@@ -89,6 +90,7 @@ export class StoreWalletRepository {
         },
       });
     });
+    });
   }
 
   async findVerifiedBankAccount(storeId: bigint) {
@@ -121,7 +123,8 @@ export class StoreWalletRepository {
   }
 
   async finalizePayoutSuccessTx(withdrawalId: bigint) {
-    return this.prisma.$transaction(async (tx) => {
+    return runWithTransactionRetry(async () => {
+      return this.prisma.$transaction(async (tx) => {
       const [lockedWithdrawal] = await tx.$queryRaw<Array<{
         withdrawal_id: bigint;
         status: string;
@@ -156,7 +159,12 @@ export class StoreWalletRepository {
 
       if (lockedWallet) {
         const currentFrozen = Number(lockedWallet.frozen_balance || 0);
-        const frozenAfter = Math.max(0, currentFrozen - Number(lockedWithdrawal.amount));
+        if (currentFrozen < Number(lockedWithdrawal.amount)) {
+          throw new ConflictException(
+            `ACCOUNTING_INCONSISTENCY: Wallet #${lockedWallet.wallet_id} frozenBalance (${currentFrozen}) is less than payout amount (${lockedWithdrawal.amount})`,
+          );
+        }
+        const frozenAfter = currentFrozen - Number(lockedWithdrawal.amount);
 
         await tx.storeWallet.update({
           where: { walletId: lockedWallet.wallet_id },
@@ -171,6 +179,7 @@ export class StoreWalletRepository {
           processedAt: new Date(),
         },
       });
+    });
     });
   }
 }

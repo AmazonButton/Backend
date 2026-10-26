@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   BadGatewayException,
   Inject,
@@ -438,7 +439,8 @@ export class StoreWalletService {
    */
   async refundFailedWithdrawal(withdrawalId: string | number | bigint, reason: string) {
     const rawId = BigInt(withdrawalId);
-    return this.prisma.$transaction(async (tx) => {
+    return runWithTransactionRetry(async () => {
+      return this.prisma.$transaction(async (tx) => {
       // 1. Lock withdrawal row exclusively with SELECT ... FOR UPDATE (Anti-Double Refund)
       const [lockedWithdrawal] = await tx.$queryRaw<Array<{
         withdrawal_id: bigint;
@@ -494,7 +496,12 @@ export class StoreWalletService {
       const balanceBefore = Number(lockedWallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
       const currentFrozen = Number(lockedWallet.frozen_balance || 0);
-      const frozenAfter = Math.max(0, currentFrozen - refundAmount);
+      if (currentFrozen < refundAmount) {
+        throw new ConflictException(
+          `ACCOUNTING_INCONSISTENCY: Wallet #${lockedWithdrawal.wallet_id} frozenBalance (${currentFrozen}) is less than refund amount (${refundAmount})`,
+        );
+      }
+      const frozenAfter = currentFrozen - refundAmount;
 
       await tx.storeWallet.update({
         where: { walletId: lockedWithdrawal.wallet_id },
@@ -528,6 +535,7 @@ export class StoreWalletService {
           processedAt: new Date(),
         },
       });
+    });
     });
   }
 

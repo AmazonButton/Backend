@@ -28,6 +28,9 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
+  // Configure trust proxy for secure req.ip resolution behind reverse proxies
+  (app.getHttpAdapter().getInstance() as any).set('trust proxy', 1);
+
   // Enable shutdown hooks for graceful termination
   app.enableShutdownHooks();
 
