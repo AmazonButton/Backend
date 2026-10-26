@@ -27,6 +27,8 @@ model User {
   phone                      String?   @unique(map: "uq_users_phone")
   phoneVerifiedAt            DateTime? @map("phone_verified_at") @db.Timestamptz(6)
   firebaseUid                String?   @unique @map("firebase_uid") @db.VarChar(128)
+  authProvider               String?   @default("LOCAL") @map("auth_provider") @db.VarChar(32)
+  providerSubject            String?   @map("provider_subject") @db.VarChar(255)
   avatarUrl                  String?   @map("avatar_url") @db.VarChar(512)
   kycStatus                  String    @default("UNVERIFIED") @map("kyc_status") @db.VarChar(32)
   status                     String    @default("ACTIVE")
@@ -55,6 +57,7 @@ model User {
   notifications                Notification[]
   apiIdempotencyKeys           ApiIdempotencyKey[]
 
+  @@unique([authProvider, providerSubject], map: "uq_users_auth_provider_subject")
   @@map("users")
 }
 

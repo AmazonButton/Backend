@@ -1024,29 +1024,39 @@ When starting a new conversation, prompt the agent with:
            - `POST /api/v1/rentals/order` ([rentals.controller.ts](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.controller.ts:34))
            - `POST /api/v1/rentals/:id/payment-requests` ([rentals.controller.ts](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.controller.ts:68))
            - `POST /api/v1/rentals/:id/extensions` ([rentals.controller.ts](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.controller.ts:80))
-         - Updated client callers in test suites (`tests/storefront-checkout-refactor.spec.ts`, `tests/inventory-concurrency-race.spec.ts`) to provide client-generated UUID `x-idempotency-key` headers.
-         - In Suite 41, added real controller metadata assertions via `Reflector` verifying all 5 financial mutations mandate `{ required: true, ttlSeconds: 86400 }`.
+           - `POST /api/v1/store/wallet/withdrawals` ([store-wallet.controller.ts](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.controller.ts:56))
+         - Updated client callers in test suites (`tests/storefront-checkout-refactor.spec.ts`, `tests/inventory-concurrency-race.spec.ts`, `tests/rentals-lifecycle-e2e.spec.ts`) to provide client-generated UUID `x-idempotency-key` headers.
+         - In Suite 41, added real controller metadata assertions via `Reflector` verifying all 6 financial mutations mandate `{ required: true, ttlSeconds: 86400 }`.
        - **P0-Test-DB-Isolation (Strict TEST_DATABASE_URL Enforcement):**
-         - In [`tests/superpower-security-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/superpower-security-verification.spec.ts): strictly mandates `process.env.TEST_DATABASE_URL` across all environments. If omitted, suite immediately exits (code 1) and refuses to touch development, production, or default Supabase database.
+         - In [`tests/superpower-security-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/superpower-security-verification.spec.ts): strictly mandates `process.env.TEST_DATABASE_URL` across all environments. If omitted, suite immediately exits (code 1) and refuses to touch development, production, or default database.
+         - Multi-layer Guard:
+           1. Fail-fast if `TEST_DATABASE_URL` matches `DATABASE_URL`.
+           2. Fail-fast if `TEST_DATABASE_URL` points to Supabase production/cloud pooler (`supabase.co`, `supabase.com`).
+           3. Require URL test marker allowlist (`test`, `localhost`, `127.0.0.1`).
          - Instantiates PrismaClient with `new PrismaClient({ datasources: { db: { url: testDatabaseUrl } } })`.
          - Strict teardown: cleanup failures are caught, logged, increment `failed++`, and throw an error rather than being silently swallowed (`.catch(() => {})`).
-         - Proactively purges any synthetic user residue (`sp_user_%`) on both startup and teardown.
-       - **P1-PostgreSQL-DLQ (Authoritative Source of Truth & Rollback):**
+         - Removed global/indiscriminate deletion of `sp_user_*` at startup/teardown; cleans up strictly run-specific test entities via `createdUserId`.
+       - **P1-PostgreSQL-DLQ (Authoritative Source of Truth, Rollback & Reconciliation):**
          - In [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts):
            - `getDeadLetterJobs`: Always returns PostgreSQL `dead_letter_jobs` rows if `this.prisma` is present (never falls back to memory DLQ when DB returns `[]`).
            - `clearDeadLetterJobs`: Awaits DB deletion, does not swallow DB errors, and returns DB `result.count`.
-           - `retryDeadLetterJob`: Rolls back job status to `DEAD` with `failedReason: RETRY_ENQUEUE_FAILED` if `enqueueJob` fails after status update.
+           - `retryDeadLetterJob`: On success, updates DLQ record status to `RESOLVED`. On enqueue failure, rolls back job status to `DEAD` with `failedReason: RETRY_ENQUEUE_FAILED`; if DB rollback fails, throws a critical error to alert operations.
+           - `reconcileStaleRetryingJobs`: Reconciles stale `RETRYING` jobs whose lease expired back to `DEAD`.
            - `failedAt`: Mapped from `r.failedAt || r.createdAt`.
        - **P1-PayOS-Timeout (Timeout & Exception Handling Cleaned):**
          - In [`src/payments/payos-payout.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payos-payout.service.ts):
            - Enclosed `fetch` and `response.json()` within `try` block and placed `clearTimeout(timeoutHandle)` inside `finally` block for both `createPayout` and `getPayout`.
            - Removed duplicate `if (err instanceof BadRequestException) throw err;`.
-       - **P1-Google-OAuth (Production Hardening with google-auth-library):**
-         - Installed `google-auth-library` and integrated `OAuth2Client.verifyIdToken({ idToken, audience })` in [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts).
-         - Performs offline cryptographic RSA signature, expiration, and audience verification against Google's public certs.
-         - Wrapped external HTTP requests (Google access tokeninfo, userinfo, Supabase fallback) with 5000ms `AbortController` timeouts and guaranteed `clearTimeout` in `finally`.
-         - Enforced `GOOGLE_CLIENT_ID` in production boot validation check in [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts).
-         - Added deterministic unit tests in Suite 41 testing mismatched audience rejection, unverified email rejection, and valid token success.
+       - **P1-Google-OAuth (Production Hardening & Anti-Account-Takeover):**
+         - Migration `20261026223000_add_user_auth_provider_and_subject` applied: added `auth_provider` and `provider_subject` with unique index `(auth_provider, provider_subject)`.
+         - In [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts):
+           - Preserves full numeric Google `sub` in `authProvider = 'GOOGLE'` and `providerSubject`.
+           - Domain Authority Verification: Automatic email linking restricted to `@gmail.com`, `@googlemail.com`, or Google Workspace accounts with verified `hd` claim matching the email domain.
+           - Third-party email domains without `hd` reject automatic linking with 409 `THIRD_PARTY_EMAIL_LINK_CHALLENGE` to prevent account takeover.
+           - Installed `google-auth-library` and integrated `OAuth2Client.verifyIdToken({ idToken, audience })` for offline cryptographic signature, expiration, and audience verification against Google public certs.
+           - Wrapped external HTTP requests with 5000ms `AbortController` timeouts and guaranteed `clearTimeout` in `finally`.
+           - Enforced `GOOGLE_CLIENT_ID` in production boot validation check in [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts).
+         - In Suite 41: unit tests mock external `fetch` for offline determinism and verify audience mismatch, unverified email, third-party takeover rejection, and raw numeric `providerSubject` preservation.
        - **P1-Trust-Proxy-Deployment:**
          - In [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts): added security warning when `TRUST_PROXY === 'true'` (warns against trusting entire proxy chain).
          - Documented `TRUST_PROXY=1` and `TEST_DATABASE_URL` in [`.env.example`](file:///f:/Learning/SEM9-FPTu/backend/.env.example).
@@ -1054,9 +1064,12 @@ When starting a new conversation, prompt the agent with:
 - **Verification Matrix:**
   - `git diff --check` — **PASS**
   - `npx prisma validate` — **PASS**
-  - `npx prisma migrate status` — **PASS (28 migrations found, database schema is up to date)**
+  - `npx prisma migrate status` — **PASS (29 migrations found, database schema is up to date)**
   - `npx tsc --noEmit` — **PASS (0 errors)**
   - `npm run build` — **PASS (0 errors)**
   - Suite 37 Phase 2 Idempotency Platform (`tests/phase2-idempotency-platform.spec.ts`) — **PASS (22/22 assertions passed)**
   - Suite 38 Phase 3 Queues & DLQ (`tests/phase3-queues-retry-dlq.spec.ts`) — **PASS (19/19 assertions passed)**
-  - Suite 41 Safety Guard: `npx tsx tests/superpower-security-verification.spec.ts` (without `TEST_DATABASE_URL`) — **PASS (Exits with code 1, refuses to run against default DB)**
+  - Suite 41 Safety Guards:
+    - Without `TEST_DATABASE_URL`: **PASS (Exits with code 1)**
+    - With identical `DATABASE_URL`: **PASS (Exits with code 1)**
+    - With Supabase cloud URL: **PASS (Exits with code 1, blocks destructive fixtures)**

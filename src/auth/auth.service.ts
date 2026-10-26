@@ -253,7 +253,7 @@ export class AuthService {
     const dto: GoogleLoginDto = typeof body === 'string' ? { token: body } : body;
     const rawToken = dto.token?.trim();
 
-    let verifiedUser: { email: string; name?: string; picture?: string; id?: string } | null = null;
+    let verifiedUser: { email: string; name?: string; picture?: string; id?: string; hd?: string } | null = null;
 
     if (rawToken) {
       const expectedAud = process.env.GOOGLE_CLIENT_ID;
@@ -286,6 +286,7 @@ export class AuthService {
             name: payload.name || payload.email.split('@')[0],
             picture: payload.picture,
             id: payload.sub,
+            hd: payload.hd,
           };
         }
       } catch (err: any) {
@@ -315,6 +316,7 @@ export class AuthService {
                 email: tData.email,
                 name: tData.email.split('@')[0],
                 id: tData.user_id || tData.sub,
+                hd: tData.hd,
               };
               try {
                 const googleRes = await fetchWithTimeout('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -388,21 +390,57 @@ export class AuthService {
         ? rawAvatarUrl
         : null;
 
-    const candidateAuthId = verifiedUser?.id;
+    const googleSub = verifiedUser?.id?.toString()?.trim() || null;
     const authId =
-      candidateAuthId &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateAuthId)
-        ? candidateAuthId
+      googleSub &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(googleSub)
+        ? googleSub
         : null;
 
-    // Check if user already exists
+    // 1. Primary lookup: Check if user is already linked by provider & subject
     let user: any = null;
-    if (authId) {
-      user = await this.authRepo.findByAuthId(authId);
+    if (googleSub) {
+      user = await this.authRepo.findByProviderSubject('GOOGLE', googleSub);
     }
+    // 2. Legacy fallback lookup by UUID authId
+    if (!user && authId) {
+      user = await this.authRepo.findByAuthId(authId);
+      if (user && googleSub && (!user.providerSubject || user.authProvider !== 'GOOGLE')) {
+        await this.authRepo.linkProviderSubject(user.userId, 'GOOGLE', googleSub);
+      }
+    }
+
+    // 3. User not found by Google Subject: Check if an account already exists with this email
     if (!user) {
-      user = await this.authRepo.findUserWithAuthRelations(email);
-      if (user) {
+      const existingUser = await this.authRepo.findUserWithAuthRelations(email);
+      if (existingUser) {
+        // Evaluate domain authority per Google Identity Services Security Guidance:
+        // Google is strictly authoritative for @gmail.com and @googlemail.com,
+        // OR when the verified ID token includes an "hd" (hosted domain) claim matching the email domain.
+        const isGmail = email.endsWith('@gmail.com') || email.endsWith('@googlemail.com');
+        const tokenHd = verifiedUser.hd?.toLowerCase();
+        const isVerifiedWorkspace = Boolean(tokenHd && email.endsWith(`@${tokenHd}`));
+
+        if (!isGmail && !isVerifiedWorkspace) {
+          // Third-party domain without Google Workspace hosted domain authority!
+          // Google's email_verified=true does NOT guarantee current authority for non-Google domains.
+          // Refuse silent automatic account linking to prevent account takeover.
+          this.logger.warn(
+            `Account linking rejected: Email ${email} has domain non-authoritative for Google without valid matching hd claim.`,
+          );
+          throw new ConflictException({
+            success: false,
+            code: 'THIRD_PARTY_EMAIL_LINK_CHALLENGE',
+            message:
+              'Email này đã được đăng ký bằng phương thức khác. Để bảo mật tài khoản bên thứ ba, vui lòng đăng nhập bằng mật khẩu để liên kết tài khoản Google trong cài đặt cá nhân.',
+          });
+        }
+
+        // Authoritative domain: safely link Google provider subject
+        user = existingUser;
+        if (googleSub) {
+          await this.authRepo.linkProviderSubject(user.userId, 'GOOGLE', googleSub);
+        }
         if (authId && !user.authId) {
           await this.authRepo.updateAuthId(user.userId, authId);
         }
@@ -430,6 +468,8 @@ export class AuthService {
               phone: dto.phone?.trim() || null,
               status: 'ACTIVE',
               authId,
+              authProvider: 'GOOGLE',
+              providerSubject: googleSub,
             },
             {
               name: storeName,
@@ -462,6 +502,8 @@ export class AuthService {
               phone: dto.phone?.trim() || null,
               status: 'ACTIVE',
               authId,
+              authProvider: 'GOOGLE',
+              providerSubject: googleSub,
             },
             {
               phone: dto.phone?.trim() || null,
@@ -541,6 +583,8 @@ export class AuthService {
       storeId,
       customerProfileId,
       phone: user.phone,
+      authProvider: user.authProvider || 'LOCAL',
+      providerSubject: user.providerSubject || null,
     };
 
     return {

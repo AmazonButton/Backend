@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Body, UseGuards, Request, Param, Post, Query, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Put, Body, UseGuards, UseInterceptors, Request, Param, Post, Query, ForbiddenException } from '@nestjs/common';
 import { StoreWalletService } from './store-wallet.service';
 import { UpdateBankAccountDto, StoreQueryDto, TransactionQueryDto, WithdrawalQueryDto } from './dto/wallet.dto';
 import { RequestWithdrawalDto } from './dto/withdrawal.dto';
@@ -7,6 +7,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { buildPaginatedResponse } from '../common/utils/pagination.helper';
+import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
+import { Idempotent } from '../common/idempotency/idempotency.decorator';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('STORE_OWNER', 'STORE_MANAGER')
@@ -53,12 +55,14 @@ export class StoreWalletController {
     );
   }
 
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('withdrawals')
+  @Idempotent({ required: true, ttlSeconds: 86400 })
   async requestWithdrawal(@Request() req: any, @Body() body: RequestWithdrawalDto, @Query() query?: StoreQueryDto) {
     const storeId = this.extractStoreId(req, query);
     const idempotencyKey =
-      (req.headers?.['idempotency-key'] as string) ||
       (req.headers?.['x-idempotency-key'] as string) ||
+      (req.headers?.['idempotency-key'] as string) ||
       undefined;
     const data = await this.walletService.requestWithdrawal(storeId, body, idempotencyKey);
     return { success: true, message: 'Gửi yêu cầu rút tiền thành công!', data: WalletMapper.toWithdrawalDto(data) };

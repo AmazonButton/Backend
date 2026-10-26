@@ -16,6 +16,7 @@ import { AppController } from '../src/app.controller';
 import { StorefrontController } from '../src/orders/storefront.controller';
 import { PaymentsController } from '../src/payments/payments.controller';
 import { RentalsController } from '../src/rentals/rentals.controller';
+import { StoreWalletController } from '../src/store-wallet/store-wallet.controller';
 import { Reflector } from '@nestjs/core';
 import { of, throwError } from 'rxjs';
 import {
@@ -27,12 +28,49 @@ import {
 } from '@nestjs/common';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL?.trim();
+const defaultDatabaseUrl = process.env.DATABASE_URL?.trim();
+
 if (!testDatabaseUrl) {
   console.error(
     '\n❌ [SECURITY GUARD] TEST_DATABASE_URL environment variable is mandatory to run Suite 41!',
   );
   console.error(
     'Refusing to run test suite against development, production, or default database.\n',
+  );
+  process.exit(1);
+}
+
+// 1. Fail-fast if TEST_DATABASE_URL matches DATABASE_URL
+if (defaultDatabaseUrl && testDatabaseUrl === defaultDatabaseUrl) {
+  console.error(
+    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL cannot match the primary DATABASE_URL!',
+  );
+  console.error(
+    'Suite 41 requires an isolated dedicated test database to prevent data contamination.\n',
+  );
+  process.exit(1);
+}
+
+// 2. Fail-fast if TEST_DATABASE_URL points to Supabase production/cloud pooler
+if (testDatabaseUrl.includes('supabase.co') || testDatabaseUrl.includes('supabase.com')) {
+  console.error(
+    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL points to Supabase production/remote cloud database!',
+  );
+  console.error(
+    'Refusing to execute destructive test fixtures against cloud infrastructure.\n',
+  );
+  process.exit(1);
+}
+
+// 3. Test URL marker allowlist check
+const hasTestMarker =
+  testDatabaseUrl.toLowerCase().includes('test') ||
+  testDatabaseUrl.toLowerCase().includes('localhost') ||
+  testDatabaseUrl.toLowerCase().includes('127.0.0.1');
+
+if (!hasTestMarker) {
+  console.error(
+    '\n❌ [SECURITY GUARD] TEST_DATABASE_URL lacks required test marker (must contain "test", "localhost", or "127.0.0.1")!',
   );
   process.exit(1);
 }
@@ -66,11 +104,6 @@ async function runSuperpowersVerificationSuite() {
   console.log('🛡️ RUNNING SUPERPOWERS VERIFICATION & SECURITY AUDIT SUITE');
   console.log('================================================================\n');
 
-  // Purge any stale synthetic user residue from prior aborted runs
-  await prisma.user.deleteMany({
-    where: { username: { startsWith: 'sp_user_' } },
-  });
-
   const jwtSecret =
     process.env.JWT_SECRET || 'ci_test_jwt_secret_key_minimum_32_characters_long_for_security!';
   process.env.JWT_SECRET = jwtSecret;
@@ -95,12 +128,32 @@ async function runSuperpowersVerificationSuite() {
   const authRepoMock: any = {
     findByEmail: async (email: string) => null,
     findByAuthId: async (id: string) => null,
-    findUserWithAuthRelations: async (email: string) => ({
-      userId: BigInt(777),
-      email,
-      role: 'CUSTOMER',
-      authId: null,
-      avatarUrl: null,
+    findByProviderSubject: async (provider: string, sub: string) => null,
+    linkProviderSubject: async (userId: bigint, provider: string, sub: string) => ({
+      userId,
+      authProvider: provider,
+      providerSubject: sub,
+    }),
+    findUserWithAuthRelations: async (email: string) => {
+      if (email === 'existing_victim@amazonbutton.vn') {
+        return {
+          userId: BigInt(888),
+          email,
+          role: 'CUSTOMER',
+          authId: null,
+          authProvider: 'LOCAL',
+          providerSubject: null,
+          avatarUrl: null,
+        };
+      }
+      return null;
+    },
+    createGoogleUserTx: async (userData: any, profileData: any) => ({
+      newUser: {
+        userId: BigInt(777),
+        ...userData,
+      },
+      customerProfile: { customerId: BigInt(777), ...profileData },
     }),
     findUserById: async (userId: bigint) => ({
       userId,
@@ -218,72 +271,135 @@ async function runSuperpowersVerificationSuite() {
     process.env.GOOGLE_CLIENT_ID = expectedClientId;
 
     const originalVerifyIdToken = (authService as any).googleOAuthClient.verifyIdToken;
-    (authService as any).googleOAuthClient.verifyIdToken = async (opts: any) => {
-      if (opts.audience && opts.audience !== 'expected-production-client-id.apps.googleusercontent.com') {
-        throw new Error('Wrong recipient, payload audience != requiredAudience');
-      }
-      if (opts.idToken === 'token_with_wrong_audience') {
-        throw new Error('Token used with wrong audience');
-      }
-      if (opts.idToken === 'token_with_unverified_email') {
-        return {
-          getPayload: () => ({
-            email: 'unverified@amazonbutton.vn',
-            email_verified: false,
-            sub: 'google_111',
-          }),
-        };
-      }
-      if (opts.idToken === 'valid_id_token') {
-        return {
-          getPayload: () => ({
-            email: 'verified_google_user@amazonbutton.vn',
-            email_verified: true,
-            sub: 'google_222',
-            name: 'Verified Google User',
-          }),
-        };
-      }
-      throw new Error('Invalid token');
+    const originalFetch = global.fetch;
+
+    // Mock fetch to ensure zero external network calls occur during the Google OAuth unit test
+    global.fetch = async (url: any) => {
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ error: 'mocked_external_call' }),
+      } as any;
     };
 
-    let wrongAudienceRejected = false;
     try {
-      await authService.googleLogin({ token: 'token_with_wrong_audience' });
-    } catch (err: any) {
-      if (err instanceof UnauthorizedException) {
-        wrongAudienceRejected = true;
+      (authService as any).googleOAuthClient.verifyIdToken = async (opts: any) => {
+        if (opts.audience && opts.audience !== expectedClientId) {
+          throw new Error('Wrong recipient, payload audience != requiredAudience');
+        }
+        if (opts.idToken === 'token_with_wrong_audience') {
+          throw new Error('Token used with wrong audience');
+        }
+        if (opts.idToken === 'token_with_unverified_email') {
+          return {
+            getPayload: () => ({
+              email: 'unverified@amazonbutton.vn',
+              email_verified: false,
+              sub: 'google_111',
+            }),
+          };
+        }
+        if (opts.idToken === 'token_third_party_linking_attempt') {
+          return {
+            getPayload: () => ({
+              email: 'existing_victim@amazonbutton.vn',
+              email_verified: true,
+              sub: 'attacker_google_sub_666',
+              name: 'Attacker Impersonator',
+              // No hd claim!
+            }),
+          };
+        }
+        if (opts.idToken === 'valid_gmail_token') {
+          return {
+            getPayload: () => ({
+              email: 'verified_google_user@gmail.com',
+              email_verified: true,
+              sub: '109283748291029384756',
+              name: 'Verified Gmail User',
+            }),
+          };
+        }
+        if (opts.idToken === 'valid_workspace_token') {
+          return {
+            getPayload: () => ({
+              email: 'verified_google_user@amazonbutton.vn',
+              email_verified: true,
+              sub: '987654321098765432101',
+              hd: 'amazonbutton.vn',
+              name: 'Verified Workspace User',
+            }),
+          };
+        }
+        throw new Error('Invalid token');
+      };
+
+      let wrongAudienceRejected = false;
+      try {
+        await authService.googleLogin({ token: 'token_with_wrong_audience' });
+      } catch (err: any) {
+        if (err instanceof UnauthorizedException) {
+          wrongAudienceRejected = true;
+        }
       }
-    }
-    assert(
-      wrongAudienceRejected === true,
-      'Deterministic Google OAuth: Token with mismatched audience rejected with 401 Unauthorized',
-    );
+      assert(
+        wrongAudienceRejected === true,
+        'Deterministic Google OAuth: Token with mismatched audience rejected with 401 Unauthorized',
+      );
 
-    let unverifiedEmailRejected = false;
-    try {
-      await authService.googleLogin({ token: 'token_with_unverified_email' });
-    } catch (err: any) {
-      if (err instanceof UnauthorizedException) {
-        unverifiedEmailRejected = true;
+      let unverifiedEmailRejected = false;
+      try {
+        await authService.googleLogin({ token: 'token_with_unverified_email' });
+      } catch (err: any) {
+        if (err instanceof UnauthorizedException) {
+          unverifiedEmailRejected = true;
+        }
       }
+      assert(
+        unverifiedEmailRejected === true,
+        'Deterministic Google OAuth: Token with email_verified=false rejected with 401 Unauthorized',
+      );
+
+      // Third-party domain without matching hd attempting to link existing user is challenged/rejected
+      let thirdPartyLinkBlocked = false;
+      try {
+        await authService.googleLogin({ token: 'token_third_party_linking_attempt' });
+      } catch (err: any) {
+        if (
+          err instanceof ConflictException &&
+          err.getResponse()?.['code'] === 'THIRD_PARTY_EMAIL_LINK_CHALLENGE'
+        ) {
+          thirdPartyLinkBlocked = true;
+        }
+      }
+      assert(
+        thirdPartyLinkBlocked === true,
+        'Deterministic Google OAuth: Third-party email linking without hd blocked with 409 (prevents account takeover)',
+      );
+
+      // Valid Gmail token succeeds and preserves full numeric Google sub
+      const validGmailRes = await authService.googleLogin({ token: 'valid_gmail_token' });
+      assert(
+        validGmailRes?.data?.user?.email === 'verified_google_user@gmail.com' &&
+          validGmailRes?.data?.user?.providerSubject === '109283748291029384756' &&
+          validGmailRes?.data?.user?.authProvider === 'GOOGLE',
+        'Deterministic Google OAuth: Authoritative @gmail.com login succeeds and preserves raw numeric provider_subject',
+      );
+
+      // Valid Workspace token with matching hd succeeds
+      const validWorkspaceRes = await authService.googleLogin({ token: 'valid_workspace_token' });
+      assert(
+        validWorkspaceRes?.data?.user?.email === 'verified_google_user@amazonbutton.vn' &&
+          validWorkspaceRes?.data?.user?.providerSubject === '987654321098765432101',
+        'Deterministic Google OAuth: Google Workspace token with verified matching hd claim succeeds',
+      );
+    } finally {
+      // Restore verifyIdToken, fetch, and env
+      (authService as any).googleOAuthClient.verifyIdToken = originalVerifyIdToken;
+      global.fetch = originalFetch;
+      process.env.NODE_ENV = originalNodeEnv;
+      process.env.GOOGLE_CLIENT_ID = originalGoogleClientId;
     }
-    assert(
-      unverifiedEmailRejected === true,
-      'Deterministic Google OAuth: Token with email_verified=false rejected with 401 Unauthorized',
-    );
-
-    const validGoogleLoginRes = await authService.googleLogin({ token: 'valid_id_token' });
-    assert(
-      validGoogleLoginRes?.data?.user?.email === 'verified_google_user@amazonbutton.vn',
-      'Deterministic Google OAuth: Valid ID token with matching audience and verified email succeeds',
-    );
-
-    // Restore verifyIdToken and env
-    (authService as any).googleOAuthClient.verifyIdToken = originalVerifyIdToken;
-
-    process.env.NODE_ENV = originalNodeEnv;
-    process.env.GOOGLE_CLIENT_ID = originalGoogleClientId;
 
     // ========================================================================
     // 2. P0 PAYOUT STATE MACHINE & STRICT ACCOUNTING INVARIANT
@@ -464,6 +580,12 @@ async function runSuperpowersVerificationSuite() {
     assert(
       rentalExtMeta?.required === true && rentalExtMeta?.ttlSeconds === 86400,
       'Real RentalsController.extendRental enforces @Idempotent({ required: true, ttlSeconds: 86400 })',
+    );
+
+    const withdrawalMeta = realReflector.get(IDEMPOTENCY_OPTIONS_KEY, StoreWalletController.prototype.requestWithdrawal);
+    assert(
+      withdrawalMeta?.required === true && withdrawalMeta?.ttlSeconds === 86400,
+      'Real StoreWalletController.requestWithdrawal enforces @Idempotent({ required: true, ttlSeconds: 86400 })',
     );
 
     const sharedKey = `IDEMP-TOKEN-${uniqueRunId}`;
@@ -798,10 +920,6 @@ async function runSuperpowersVerificationSuite() {
         await prisma.apiIdempotencyKey.deleteMany({ where: { userId: createdUserId } });
         await prisma.user.deleteMany({ where: { userId: createdUserId } });
       }
-      // Purge synthetic user residue with sp_user_ prefix
-      await prisma.user.deleteMany({
-        where: { username: { startsWith: 'sp_user_' } },
-      });
       await prisma.deadLetterJob.deleteMany({
         where: { queueName: 'superpower-dlq-test-queue' },
       });

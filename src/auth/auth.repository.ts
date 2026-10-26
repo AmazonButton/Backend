@@ -283,6 +283,24 @@ export class AuthRepository {
     });
   }
 
+  async findByProviderSubject(authProvider: string, providerSubject: string) {
+    return this.prisma.user.findFirst({
+      where: { authProvider, providerSubject },
+      include: {
+        customerProfile: { include: { addresses: true } },
+        ownedStores: true,
+        storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+      },
+    });
+  }
+
+  async linkProviderSubject(userId: bigint, authProvider: string, providerSubject: string) {
+    return this.prisma.user.update({
+      where: { userId },
+      data: { authProvider, providerSubject },
+    });
+  }
+
   async createRefreshToken(userId: bigint, tokenHash: string, expiresAt: Date) {
     return this.prisma.refreshToken.create({
       data: {

@@ -165,6 +165,7 @@ async function runRentalsLifecycleSuite() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${tokenA}`,
+          'x-idempotency-key': `IDEMP-RENTAL-ORDER-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
         },
         body: JSON.stringify({
           packageId: rentalPkg.packageId.toString(),
@@ -221,7 +222,10 @@ async function runRentalsLifecycleSuite() {
       try {
         const res = await fetch(`${BASE_URL}/rentals/${rentalA.rentalId}/payment-requests`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${tokenA}` },
+          headers: {
+            Authorization: `Bearer ${tokenA}`,
+            'x-idempotency-key': `IDEMP-RENTAL-PAYREQ-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+          },
         });
         const body = await res.json();
 
@@ -260,6 +264,7 @@ async function runRentalsLifecycleSuite() {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${tokenA}`,
+            'x-idempotency-key': `IDEMP-RENTAL-EXT-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
           },
           body: JSON.stringify({ additionalMonths: 2 }),
         });

@@ -558,29 +558,75 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     // Now safely re-enqueue with rollback on failure
     try {
-      await this.enqueueJob(queueName, jobName, jobData, {
+      const enqueuedJobId = await this.enqueueJob(queueName, jobName, jobData, {
         attempts: maxAttempts,
         backoffDelayMs: 1000,
       });
 
-      this.deadLetterStore.delete(dlqId);
-      this.logger.log(`Job ${dlqId} safely claimed and re-enqueued from DLQ into active queue [${queueName}]`);
-      return true;
-    } catch (enqueueErr: any) {
-      this.logger.error(`Failed to re-enqueue DLQ job ${dlqId}: ${enqueueErr.message}`);
       if (this.prisma) {
         await this.prisma.deadLetterJob.update({
           where: { id: dlqId },
           data: {
-            status: 'DEAD',
-            failedReason: `RETRY_ENQUEUE_FAILED: ${enqueueErr.message}`,
+            status: 'RESOLVED',
           },
-        }).catch((err: any) => this.logger.error(`Failed to rollback status for DLQ job ${dlqId}: ${err.message}`));
+        });
+      }
+
+      this.deadLetterStore.delete(dlqId);
+      this.logger.log(`Job ${dlqId} safely claimed and re-enqueued as ${enqueuedJobId} from DLQ into active queue [${queueName}] (status: RESOLVED)`);
+      return true;
+    } catch (enqueueErr: any) {
+      this.logger.error(`Failed to re-enqueue DLQ job ${dlqId}: ${enqueueErr.message}`);
+      if (this.prisma) {
+        try {
+          await this.prisma.deadLetterJob.update({
+            where: { id: dlqId },
+            data: {
+              status: 'DEAD',
+              failedReason: `RETRY_ENQUEUE_FAILED: ${enqueueErr.message}`,
+            },
+          });
+        } catch (rollbackErr: any) {
+          this.logger.error(
+            `CRITICAL_DLQ_ROLLBACK_FAILURE: Failed to rollback status to DEAD for DLQ job ${dlqId}: ${rollbackErr.message}`,
+          );
+          throw new Error(
+            `CRITICAL: Re-enqueue failed and DB rollback failed for DLQ job ${dlqId}: ${rollbackErr.message}`,
+          );
+        }
       } else {
         const deadJob = this.deadLetterStore.get(dlqId);
         if (deadJob) deadJob.status = 'DEAD';
       }
       return false;
+    }
+  }
+
+  /**
+   * Reconciles stale DLQ jobs stuck in RETRYING state for longer than timeoutMs (default: 10m).
+   * Restores status to DEAD with a timeout reason so they can be reclaimed.
+   */
+  async reconcileStaleRetryingJobs(timeoutMs = 600000): Promise<number> {
+    if (!this.prisma) return 0;
+    try {
+      const cutoff = new Date(Date.now() - timeoutMs);
+      const result = await this.prisma.deadLetterJob.updateMany({
+        where: {
+          status: 'RETRYING',
+          updatedAt: { lt: cutoff },
+        },
+        data: {
+          status: 'DEAD',
+          failedReason: 'RETRY_TIMEOUT_RECONCILED: Stale RETRYING lease expired',
+        },
+      });
+      if (result.count > 0) {
+        this.logger.warn(`Reconciled ${result.count} stale RETRYING DLQ jobs back to DEAD`);
+      }
+      return result.count;
+    } catch (err: any) {
+      this.logger.error(`Failed to reconcile stale RETRYING DLQ jobs: ${err.message}`);
+      return 0;
     }
   }
 
