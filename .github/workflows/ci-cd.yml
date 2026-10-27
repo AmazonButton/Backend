@@ -92,7 +92,7 @@ jobs:
       NODE_ENV: test
       PORT: 3000
       DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/smart_order_test?schema=public
-      TEST_DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/smart_order_test?schema=public
+      TEST_DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/smart_order_verification_test?schema=public
       REDIS_URL: redis://localhost:6379
       REDIS_HOST: localhost
       REDIS_PORT: 6379
@@ -145,9 +145,13 @@ jobs:
       - name: Initialize PostgreSQL Extensions Schema
         run: |
           PGPASSWORD=postgrespassword psql -h localhost -U postgres -d smart_order_test -c "CREATE SCHEMA IF NOT EXISTS extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA extensions;"
+          PGPASSWORD=postgrespassword psql -h localhost -U postgres -c "CREATE DATABASE smart_order_verification_test;"
+          PGPASSWORD=postgrespassword psql -h localhost -U postgres -d smart_order_verification_test -c "CREATE SCHEMA IF NOT EXISTS extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA extensions;"
 
       - name: Apply Database Migrations (Isolated CI DB)
-        run: npx prisma migrate deploy
+        run: |
+          npx prisma migrate deploy
+          DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy
 
       - name: Backfill and Verify Encrypted Snapshots (CI DB)
         run: node scripts/backfill_and_verify_withdrawal_snapshots.js

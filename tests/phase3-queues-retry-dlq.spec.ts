@@ -106,11 +106,17 @@ async function runPhase3QueueSuite() {
     );
 
     // Wait for 2 attempts to fail and be moved to DLQ
-    await new Promise((r) => setTimeout(r, 300));
+    for (let i = 0; i < 30 && permanentFailAttempts < 2; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
 
     assert(permanentFailAttempts === 2, `Exhausted all configured max attempts (2): got ${permanentFailAttempts}`);
 
-    const deadJobs = await queueService.getDeadLetterJobs('test-dlq-queue');
+    let deadJobs = await queueService.getDeadLetterJobs('test-dlq-queue');
+    for (let i = 0; i < 20 && deadJobs.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      deadJobs = await queueService.getDeadLetterJobs('test-dlq-queue');
+    }
     assert(deadJobs.length === 1, 'Exhausted job cleanly transferred to Dead-Letter Queue (DLQ)');
 
     const deadJob = deadJobs[0];
@@ -123,43 +129,38 @@ async function runPhase3QueueSuite() {
     // -------------------------------------------------------------
     // SECTION 4: DLQ Inspection & Recovery / Replay
     // -------------------------------------------------------------
-    console.log('\n--- 4. DLQ Re-enqueue, Replay & Clearing ---');
-
+    let shouldFail = true;
     let recoveredData: any = null;
     queueService.registerProcessor('test-recovery-queue', async (job: QueueJob) => {
+      if (shouldFail) {
+        throw new Error('Initial crash');
+      }
       recoveredData = job.data;
       return true;
     });
 
-    // Manually register dead job under test-recovery-queue to test replay
-    const dlqReplayTargetJobId = await queueService.enqueueJob(
+    // Enqueue job that will fail once and move to DLQ
+    await queueService.enqueueJob(
       'test-recovery-queue',
       'recoverable-job',
       { accountId: 'ACC-123' },
       { attempts: 1 },
     );
 
-    // Let it fail once
-    queueService.registerProcessor('test-recovery-queue', async () => {
-      throw new Error('Initial crash');
-    });
     let recoveryDeadJobs = await queueService.getDeadLetterJobs('test-recovery-queue');
-    for (let i = 0; i < 20 && recoveryDeadJobs.length === 0; i++) {
+    for (let i = 0; i < 30 && recoveryDeadJobs.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 100));
       recoveryDeadJobs = await queueService.getDeadLetterJobs('test-recovery-queue');
     }
     assert(recoveryDeadJobs.length >= 1, 'Job in DLQ ready for admin replay');
 
-    // Replay job with fixed handler
-    queueService.registerProcessor('test-recovery-queue', async (job: QueueJob) => {
-      recoveredData = job.data;
-      return true;
-    });
+    // Enable success on replay
+    shouldFail = false;
 
     const replayed = await queueService.retryDeadLetterJob(recoveryDeadJobs[0].id);
     assert(replayed === true, 'retryDeadLetterJob succeeded and restored job to queue');
 
-    for (let i = 0; i < 20 && !recoveredData; i++) {
+    for (let i = 0; i < 30 && !recoveredData; i++) {
       await new Promise((r) => setTimeout(r, 100));
     }
     assert(recoveredData !== null && recoveredData.accountId === 'ACC-123', 'Replayed job successfully executed');
