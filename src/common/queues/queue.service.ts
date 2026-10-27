@@ -14,13 +14,15 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private readonly bullQueues: Map<string, BullQueue> = new Map();
   private readonly bullWorkers: Map<string, BullWorker> = new Map();
 
-  // In-memory fallback structures
+  // Volatile emergency buffer structures (non-durable; in-memory fallback & temporary unpersisted cache)
   private readonly waitingQueues: Map<string, QueueJob[]> = new Map();
   private readonly deadLetterStore: Map<string, DeadLetterJob> = new Map();
+  private readonly unpersistedDeadLetterJobs: Map<string, DeadLetterJob> = new Map();
   private readonly processors: Map<string, (job: QueueJob) => Promise<any>> = new Map();
   private readonly processingJobs: Set<string> = new Set();
   private readonly stats: Map<string, { completed: number; failed: number }> = new Map();
 
+  private isFlushingUnpersistedDlq = false;
   private isShuttingDown = false;
   private workerInterval: NodeJS.Timeout | null = null;
   private reconciliationInterval: NodeJS.Timeout | null = null;
@@ -79,9 +81,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Health and readiness check: verifies Redis connection ping or in-memory readiness.
+   * Fails if volatile emergency buffer has unpersisted DLQ jobs awaiting PostgreSQL flush.
    */
   async isReady(): Promise<boolean> {
     if (this.isShuttingDown) return false;
+
+    if (this.unpersistedDeadLetterJobs.size > 0) {
+      return false;
+    }
 
     const isProduction = process.env.NODE_ENV === 'production';
     const requireRedis = isProduction || process.env.REQUIRE_REDIS === 'true';
@@ -105,9 +112,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   private startReconciliationScheduler() {
     if (!this.prisma) return;
-    // Immediate startup reconciliation
+    // Immediate startup reconciliation & unpersisted DLQ flush
     this.reconcileStaleRetryingJobs().catch((err) => {
       this.logger.error(`Initial startup DLQ reconciliation encountered error: ${err.message}`);
+    });
+    this.flushUnpersistedDeadLetterJobs().catch((err) => {
+      this.logger.error(`Initial unpersisted DLQ flush encountered error: ${err.message}`);
     });
 
     // Run periodic check every 60 seconds
@@ -116,28 +126,135 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.reconcileStaleRetryingJobs().catch((err) => {
           this.logger.error(`Periodic DLQ reconciliation encountered error: ${err.message}`);
         });
+        this.flushUnpersistedDeadLetterJobs().catch((err) => {
+          this.logger.error(`Periodic unpersisted DLQ flush encountered error: ${err.message}`);
+        });
       }
     }, 60000);
   }
 
-  private async handleJobCompletion(job: QueueJob) {
-    if (job.id.startsWith('dlq-replay:')) {
-      const dlqId = job.id.replace('dlq-replay:', '');
-      if (this.prisma) {
+  private extractReplayDlqId(jobId: string): string | null {
+    const prefix = 'dlq-replay__';
+
+    if (jobId.startsWith(prefix)) {
+      const timestampSeparator = jobId.lastIndexOf('__');
+
+      if (timestampSeparator <= prefix.length) {
+        return null;
+      }
+
+      return jobId.slice(prefix.length, timestampSeparator);
+    }
+
+    const legacyPrefix = 'dlq-replay:';
+    if (jobId.startsWith(legacyPrefix)) {
+      return jobId.slice(legacyPrefix.length);
+    }
+
+    return null;
+  }
+
+  private async flushUnpersistedDeadLetterJobs() {
+    if (this.isFlushingUnpersistedDlq || !this.prisma || this.unpersistedDeadLetterJobs.size === 0) return;
+
+    this.isFlushingUnpersistedDlq = true;
+    try {
+      for (const [dlqId, deadJob] of Array.from(this.unpersistedDeadLetterJobs.entries())) {
         try {
-          await this.prisma.deadLetterJob.update({
-            where: { id: dlqId },
+          await this.prisma.deadLetterJob.create({
             data: {
-              status: 'RESOLVED',
-              failedReason: null,
+              id: dlqId,
+              queueName: deadJob.queueName,
+              jobName: deadJob.jobName,
+              payload: deadJob.data ?? {},
+              attemptsMade: deadJob.attemptsMade,
+              maxAttempts: deadJob.maxAttempts,
+              failedReason: deadJob.failedReason,
+              stacktrace: deadJob.stacktrace ?? [],
+              status: deadJob.status,
+              failedAt: deadJob.failedAt,
             },
           });
-          this.logger.log(`DLQ job ${dlqId} (replay ${job.id}) processed successfully and marked RESOLVED in DB.`);
-        } catch (dbErr: any) {
-          this.logger.error(`Failed to mark DLQ job ${dlqId} as RESOLVED: ${dbErr.message}`);
+
+          this.unpersistedDeadLetterJobs.delete(dlqId);
+          this.logger.log(`Successfully flushed previously unpersisted DLQ job ${dlqId} to PostgreSQL.`);
+        } catch (error: any) {
+          if (error.code === 'P2002') {
+            const existing = await this.prisma.deadLetterJob.findUnique({
+              where: { id: dlqId },
+              select: { id: true },
+            });
+
+            if (existing) {
+              this.unpersistedDeadLetterJobs.delete(dlqId);
+              continue;
+            }
+          }
+
+          this.logger.error(`Failed to flush unpersisted DLQ job ${dlqId}: ${error.message}`);
+          throw error;
         }
       }
-      this.deadLetterStore.delete(dlqId);
+    } finally {
+      this.isFlushingUnpersistedDlq = false;
+    }
+  }
+
+  private async handleJobCompletion(job: QueueJob) {
+    const dlqId = this.extractReplayDlqId(job.id);
+
+    if (dlqId) {
+      if (this.prisma) {
+        let success = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const updateResult = await this.prisma.deadLetterJob.updateMany({
+              where: {
+                id: dlqId,
+                status: 'RETRY_QUEUED',
+                replayJobId: job.id,
+              },
+              data: {
+                status: 'RESOLVED',
+                failedReason: null,
+              },
+            });
+            if (updateResult.count > 0) {
+              this.logger.log(`DLQ job ${dlqId} (replay ${job.id}) processed successfully and marked RESOLVED in DB.`);
+            } else {
+              this.logger.warn(
+                `DLQ completion for ${dlqId} (replay ${job.id}) did not match active RETRY_QUEUED state (possible superseded replay).`,
+              );
+            }
+            success = true;
+            break;
+          } catch (dbErr: any) {
+            this.logger.error(`Attempt ${attempt}/3 failed to mark DLQ job ${dlqId} as RESOLVED: ${dbErr.message}`);
+            if (attempt < 3) {
+              await new Promise((r) => setTimeout(r, 100 * attempt));
+            }
+          }
+        }
+        if (!success) {
+          this.logger.error(`🚨 [CRITICAL_DLQ_UPDATE_FAILED] Exhausted retries marking DLQ job ${dlqId} as RESOLVED!`);
+        }
+      }
+
+      const memoryJob = this.deadLetterStore.get(dlqId);
+      if (
+        memoryJob?.status === 'RETRY_QUEUED' &&
+        memoryJob.replayJobId === job.id
+      ) {
+        this.deadLetterStore.delete(dlqId);
+      }
+
+      const unpersistedJob = this.unpersistedDeadLetterJobs.get(dlqId);
+      if (
+        unpersistedJob?.status === 'RETRY_QUEUED' &&
+        unpersistedJob.replayJobId === job.id
+      ) {
+        this.unpersistedDeadLetterJobs.delete(dlqId);
+      }
     }
   }
 
@@ -146,9 +263,24 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async initRedisAndBullMQ() {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const redisDisabled = process.env.DISABLE_REDIS === 'true';
     const rawRedisUrl = process.env.REDIS_URL || process.env.REDIS_HOST;
-    if (!rawRedisUrl || process.env.DISABLE_REDIS === 'true') {
-      this.logger.log('QueueService operating in Resilient In-Memory Mode with PostgreSQL DLQ');
+
+    if (isProduction && redisDisabled) {
+      throw new Error(
+        'Invalid production configuration: DISABLE_REDIS=true is not permitted',
+      );
+    }
+
+    if (isProduction && !rawRedisUrl) {
+      throw new Error(
+        'Invalid production configuration: REDIS_URL is required',
+      );
+    }
+
+    if (!rawRedisUrl || redisDisabled) {
+      this.logger.log('QueueService operating in in-memory development mode');
       return;
     }
 
@@ -164,7 +296,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.redisClient.on('error', (err) => {
-        this.logger.warn(`Redis connection error (${safeUrl}): ${err.message}. Retaining in-memory fallback.`);
+        this.logger.warn(`Redis connection error (${safeUrl}): ${err.message}.`);
+        if (process.env.NODE_ENV === 'production') {
+          this.isBullMqActive = false;
+        }
       });
 
       // Verify connection with 2s timeout
@@ -184,13 +319,6 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      this.redisClient.on('error', (err) => {
-        this.logger.warn(`Redis connection error (${safeUrl}): ${err.message}.`);
-        if (process.env.NODE_ENV === 'production') {
-          this.isBullMqActive = false;
-        }
-      });
-
       this.redisClient.on('close', () => {
         this.logger.warn('Redis connection closed.');
         if (process.env.NODE_ENV === 'production') {
@@ -203,14 +331,32 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.isBullMqActive = true;
       });
     } catch (err: any) {
-      this.logger.warn(`Could not connect to Redis at ${safeUrl}: ${err.message}. Running in In-Memory fallback.`);
-      if (this.redisClient) {
-        try {
-          this.redisClient.disconnect();
-        } catch (_) {}
-        this.redisClient = null;
-      }
+      const failedClient = this.redisClient;
+
+      this.redisClient = null;
       this.isBullMqActive = false;
+
+      if (failedClient) {
+        failedClient.removeAllListeners();
+
+        try {
+          failedClient.disconnect();
+        } catch {
+          // Client may already be closed.
+        }
+      }
+
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.error(
+          `Redis initialization failed (${safeUrl}): ${err.message}`,
+        );
+        throw new Error('Redis initialization failed');
+      }
+
+      this.logger.warn(
+        `Could not connect to Redis at ${safeUrl}: ${err.message}. ` +
+        'Running in in-memory development mode.',
+      );
     }
   }
 
@@ -338,6 +484,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     // Try BullMQ dispatch first if available
     const bullQueue = this.getOrCreateBullQueue(queueName);
+
+    if (
+      process.env.NODE_ENV === 'production' &&
+      (!bullQueue || !this.isBullMqActive)
+    ) {
+      throw new Error('QUEUE_UNAVAILABLE');
+    }
+
     if (bullQueue) {
       try {
         const addedJob = await bullQueue.add(jobName, data, {
@@ -354,6 +508,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         });
         return addedJob.id || jobId;
       } catch (err: any) {
+        if (process.env.NODE_ENV === 'production') {
+          this.logger.error(`BullMQ enqueue failed in production: ${err.message}`);
+          throw new Error('QUEUE_UNAVAILABLE');
+        }
         this.logger.warn(`BullMQ enqueue failed: ${err.message}. Enqueueing to in-memory fallback.`);
       }
     }
@@ -490,13 +648,18 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   private async moveToDeadLetterQueue(job: QueueJob, error: any) {
     // If this failed job was a DLQ replay job, update the existing DLQ record rather than creating an orphan
-    if (job.id.startsWith('dlq-replay:')) {
-      const originalDlqId = job.id.replace('dlq-replay:', '');
+    const originalDlqId = this.extractReplayDlqId(job.id);
+
+    if (originalDlqId) {
       const failureReason = `REPLAY_FAILED: ${error?.message || 'Unknown processing failure'}`;
       if (this.prisma) {
         try {
-          await this.prisma.deadLetterJob.update({
-            where: { id: originalDlqId },
+          const result = await this.prisma.deadLetterJob.updateMany({
+            where: {
+              id: originalDlqId,
+              status: 'RETRY_QUEUED',
+              replayJobId: job.id,
+            },
             data: {
               status: 'DEAD',
               attemptsMade: { increment: job.attemptsMade },
@@ -504,19 +667,38 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
               failedAt: new Date(),
             },
           });
+
+          if (result.count === 0) {
+            this.logger.warn(
+              `Ignored stale replay failure ${job.id}; it is no longer the active replay`,
+            );
+            return;
+          }
+
           this.logger.warn(
             `🚨 [DLQ ALERT] Replayed DLQ job ${originalDlqId} (${job.jobName}) failed again and was restored to DEAD status in DB.`,
           );
-          return;
         } catch (dbErr: any) {
           this.logger.error(`Failed to restore DLQ job ${originalDlqId} to DEAD in DB: ${dbErr.message}`);
         }
       }
       const deadJob = this.deadLetterStore.get(originalDlqId);
-      if (deadJob) {
+      if (
+        deadJob?.status === 'RETRY_QUEUED' &&
+        deadJob.replayJobId === job.id
+      ) {
         deadJob.status = 'DEAD';
         deadJob.failedReason = failureReason;
         deadJob.failedAt = new Date();
+      }
+      const unpersisted = this.unpersistedDeadLetterJobs.get(originalDlqId);
+      if (
+        unpersisted?.status === 'RETRY_QUEUED' &&
+        unpersisted.replayJobId === job.id
+      ) {
+        unpersisted.status = 'DEAD';
+        unpersisted.failedReason = failureReason;
+        unpersisted.failedAt = new Date();
       }
       return;
     }
@@ -541,23 +723,37 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     // Persist to PostgreSQL dead_letter_jobs table if prisma is available
     if (this.prisma) {
-      try {
-        await this.prisma.deadLetterJob.create({
-          data: {
-            id: dlqId,
-            queueName: job.queueName,
-            jobName: job.jobName,
-            payload: safeData ?? {},
-            attemptsMade: job.attemptsMade,
-            maxAttempts: job.opts.attempts ?? 3,
-            failedReason: deadJob.failedReason,
-            stacktrace: deadJob.stacktrace ?? [],
-            status: 'DEAD',
-            failedAt: deadJob.failedAt,
-          },
-        });
-      } catch (dbErr: any) {
-        this.logger.error(`Failed to persist dead letter job to database: ${dbErr.message}`);
+      let persisted = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await this.prisma.deadLetterJob.create({
+            data: {
+              id: dlqId,
+              queueName: job.queueName,
+              jobName: job.jobName,
+              payload: safeData ?? {},
+              attemptsMade: job.attemptsMade,
+              maxAttempts: job.opts.attempts ?? 3,
+              failedReason: deadJob.failedReason,
+              stacktrace: deadJob.stacktrace ?? [],
+              status: 'DEAD',
+              failedAt: deadJob.failedAt,
+            },
+          });
+          persisted = true;
+          break;
+        } catch (dbErr: any) {
+          this.logger.error(`Attempt ${attempt}/3 failed to persist dead letter job to database: ${dbErr.message}`);
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 100 * attempt));
+          }
+        }
+      }
+      if (!persisted) {
+        this.logger.error(
+          `🚨 [CRITICAL_DLQ_PERSISTENCE_FAILED] Dead letter job ${dlqId} failed all 3 attempts to persist to PostgreSQL! Retaining in unpersisted fallback store.`,
+        );
+        this.unpersistedDeadLetterJobs.set(dlqId, deadJob);
       }
     }
 
@@ -572,22 +768,53 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   async getDeadLetterJobs(queueName?: string): Promise<DeadLetterJob[]> {
     if (this.prisma) {
-      const rows = await this.prisma.deadLetterJob.findMany({
-        where: queueName ? { queueName } : {},
-        orderBy: { createdAt: 'desc' },
-      });
-      return rows.map((r: any) => ({
-        id: r.id,
-        queueName: r.queueName,
-        jobName: r.jobName,
-        data: r.payload,
-        attemptsMade: r.attemptsMade,
-        maxAttempts: r.maxAttempts,
-        failedReason: r.failedReason || '',
-        status: r.status,
-        replayJobId: r.replayJobId,
-        failedAt: r.failedAt || r.createdAt,
-      }));
+      try {
+        const rows = await this.prisma.deadLetterJob.findMany({
+          where: queueName ? { queueName } : {},
+          orderBy: { createdAt: 'desc' },
+        });
+        const dbJobs: DeadLetterJob[] = rows.map((r: any) => ({
+          id: r.id,
+          queueName: r.queueName,
+          jobName: r.jobName,
+          data: r.payload,
+          attemptsMade: r.attemptsMade,
+          maxAttempts: r.maxAttempts,
+          failedReason: r.failedReason || '',
+          status: r.status,
+          replayJobId: r.replayJobId,
+          failedAt: r.failedAt || r.createdAt,
+        }));
+
+        // Merge unpersisted jobs if any exist
+        if (this.unpersistedDeadLetterJobs.size > 0) {
+          for (const [id, unpersisted] of this.unpersistedDeadLetterJobs.entries()) {
+            if (!queueName || unpersisted.queueName === queueName) {
+              if (!dbJobs.some((j) => j.id === id)) {
+                dbJobs.unshift(unpersisted);
+              }
+            }
+          }
+        }
+
+        return dbJobs;
+      } catch (dbErr: any) {
+        this.logger.error(
+          `[QueueService] Failed to query PostgreSQL dead_letter_jobs: ${dbErr.message}. Serving unpersisted and in-memory jobs in degraded mode.`,
+        );
+        const unpersisted = Array.from(this.unpersistedDeadLetterJobs.values());
+        const memoryJobs = Array.from(this.deadLetterStore.values());
+        const combined = [...unpersisted];
+        for (const m of memoryJobs) {
+          if (!combined.some((j) => j.id === m.id)) {
+            combined.push(m);
+          }
+        }
+        if (queueName) {
+          return combined.filter((j) => j.queueName === queueName);
+        }
+        return combined;
+      }
     }
     const all = Array.from(this.deadLetterStore.values());
     if (queueName) {
@@ -598,8 +825,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Re-enqueue a job from DLQ back into the active waiting queue.
-   * Atomically claims the job in DB first (marking status as RETRYING) before enqueueing.
-   * Uses deterministic jobId 'dlq-replay:${dlqId}' to ensure deduplication.
+   * Atomically claims the job in DB first (marking status as RETRY_QUEUED and setting replayJobId) before enqueueing.
+   * Uses colon-free deterministic jobId 'dlq-replay__${dlqId}__${Date.now()}' compatible with BullMQ.
    * Transitions status to RETRY_QUEUED on successful enqueue (only moves to RESOLVED on completion).
    * If enqueueing fails, cleanly rolls back status to DEAD with the enqueue failure reason.
    */
@@ -608,38 +835,48 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     let jobName: string | undefined;
     let jobData: any;
     let maxAttempts = 3;
+    const replayJobId = `dlq-replay__${dlqId}__${Date.now()}`;
 
     if (this.prisma) {
       try {
-        // Atomic status transition in DB from DEAD to RETRYING
-        const claimResult = await this.prisma.deadLetterJob.updateMany({
-          where: { id: dlqId, status: 'DEAD' },
-          data: { status: 'RETRYING' },
-        });
-        if (claimResult.count === 0) {
-          this.logger.warn(`DLQ job ${dlqId} could not be claimed from DB (already RETRYING/RETRY_QUEUED or not found)`);
-          return false;
-        }
-
         const dbJob = await this.prisma.deadLetterJob.findUnique({
           where: { id: dlqId },
         });
-        if (dbJob) {
-          queueName = dbJob.queueName;
-          jobName = dbJob.jobName;
-          jobData = dbJob.payload;
-          maxAttempts = dbJob.maxAttempts;
+        if (!dbJob || dbJob.status !== 'DEAD') {
+          this.logger.warn(
+            `DLQ job ${dlqId} cannot be claimed from DB (status is ${dbJob?.status ?? 'NOT_FOUND'})`,
+          );
+          return false;
+        }
+
+        queueName = dbJob.queueName;
+        jobName = dbJob.jobName;
+        jobData = dbJob.payload;
+        maxAttempts = dbJob.maxAttempts;
+
+        // Atomically set RETRY_QUEUED and replayJobId in DB BEFORE enqueueing
+        const claimResult = await this.prisma.deadLetterJob.updateMany({
+          where: { id: dlqId, status: 'DEAD' },
+          data: {
+            status: 'RETRY_QUEUED',
+            replayJobId,
+          },
+        });
+        if (claimResult.count === 0) {
+          this.logger.warn(`DLQ job ${dlqId} could not be claimed from DB (concurrent transition detected)`);
+          return false;
         }
       } catch (err: any) {
-        this.logger.error(`Failed to atomically claim DLQ job ${dlqId} in DB: ${err.message}`);
+        this.logger.error(`Failed to claim DLQ job ${dlqId} in DB: ${err.message}`);
         return false;
       }
     } else {
       const deadJob = this.deadLetterStore.get(dlqId);
-      if (!deadJob || deadJob.status === 'RETRYING' || deadJob.status === 'RETRY_QUEUED') {
+      if (!deadJob || deadJob.status !== 'DEAD') {
         return false;
       }
-      deadJob.status = 'RETRYING';
+      deadJob.status = 'RETRY_QUEUED';
+      deadJob.replayJobId = replayJobId;
       queueName = deadJob.queueName;
       jobName = deadJob.jobName;
       jobData = deadJob.data;
@@ -647,33 +884,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!queueName || !jobName) {
+      if (this.prisma) {
+        await this.prisma.deadLetterJob.updateMany({
+          where: { id: dlqId, replayJobId, status: 'RETRY_QUEUED' },
+          data: { status: 'DEAD', failedReason: 'MISSING_QUEUE_OR_JOB_NAME' },
+        });
+      }
       return false;
     }
 
-    // Now safely re-enqueue with deterministic replayJobId
-    const replayJobId = `dlq-replay:${dlqId}`;
     try {
-      const enqueuedJobId = await this.enqueueJob(queueName, jobName, jobData, {
+      await this.enqueueJob(queueName, jobName, jobData, {
         jobId: replayJobId,
         attempts: maxAttempts,
         backoffDelayMs: 1000,
       });
-
-      if (this.prisma) {
-        await this.prisma.deadLetterJob.update({
-          where: { id: dlqId },
-          data: {
-            status: 'RETRY_QUEUED',
-            replayJobId,
-          },
-        });
-      }
-
-      const deadJob = this.deadLetterStore.get(dlqId);
-      if (deadJob) {
-        deadJob.status = 'RETRY_QUEUED';
-        deadJob.replayJobId = replayJobId;
-      }
 
       this.logger.log(
         `Job ${dlqId} safely claimed and enqueued as ${replayJobId} from DLQ into active queue [${queueName}] (status: RETRY_QUEUED)`,
@@ -683,8 +908,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Failed to re-enqueue DLQ job ${dlqId}: ${enqueueErr.message}`);
       if (this.prisma) {
         try {
-          await this.prisma.deadLetterJob.update({
-            where: { id: dlqId },
+          await this.prisma.deadLetterJob.updateMany({
+            where: { id: dlqId, replayJobId, status: 'RETRY_QUEUED' },
             data: {
               status: 'DEAD',
               failedReason: `RETRY_ENQUEUE_FAILED: ${enqueueErr.message}`,
@@ -700,7 +925,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         }
       } else {
         const deadJob = this.deadLetterStore.get(dlqId);
-        if (deadJob) deadJob.status = 'DEAD';
+        if (deadJob) {
+          deadJob.status = 'DEAD';
+          deadJob.failedReason = `RETRY_ENQUEUE_FAILED: ${enqueueErr.message}`;
+        }
       }
       return false;
     }
@@ -748,12 +976,23 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           this.deadLetterStore.delete(id);
         }
       }
+      for (const [id, job] of this.unpersistedDeadLetterJobs.entries()) {
+        if (!queueName || job.queueName === queueName) {
+          this.unpersistedDeadLetterJobs.delete(id);
+        }
+      }
       return result.count;
     }
     let memoryCount = 0;
     for (const [id, job] of this.deadLetterStore.entries()) {
       if (!queueName || job.queueName === queueName) {
         this.deadLetterStore.delete(id);
+        memoryCount++;
+      }
+    }
+    for (const [id, job] of this.unpersistedDeadLetterJobs.entries()) {
+      if (!queueName || job.queueName === queueName) {
+        this.unpersistedDeadLetterJobs.delete(id);
         memoryCount++;
       }
     }

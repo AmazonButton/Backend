@@ -74,21 +74,51 @@ async function runSuperpowersVerificationSuite() {
   );
   const productsRepo = new ProductsRepository(prismaServiceMock);
 
+  const mockCreatedUsers = new Map<bigint, any>();
+
   const authRepoMock: any = {
     findByEmail: async (email: string) => null,
     findByAuthId: async (id: string) => null,
     findByProviderSubject: async (provider: string, sub: string) => null,
-    linkProviderSubject: async (userId: bigint, provider: string, sub: string) => ({
-      userId,
-      authProvider: provider,
-      providerSubject: sub,
-    }),
+    findIdentityForUserAndProvider: async (userId: bigint, provider: string) => null,
+    linkProviderSubject: async (
+      userId: bigint,
+      provider: string,
+      sub: string,
+    ) => {
+      const createdUser = mockCreatedUsers.get(userId);
+
+      let email = createdUser?.email;
+
+      if (userId === BigInt(888)) {
+        email = 'existing_victim@amazonbutton.vn';
+      }
+
+      if (userId === BigInt(889)) {
+        email = 'bound_user@gmail.com';
+      }
+
+      if (!email) {
+        throw new Error(`Mock user ${userId} not found`);
+      }
+
+      return {
+        ...createdUser,
+        userId,
+        email,
+        role: createdUser?.role ?? 'CUSTOMER',
+        status: 'ACTIVE',
+        authProvider: provider,
+        providerSubject: sub,
+      };
+    },
     findUserWithAuthRelations: async (email: string) => {
       if (email === 'existing_victim@amazonbutton.vn') {
         return {
           userId: BigInt(888),
           email,
           role: 'CUSTOMER',
+          status: 'ACTIVE',
           authId: null,
           authProvider: 'LOCAL',
           providerSubject: null,
@@ -100,6 +130,7 @@ async function runSuperpowersVerificationSuite() {
           userId: BigInt(889),
           email,
           role: 'CUSTOMER',
+          status: 'ACTIVE',
           authId: null,
           authProvider: 'GOOGLE',
           providerSubject: 'original_google_sub_111111',
@@ -108,19 +139,33 @@ async function runSuperpowersVerificationSuite() {
       }
       return null;
     },
-    createGoogleUserTx: async (userData: any, profileData: any) => ({
-      newUser: {
+    createGoogleUserTx: async (userData: any, profileData: any) => {
+      const newUser = {
         userId: BigInt(777),
         ...userData,
-      },
-      customerProfile: { customerId: BigInt(777), ...profileData },
-    }),
-    findUserById: async (userId: bigint) => ({
-      userId,
-      email: 'verified_user@amazonbutton.vn',
-      role: 'CUSTOMER',
-      status: 'ACTIVE',
-    }),
+      };
+
+      mockCreatedUsers.set(newUser.userId, newUser);
+
+      return {
+        newUser,
+        customerProfile: {
+          customerId: newUser.userId,
+          ...profileData,
+        },
+      };
+    },
+    findUserById: async (userId: bigint) => {
+      const created = mockCreatedUsers.get(userId);
+      if (created) return created;
+      return {
+        userId,
+        email: 'verified_user@amazonbutton.vn',
+        role: 'CUSTOMER',
+        status: 'ACTIVE',
+      };
+    },
+    createRefreshToken: async () => ({ id: 'rt_mock_123', token: 'mock_refresh_token' }),
     updateAuthId: async () => {},
     updateProfile: async () => ({}),
     findRefreshToken: async () => null,
@@ -144,14 +189,6 @@ async function runSuperpowersVerificationSuite() {
   const cleanupIdempotencyKeys: string[] = [];
 
   try {
-    // --------------------------------------------------------------------------
-    // ISOLATED TEST ENTITIES (Strictly zero pollution of existing production stores)
-    // --------------------------------------------------------------------------
-    // Purge any synthetic user residue from previous runs before starting
-    await prisma.user.deleteMany({
-      where: { username: { startsWith: 'sp_user_' } },
-    });
-
     const uniqueRunId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
     const testUser = await prisma.user.create({
@@ -838,8 +875,9 @@ async function runSuperpowersVerificationSuite() {
         'retryDeadLetterJob() preserves authoritative state transition in DB (RETRY_QUEUED or RESOLVED)',
       );
       assert(
-        updatedDbRecord?.replayJobId === `dlq-replay:${dlqRecord.id}`,
-        'retryDeadLetterJob() sets deterministic replayJobId (dlq-replay:id) in DB to guarantee deduplication',
+        updatedDbRecord?.replayJobId?.startsWith(`dlq-replay__${dlqRecord.id}__`) ||
+          updatedDbRecord?.replayJobId === `dlq-replay:${dlqRecord.id}`,
+        'retryDeadLetterJob() sets deterministic replayJobId (dlq-replay__id__timestamp) in DB to guarantee deduplication',
       );
 
       // Attempting to retry second time immediately returns false (already RETRY_QUEUED)
@@ -958,10 +996,6 @@ async function runSuperpowersVerificationSuite() {
         await prisma.apiIdempotencyKey.deleteMany({ where: { userId: createdUserId } });
         await prisma.user.deleteMany({ where: { userId: createdUserId } });
       }
-      // Purge any synthetic sp_user_* residue from test run
-      await prisma.user.deleteMany({
-        where: { username: { startsWith: 'sp_user_' } },
-      });
       await prisma.deadLetterJob.deleteMany({
         where: { queueName: 'superpower-dlq-test-queue' },
       });

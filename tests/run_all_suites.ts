@@ -209,7 +209,12 @@ const suites: TestSuite[] = [
     args: ['tsx', path.join(__dirname, 'phase5-graceful-shutdown-health.spec.ts')],
   },
   {
-    name: '41. Superpowers Security Verification & Hardening Suite',
+    name: '41. Superpowers Security Unit & Isolation Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'superpower-security-unit.spec.ts')],
+  },
+  {
+    name: '42. Superpowers Security Verification & Hardening Suite',
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'superpower-security-verification.spec.ts')],
   },

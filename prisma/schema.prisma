@@ -947,7 +947,7 @@ model UserAuthIdentity {
   user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
 
   @@unique([provider, providerSubject], name: "uq_user_auth_identities_provider_subject", map: "uq_user_auth_identities_provider_subject")
+  @@unique([userId, provider], name: "uq_user_auth_identities_user_provider", map: "uq_user_auth_identities_user_provider")
   @@index([userId], map: "idx_user_auth_identities_user_id")
   @@map("user_auth_identities")
 }
-

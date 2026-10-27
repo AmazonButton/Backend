@@ -1,4 +1,4 @@
-import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Inject, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -318,32 +318,74 @@ export class AuthRepository {
   }
 
   async findIdentityForUserAndProvider(userId: bigint, provider: string) {
-    return this.prisma.userAuthIdentity.findFirst({
-      where: { userId, provider },
+    return this.prisma.userAuthIdentity.findUnique({
+      where: {
+        uq_user_auth_identities_user_provider: {
+          userId,
+          provider,
+        },
+      },
     });
   }
 
   async linkProviderSubject(userId: bigint, authProvider: string, providerSubject: string) {
     return this.prisma.$transaction(async (tx) => {
-      // 1. Upsert into user_auth_identities table
-      await tx.userAuthIdentity.upsert({
+      // 1. Row-lock user to serialize concurrent linking operations
+      await tx.$queryRaw`SELECT user_id FROM users WHERE user_id = ${userId} FOR UPDATE`;
+
+      // 2. Invariant: Check if providerSubject is already owned by someone else
+      const existingBySubject = await tx.userAuthIdentity.findUnique({
         where: {
           uq_user_auth_identities_provider_subject: {
             provider: authProvider,
             providerSubject,
           },
         },
-        create: {
-          userId,
-          provider: authProvider,
-          providerSubject,
-        },
-        update: {
-          userId,
+      });
+
+      if (existingBySubject && existingBySubject.userId !== userId) {
+        throw new ConflictException(
+          'PROVIDER_SUBJECT_MISMATCH: This external identity is already linked to another account.',
+        );
+      }
+
+      // 3. Invariant: Check if user is already bound to a different providerSubject
+      const existingByUserProvider = await tx.userAuthIdentity.findUnique({
+        where: {
+          uq_user_auth_identities_user_provider: {
+            userId,
+            provider: authProvider,
+          },
         },
       });
 
-      // 2. Sync to direct user columns and return updated user object
+      if (existingByUserProvider && existingByUserProvider.providerSubject !== providerSubject) {
+        throw new ConflictException(
+          'PROVIDER_SUBJECT_MISMATCH: User account is already linked to a different provider subject.',
+        );
+      }
+
+      // 4. Create identity if not yet created (never reassign ownership)
+      if (!existingBySubject && !existingByUserProvider) {
+        try {
+          await tx.userAuthIdentity.create({
+            data: {
+              userId,
+              provider: authProvider,
+              providerSubject,
+            },
+          });
+        } catch (dbErr: any) {
+          if (dbErr.code === 'P2002') {
+            throw new ConflictException(
+              'PROVIDER_SUBJECT_MISMATCH: Concurrent identity conflict during link.',
+            );
+          }
+          throw dbErr;
+        }
+      }
+
+      // 5. Sync to direct user columns and return updated user object
       return tx.user.update({
         where: { userId },
         data: { authProvider, providerSubject },

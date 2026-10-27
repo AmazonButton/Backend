@@ -4,7 +4,7 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** Verified clean build (`npm run build`), TypeScript compilation (`npx tsc --noEmit`), Prisma 27 migrations up-to-date (`npx prisma migrate status`), and all P0/P1 senior review fixes verified across Suites 35–40 (99/99 assertions passing). Production ready with: immutable terminal payout state machine, multi-tenant & resource-scoped idempotency platform (`uq_api_idempotency_scoped`), cryptographic JWT signature verification on logout (forged token DoS eliminated), real BullMQ + Redis integration with masked logging and PostgreSQL `dead_letter_jobs` table, async email retries & DLQ, deadlock transaction retry helper integration (`runWithTransactionRetry`), atomic price history row locking, and Kubernetes zero-downtime draining probe.
+> **Status:** Verified clean build (`npm run build`), TypeScript compilation (`npx tsc --noEmit`), Prisma 32 migrations up-to-date (`npx prisma migrate status`), and senior review fixes verified across Unit & DLQ suites (Superpower Security Unit: 41/41 passing; Phase 3 Queues/DLQ: 19/19 passing). Production ready with: immutable terminal payout state machine, multi-tenant & resource-scoped idempotency platform (`uq_api_idempotency_scoped`), cryptographic JWT signature verification on logout (forged token DoS eliminated), real BullMQ + Redis integration with masked logging, robust colon-free replay IDs, PostgreSQL `dead_letter_jobs` CAS failure handling, async email retries & DLQ, deadlock transaction retry helper integration (`runWithTransactionRetry`), atomic price history row locking, and Kubernetes zero-downtime draining probe.
 
 ---
 
@@ -12,7 +12,7 @@
 - Check TypeScript types: `npx tsc --noEmit`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (40 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run All Tests (42 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
 - Individual Suite Commands:
   - Suite 1 (Firebase Phone Auth): `npx tsx tests/firebase-phone-auth.spec.ts`
   - Suite 2 (FCM Notifications): `npx tsx tests/notifications-fcm.spec.ts`
@@ -54,7 +54,8 @@
   - Suite 38 (Phase 3 Asynchronous Queues, Backoff Retry & DLQ): `npx tsx tests/phase3-queues-retry-dlq.spec.ts`
   - Suite 39 (Phase 4 Database Index & Query Optimization): `npx tsx tests/phase4-index-query-optimization.spec.ts`
   - Suite 40 (Phase 5 Health Probes & Graceful Shutdown): `npx tsx tests/phase5-graceful-shutdown-health.spec.ts`
-  - Suite 41 (Superpowers Dedicated Security Suite): `npx tsx tests/superpower-security-verification.spec.ts`
+  - Suite 41 (Superpowers Security Unit & Isolation): `npx tsx tests/superpower-security-unit.spec.ts`
+  - Suite 42 (Superpowers Security Verification & Hardening): `npx tsx tests/superpower-security-verification.spec.ts`
 
 ---
 
@@ -1061,24 +1062,51 @@ When starting a new conversation, prompt the agent with:
          - In [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts): added security warning when `TRUST_PROXY === 'true'` (warns against trusting entire proxy chain).
          - Documented `TRUST_PROXY=1` and `TEST_DATABASE_URL` in [`.env.example`](file:///f:/Learning/SEM9-FPTu/backend/.env.example).
 
+    12. **[2026-10-27] Superpowers Review Fixes & Hardening (Migration Checksum, DLQ CAS, Redis Production Invariants):**
+       - **Item 1: P0 Migration Checksum Integrity:**
+         - Restored applied migration [`prisma/migrations/20261027003000_add_user_provider_unique_and_backfill_identities/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261027003000_add_user_provider_unique_and_backfill_identities/migration.sql) to its exact original LF content matching database checksum `408617a9...`.
+         - Created new migration [`prisma/migrations/20261027010000_verify_provider_identity_ownership/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261027010000_verify_provider_identity_ownership/migration.sql) executing:
+           1. Ownership conflict check: aborts with `PROVIDER_SUBJECT_OWNERSHIP_CONFLICT` if subject belongs to another user.
+           2. Multiple subjects check: aborts with `MULTIPLE_PROVIDER_IDENTITIES` if one user has multiple identities for the same provider.
+           3. Safe backfill: inserts only missing identities without overwriting or deleting records.
+           4. Postflight check: aborts with `PROVIDER_IDENTITY_POSTFLIGHT_FAILED` if any user anchor is missing.
+         - Deployed via `npx prisma migrate deploy` (32 migrations applied, `prisma migrate status` PASS).
+       - **Item 2: P0 Robust DLQ Replay ID Parsing:**
+         - In [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts): implemented `extractReplayDlqId(jobId: string)` helper handling IDs with internal double underscores (e.g. `dlq-replay__dlq_origin__part__<timestamp>` extracts `dlq_origin__part`).
+         - Unified parsing across `handleJobCompletion` and `moveToDeadLetterQueue`.
+       - **Item 3: P0 CAS Failure Path & Stale Completion Guard:**
+         - In `moveToDeadLetterQueue`: DB update executes CAS with `where: { id: originalDlqId, status: 'RETRY_QUEUED', replayJobId: job.id }`; ignores stale replay failures when `result.count === 0`.
+         - In both DB and memory stores (`deadLetterStore`, `unpersistedDeadLetterJobs`), mutations and completions require `replayJobId === job.id`.
+         - Stale replay completion does not evict newer active replay state.
+       - **Item 4: P1 Unified Production Redis Invariants:**
+         - In `initRedisAndBullMQ`:
+           - Prohibits `DISABLE_REDIS=true` in production (throws immediately).
+           - Requires `REDIS_URL` in production (throws immediately).
+           - Connection failure throws `'Redis initialization failed'`.
+           - In-memory fallback permitted exclusively in `test` / `development`.
+         - In `enqueueJob`: throws `'QUEUE_UNAVAILABLE'` in production when BullMQ/Redis is disconnected or unavailable.
+       - **Item 5: P1 Safe DLQ Flush & Volatile Emergency Buffer:**
+         - Added `isFlushingUnpersistedDlq` concurrency lock to prevent overlapping flush executions.
+         - Replaced `upsert` with `create` and `P2002` duplicate key handling (verifies record exists via `findUnique` and deletes from RAM buffer without mutating existing `RESOLVED` / active states).
+         - Documented in-memory store as volatile emergency buffer; readiness probe `/readyz` fails if buffer contains unflushed records.
+       - **Item 6: P1 Stateful OAuth Mock in Test Suite:**
+         - In [`tests/superpower-security-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/superpower-security-verification.spec.ts): implemented `mockCreatedUsers = new Map<bigint, any>()` store for `createGoogleUserTx`, `linkProviderSubject`, and `findUserById` to return correct dynamic emails for Gmail and Workspace logins.
+       - **Item 7: P2 Unit Suite Registration:**
+         - Registered `41. Superpowers Security Unit & Isolation Suite` and `42. Superpowers Security Verification & Hardening Suite` in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
+
 - **Verification Matrix:**
-  - `git diff --check` — **PASS**
-  - `npx prisma validate` — **PASS**
-  - `npx prisma generate` — **PASS (Generated Prisma Client v5.22.0)**
-  - `npx prisma migrate status` — **PASS (29 migrations found, database schema is up to date)**
+  - `git diff --check` — **PASS (0 whitespace / syntax errors)**
+  - `npx prisma validate` — **PASS (Schema valid)**
+  - `npx prisma generate` — **PASS (Prisma Client v5.22.0 generated)**
+  - `npx prisma migrate status` — **PASS (32 migrations applied, database schema up to date, checksum verified)**
   - `npx tsc --noEmit` — **PASS (0 errors, strict typechecking verified)**
-  - `npm run build` — **PASS (0 errors, NestJS production build completed successfully)**
-  - Suite 41 & Suite 37 Security Guards:
-    - Without `TEST_DATABASE_URL`: **PASS (Refuses execution with code 1, prevents cloud DB execution)**
-    - With identical `DATABASE_URL`: **PASS (Refuses execution with code 1, prevents primary DB mutation)**
-    - With non-whitelisted remote URL: **PASS (Refuses execution with code 1, protects staging/prod clouds)**
-  - Financial Idempotency Contract:
-    - Real controller metadata via NestJS `Reflector` verified on `StorefrontController.checkout`, `PaymentsController.createLink`, `RentalsController.createRentalOrder`, `RentalsController.createPaymentRequest`, `RentalsController.extendRental`, `StoreWalletController.requestWithdrawal` (`required: true, ttlSeconds: 86400`).
-  - Google OAuth Anti-Takeover:
-    - Cryptographic ID token verification via `OAuth2Client.verifyIdToken({ idToken, audience })`.
-    - `PROVIDER_SUBJECT_MISMATCH` blocks account linking when user email is already bound to a different Google `sub`.
-    - External HTTP requests enforce 5000ms `AbortController` timeouts with guaranteed cleanup in `finally`.
-  - Authoritative PostgreSQL DLQ:
-    - Retrying jobs claim state in DB and assign deterministic `replayJobId = dlq-replay:<id>`.
-    - Stale retrying jobs automatically reclaimed via `reconcileStaleRetryingJobs(timeoutMs)` back to `DEAD`.
-    - Synthetic test residue (`sp_user_*`) purged automatically on startup and teardown.
+  - `npm run build` — **PASS (NestJS production build succeeded)**
+  - `npx tsx tests/superpower-security-unit.spec.ts` — **PASS (41 passed, 0 failed, 100% assertions verified across DB CAS, DLQ parsing, flush P2002, and Redis production fail-closed matrix)**
+  - `npx tsx tests/phase3-queues-retry-dlq.spec.ts` — **PASS (19 passed, 0 failed, BullMQ colon-free replay verified)**
+  - **Master Runner (42 Suites) & Test Database Note:**
+    - Suite 41 (`superpower-security-unit.spec.ts`) & Suite 42 (`superpower-security-verification.spec.ts`) registered in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
+    - Suite 42 requires a dedicated local PostgreSQL database with `_test` suffix via `TEST_DATABASE_URL` and safely refuses execution (exit code 1) when omitted to prevent touching cloud Supabase/production data.
+    - Full `npm run test:all` requires the local NestJS server running on port 3000 (for HTTP contract suites) and an isolated `TEST_DATABASE_URL` (for DB verification suites).
+  - **Git Status:**
+    - Branch `main` committed and pushed to `origin/main`.
+    - Working tree clean, all 32 migrations and security hardening verified.

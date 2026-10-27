@@ -117,9 +117,16 @@ export function validateTestDatabaseUrl(
         'public'
       ).toLowerCase();
 
+      // Canonicalize loopback aliases to prevent 'localhost' vs '127.0.0.1' bypass
+      const canonicalizeHost = (h: string) =>
+        ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(h.toLowerCase()) ? '127.0.0.1' : h.toLowerCase();
+
+      const canonTestHost = canonicalizeHost(hostname);
+      const canonPrimaryHost = canonicalizeHost(primaryHost);
+
       // Check if target database is identical
       if (
-        hostname === primaryHost &&
+        canonTestHost === canonPrimaryHost &&
         testPort === primaryPort &&
         dbName === primaryDbName &&
         testSchema === primarySchema
