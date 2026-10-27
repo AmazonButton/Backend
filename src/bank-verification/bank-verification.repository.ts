@@ -61,6 +61,12 @@ export class BankVerificationRepository {
     accountName: string;
     verificationStatus?: string;
   }) {
+    const existingDefault = await this.prisma.storeBankAccount.findFirst({
+      where: { storeId: params.storeId, isDefault: true },
+      select: { id: true, accountNumberHash: true },
+    });
+    const shouldBeDefault = !existingDefault || existingDefault.accountNumberHash === params.accountNumberHash;
+
     return this.prisma.storeBankAccount.upsert({
       where: {
         uq_store_bank_account_store_acc_hash: {
@@ -77,7 +83,7 @@ export class BankVerificationRepository {
         accountNumberHash: params.accountNumberHash,
         accountName: params.accountName,
         verificationStatus: params.verificationStatus || 'PENDING',
-        isDefault: true,
+        isDefault: shouldBeDefault,
       },
       update: {
         bankName: params.bankName,

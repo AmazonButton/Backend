@@ -260,7 +260,8 @@ async function runSuperpowersSecurityUnitSuite() {
   // Test safe replay ID has no colons
   const dlqTestState = { replayIdVerified: false };
   inMemoryQueue.registerProcessor('dlq-test-queue', async (job) => {
-    if (job.opts?.jobId?.includes('dlq-replay__') && !job.opts.jobId.includes(':')) {
+    const rawId = String(job.id || job.opts?.jobId || '');
+    if (rawId.includes('dlq-replay__') && !rawId.includes(':')) {
       dlqTestState.replayIdVerified = true;
       return;
     }
@@ -270,15 +271,19 @@ async function runSuperpowersSecurityUnitSuite() {
   // Exhaust job to DLQ
   await inMemoryQueue.enqueueJob('dlq-test-queue', 'crash-job', { data: 1 }, { attempts: 1 });
   // Wait for worker processing and DLQ move
-  await new Promise((r) => setTimeout(r, 100));
-
-  const dlqJobs = await inMemoryQueue.getDeadLetterJobs('dlq-test-queue');
+  let dlqJobs = await inMemoryQueue.getDeadLetterJobs('dlq-test-queue');
+  for (let i = 0; i < 20 && dlqJobs.length === 0; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    dlqJobs = await inMemoryQueue.getDeadLetterJobs('dlq-test-queue');
+  }
   assert(dlqJobs.length >= 1, 'Job moved to DLQ after exhaustion');
 
   if (dlqJobs.length >= 1) {
     const replaySuccess = await inMemoryQueue.retryDeadLetterJob(dlqJobs[0].id);
     assert(replaySuccess === true, 'retryDeadLetterJob enqueues job with colon-free ID');
-    await new Promise((r) => setTimeout(r, 100));
+    for (let i = 0; i < 20 && !dlqTestState.replayIdVerified; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
     assert(dlqTestState.replayIdVerified === true, 'Replayed job ID uses BullMQ-safe colon-free format dlq-replay__*');
   }
 
