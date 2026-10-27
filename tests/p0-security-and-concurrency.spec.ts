@@ -401,6 +401,7 @@ async function runP0SecurityAndConcurrencyTests() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runP0SecurityAndConcurrencyTests();

@@ -181,7 +181,7 @@ async function runPhase3QueueSuite() {
     assert(testQueueStat !== undefined && testQueueStat.completed >= 1, 'Queue metrics accurately count completed jobs');
 
   } finally {
-    queueService.onModuleDestroy();
+    await queueService.onModuleDestroy();
   }
 
   console.log('\n================================================================');
@@ -191,6 +191,7 @@ async function runPhase3QueueSuite() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runPhase3QueueSuite().catch((err) => {

@@ -1016,6 +1016,7 @@ async function runSuperpowersVerificationSuite() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runSuperpowersVerificationSuite().catch((err) => {

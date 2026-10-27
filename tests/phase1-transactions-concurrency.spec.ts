@@ -397,6 +397,7 @@ async function runPhase1TransactionsConcurrencyTests() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runPhase1TransactionsConcurrencyTests();

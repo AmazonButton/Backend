@@ -108,7 +108,7 @@ async function runPhase5HealthAndShutdownSuite() {
     assert((queueService as any).workerInterval === null, 'Worker polling interval cleared on destroy');
 
   } finally {
-    queueService.onModuleDestroy();
+    await queueService.onModuleDestroy();
     await prisma.$disconnect();
   }
 
@@ -119,6 +119,7 @@ async function runPhase5HealthAndShutdownSuite() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runPhase5HealthAndShutdownSuite().catch((err) => {

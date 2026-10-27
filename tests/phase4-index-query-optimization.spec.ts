@@ -89,6 +89,7 @@ async function runPhase4IndexOptimizationSuite() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runPhase4IndexOptimizationSuite().catch((err) => {
