@@ -175,9 +175,14 @@ async function runPhase3QueueSuite() {
     // SECTION 5: Queue Statistics Reporting
     // -------------------------------------------------------------
     console.log('\n--- 5. Queue Statistics & Health Metrics ---');
-    const stats = queueService.getQueueStats();
+    let stats = queueService.getQueueStats();
+    let testQueueStat = stats.find((s) => s.queueName === 'test-success-queue');
+    for (let i = 0; i < 20 && (!testQueueStat || testQueueStat.completed < 1); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      stats = queueService.getQueueStats();
+      testQueueStat = stats.find((s) => s.queueName === 'test-success-queue');
+    }
     assert(Array.isArray(stats) && stats.length > 0, 'Queue statistics exported');
-    const testQueueStat = stats.find((s) => s.queueName === 'test-success-queue');
     assert(testQueueStat !== undefined && testQueueStat.completed >= 1, 'Queue metrics accurately count completed jobs');
 
   } finally {

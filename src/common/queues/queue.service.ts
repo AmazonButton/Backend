@@ -419,6 +419,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       worker.on('completed', async (bullJob) => {
         if (!bullJob) return;
+        const stat = this.stats.get(queueName);
+        if (stat) {
+          stat.completed++;
+        } else {
+          this.stats.set(queueName, { completed: 1, failed: 0 });
+        }
         await this.handleJobCompletion({
           id: bullJob.id || '',
           queueName,
@@ -432,6 +438,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       worker.on('failed', async (bullJob, err) => {
         if (!bullJob) return;
+        const stat = this.stats.get(queueName);
+        if (stat) {
+          stat.failed++;
+        } else {
+          this.stats.set(queueName, { completed: 0, failed: 1 });
+        }
         const maxAttempts = bullJob.opts.attempts || 3;
         if (bullJob.attemptsMade >= maxAttempts) {
           await this.moveToDeadLetterQueue(
