@@ -61,7 +61,7 @@
 - Live Render Performance & Load Benchmark (P50/P90/P95/P99 SLA, 44.5 RPS, 429 Defense): `npx tsx tests/render_live_performance_benchmark.ts`
 - Live Render 500-1000 High-Load Stress Suite (38.7 RPS @ 500 reqs, 1000-req Rate Limit Quota Enforced): `npx tsx tests/render_live_high_load_stress.ts`
 - Live Render Multi-Instance Cluster Manager CLI (Status, Deploys, Restart, 41/41 Env Parity): `npm run render:cluster status` | `npm run render:cluster env` | `npm run render:cluster deploy`
-- Live Render Dual-Node Cluster 1,000-Request Load Test (Round-Robin Node 1 + Node 2, 0x 429 errors, Node 2 100% pass @ 147ms P50): `npx tsx tests/render_live_dual_cluster_load_test.ts`
+- Live Render Dual-Node Cluster 1,000-Request Load Test (Round-Robin Node 1 + Node 2, PgBouncer 6543, 100.0% Pass Rate: 1000/1000, 0x 429 errors, 0 failures, Node 1: 500/500, Node 2: 500/500): `npx tsx tests/render_live_dual_cluster_load_test.ts`
 
 ---
 
