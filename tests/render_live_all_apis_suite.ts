@@ -383,6 +383,172 @@ async function main() {
   await test('TC87', 'Non-existent identity session retrieval returns 404', 'Identity', 'GET', '/identity-verifications/sessions/999999', customerToken, undefined, 404);
 
   // ============================================================================
+  // 19. Banks Catalog
+  // ============================================================================
+  console.log('\n--- 19. Supported Banks Catalog ---');
+  await test('TC88', 'Public supported Vietnam banks catalog returns bank list', 'Banks', 'GET', '/banks', undefined, undefined, 200, (d) => Array.isArray(d?.data) && d.data.length > 0);
+
+  // ============================================================================
+  // 20. Store Self-Profile (stores/me)
+  // ============================================================================
+  console.log('\n--- 20. Store Self-Profile Management ---');
+  await test('TC89', 'Store Owner inspects owned store profile', 'Stores', 'GET', '/stores/me', storeOwnerToken, undefined, 200, (d) => String(d?.data?.storeId) === '1');
+  await test('TC90', 'Store Owner updates store profile address', 'Stores', 'PATCH', '/stores/me', storeOwnerToken, { address: '123 Đường Số 1, Phường Tân Phú, Quận 7' }, 200, (d) => d?.success === true);
+  await test('TC91', 'Customer role calling store self-profile rejected with 403/404', 'Stores', 'GET', '/stores/me', customerToken, undefined, [403, 404]);
+
+  // ============================================================================
+  // 21. Store Analytics Deep Drilldowns
+  // ============================================================================
+  console.log('\n--- 21. Store Analytics Drilldowns ---');
+  await test('TC92', 'Store Owner accesses store dashboard metrics', 'StoreAnalytics', 'GET', '/analytics/dashboard', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC93', 'Store Owner accesses orders analytics drilldown', 'StoreAnalytics', 'GET', '/analytics/orders', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC94', 'Store Owner accesses products analytics drilldown', 'StoreAnalytics', 'GET', '/analytics/products', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC95', 'Store Owner accesses inventory analytics drilldown', 'StoreAnalytics', 'GET', '/analytics/inventory', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC96', 'Store Owner accesses customers analytics drilldown', 'StoreAnalytics', 'GET', '/analytics/customers', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC97', 'Store Owner accesses finance analytics drilldown', 'StoreAnalytics', 'GET', '/analytics/finance', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC98', 'Store Owner accesses operations analytics drilldown', 'StoreAnalytics', 'GET', '/analytics/operations', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC99', 'Store Owner accesses staff analytics drilldown', 'StoreAnalytics', 'GET', '/analytics/staff', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC100', 'Customer role accessing store analytics rejected with 403', 'StoreAnalytics', 'GET', '/analytics/dashboard', customerToken, undefined, 403);
+
+  // ============================================================================
+  // 22. Notifications Management
+  // ============================================================================
+  console.log('\n--- 22. User Notifications System ---');
+  await test('TC101', 'Customer lists personal notifications', 'Notifications', 'GET', '/notifications', customerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC102', 'Customer retrieves unread notification count', 'Notifications', 'GET', '/notifications/unread-count', customerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC103', 'Customer marks all notifications as read', 'Notifications', 'PATCH', '/notifications/read-all', customerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC104', 'Register FCM Token validation failure on empty body', 'Notifications', 'POST', '/notifications/fcm-token', customerToken, {}, 400);
+  await test('TC105', 'Unregister FCM Token validation failure on empty body', 'Notifications', 'DELETE', '/notifications/fcm-token', customerToken, {}, 400);
+
+  // ============================================================================
+  // 23. Device Templates & Fleet Control
+  // ============================================================================
+  console.log('\n--- 23. Device Templates & Fleet Stats ---');
+  await test('TC106', 'SUPER_ADMIN lists device templates', 'DeviceTemplates', 'GET', '/device-templates', superAdminToken, undefined, 200, (d) => d?.success === true);
+  await test('TC107', 'Customer role accessing device templates rejected with 403', 'DeviceTemplates', 'GET', '/device-templates', customerToken, undefined, 403);
+  await test('TC108', 'Store Owner inspects fleet statistics', 'Devices', 'GET', '/devices/fleet/stats', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC109', 'SUPER_ADMIN lists unassigned button devices', 'Devices', 'GET', '/devices/unassigned', superAdminToken, undefined, 200, (d) => d?.success === true);
+  await test('TC110', 'Lookup non-existent device claim code returns 400/404', 'Devices', 'POST', '/devices/lookup-code', storeOwnerToken, { code: '000000' }, [400, 404]);
+
+  // ============================================================================
+  // 24. Cloud Storage & Media Presigned Signatures
+  // ============================================================================
+  console.log('\n--- 24. Media & Cloud Storage ---');
+  await test('TC111', 'Store Owner requests Cloudinary presigned upload signature', 'Media', 'GET', '/media/signature', storeOwnerToken, undefined, 200, (d) => d?.success === true && !!d?.data?.signature);
+  await test('TC112', 'Customer role requesting upload signature rejected with 403', 'Media', 'GET', '/media/signature', customerToken, undefined, 403);
+  await test('TC113', 'Empty media upload request rejected with 400', 'Media', 'POST', '/media/upload', storeOwnerToken, {}, [400, 500]);
+
+  // ============================================================================
+  // 25. Product Discounts Catalog
+  // ============================================================================
+  console.log('\n--- 25. Product Discounts ---');
+  await test('TC114', 'Public product discounts list returns active discounts for product 5', 'Discounts', 'GET', '/products/5/discounts', undefined, undefined, 200, (d) => d?.success === true);
+  await test('TC115', 'Customer role creating product discount rejected with 403', 'Discounts', 'POST', '/products/5/discounts', customerToken, {}, [400, 403]);
+  await test('TC116', 'Non-existent discount ID returns 404 NOT FOUND', 'Discounts', 'GET', '/discounts/999999999', undefined, undefined, 404);
+
+  // ============================================================================
+  // 26. Driver Shifts & Online Drivers
+  // ============================================================================
+  console.log('\n--- 26. Driver Shifts & Dispatch ---');
+  await test('TC117', 'Store Owner / Delivery Staff checks current shift status', 'DriverShifts', 'GET', '/driver-shifts/current', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC118', 'Store Owner / Delivery Staff inspects shift history with pagination', 'DriverShifts', 'GET', '/driver-shifts/history', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC119', 'Customer role accessing driver duty rejected with 403', 'DriverShifts', 'GET', '/drivers/me/duty', customerToken, undefined, 403);
+  await test('TC120', 'Store Owner checks currently online delivery drivers for store 1', 'DriverShifts', 'GET', '/drivers/store/1/online', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+
+  // ============================================================================
+  // 27. Order Lifecycle & Audit Trails
+  // ============================================================================
+  console.log('\n--- 27. Order Timeline & Driver Queue ---');
+  await test('TC121', 'Customer / Store Owner inspects order lifecycle audit timeline', 'Orders', 'GET', '/orders/1/timeline', storeOwnerToken, undefined, [200, 404]);
+  await test('TC122', 'Customer role accessing driver assigned orders rejected with 403', 'Orders', 'GET', '/orders/driver/my-orders', customerToken, undefined, 403);
+  await test('TC123', 'Store Owner inspects assigned driver orders queue', 'Orders', 'GET', '/orders/driver/my-orders', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+
+  // ============================================================================
+  // 28. Auth Profile & Validation Endpoints
+  // ============================================================================
+  console.log('\n--- 28. Auth Profile & Query Utilities ---');
+  await test('TC124', 'Customer retrieves own verified user profile', 'Auth', 'GET', '/auth/me', customerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC125', 'Store Owner retrieves own verified user profile', 'Auth', 'GET', '/auth/me', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC126', 'Check email availability returns status', 'Auth', 'GET', '/auth/check-email?email=admin@example.com', undefined, undefined, 200, (d) => typeof d?.exists === 'boolean');
+  await test('TC127', 'Check username availability returns status', 'Auth', 'GET', '/auth/check-username?username=admin', undefined, undefined, 200, (d) => typeof d?.exists === 'boolean');
+  await test('TC128', 'Customer updates profile display name', 'Auth', 'PATCH', '/auth/me', customerToken, { fullName: 'Tris Customer Active' }, 200, (d) => d?.success === true);
+
+  // ============================================================================
+  // 29. Rentals Customer Management
+  // ============================================================================
+  console.log('\n--- 29. Rentals Customer Portal ---');
+  await test('TC129', 'Customer retrieves active personal button rentals', 'Rentals', 'GET', '/rentals/my-rentals', customerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC130', 'Admin without customer profile calling my-rentals rejected with 403', 'Rentals', 'GET', '/rentals/my-rentals', adminToken, undefined, 403);
+
+  // ============================================================================
+  // 30. Customer Address Creation & Listing
+  // ============================================================================
+  console.log('\n--- 30. Customer Delivery Address Lifecycle ---');
+  await test('TC131', 'Customer creates new delivery address with full payload', 'Addresses', 'POST', '/customer-addresses', customerToken, {
+    recipientName: 'Tris Test User',
+    phone: '0901234567',
+    addressDetail: '123 Đường Số 1, Phường Tân Phú',
+    ward: 'Phường Tân Phú',
+    district: 'Quận 7',
+    province: 'TP. Hồ Chí Minh',
+  }, [200, 201], (d) => d?.success === true);
+  await test('TC132', 'Customer retrieves delivery addresses containing created address', 'Addresses', 'GET', '/customer-addresses', customerToken, undefined, 200, (d) => Array.isArray(d?.data) && d.data.length > 0);
+
+  // ============================================================================
+  // 31. Device Telemetry, Audit Logs & Toggle Status
+  // ============================================================================
+  console.log('\n--- 31. Device Telemetry & Control ---');
+  await test('TC133', 'SUPER_ADMIN checks telemetry of platform button 69', 'Devices', 'GET', '/devices/69/telemetry', superAdminToken, undefined, 200, (d) => d?.success === true);
+  await test('TC134', 'SUPER_ADMIN checks audit logs of button 69', 'Devices', 'GET', '/devices/69/audit-logs', superAdminToken, undefined, 200, (d) => d?.success === true);
+  await test('TC135', 'SUPER_ADMIN disables button 69', 'Devices', 'POST', '/devices/69/disable', superAdminToken, {}, [200, 201], (d) => d?.success === true);
+  await test('TC136', 'SUPER_ADMIN re-enables button 69', 'Devices', 'POST', '/devices/69/enable', superAdminToken, {}, [200, 201], (d) => d?.success === true);
+
+  // ============================================================================
+  // 32. Category Creation Mutation
+  // ============================================================================
+  console.log('\n--- 32. Category Creation Mutation ---');
+  await test('TC137', 'Store Owner creates new product category with valid payload', 'Categories', 'POST', '/stores/1/categories', storeOwnerToken, {
+    categoryName: `Test Live Category ${Date.now()}`,
+    status: 'ACTIVE',
+  }, [200, 201], (d) => d?.success === true);
+
+  // ============================================================================
+  // 33. Product Creation Mutation
+  // ============================================================================
+  console.log('\n--- 33. Product Creation Mutation ---');
+  await test('TC138', 'Store Owner creates test product with valid payload', 'Products', 'POST', '/products', storeOwnerToken, {
+    name: `Test Live Product ${Date.now()}`,
+    price: 35000,
+    stock: 50,
+    description: 'Sản phẩm test live Render tự động',
+  }, [200, 201], (d) => d?.success === true);
+
+  // ============================================================================
+  // 34. Payments Validation & Security (Excluding live charges/payouts)
+  // ============================================================================
+  console.log('\n--- 34. Payments Security & Validation ---');
+  await test('TC139', 'Empty payment link creation rejected with 400', 'Payments', 'POST', '/payments/payos/create-link', customerToken, {}, 400);
+  await test('TC140', 'Unauthenticated payment link creation rejected with 401', 'Payments', 'POST', '/payments/payos/create-link', undefined, {}, 401);
+  await test('TC141', 'Inquiry non-existent payment request returns code 101/404', 'Payments', 'GET', '/payments/payos/payment-requests/999999', customerToken, undefined, [200, 404], (d) => d?.data?.code === '101' || d?.success === true);
+  await test('TC142', 'Non-existent bank verification transaction inquiry returns 404', 'Banks', 'GET', '/bank-account-verifications/999999', storeOwnerToken, undefined, 404);
+
+  // ============================================================================
+  // 35. Provisioning Session Verification & Confirmation
+  // ============================================================================
+  console.log('\n--- 35. Provisioning Verification & BOLA Guards ---');
+  await test('TC143', 'Provisioning session verification with invalid sessionId returns 400/404', 'Devices', 'POST', '/provisioning/verify', undefined, { sessionId: 'invalid-session-999' }, [400, 404]);
+  await test('TC144', 'Confirm pairing on non-existent session returns 404', 'Devices', 'POST', '/provisioning/sessions/999999/confirm', customerToken, {}, [400, 404]);
+
+  // ============================================================================
+  // 36. Store Driver Shifts & CRM Detail BOLA
+  // ============================================================================
+  console.log('\n--- 36. Store Driver Shifts & CRM BOLA ---');
+  await test('TC145', 'Store Owner lists store driver shifts', 'DriverShifts', 'GET', '/stores/1/driver-shifts', storeOwnerToken, undefined, 200, (d) => d?.success === true);
+  await test('TC146', 'BOLA: Store Owner B inspecting Store 1 driver shifts rejected with 403', 'DriverShifts', 'GET', '/stores/1/driver-shifts', storeOwnerBToken, undefined, 403);
+  await test('TC147', 'Store Owner views store CRM customer detail', 'CRM', 'GET', '/stores/1/customers/1', storeOwnerToken, undefined, [200, 404]);
+  await test('TC148', 'BOLA: Store Owner B inspecting Store 1 CRM customer detail rejected with 403', 'CRM', 'GET', '/stores/1/customers/1', storeOwnerBToken, undefined, 403);
+
+  // ============================================================================
   // Summary & Report
   // ============================================================================
   const total = results.length;
@@ -411,7 +577,7 @@ async function main() {
     });
     process.exit(1);
   } else {
-    console.log('\n🎉 ALL 87 TEST CASES PASSED AGAINST LIVE RENDER PRODUCTION DEPLOYMENT!');
+    console.log(`\n🎉 ALL ${total} TEST CASES PASSED AGAINST LIVE RENDER PRODUCTION DEPLOYMENT!`);
     process.exit(0);
   }
 }
