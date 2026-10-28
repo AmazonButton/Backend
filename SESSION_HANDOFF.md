@@ -58,6 +58,7 @@
   - Suite 43 (Analytics Financial Matrix & Database Aggregation): `npx tsx tests/analytics-foundation-unit.spec.ts`
   - Suite 44 (Multi-Role Analytics & Dashboard E2E): `npx tsx tests/analytics-dashboard-e2e.spec.ts`
 - Live Render Production Master Suite (148/148 passing across all 36 domains): `npx tsx tests/render_live_all_apis_suite.ts`
+- Live Render Performance & Load Benchmark (P50/P90/P95/P99 SLA, 44.5 RPS, 429 Defense): `npx tsx tests/render_live_performance_benchmark.ts`
 
 ---
 
