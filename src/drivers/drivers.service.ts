@@ -92,7 +92,7 @@ export class DriversService {
       this.prisma.order.findMany({
         where: {
           assignedDriverId: driverId,
-          orderStatus: { in: ['ASSIGNED', 'PICKED_UP', 'SHIPPING', 'DELIVERING'] },
+          orderStatus: { in: ['ASSIGNED', 'PICKED_UP', 'SHIPPING'] },
         },
       }),
     ]);

@@ -10,6 +10,9 @@ import { StoreWalletModule } from './store-wallet/store-wallet.module';
 import { StoreStaffModule } from './store-staff/store-staff.module';
 import { StoreCustomersModule } from './store-customers/store-customers.module';
 import { RentalsModule } from './rentals/rentals.module';
+import { CustomersModule } from './customers/customers.module';
+import { StaffModule } from './staff/staff.module';
+import { DashboardCacheModule } from './common/cache/dashboard-cache.module';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
@@ -63,6 +66,9 @@ import { AppController } from './app.controller';
     DriverShiftsModule,
     IdentityVerificationsModule,
     BankVerificationModule,
+    DashboardCacheModule,
+    CustomersModule,
+    StaffModule,
   ],
   controllers: [AppController],
 })

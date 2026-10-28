@@ -3,9 +3,10 @@ import { AnalyticsController } from './analytics.controller';
 import { AnalyticsService } from './analytics.service';
 import { AnalyticsRepository } from './analytics.repository';
 import { PrismaModule } from '../prisma/prisma.module';
+import { DashboardCacheModule } from '../common/cache/dashboard-cache.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, DashboardCacheModule],
   controllers: [AnalyticsController],
   providers: [AnalyticsService, AnalyticsRepository],
   exports: [AnalyticsService, AnalyticsRepository],

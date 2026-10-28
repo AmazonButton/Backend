@@ -218,6 +218,16 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'superpower-security-verification.spec.ts')],
   },
+  {
+    name: '43. Analytics Financial Matrix & Database Aggregation Unit Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'analytics-foundation-unit.spec.ts')],
+  },
+  {
+    name: '44. Multi-Role Analytics & Dashboard End-to-End Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'analytics-dashboard-e2e.spec.ts')],
+  },
 ];
 
 async function main() {

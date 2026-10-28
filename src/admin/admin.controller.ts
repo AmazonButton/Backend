@@ -4,6 +4,11 @@ import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
 import { CreateRentalPackageDto, UpdateRentalPackageDto } from './dto/rental-packages.dto';
 import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
+import {
+  AdminDashboardQueryDto,
+  AdminTimeseriesAnalyticsQueryDto,
+  AdminStoresLeaderboardQueryDto,
+} from './dto/admin-analytics-query.dto';
 import { WalletMapper } from '../store-wallet/mappers/wallet.mapper';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -181,5 +186,45 @@ export class AdminController {
   async listPayosPayouts(@Query() query: ListPayosPayoutsQueryDto) {
     const res = await this.adminService.listPayosPayouts(query);
     return { success: true, data: res?.data || res };
+  }
+
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
+  @Get('dashboard')
+  async getDashboard(@Query() query: AdminDashboardQueryDto) {
+    const data = await this.adminService.getDashboard(query);
+    return { success: true, message: 'Lấy dữ liệu dashboard quản trị thành công', data };
+  }
+
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
+  @Get('analytics/revenue')
+  async getRevenueAnalytics(@Query() query: AdminTimeseriesAnalyticsQueryDto) {
+    const data = await this.adminService.getRevenueAnalytics(query);
+    return { success: true, message: 'Lấy dữ liệu phân tích doanh thu thành công', data };
+  }
+
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
+  @Get('analytics/growth')
+  async getGrowthAnalytics(@Query() query: AdminTimeseriesAnalyticsQueryDto) {
+    const data = await this.adminService.getGrowthAnalytics(query);
+    return { success: true, message: 'Lấy dữ liệu phân tích tăng trưởng thành công', data };
+  }
+
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
+  @Get('analytics/operations')
+  async getOperationsAnalytics() {
+    const data = await this.adminService.getOperationsAnalytics();
+    return { success: true, message: 'Lấy dữ liệu vận hành hệ thống thành công', data };
+  }
+
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
+  @Get('analytics/stores')
+  async getStoresLeaderboard(@Query() query: AdminStoresLeaderboardQueryDto) {
+    const result = await this.adminService.getStoresLeaderboard(query);
+    return {
+      success: true,
+      message: 'Lấy bảng xếp hạng cửa hàng thành công',
+      data: result.stores,
+      pagination: result.pagination,
+    };
   }
 }

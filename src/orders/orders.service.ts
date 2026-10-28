@@ -23,6 +23,7 @@ import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
 import { CreateStorefrontOrderDto } from './dto/create-storefront-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { OrderTimelineResponseDto } from './dto/order-timeline-response.dto';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 
 @Injectable()
 export class OrdersService {
@@ -34,7 +35,34 @@ export class OrdersService {
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
     @Inject(StoreWalletService) private readonly storeWalletService: StoreWalletService,
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
+    @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
   ) {}
+
+  private async invalidateDashboardCaches(storeId?: string | number | bigint, customerUserId?: string | number | bigint) {
+    if (!this.cacheService || typeof this.cacheService.invalidatePrefix !== 'function') return;
+    try {
+      const storeIdStr = storeId ? storeId.toString() : '';
+      const customerUserIdStr = customerUserId ? customerUserId.toString() : '';
+      const promises: Promise<void>[] = [
+        this.cacheService.invalidatePrefix('admin:dashboard:'),
+        this.cacheService.invalidatePrefix('admin:revenue:'),
+        this.cacheService.invalidatePrefix('admin:growth:'),
+        this.cacheService.invalidatePrefix('admin:operations'),
+        this.cacheService.invalidatePrefix('admin:stores-leaderboard:'),
+      ];
+      if (storeIdStr) {
+        promises.push(this.cacheService.invalidatePrefix(`dash:store:${storeIdStr}:`));
+        promises.push(this.cacheService.invalidatePrefix(`staff:dashboard:store:${storeIdStr}:`));
+      }
+      if (customerUserIdStr) {
+        promises.push(this.cacheService.invalidateKey(`customer:dashboard:${customerUserIdStr}`));
+        promises.push(this.cacheService.invalidatePrefix(`customer:orders:${customerUserIdStr}:`));
+      }
+      await Promise.all(promises);
+    } catch (err: any) {
+      this.logger.warn(`Failed to invalidate dashboard cache on order change: ${err.message}`);
+    }
+  }
 
   /**
    * Xử lý tín hiệu bấm nút IoT — Gọi Stored Procedure sp_create_order_from_button
@@ -203,6 +231,9 @@ export class OrdersService {
         this.logger.warn(`Failed to send order created push notification: ${err.message}`);
       });
     }
+
+    const customerUserId = button.customer?.userId || (button.customer as any)?.user?.userId;
+    await this.invalidateDashboardCaches(button.storeId, customerUserId);
 
     return {
       order: formattedOrder,
@@ -517,6 +548,8 @@ export class OrdersService {
     if (order.customerId) {
       this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_CANCELLED', cancelPayload);
     }
+    const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
+    await this.invalidateDashboardCaches(order.storeId, customerUserId);
 
     return formattedOrder;
   }
@@ -599,6 +632,9 @@ export class OrdersService {
       this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_READY_FOR_DELIVERY', readyPayload);
     }
 
+    const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
+    await this.invalidateDashboardCaches(order.storeId, customerUserId);
+
     return formattedOrder;
   }
 
@@ -629,6 +665,9 @@ export class OrdersService {
     this.eventsGateway.emitToStore(storeId.toString(), 'ORDER_CLAIMED', payload);
     this.eventsGateway.emitToStore(storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
 
+    const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
+    await this.invalidateDashboardCaches(storeId, customerUserId);
+
     return formatted;
   }
 
@@ -646,6 +685,8 @@ export class OrdersService {
     this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
     this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_DELIVERED', payload);
     this.eventsGateway.emitToCustomer(updated.customerId.toString(), 'ORDER_STATUS_CHANGED', payload);
+
+    await this.invalidateDashboardCaches(updated.storeId, updated.customerId ? updated.customer?.userId : undefined);
 
     return formatted;
   }
@@ -670,6 +711,8 @@ export class OrdersService {
     };
     this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_DELIVERY_FAILED', payload);
     this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
+
+    await this.invalidateDashboardCaches(updated.storeId, updated.customerId ? updated.customer?.userId : undefined);
 
     return formatted;
   }
@@ -770,6 +813,11 @@ export class OrdersService {
     if (createdOrder.customerId) {
       this.eventsGateway.emitToCustomer(createdOrder.customerId.toString(), 'ORDER_CREATED', orderPayload);
     }
+
+    await this.invalidateDashboardCaches(
+      storeId,
+      createdOrder.customerId ? customerUserBigInt?.toString() : undefined,
+    );
 
     return {
       success: true,

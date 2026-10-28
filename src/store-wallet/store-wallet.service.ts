@@ -17,6 +17,7 @@ import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 import { WalletMapper } from './mappers/wallet.mapper';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 import { StoreWalletRepository } from './store-wallet.repository';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 
 @Injectable()
 export class StoreWalletService {
@@ -27,8 +28,26 @@ export class StoreWalletService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
     @Optional() @Inject(StoreWalletRepository) walletRepo?: StoreWalletRepository,
+    @Optional() private readonly cacheService?: DashboardCacheService,
   ) {
     this.repo = walletRepo || new StoreWalletRepository(this.prisma);
+  }
+
+  private async invalidateWalletCaches(storeId?: string | number | bigint) {
+    if (!this.cacheService || typeof this.cacheService.invalidatePrefix !== 'function') return;
+    try {
+      const promises: Promise<void>[] = [
+        this.cacheService.invalidatePrefix('admin:dashboard:'),
+        this.cacheService.invalidatePrefix('admin:operations'),
+        this.cacheService.invalidatePrefix('admin:revenue:'),
+      ];
+      if (storeId) {
+        promises.push(this.cacheService.invalidatePrefix(`dash:store:${storeId.toString()}:`));
+      }
+      await Promise.all(promises);
+    } catch (error) {
+      this.logger.warn(`Failed to invalidate wallet cache: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 
   async getOrCreateStoreWallet(storeId: string | number | bigint) {
@@ -336,6 +355,8 @@ export class StoreWalletService {
       throw err;
     }
 
+    await this.invalidateWalletCaches(rawStoreId);
+
     const shouldAutoPayout = dto.autoPayout ?? options?.autoPayout ?? false;
     if (shouldAutoPayout && this.payosPayoutService) {
       return this.triggerPayosPayout(withdrawal.withdrawalId);
@@ -439,7 +460,7 @@ export class StoreWalletService {
    */
   async refundFailedWithdrawal(withdrawalId: string | number | bigint, reason: string) {
     const rawId = BigInt(withdrawalId);
-    return runWithTransactionRetry(async () => {
+    const result = await runWithTransactionRetry(async () => {
       return this.prisma.$transaction(async (tx) => {
       // 1. Lock withdrawal row exclusively with SELECT ... FOR UPDATE (Anti-Double Refund)
       const [lockedWithdrawal] = await tx.$queryRaw<Array<{
@@ -537,6 +558,27 @@ export class StoreWalletService {
       });
     });
     });
+
+    await this._invalidateWalletForWithdrawal(rawId);
+
+    return result;
+  }
+
+  private async _invalidateWalletForWithdrawal(withdrawalId: bigint) {
+    try {
+      const w = await this.prisma.storeWithdrawal.findUnique({
+        where: { withdrawalId },
+        include: { wallet: true },
+      });
+      if (w?.wallet?.storeId) {
+        await this.invalidateWalletCaches(w.wallet.storeId);
+      } else {
+        await this.invalidateWalletCaches();
+      }
+    } catch {
+      this.logger.warn(`Could not resolve storeId for wallet cache invalidation on withdrawal ${withdrawalId}`);
+      await this.invalidateWalletCaches();
+    }
   }
 
   /**
@@ -584,6 +626,7 @@ export class StoreWalletService {
     if (isSucceeded) {
       await this.repo.finalizePayoutSuccessTx(withdrawal.withdrawalId);
       this.logger.log(`Hoàn tất chi tiền thành công cho yêu cầu #${withdrawal.withdrawalCode}`);
+      await this.invalidateWalletCaches(withdrawal.wallet?.storeId ?? undefined);
       return { success: true, message: 'Đã hoàn tất chi tiền thành công' };
     }
 
@@ -591,6 +634,7 @@ export class StoreWalletService {
       const failReason = desc || 'PayOS Payout thông báo thất bại';
       await this.refundFailedWithdrawal(withdrawal.withdrawalId, failReason);
       this.logger.log(`Đã hoàn tiền tự động cho yêu cầu rút thất bại #${withdrawal.withdrawalCode}`);
+      await this.invalidateWalletCaches(withdrawal.wallet?.storeId ?? undefined);
       return { success: true, message: 'Đã hoàn tiền yêu cầu rút thất bại' };
     }
 
@@ -638,7 +682,7 @@ export class StoreWalletService {
     const txState = payoutInfo?.data?.transactions?.[0]?.state;
 
     if (approvalState === 'SUCCEEDED' || txState === 'SUCCEEDED' || approvalState === 'COMPLETED') {
-      return this.prisma.$transaction(async (tx) => {
+      const txResult = await this.prisma.$transaction(async (tx) => {
         const [lockedWithdrawal] = await tx.$queryRaw<Array<{
           withdrawal_id: bigint;
           status: string;
@@ -683,10 +727,14 @@ export class StoreWalletService {
           },
         });
       });
+      await this.invalidateWalletCaches(withdrawal.wallet?.storeId ?? undefined);
+      return txResult;
     }
 
     if (approvalState === 'FAILED' || txState === 'FAILED' || approvalState === 'REJECTED') {
-      return this.refundFailedWithdrawal(rawId, 'PayOS Payout x�c nh?n th?t b?i');
+      const refundedResult = await this.refundFailedWithdrawal(rawId, 'PayOS Payout xac nhan that bai');
+      await this.invalidateWalletCaches(withdrawal.wallet?.storeId ?? undefined);
+      return refundedResult;
     }
 
     // N?u v?n dang PROCESSING -> Gi? nguy�n tr?ng th�i, tuy?t d?i kh�ng refund (Section 24)

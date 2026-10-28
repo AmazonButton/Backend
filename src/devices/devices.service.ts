@@ -5,14 +5,17 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { DevicesRepository } from './devices.repository';
 import { ProvisioningRepository } from './provisioning.repository';
 import { EventsGateway } from '../websocket/events.gateway';
 import * as crypto from 'crypto';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 
 @Injectable()
 export class DevicesService {
+  private readonly logger = new Logger(DevicesService.name);
   private static provRepoInstance: ProvisioningRepository | null = null;
     private static registeredMacAddresses = new Set<string>();
   private static deviceMacMap = new Map<string, string>();
@@ -106,8 +109,40 @@ export class DevicesService {
     @Inject(DevicesRepository) private readonly devicesRepo: DevicesRepository,
     @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
     @Optional() @Inject(ProvisioningRepository) private readonly provRepo?: ProvisioningRepository,
+    @Optional() private readonly cacheService?: DashboardCacheService,
   ) {
     if (provRepo) DevicesService.provRepoInstance = provRepo;
+  }
+
+  private async invalidateDeviceCaches(
+    storeId?: string | number | bigint,
+    customerUserId?: string | number | bigint,
+  ) {
+    if (!this.cacheService) return;
+    try {
+      const promises: Promise<void>[] = [
+        this.cacheService.invalidatePrefix('admin:dashboard:'),
+        this.cacheService.invalidatePrefix('admin:operations'),
+      ];
+      if (storeId != null) {
+        promises.push(this.cacheService.invalidatePrefix(`dash:store:${storeId.toString()}:`));
+        promises.push(this.cacheService.invalidatePrefix(`staff:dashboard:store:${storeId.toString()}:`));
+      }
+      if (customerUserId != null) {
+        const id = customerUserId.toString();
+        promises.push(
+          this.cacheService.invalidateKey(`customer:dashboard:${id}`),
+          this.cacheService.invalidateKey(`customer:devices:${id}`),
+        );
+      }
+      await Promise.all(promises);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to invalidate device caches: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+    }
   }
 
   private formatButton(b: any) {
@@ -248,20 +283,24 @@ export class DevicesService {
 
   async getFleetStats(user: any) {
     const whereClause = this.buildDeviceScope(user);
-    const [total, active] = await Promise.all([
+    const [total, active, inactive, lowBattery, unassigned] = await Promise.all([
       this.devicesRepo.count(whereClause),
       this.devicesRepo.count({ ...whereClause, status: 'ACTIVE' }),
+      this.devicesRepo.count({ ...whereClause, status: { not: 'ACTIVE' } }),
+      this.devicesRepo.count({ ...whereClause, batteryLevel: { lte: 20 } }),
+      this.devicesRepo.count({
+        ...whereClause,
+        OR: [{ customerId: null }, { buttonProducts: { none: {} } }],
+      }),
     ]);
 
     return {
       total,
-      online: active,
-      offline: total - active,
       totalDevices: total,
       activeDevices: active,
-      offlineDevices: total - active,
-      criticalDevices: 0,
-      healthyPercentage: total > 0 ? Math.round((active / total) * 100) : 100,
+      inactiveDevices: inactive,
+      lowBatteryDevices: lowBattery,
+      unassignedDevices: unassigned,
     };
   }
 
@@ -366,6 +405,7 @@ export class DevicesService {
       ]);
     }
 
+    await this.invalidateDeviceCaches(newButton.storeId, newButton.customer?.userId);
     return this.getById(newButton.buttonId, user);
   }
 
@@ -375,7 +415,8 @@ export class DevicesService {
   }
 
   async update(id: string | number | bigint, body: any, user: any) {
-    const existing = await this.getById(id, user);
+    const button = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(button);
 
     if (body.quantity !== undefined && !body.productId) {
       if (!existing.products || existing.products.length === 0) {
@@ -427,17 +468,21 @@ export class DevicesService {
     if (body.location) {
       result.location = body.location;
     }
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return result;
   }
 
   async remove(id: string | number | bigint, user: any) {
-    const existing = await this.getById(id, user);
+    const button = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(button);
     await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'INACTIVE' });
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return { success: true, message: 'Đã hủy kích hoạt nút bấm thành công' };
   }
 
   async pair(id: string | number | bigint, body: any, user: any) {
-    const existing = await this.getById(id, user);
+    const button = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(button);
 
     if (body.productId) {
       const targetProductId = BigInt(body.productId);
@@ -446,6 +491,7 @@ export class DevicesService {
       ]);
     }
 
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return this.getById(existing.buttonId, user);
   }
 
@@ -463,7 +509,8 @@ export class DevicesService {
   }
 
   async assignProduct(id: string | number | bigint, body: any, user: any) {
-    const existing = await this.getById(id, user);
+    const button = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(button);
     const targetProductId = BigInt(body.productId);
 
     await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
@@ -482,6 +529,7 @@ export class DevicesService {
       user: { fullName: user?.fullName || 'Store Owner' },
     });
     this.deviceAuditLogs.set(existing.deviceId, logList);
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
 
     return {
       success: true,
@@ -491,20 +539,26 @@ export class DevicesService {
   }
 
   async unassignProduct(id: string | number | bigint, user: any) {
-    const existing = await this.getById(id, user);
+    const button = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(button);
     await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), []);
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return { success: true, message: 'Đã hủy toàn bộ sản phẩm trên nút bấm' };
   }
 
   async disable(id: string | number | bigint, user: any) {
-    const existing = await this.getById(id, user);
+    const button = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(button);
     const updated = await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'INACTIVE' });
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return this.formatButton(updated);
   }
 
   async enable(id: string | number | bigint, user: any) {
-    const existing = await this.getById(id, user);
+    const button = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(button);
     const updated = await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'ACTIVE' });
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return this.formatButton(updated);
   }
 
@@ -549,13 +603,15 @@ export class DevicesService {
   }
 
   async toggleStatus(id: string, status: string, user: any) {
-    const existing = await this.assertDeviceAccess(id, user);
-    const updated = await this.devicesRepo.update(existing.buttonId, { status });
+    const button = await this.assertDeviceAccess(id, user);
+    const updated = await this.devicesRepo.update(button.buttonId, { status });
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return this.formatButton(updated);
   }
 
   async customerUpdateConfig(id: string, body: any, user: any) {
-    const existing = await this.getById(id, user);
+    const before = await this.assertDeviceAccess(id, user);
+    const existing = this.formatButton(before);
     const buttonId = BigInt(existing.buttonId);
 
     // 1. Re-map Store if storeId is provided and different from current
@@ -591,13 +647,28 @@ export class DevicesService {
       ]);
     }
 
-    return this.getById(existing.buttonId, user);
+    const after = await this.assertDeviceAccess(id, user);
+
+    await this.invalidateDeviceCaches(
+      before.storeId,
+      before.customer?.userId,
+    );
+
+    if (String(after.storeId) !== String(before.storeId)) {
+      await this.invalidateDeviceCaches(
+        after.storeId,
+        after.customer?.userId,
+      );
+    }
+
+    return this.formatButton(after);
   }
 
   async updateBattery(id: string, level: number, user: any) {
-    const existing = await this.assertDeviceAccess(id, user);
-    await this.devicesRepo.update(existing.buttonId, { batteryLevel: level });
-    return { success: true, buttonId: existing.buttonId.toString(), batteryLevel: level };
+    const button = await this.assertDeviceAccess(id, user);
+    await this.devicesRepo.update(button.buttonId, { batteryLevel: level });
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
+    return { success: true, buttonId: button.buttonId.toString(), batteryLevel: level };
   }
 
   async extendWarranty(id: string, body: any, user: any) {
@@ -609,8 +680,9 @@ export class DevicesService {
   }
 
   async toggleDeviceStatus(id: string, status: string, user: any) {
-    const existing = await this.assertDeviceAccess(id, user);
-    const updated = await this.devicesRepo.update(existing.buttonId, { status });
+    const button = await this.assertDeviceAccess(id, user);
+    const updated = await this.devicesRepo.update(button.buttonId, { status });
+    await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return this.formatButton(updated);
   }
 

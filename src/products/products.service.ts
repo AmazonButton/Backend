@@ -6,6 +6,7 @@ import { EventsGateway } from '../websocket/events.gateway';
 import { PriceHistoryResponseDto } from './dto/price-history-response.dto';
 import { InventoryResponseDto } from './dto/inventory-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 
 @Injectable()
 export class ProductsService {
@@ -15,7 +16,25 @@ export class ProductsService {
     @Inject(StoreSubscriptionsService) private readonly subscriptionsService: StoreSubscriptionsService,
     @Inject(MediaService) private readonly mediaService: MediaService,
     @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
+    @Optional() private readonly cacheService?: DashboardCacheService,
   ) {}
+
+  private async invalidateProductCaches(storeId?: string | number | bigint) {
+    if (!this.cacheService || typeof this.cacheService.invalidatePrefix !== 'function') return;
+    try {
+      const promises: Promise<void>[] = [
+        this.cacheService.invalidatePrefix('admin:dashboard:'),
+        this.cacheService.invalidatePrefix('admin:operations'),
+      ];
+      if (storeId) {
+        promises.push(this.cacheService.invalidatePrefix(`dash:store:${storeId.toString()}:`));
+        promises.push(this.cacheService.invalidatePrefix(`staff:dashboard:store:${storeId.toString()}:`));
+      }
+      await Promise.all(promises);
+    } catch (error) {
+      this.logger.warn(`Failed to invalidate product cache: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
 
   private extractPublicIdFromUrl(url?: string): string | undefined {
     if (!url || typeof url !== 'string') return undefined;
@@ -209,6 +228,7 @@ export class ProductsService {
       product: formatted,
       storeId: targetStoreId.toString(),
     });
+    await this.invalidateProductCaches(targetStoreId);
     return formatted;
   }
 
@@ -317,6 +337,7 @@ export class ProductsService {
       product: formatted,
       storeId: existing.storeId.toString(),
     });
+    await this.invalidateProductCaches(existing.storeId);
     return formatted;
   }
 
@@ -370,6 +391,7 @@ export class ProductsService {
       availableStock: stock,
     });
 
+    await this.invalidateProductCaches(existing.storeId);
     return res;
   }
 

@@ -25,6 +25,12 @@ export class RentalsRepository {
       data,
       include: {
         package: true,
+        customer: {
+          select: {
+            customerId: true,
+            userId: true,
+          },
+        },
       },
     });
   }

@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Optional,
   Logger,
 } from '@nestjs/common';
 import { RentalsRepository } from './rentals.repository';
@@ -11,17 +12,49 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateRentalOrderDto } from './dto/rentals.dto';
 import { RentalResponseDto } from './dto/rental-response.dto';
 import { RentalExtensionDto } from './dto/rental-extension.dto';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 
 @Injectable()
 export class RentalsService {
   private readonly logger = new Logger(RentalsService.name);
   private readonly rentalsRepo: RentalsRepository;
 
-  constructor(@Inject(RentalsRepository) repoOrPrisma: RentalsRepository | PrismaService) {
+  constructor(
+    @Inject(RentalsRepository) repoOrPrisma: RentalsRepository | PrismaService,
+    @Optional() private readonly cacheService?: DashboardCacheService,
+  ) {
     if (repoOrPrisma && 'listAvailablePackages' in repoOrPrisma) {
       this.rentalsRepo = repoOrPrisma as RentalsRepository;
     } else {
       this.rentalsRepo = new RentalsRepository(repoOrPrisma as PrismaService);
+    }
+  }
+
+  private async invalidateRentalCaches(
+    customerUserId?: string | number | bigint,
+    storeId?: string | number | bigint,
+  ) {
+    if (!this.cacheService) return;
+    try {
+      const promises: Promise<void>[] = [
+        this.cacheService.invalidatePrefix('admin:dashboard:'),
+        this.cacheService.invalidatePrefix('admin:operations'),
+      ];
+      if (customerUserId != null) {
+        const id = customerUserId.toString();
+        promises.push(
+          this.cacheService.invalidateKey(`customer:dashboard:${id}`),
+          this.cacheService.invalidateKey(`customer:rentals:${id}`),
+        );
+      }
+      if (storeId != null) {
+        promises.push(this.cacheService.invalidatePrefix(`dash:store:${storeId.toString()}:`));
+      }
+      await Promise.all(promises);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to invalidate rental caches: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
     }
   }
 
@@ -59,6 +92,7 @@ export class RentalsService {
       status: 'PENDING_PAYMENT',
     });
 
+    await this.invalidateRentalCaches(created.customer?.userId);
     return RentalResponseDto.fromEntity(created);
   }
 
@@ -157,14 +191,16 @@ export class RentalsService {
       additionalAmount,
     );
 
+    await this.invalidateRentalCaches(rental.customer?.userId);
     return RentalResponseDto.fromEntity(updated);
   }
 
   async requestRentalReturn(rentalIdStr: string | bigint, user: any): Promise<RentalResponseDto> {
     const rentalId = BigInt(rentalIdStr);
-    await this.verifyRentalOwnership(rentalId, user);
+    const rentalForReturn = await this.verifyRentalOwnership(rentalId, user);
 
     const updated = await this.rentalsRepo.updateRentalStatus(rentalId, 'RETURN_REQUESTED');
+    await this.invalidateRentalCaches(rentalForReturn.customer?.userId);
     return RentalResponseDto.fromEntity(updated);
   }
 
@@ -183,6 +219,7 @@ export class RentalsService {
     }
 
     const updated = await this.rentalsRepo.updateRentalStatus(rawRentalId, 'ACTIVE');
+    await this.invalidateRentalCaches(rental.customer?.userId);
     return RentalResponseDto.fromEntity(updated);
   }
 
@@ -213,6 +250,7 @@ export class RentalsService {
     }
 
     const updated = await this.rentalsRepo.updateRentalStatus(rentalId, status);
+    await this.invalidateRentalCaches(rental.customer?.userId);
     return RentalResponseDto.fromEntity(updated);
   }
 }

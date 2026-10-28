@@ -254,6 +254,7 @@ model Inventory {
   minStockAlert    Int      @default(5) @map("min_stock_alert")
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
 
+  @@index([storeId, quantityOnHand, minStockAlert], map: "idx_inventory_store_stock_alert")
   @@map("inventory")
 }
 
@@ -292,6 +293,7 @@ model IoTButton {
   idempotencyKeys IotIdempotencyKey[]
 
   @@unique([buttonId, customerId, storeId], name: "uq_iot_button_context")
+  @@index([storeId, status, batteryLevel], map: "idx_iot_button_store_status_battery")
   @@map("iot_button")
 }
 
@@ -357,6 +359,8 @@ model Order {
   @@index([customerId, orderStatus, createdAt(sort: Desc)], map: "idx_orders_customer_status_created")
   @@index([assignedDriverId, orderStatus], map: "idx_orders_driver_status")
   @@index([orderDate(sort: Desc)], map: "idx_orders_order_date")
+  @@index([storeId, orderDate(sort: Desc), orderStatus], map: "idx_orders_store_date_status")
+  @@index([customerId, orderDate(sort: Desc), orderStatus], map: "idx_orders_customer_date_status")
   @@map("orders")
 }
 
@@ -412,6 +416,7 @@ model PaymentTransaction {
   @@index([orderId, status], map: "idx_payment_tx_order_status")
   @@index([rentalId, status], map: "idx_payment_tx_rental_status")
   @@index([createdAt(sort: Desc)], map: "idx_payment_tx_created_at")
+  @@index([status, orderId, createdAt(sort: Desc)], map: "idx_payment_tx_status_order_created")
   @@map("payment_transaction")
 }
 

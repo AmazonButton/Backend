@@ -262,7 +262,11 @@ async function runTests() {
     });
     const data = await res.json();
     if (res.status === 200 && data.data && typeof data.data.total === 'number') {
-      logTest('10. Fleet Stats Breakdown', true, `Total: ${data.data.total}, Online: ${data.data.online}, Offline: ${data.data.offline}`);
+      logTest(
+        '10. Fleet Stats Breakdown',
+        true,
+        `Total: ${data.data.total}, Active: ${data.data.activeDevices}, Inactive: ${data.data.inactiveDevices}`,
+      );
       passed++;
     } else {
       throw new Error('Invalid fleet stats structure');
