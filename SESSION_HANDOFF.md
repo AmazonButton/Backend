@@ -59,6 +59,7 @@
   - Suite 44 (Multi-Role Analytics & Dashboard E2E): `npx tsx tests/analytics-dashboard-e2e.spec.ts`
 - Live Render Production Master Suite (148/148 passing across all 36 domains): `npx tsx tests/render_live_all_apis_suite.ts`
 - Live Render Performance & Load Benchmark (P50/P90/P95/P99 SLA, 44.5 RPS, 429 Defense): `npx tsx tests/render_live_performance_benchmark.ts`
+- Live Render 500-1000 High-Load Stress Suite (38.7 RPS @ 500 reqs, 1000-req Rate Limit Quota Enforced): `npx tsx tests/render_live_high_load_stress.ts`
 
 ---
 
