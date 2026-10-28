@@ -113,12 +113,14 @@ export class AdminController {
   }
 
   // Withdrawals
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
   @Get('withdrawals')
   async listAllWithdrawals() {
     const data = await this.adminService.listAllWithdrawals();
     return { success: true, data: WalletMapper.toWithdrawalDtoList(data) };
   }
 
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
   @Get('withdrawals/:id')
   async getWithdrawalById(@Param('id') id: string) {
     const data = await this.adminService.getWithdrawalById(id);
