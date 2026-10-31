@@ -392,10 +392,27 @@ export class AdminService {
     let targetPayout: any = null;
 
     if (withdrawal.providerPayoutId) {
-      statusData = await this.payosPayoutService.getPayout(withdrawal.providerPayoutId);
-      targetPayout = statusData?.data;
+      try {
+        statusData = await this.payosPayoutService.getPayout(withdrawal.providerPayoutId);
+        targetPayout = statusData?.data;
+      } catch (err: any) {
+        return {
+          withdrawal,
+          message: `Lỗi khi lấy chi tiết payout từ provider (${err?.message || 'Unknown error'}). Giữ trạng thái chờ đối soát.`,
+          statusData: null,
+        };
+      }
     } else if (withdrawal.providerReferenceId) {
-      statusData = await this.payosPayoutService.getPayouts({ referenceId: withdrawal.providerReferenceId });
+      try {
+        statusData = await this.payosPayoutService.getPayouts({ referenceId: withdrawal.providerReferenceId });
+      } catch (err: any) {
+        return {
+          withdrawal,
+          message: `Lỗi khi tra cứu danh sách payouts từ provider (${err?.message || 'Unknown error'}). Giữ trạng thái chờ đối soát.`,
+          statusData: null,
+        };
+      }
+
       const rawList = statusData?.data?.payouts || statusData?.data || [];
       const payoutsList = Array.isArray(rawList) ? rawList : [];
 
@@ -408,15 +425,29 @@ export class AdminService {
 
       if (matched.length === 1) {
         const found = matched[0];
-        if (found.id) {
-          try {
-            const detailRes = await this.payosPayoutService.getPayout(found.id);
-            targetPayout = detailRes?.data || found;
-          } catch {
-            targetPayout = found;
+        if (!found.id) {
+          return {
+            withdrawal,
+            message: 'Bản ghi payout không có ID chi tiết từ provider, không thể xác thực an toàn. Giữ trạng thái chờ đối soát.',
+            statusData,
+          };
+        }
+        try {
+          const detailRes = await this.payosPayoutService.getPayout(found.id);
+          targetPayout = detailRes?.data;
+          if (!targetPayout) {
+            return {
+              withdrawal,
+              message: 'Phản hồi chi tiết payout từ provider rỗng, không dùng bản tóm tắt thay thế. Giữ trạng thái chờ đối soát.',
+              statusData: detailRes,
+            };
           }
-        } else {
-          targetPayout = found;
+        } catch (err: any) {
+          return {
+            withdrawal,
+            message: `Lỗi khi lấy chi tiết payout (${err?.message || 'Detail lookup failed'}). Không dùng bản tóm tắt thay thế, giữ trạng thái chờ đối soát.`,
+            statusData,
+          };
         }
       } else {
         return {
@@ -429,38 +460,144 @@ export class AdminService {
         };
       }
     } else {
-      return { withdrawal, message: 'Chưa có thông tin provider reference id' };
+      return { withdrawal, message: 'Chưa có thông tin provider reference id hoặc payout id' };
     }
 
     if (!targetPayout) {
-      return { withdrawal, message: 'Không thể trích xuất dữ liệu chi tiết payout từ provider', statusData };
+      return { withdrawal, message: 'Không thể trích xuất dữ liệu chi tiết payout từ provider. Giữ trạng thái chờ đối soát.', statusData };
     }
 
-    const reportedAmount = Number(
-      targetPayout.amount ||
-      targetPayout.transactions?.[0]?.amount ||
-      0,
-    );
-    if (reportedAmount > 0 && Math.abs(reportedAmount - Number(withdrawal.amount)) > 0.01) {
+    // 1. Match specific transaction inside payout if transactions array is present
+    let matchedTx: any = null;
+    if (Array.isArray(targetPayout.transactions) && targetPayout.transactions.length > 0) {
+      const candidates = targetPayout.transactions.filter((tx: any) => {
+        const refMatches =
+          (withdrawal.providerReferenceId && tx.referenceId === withdrawal.providerReferenceId) ||
+          (withdrawal.withdrawalCode && tx.referenceId === withdrawal.withdrawalCode);
+        const idMatches =
+          withdrawal.providerPayoutId &&
+          (tx.id === withdrawal.providerPayoutId || String(tx.payoutId) === withdrawal.providerPayoutId);
+        return refMatches || idMatches;
+      });
+
+      if (candidates.length === 1) {
+        matchedTx = candidates[0];
+      } else if (candidates.length > 1) {
+        return {
+          withdrawal,
+          message: 'Có nhiều hơn một transaction khớp reference trong chi tiết payout. Giữ trạng thái chờ đối soát.',
+          statusData,
+        };
+      } else if (
+        targetPayout.transactions.length === 1 &&
+        (targetPayout.referenceId === withdrawal.providerReferenceId ||
+          targetPayout.id === withdrawal.providerPayoutId)
+      ) {
+        matchedTx = targetPayout.transactions[0];
+      } else {
+        return {
+          withdrawal,
+          message: 'Không tìm thấy transaction tương ứng với yêu cầu rút tiền trong chi tiết payout. Giữ trạng thái chờ đối soát.',
+          statusData,
+        };
+      }
+    }
+
+    // 2. Strict amount validation: finite, strictly positive, integer VND, and exact match
+    const rawAmount = matchedTx ? matchedTx.amount : targetPayout.amount;
+    const reportedAmount = Number(rawAmount);
+    const expectedAmount = Number(withdrawal.amount);
+
+    if (
+      rawAmount === undefined ||
+      rawAmount === null ||
+      !Number.isFinite(reportedAmount) ||
+      !Number.isInteger(reportedAmount) ||
+      reportedAmount <= 0
+    ) {
       return {
         withdrawal,
-        message: `Số tiền trên cổng thanh toán (${reportedAmount}) không khớp với yêu cầu rút tiền (${withdrawal.amount}). Giữ trạng thái chờ đối soát.`,
+        message: `Số tiền trên cổng thanh toán không hợp lệ (nhận được: ${rawAmount}). Giữ trạng thái chờ đối soát.`,
         statusData,
       };
     }
 
+    if (reportedAmount !== expectedAmount) {
+      return {
+        withdrawal,
+        message: `Số tiền trên cổng thanh toán (${reportedAmount}) không khớp chính xác với yêu cầu rút tiền (${expectedAmount}). Giữ trạng thái chờ đối soát.`,
+        statusData,
+      };
+    }
+
+    // 3. Strict recipient snapshot validation (BIN & account name)
+    const reportedBin = String(
+      matchedTx?.toBin || matchedTx?.bin || targetPayout.toBin || targetPayout.bin || '',
+    ).trim();
+    const reportedAccountName = String(
+      matchedTx?.toAccountName || targetPayout.toAccountName || matchedTx?.accountName || targetPayout.accountName || '',
+    ).trim();
+
+    const expectedBin = String(
+      withdrawal.bankBinSnapshot || withdrawal.bankCode || '',
+    ).trim();
+    const expectedAccountName = String(
+      withdrawal.bankAccountNameSnapshot || withdrawal.bankAccountHolder || '',
+    ).trim();
+
+    if (reportedBin && expectedBin && reportedBin !== expectedBin) {
+      return {
+        withdrawal,
+        message: `Mã ngân hàng người nhận (${reportedBin}) không khớp với snapshot yêu cầu rút tiền (${expectedBin}). Giữ trạng thái chờ đối soát.`,
+        statusData,
+      };
+    }
+
+    const normalizeText = (s: string) =>
+      (s || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '')
+        .trim();
+
+    if (reportedAccountName && expectedAccountName) {
+      if (normalizeText(reportedAccountName) !== normalizeText(expectedAccountName)) {
+        return {
+          withdrawal,
+          message: `Tên người thụ hưởng (${reportedAccountName}) không khớp với snapshot yêu cầu rút tiền (${expectedAccountName}). Giữ trạng thái chờ đối soát.`,
+          statusData,
+        };
+      }
+    }
+
+    // 4. Ensure valid provider payout ID exists
+    const finalPayoutId = String(
+      (matchedTx ? matchedTx.id : null) || targetPayout.id || withdrawal.providerPayoutId || '',
+    ).trim();
+    if (!finalPayoutId) {
+      return {
+        withdrawal,
+        message: 'Thiếu thông tin payout ID từ cổng thanh toán. Giữ trạng thái chờ đối soát.',
+        statusData,
+      };
+    }
+
+    // 5. Check approval state and finalize only if confirmed
     const state = String(
+      (matchedTx ? matchedTx.state : null) ||
       targetPayout.approvalState ||
       targetPayout.state ||
       targetPayout.status ||
-      targetPayout.transactions?.[0]?.state ||
       '',
     ).toUpperCase();
 
     if (['COMPLETED', 'PAID', 'SUCCEEDED'].includes(state)) {
       await this.adminRepo.finalizeSucceededWithdrawalTransaction(
         rawWithdrawalId,
-        targetPayout.id || withdrawal.providerPayoutId,
+        finalPayoutId,
       );
     } else if (['REJECTED', 'FAILED', 'CANCELLED'].includes(state)) {
       // Explicitly confirmed as failed by provider: safe to refund wallet now

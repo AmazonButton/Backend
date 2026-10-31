@@ -362,6 +362,7 @@ export class CustomersRepository {
         bankCode: true,
         bankName: true,
         accountNumberMasked: true,
+        accountNumberHash: true,
         accountName: true,
         verificationStatus: true,
         isDefault: true,
@@ -375,6 +376,49 @@ export class CustomersRepository {
     return this.prisma.customerBankAccount.updateMany({
       where: { id: accountId, customerId },
       data: { verificationStatus: status, updatedAt: new Date() },
+    });
+  }
+
+  async createBankVerificationProof(data: {
+    proofReference: string;
+    customerId: bigint;
+    accountId: bigint;
+    bankBin: string;
+    accountNumberHash: string;
+    status?: string;
+    provider?: string;
+    expiresAt: Date;
+  }) {
+    return this.prisma.customerBankVerificationProof.create({
+      data: {
+        proofReference: data.proofReference,
+        customerId: data.customerId,
+        accountId: data.accountId,
+        bankBin: data.bankBin,
+        accountNumberHash: data.accountNumberHash,
+        status: data.status || 'PENDING',
+        provider: data.provider || 'PAYOS',
+        expiresAt: data.expiresAt,
+      },
+    });
+  }
+
+  async findBankVerificationProof(proofReference: string) {
+    return this.prisma.customerBankVerificationProof.findUnique({
+      where: { proofReference },
+    });
+  }
+
+  async consumeBankVerificationProof(proofId: bigint, customerId: bigint, accountId: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.customerBankVerificationProof.update({
+        where: { id: proofId },
+        data: { usedAt: new Date(), updatedAt: new Date() },
+      });
+      return tx.customerBankAccount.updateMany({
+        where: { id: accountId, customerId },
+        data: { verificationStatus: 'VERIFIED', updatedAt: new Date() },
+      });
     });
   }
 

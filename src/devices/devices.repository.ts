@@ -107,7 +107,7 @@ export class DevicesRepository {
     return this.prisma.$transaction(async (tx) => {
       // 1. Lock button row exclusively FIRST to serialize against concurrent store remapping
       const [button] = await tx.$queryRaw<Array<{ button_id: bigint; store_id: bigint }>>`
-        SELECT button_id, store_id FROM iot_buttons
+        SELECT button_id, store_id FROM iot_button
         WHERE button_id = ${buttonId}
         FOR UPDATE
       `;
@@ -243,7 +243,7 @@ export class DevicesRepository {
     return this.prisma.$transaction(async (tx) => {
       // 1. Lock button row exclusively FIRST using identical lock order (button -> mappings)
       const [button] = await tx.$queryRaw<Array<{ button_id: bigint; store_id: bigint }>>`
-        SELECT button_id, store_id FROM iot_buttons
+        SELECT button_id, store_id FROM iot_button
         WHERE button_id = ${buttonId}
         FOR UPDATE
       `;

@@ -128,8 +128,9 @@ model CustomerProfile {
   iotButtons     IoTButton[]
   orders               Order[]
   rentals              ButtonRental[]
-  customerBankAccounts CustomerBankAccount[]
-  rentalRefunds        DepositRefund[]
+  customerBankAccounts   CustomerBankAccount[]
+  rentalRefunds          DepositRefund[]
+  bankVerificationProofs CustomerBankVerificationProof[]
 
   @@map("customer_profile")
 }
@@ -1130,10 +1131,31 @@ model CustomerBankAccount {
   updatedAt              DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   refunds                DepositRefund[]
+  verificationProofs     CustomerBankVerificationProof[]
 
   @@unique([customerId, accountNumberHash], name: "uq_customer_bank_acc_hash")
   @@index([customerId, isDefault], map: "idx_customer_bank_default")
   @@map("customer_bank_accounts")
+}
+
+model CustomerBankVerificationProof {
+  id                BigInt              @id @default(autoincrement()) @map("id")
+  proofReference    String              @unique(map: "uq_cust_bank_proof_ref") @map("proof_reference") @db.VarChar(128)
+  customerId        BigInt              @map("customer_id")
+  customer          CustomerProfile     @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  accountId         BigInt              @map("account_id")
+  bankAccount       CustomerBankAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  bankBin           String              @map("bank_bin") @db.VarChar(10)
+  accountNumberHash String              @map("account_number_hash") @db.VarChar(64)
+  status            String              @default("PENDING") @map("status") @db.VarChar(32)
+  provider          String              @default("PAYOS") @map("provider") @db.VarChar(32)
+  expiresAt         DateTime            @map("expires_at") @db.Timestamptz(6)
+  usedAt            DateTime?           @map("used_at") @db.Timestamptz(6)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([customerId, accountId], map: "idx_cust_bank_proof_cust_acc")
+  @@map("customer_bank_verification_proofs")
 }
 
 model AccessAdjustment {

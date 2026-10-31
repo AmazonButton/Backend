@@ -133,7 +133,7 @@ async function run() {
       const tx = {
         $queryRaw: async (query: any) => {
           const qStr = query.strings ? query.strings.join('') : String(query);
-          if (qStr.includes('iot_buttons') && qStr.includes('FOR UPDATE')) {
+          if (qStr.includes('iot_button') && !qStr.includes('iot_buttons') && qStr.includes('FOR UPDATE')) {
             lockedButtonInSetProducts = true;
             return [{ button_id: BigInt(1), store_id: currentStoreId }];
           }
@@ -176,7 +176,7 @@ async function run() {
 
   // 4.1. Mapping Store 10 product while button is at Store 10 succeeds
   await realDevicesRepo.setButtonProducts(BigInt(1), [{ productId: BigInt(101), quantity: 1 }]);
-  assert.strictEqual(lockedButtonInSetProducts, true, 'setButtonProducts must lock iot_buttons FOR UPDATE first');
+  assert.strictEqual(lockedButtonInSetProducts, true, 'setButtonProducts must lock iot_button FOR UPDATE first');
 
   // 4.2. Remap button to Store 20
   await realDevicesRepo.remapStore(BigInt(1), BigInt(20));

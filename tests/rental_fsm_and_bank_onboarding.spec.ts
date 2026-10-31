@@ -107,8 +107,9 @@ async function run() {
   assert.strictEqual(list[0].accountNumberMasked, masked);
 
   // Test 5: Customer Bank Account Verification Workflow & Polling
-  // Wire in repository lookup & verify mock implementations
   let currentAccountStatus = 'PENDING';
+  const mockProofsTable: Record<string, any> = {};
+
   mockCustomersRepo.findCustomerBankAccountById = async (_cId: bigint, _aId: bigint) => ({
     id: BigInt(1),
     customerId: BigInt(55),
@@ -116,6 +117,7 @@ async function run() {
     bankCode: 'MB',
     bankName: 'MB Bank',
     accountNumberMasked: masked,
+    accountNumberHash: deterministicHash,
     accountName: 'NGUYEN VAN A',
     verificationStatus: currentAccountStatus,
     isDefault: true,
@@ -123,8 +125,23 @@ async function run() {
     updatedAt: new Date(),
   });
 
-  mockCustomersRepo.verifyCustomerBankAccount = async (_cId: bigint, _aId: bigint, status: string) => {
-    currentAccountStatus = status;
+  mockCustomersRepo.createBankVerificationProof = async (data: any) => {
+    const record = { id: BigInt(101), ...data, usedAt: null };
+    mockProofsTable[data.proofReference] = record;
+    return record;
+  };
+
+  mockCustomersRepo.findBankVerificationProof = async (ref: string) => {
+    return mockProofsTable[ref] || null;
+  };
+
+  mockCustomersRepo.consumeBankVerificationProof = async (proofId: bigint, _cId: bigint, _aId: bigint) => {
+    for (const key of Object.keys(mockProofsTable)) {
+      if (mockProofsTable[key].id === proofId) {
+        mockProofsTable[key].usedAt = new Date();
+      }
+    }
+    currentAccountStatus = 'VERIFIED';
   };
 
   // 5.1. Poll initial status -> must be PENDING
@@ -135,32 +152,114 @@ async function run() {
     'Initial bank account status must be PENDING for new customer onboard',
   );
 
-  // 5.2. Non-matching name verification -> must reject and mark REJECTED
-  const nonMatchingUser = { userId: BigInt(10), role: 'CUSTOMER', fullName: 'TRAN THI B' };
+  // 5.2. Arbitrary fake proof -> must reject
   await assert.rejects(
     async () => {
-      await customersService.verifyBankAccount(nonMatchingUser, '1');
+      await customersService.verifyBankAccount(customerUser, '1', { proofReference: 'not-a-real-proof' });
     },
     (err: any) => {
       assert.strictEqual(
-        err.message.includes('không trùng khớp') || err.status === 400,
+        err.message.includes('không tồn tại hoặc không hợp lệ') || err.status === 400,
         true,
-        `Expected rejection for non-matching name, got: ${err.message}`,
+        `Expected rejection for arbitrary proof, got: ${err.message}`,
       );
       return true;
     },
-    'Expected verifyBankAccount to reject when accountName does not match customer fullName',
+    'Expected verifyBankAccount to reject arbitrary proof string',
   );
-  assert.strictEqual(currentAccountStatus, 'REJECTED');
+  assert.strictEqual(currentAccountStatus, 'PENDING');
 
-  // 5.3. Matching legal name verification -> must transition to VERIFIED
-  const matchingUser = { userId: BigInt(10), role: 'CUSTOMER', fullName: 'Nguyen Van A' };
-  const verifiedResult = await customersService.verifyBankAccount(matchingUser, '1');
+  // 5.3. Proof belonging to another customer -> must reject
+  mockProofsTable['PROOF_OTHER_CUST'] = {
+    id: BigInt(102),
+    proofReference: 'PROOF_OTHER_CUST',
+    customerId: BigInt(999), // Different customer!
+    accountId: BigInt(1),
+    bankBin: '970422',
+    accountNumberHash: deterministicHash,
+    status: 'SUCCESS',
+    expiresAt: new Date(Date.now() + 60000),
+    usedAt: null,
+  };
+  await assert.rejects(
+    async () => {
+      await customersService.verifyBankAccount(customerUser, '1', { proofReference: 'PROOF_OTHER_CUST' });
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('không thuộc về khách hàng này') || err.status === 400,
+        true,
+        `Expected rejection for other customer's proof, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected verifyBankAccount to reject proof bound to another customer',
+  );
+  assert.strictEqual(currentAccountStatus, 'PENDING');
+
+  // 5.4. Expired proof -> must reject
+  mockProofsTable['PROOF_EXPIRED'] = {
+    id: BigInt(103),
+    proofReference: 'PROOF_EXPIRED',
+    customerId: BigInt(55),
+    accountId: BigInt(1),
+    bankBin: '970422',
+    accountNumberHash: deterministicHash,
+    status: 'SUCCESS',
+    expiresAt: new Date(Date.now() - 60000), // Expired!
+    usedAt: null,
+  };
+  await assert.rejects(
+    async () => {
+      await customersService.verifyBankAccount(customerUser, '1', { proofReference: 'PROOF_EXPIRED' });
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('hết hạn') || err.status === 400,
+        true,
+        `Expected rejection for expired proof, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected verifyBankAccount to reject expired proof',
+  );
+  assert.strictEqual(currentAccountStatus, 'PENDING');
+
+  // 5.5. Legitimate initiate + verify workflow
+  const initiated = await customersService.initiateBankAccountVerification(customerUser, '1');
+  assert.strictEqual(typeof initiated.proofReference, 'string');
+  assert.strictEqual(initiated.status, 'SUCCESS');
+
+  const verifiedResult = await customersService.verifyBankAccount(customerUser, '1', {
+    proofReference: initiated.proofReference,
+  });
   assert.strictEqual(verifiedResult.verificationStatus, 'VERIFIED');
+  assert.strictEqual(currentAccountStatus, 'VERIFIED');
 
-  // 5.4. Polling after verification -> must return VERIFIED
+  // 5.6. Polling after verification -> must return VERIFIED
   const verifiedPoll = await customersService.getBankAccountVerificationStatus(customerUser, '1');
   assert.strictEqual(verifiedPoll.verificationStatus, 'VERIFIED');
+
+  // 5.7. Replay attack: reusing the same proof must reject
+  await assert.rejects(
+    async () => {
+      // Temporarily simulate account being PENDING again to test replay
+      currentAccountStatus = 'PENDING';
+      await customersService.verifyBankAccount(customerUser, '1', {
+        proofReference: initiated.proofReference,
+      });
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('đã được sử dụng') || err.status === 400,
+        true,
+        `Expected rejection for reused proof, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected verifyBankAccount to reject already-consumed proof (anti-replay)',
+  );
+  currentAccountStatus = 'VERIFIED';
 
   // Test 6: Concurrency & Lock Order (Customer Profile Row Lock)
   // Verify that createCustomerBankAccount locks customer_profile row even when 0 bank accounts exist

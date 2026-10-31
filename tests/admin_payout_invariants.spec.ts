@@ -142,6 +142,89 @@ async function run() {
     'Expected syncPayoutStatus to correctly resolve reference from payouts list and finalize withdrawal',
   );
 
+  // 3.1. Missing amount or 0 or NaN must NOT finalize
+  finalizedId = null;
+  const mockPayosMissingAmount = {
+    getPayouts: async () => ({
+      code: '00',
+      data: {
+        payouts: [{ id: 'pay_zero_1', referenceId: 'REF_WTH456', amount: 0, approvalState: 'SUCCEEDED' }],
+      },
+    }),
+    getPayout: async () => ({
+      code: '00',
+      data: { id: 'pay_zero_1', referenceId: 'REF_WTH456', amount: undefined, approvalState: 'SUCCEEDED' },
+    }),
+  };
+  const adminServiceZeroAmount = new AdminService(mockAdminRepoForSync as any, mockPayosMissingAmount as any, {} as any);
+  (adminServiceZeroAmount as any).invalidateAdminAndStoreCaches = async () => {};
+  const resZero = await adminServiceZeroAmount.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(finalizedId, null, 'Must NOT finalize when amount is missing or undefined');
+  assert.strictEqual(resZero.message?.includes('không hợp lệ'), true);
+
+  // 3.2. Detail lookup error must NOT fall back to summary and finalize
+  finalizedId = null;
+  const mockPayosDetailFails = {
+    getPayouts: async () => ({
+      code: '00',
+      data: {
+        payouts: [{ id: 'pay_fail_1', referenceId: 'REF_WTH456', amount: 100000, approvalState: 'SUCCEEDED' }],
+      },
+    }),
+    getPayout: async () => {
+      throw new Error('PayOS internal 500 error');
+    },
+  };
+  const adminServiceDetailFails = new AdminService(mockAdminRepoForSync as any, mockPayosDetailFails as any, {} as any);
+  (adminServiceDetailFails as any).invalidateAdminAndStoreCaches = async () => {};
+  const resDetailFail = await adminServiceDetailFails.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(finalizedId, null, 'Must NOT finalize with summary when detail lookup fails');
+  assert.strictEqual(resDetailFail.message?.includes('Lỗi khi lấy chi tiết payout'), true);
+
+  // 3.3. Recipient snapshot mismatch must NOT finalize
+  finalizedId = null;
+  const mockAdminRepoWithSnapshot = {
+    findWithdrawalById: async (_id: bigint) => ({
+      withdrawalId: BigInt(456),
+      withdrawalCode: 'WTH456',
+      storeId: BigInt(2),
+      amount: 100000,
+      walletId: BigInt(20),
+      status: 'PENDING_RECONCILIATION',
+      providerReferenceId: 'REF_WTH456',
+      bankBinSnapshot: '970422',
+      bankAccountNameSnapshot: 'STORE OWNER A',
+    }),
+    finalizeSucceededWithdrawalTransaction: async (id: bigint) => {
+      finalizedId = id;
+    },
+    refundFailedWithdrawalTransaction: async () => {},
+  };
+  const mockPayosMismatchRecipient = {
+    getPayouts: async () => ({
+      code: '00',
+      data: {
+        payouts: [{ id: 'pay_rec_1', referenceId: 'REF_WTH456', amount: 100000, approvalState: 'SUCCEEDED' }],
+      },
+    }),
+    getPayout: async () => ({
+      code: '00',
+      data: {
+        id: 'pay_rec_1',
+        referenceId: 'REF_WTH456',
+        amount: 100000,
+        toBin: '970415', // Vietinbank instead of MB 970422!
+        toAccountName: 'ATTACKER ACCOUNT',
+        approvalState: 'SUCCEEDED',
+      },
+    }),
+  };
+  const adminServiceMismatchRec = new AdminService(mockAdminRepoWithSnapshot as any, mockPayosMismatchRecipient as any, {} as any);
+  (adminServiceMismatchRec as any).invalidateAdminAndStoreCaches = async () => {};
+  const resMismatchRec = await adminServiceMismatchRec.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(finalizedId, null, 'Must NOT finalize when recipient snapshot mismatches');
+  assert.strictEqual(resMismatchRec.message?.includes('không khớp với snapshot'), true);
+
   // Test 4: Financial Underflow Protection (No Clamping)
   // Ensure that if currentFrozen < amount, finalize / refund / reject throw ConflictException instead of clamping to 0
   const underflowWallet = {

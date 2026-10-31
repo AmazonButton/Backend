@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreateCustomerBankAccountDto } from './dto/create-customer-bank-account.dto';
+import { VerifyCustomerBankAccountDto } from './dto/verify-customer-bank-account.dto';
 
 @ApiTags('Customers')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -102,14 +103,26 @@ export class CustomersController {
   }
 
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Khởi tạo phiên xác minh tài khoản ngân hàng của khách hàng' })
+  @Post('me/bank-accounts/:id/initiate-verification')
+  async initiateMyBankAccountVerification(@Request() req: any, @Param('id') id: string) {
+    const data = await this.customersService.initiateBankAccountVerification(req.user, id);
+    return {
+      success: true,
+      message: data.message || 'Khởi tạo quy trình xác minh tài khoản ngân hàng thành công',
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Xác minh tài khoản ngân hàng của khách hàng với bằng chứng hợp lệ' })
   @Post('me/bank-accounts/:id/verify')
   async verifyMyBankAccount(
     @Request() req: any,
     @Param('id') id: string,
-    @Body() evidence?: { verificationCode?: string; proofReference?: string },
+    @Body() dto: VerifyCustomerBankAccountDto,
   ) {
-    const data = await this.customersService.verifyBankAccount(req.user, id, evidence);
+    const data = await this.customersService.verifyBankAccount(req.user, id, dto);
     return {
       success: true,
       message: data.message || 'Xác minh tài khoản ngân hàng thành công',

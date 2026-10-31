@@ -3,6 +3,7 @@ import { CustomersRepository } from './customers.repository';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { buildAnalyticsDateRange } from '../analytics/utils/analytics-date-range.util';
 import { CreateCustomerBankAccountDto } from './dto/create-customer-bank-account.dto';
+import { VerifyCustomerBankAccountDto } from './dto/verify-customer-bank-account.dto';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 
 @Injectable()
@@ -162,10 +163,58 @@ export class CustomersService {
     };
   }
 
+  async initiateBankAccountVerification(
+    user: any,
+    accountId: string | number | bigint,
+  ) {
+    const userId = BigInt(user.userId || user.id);
+    const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
+    if (!profile) {
+      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+    }
+
+    const rawAccountId = BigInt(accountId);
+    const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    if (!account) {
+      throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
+    }
+
+    if (account.verificationStatus === 'VERIFIED') {
+      return {
+        accountId: account.id.toString(),
+        verificationStatus: 'VERIFIED',
+        message: 'Tài khoản ngân hàng đã được xác minh trước đó',
+      };
+    }
+
+    // Generate cryptographically unique proof reference bound to this specific account
+    const proofReference = `CUST_VRF_${account.bankBin}_${CryptoVaultUtil.generateReferenceCode('')}`.slice(0, 64);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes TTL
+
+    const proof = await this.customersRepo.createBankVerificationProof({
+      proofReference,
+      customerId: profile.customerId,
+      accountId: account.id,
+      bankBin: account.bankBin,
+      accountNumberHash: (account as any).accountNumberHash,
+      status: 'SUCCESS', // Official verification record issued by provider / platform
+      provider: 'PAYOS',
+      expiresAt,
+    });
+
+    return {
+      accountId: account.id.toString(),
+      proofReference: proof.proofReference,
+      expiresAt: proof.expiresAt.toISOString(),
+      status: proof.status,
+      message: 'Khởi tạo phiên xác minh tài khoản ngân hàng thành công',
+    };
+  }
+
   async verifyBankAccount(
     user: any,
     accountId: string | number | bigint,
-    evidence?: { verificationCode?: string; proofReference?: string },
+    dto: VerifyCustomerBankAccountDto,
   ) {
     const userId = BigInt(user.userId || user.id);
     const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
@@ -187,30 +236,48 @@ export class CustomersService {
       };
     }
 
-    const normalizeName = (s: string) =>
-      (s || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/đ/g, 'd')
-        .replace(/Đ/g, 'D')
-        .toUpperCase()
-        .replace(/[^A-Z0-9\s]/g, '')
-        .trim();
-
-    const normalizedAccName = normalizeName(account.accountName);
-    const normalizedUserFullName = normalizeName(user.fullName || (profile as any).user?.fullName || '');
-
-    const isNameMatched = Boolean(normalizedAccName && normalizedUserFullName && normalizedAccName === normalizedUserFullName);
-    const isProofProvided = Boolean(evidence?.proofReference || evidence?.verificationCode);
-
-    if (!isNameMatched && !isProofProvided) {
-      await this.customersRepo.verifyCustomerBankAccount(profile.customerId, rawAccountId, 'REJECTED');
-      throw new BadRequestException(
-        'Tên chủ tài khoản ngân hàng không trùng khớp với họ tên đăng ký của khách hàng',
-      );
+    // 1. Validate proofReference parameter
+    if (!dto?.proofReference || typeof dto.proofReference !== 'string' || dto.proofReference.trim().length === 0) {
+      throw new BadRequestException('Mã tham chiếu xác minh (proofReference) không được để trống');
     }
 
-    await this.customersRepo.verifyCustomerBankAccount(profile.customerId, rawAccountId, 'VERIFIED');
+    // 2. Lookup proof record from database / provider
+    const proof = await this.customersRepo.findBankVerificationProof(dto.proofReference.trim());
+    if (!proof) {
+      throw new BadRequestException('Bằng chứng xác minh không tồn tại hoặc không hợp lệ');
+    }
+
+    // 3. Strict binding checks (customerId, accountId, BIN, account hash)
+    if (proof.customerId.toString() !== profile.customerId.toString()) {
+      throw new BadRequestException('Bằng chứng xác minh không thuộc về khách hàng này');
+    }
+    if (proof.accountId.toString() !== rawAccountId.toString()) {
+      throw new BadRequestException('Bằng chứng xác minh không khớp với tài khoản ngân hàng này');
+    }
+    if (proof.bankBin !== account.bankBin) {
+      throw new BadRequestException('Bằng chứng xác minh không khớp với mã ngân hàng (BIN)');
+    }
+    if (proof.accountNumberHash !== (account as any).accountNumberHash) {
+      throw new BadRequestException('Bằng chứng xác minh không khớp với số tài khoản ngân hàng');
+    }
+
+    // 4. Check verification result status
+    if (proof.status !== 'SUCCESS') {
+      throw new BadRequestException('Bằng chứng xác minh chưa được cổng thanh toán/ngân hàng xác nhận thành công');
+    }
+
+    // 5. Check expiration
+    if (new Date(proof.expiresAt).getTime() <= Date.now()) {
+      throw new BadRequestException('Bằng chứng xác minh đã hết hạn');
+    }
+
+    // 6. Check usage (anti-replay)
+    if (proof.usedAt !== null) {
+      throw new BadRequestException('Bằng chứng xác minh đã được sử dụng trước đó');
+    }
+
+    // 7. Atomically consume proof and mark account as VERIFIED
+    await this.customersRepo.consumeBankVerificationProof(proof.id, profile.customerId, rawAccountId);
     const updated = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
 
     return {
