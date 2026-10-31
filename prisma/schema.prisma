@@ -91,6 +91,8 @@ model Store {
   driverShifts                DriverShift[]
   withdrawals                 StoreWithdrawal[]
   bankAccounts                StoreBankAccount[]
+  custodyButtons              IoTButton[]                   @relation("StoreCustodyButtons")
+  fulfillmentRentals          ButtonRental[]                @relation("StoreFulfillmentRentals")
 
   @@map("store")
 }
@@ -124,8 +126,10 @@ model CustomerProfile {
   addresses      CustomerAddress[]
   storeCustomers StoreCustomer[]
   iotButtons     IoTButton[]
-  orders         Order[]
-  rentals        ButtonRental[]
+  orders               Order[]
+  rentals              ButtonRental[]
+  customerBankAccounts CustomerBankAccount[]
+  rentalRefunds        DepositRefund[]
 
   @@map("customer_profile")
 }
@@ -288,12 +292,20 @@ model IoTButton {
   rentalId            BigInt?          @map("rental_id")
   rental              ButtonRental?    @relation(fields: [rentalId], references: [rentalId], onDelete: SetNull)
 
+  custodyStoreId      BigInt?          @map("custody_store_id")
+  custodyStore        Store?           @relation("StoreCustodyButtons", fields: [custodyStoreId], references: [storeId], onDelete: SetNull)
+  inventoryState      String           @default("IN_PLATFORM_WAREHOUSE") @map("inventory_state") @db.VarChar(30)
+  canOrder            Boolean          @default(true) @map("can_order")
+
   buttonProducts  ButtonProduct[]
   orders          Order[]
   idempotencyKeys IotIdempotencyKey[]
+  deviceMovements DeviceMovement[]
+  rentalReturns   RentalReturn[]
 
   @@unique([buttonId, customerId, storeId], name: "uq_iot_button_context")
   @@index([storeId, status, batteryLevel], map: "idx_iot_button_store_status_battery")
+  @@index([custodyStoreId, inventoryState], map: "idx_iot_button_custody_inventory")
   @@map("iot_button")
 }
 
@@ -530,22 +542,34 @@ model ButtonRental {
   rentalCode      String          @unique @map("rental_code")
   customerId      BigInt          @map("customer_id")
   customer        CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
-  packageId       BigInt          @map("package_id")
-  package         RentalPackage   @relation(fields: [packageId], references: [packageId], onDelete: Restrict)
-  monthsRented    Int             @default(1) @map("months_rented")
-  totalRentAmount Decimal         @map("total_rent_amount") @db.Decimal(15, 2)
-  depositAmount   Decimal         @default(0) @map("deposit_amount") @db.Decimal(15, 2)
-  startDate       DateTime        @map("start_date")
-  endDate         DateTime        @map("end_date")
-  status          String          @default("PENDING_PAYMENT") @map("status")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at")
+  packageId           BigInt          @map("package_id")
+  package             RentalPackage   @relation(fields: [packageId], references: [packageId], onDelete: Restrict)
+  fulfillmentStoreId  BigInt?         @map("fulfillment_store_id")
+  fulfillmentStore    Store?          @relation("StoreFulfillmentRentals", fields: [fulfillmentStoreId], references: [storeId], onDelete: SetNull)
+  buttonQuantity      Int             @default(1) @map("button_quantity")
+  depositPerButton    Decimal         @default(0) @map("deposit_per_button") @db.Decimal(15, 2)
+  rentPerButton       Decimal         @default(0) @map("rent_per_button") @db.Decimal(15, 2)
+  monthsRented        Int             @default(1) @map("months_rented")
+  totalRentAmount     Decimal         @map("total_rent_amount") @db.Decimal(15, 2)
+  depositAmount       Decimal         @default(0) @map("deposit_amount") @db.Decimal(15, 2)
+  startDate           DateTime        @map("start_date")
+  endDate             DateTime        @map("end_date")
+  paidThrough         DateTime?       @map("paid_through")
+  effectiveExpiresAt  DateTime?       @map("effective_expires_at")
+  returnedAt          DateTime?       @map("returned_at")
+  status              String          @default("PENDING_PAYMENT") @map("status")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @default(now()) @updatedAt @map("updated_at")
 
-  buttons  IoTButton[]
-  payments PaymentTransaction[]
+  buttons             IoTButton[]
+  payments            PaymentTransaction[]
+  deposit             RentalDeposit?
+  returns             RentalReturn[]
+  refunds             DepositRefund[]
 
   @@index([customerId, status], map: "idx_button_rentals_customer_status")
   @@index([packageId, status], map: "idx_button_rentals_package_status")
+  @@index([fulfillmentStoreId, status], map: "idx_button_rentals_fulfillment_status")
   @@map("button_rentals")
 }
 
@@ -955,4 +979,214 @@ model UserAuthIdentity {
   @@unique([userId, provider], name: "uq_user_auth_identities_user_provider", map: "uq_user_auth_identities_user_provider")
   @@index([userId], map: "idx_user_auth_identities_user_id")
   @@map("user_auth_identities")
+}
+
+// =========================================================================
+// PLATFORM BUTTON RENTAL, CUSTODY, BILLING CHARGES & REFUND DOMAIN (BRD V2.3)
+// =========================================================================
+
+model DeviceMovement {
+  movementId      BigInt    @id @default(autoincrement()) @map("movement_id")
+  buttonId        BigInt    @map("button_id")
+  button          IoTButton @relation(fields: [buttonId], references: [buttonId], onDelete: Cascade)
+  sourceType      String    @map("source_type") @db.VarChar(30)
+  sourceStoreId   BigInt?   @map("source_store_id")
+  destType        String    @map("dest_type") @db.VarChar(30)
+  destStoreId     BigInt?   @map("dest_store_id")
+  rentalId        BigInt?   @map("rental_id")
+  actorUserId     BigInt?   @map("actor_user_id")
+  reason          String?   @db.VarChar(255)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([buttonId, createdAt(sort: Desc)], map: "idx_device_movements_button")
+  @@index([sourceStoreId], map: "idx_device_movements_source_store")
+  @@index([destStoreId], map: "idx_device_movements_dest_store")
+  @@map("device_movements")
+}
+
+model BillingCharge {
+  chargeId                BigInt               @id @default(autoincrement()) @map("charge_id")
+  chargeCode              String               @unique @map("charge_code") @db.VarChar(64)
+  purpose                 String               @map("purpose") @db.VarChar(32)
+  targetType              String               @map("target_type") @db.VarChar(32)
+  targetId                BigInt               @map("target_id")
+  currency                String               @default("VND") @db.VarChar(10)
+  totalAmount             Decimal              @map("total_amount") @db.Decimal(15, 2)
+  status                  String               @default("PENDING") @db.VarChar(20)
+  paidAt                  DateTime?            @map("paid_at") @db.Timestamptz(6)
+  paymentMethod           String?              @map("payment_method") @db.VarChar(32)
+  qrCode                  String?              @map("qr_code") @db.Text
+  paymentLinkId           String?              @map("payment_link_id") @db.VarChar(128)
+  checkoutUrl             String?              @map("checkout_url") @db.VarChar(1024)
+  providerTransactionCode String?              @unique(map: "uq_billing_charges_provider_tx") @map("provider_transaction_code") @db.VarChar(128)
+  createdAt               DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  lines                   BillingChargeLine[]
+
+  @@index([targetType, targetId, status], map: "idx_billing_charges_target")
+  @@index([status, createdAt(sort: Desc)], map: "idx_billing_charges_status_created")
+  @@map("billing_charges")
+}
+
+model BillingChargeLine {
+  lineId          BigInt         @id @default(autoincrement()) @map("line_id")
+  chargeId        BigInt         @map("charge_id")
+  charge          BillingCharge  @relation(fields: [chargeId], references: [chargeId], onDelete: Cascade)
+  lineType        String         @map("line_type") @db.VarChar(32)
+  amount          Decimal        @map("amount") @db.Decimal(15, 2)
+  durationUnit    String?        @default("MONTH") @map("duration_unit") @db.VarChar(10)
+  durationCount   Int?           @default(1) @map("duration_count")
+  quantity        Int?           @default(1) @map("quantity")
+  unitPrice       Decimal?       @map("unit_price") @db.Decimal(15, 2)
+  description     String?        @db.VarChar(255)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([chargeId], map: "idx_billing_charge_lines_charge")
+  @@map("billing_charge_lines")
+}
+
+model RentalDeposit {
+  depositId             BigInt        @id @default(autoincrement()) @map("deposit_id")
+  rentalId              BigInt        @unique @map("rental_id")
+  rental                ButtonRental  @relation(fields: [rentalId], references: [rentalId], onDelete: Cascade)
+  collectedAmount       Decimal       @default(0) @map("collected_amount") @db.Decimal(15, 2)
+  heldAmount            Decimal       @default(0) @map("held_amount") @db.Decimal(15, 2)
+  refundReservedAmount  Decimal       @default(0) @map("refund_reserved_amount") @db.Decimal(15, 2)
+  refundedAmount        Decimal       @default(0) @map("refunded_amount") @db.Decimal(15, 2)
+  updatedAt             DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("rental_deposits")
+}
+
+model RentalReturn {
+  returnId          BigInt         @id @default(autoincrement()) @map("return_id")
+  returnCode        String         @unique @map("return_code") @db.VarChar(64)
+  rentalId          BigInt         @map("rental_id")
+  rental            ButtonRental   @relation(fields: [rentalId], references: [rentalId], onDelete: Restrict)
+  buttonId          BigInt         @map("button_id")
+  button            IoTButton      @relation(fields: [buttonId], references: [buttonId], onDelete: Restrict)
+  status            String         @default("PENDING_RECEIPT") @map("status") @db.VarChar(30)
+  receivedByUserId  BigInt?        @map("received_by_user_id")
+  inspectedByUserId BigInt?        @map("inspected_by_user_id")
+  inspectionNote    String?        @map("inspection_note") @db.Text
+  receivedAt        DateTime?      @map("received_at") @db.Timestamptz(6)
+  inspectedAt       DateTime?      @map("inspected_at") @db.Timestamptz(6)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  refunds           DepositRefund[]
+
+  @@index([rentalId, status], map: "idx_rental_returns_rental_status")
+  @@index([buttonId], map: "idx_rental_returns_button")
+  @@map("rental_returns")
+}
+
+model DepositRefund {
+  refundId            BigInt               @id @default(autoincrement()) @map("refund_id")
+  refundCode          String               @unique @map("refund_code") @db.VarChar(64)
+  returnId            BigInt?              @unique(map: "uq_deposit_refunds_return_id") @map("return_id")
+  returnRequest       RentalReturn?        @relation(fields: [returnId], references: [returnId], onDelete: SetNull)
+  rentalId            BigInt               @map("rental_id")
+  rental              ButtonRental         @relation(fields: [rentalId], references: [rentalId], onDelete: Restrict)
+  customerId          BigInt               @map("customer_id")
+  customer            CustomerProfile      @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
+  bankAccountId                   BigInt?              @map("bank_account_id")
+  bankAccount                     CustomerBankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  recipientBin                    String?              @map("recipient_bin") @db.VarChar(10)
+  recipientAccountNumberEncrypted String?              @map("recipient_account_number_encrypted") @db.Text
+  recipientAccountNumberHash      String?              @map("recipient_account_number_hash") @db.VarChar(64)
+  recipientAccountHolderName      String?              @map("recipient_account_holder_name") @db.VarChar(255)
+  recipientAccountNumberMasked    String?              @map("recipient_account_number_masked") @db.VarChar(32)
+  amount                          Decimal              @map("amount") @db.Decimal(15, 2)
+  status              String               @default("PENDING_APPROVAL") @map("status") @db.VarChar(30)
+  approvedByUserId    BigInt?              @map("approved_by_user_id")
+  rejectionReason     String?              @map("rejection_reason") @db.VarChar(255)
+  providerReferenceId String?              @unique @map("provider_reference_id") @db.VarChar(128)
+  payoutError         String?              @map("payout_error") @db.Text
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  refundedAt          DateTime?            @map("refunded_at") @db.Timestamptz(6)
+  updatedAt           DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([customerId, status], map: "idx_deposit_refunds_customer_status")
+  @@index([rentalId], map: "idx_deposit_refunds_rental")
+  @@map("deposit_refunds")
+}
+
+model CustomerBankAccount {
+  id                     BigInt          @id @default(autoincrement()) @map("id")
+  customerId             BigInt          @map("customer_id")
+  customer               CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  bankBin                String          @map("bank_bin") @db.VarChar(10)
+  bankCode               String?         @map("bank_code") @db.VarChar(20)
+  bankName               String          @map("bank_name") @db.VarChar(100)
+  accountNumberEncrypted String          @map("account_number_encrypted") @db.Text
+  accountNumberHash      String          @map("account_number_hash") @db.VarChar(64)
+  accountNumberMasked    String          @map("account_number_masked") @db.VarChar(32)
+  accountName            String          @map("account_name") @db.VarChar(255)
+  verificationStatus     String          @default("PENDING") @map("verification_status") @db.VarChar(32)
+  isDefault              Boolean         @default(true) @map("is_default")
+  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  refunds                DepositRefund[]
+
+  @@unique([customerId, accountNumberHash], name: "uq_customer_bank_acc_hash")
+  @@index([customerId, isDefault], map: "idx_customer_bank_default")
+  @@map("customer_bank_accounts")
+}
+
+model AccessAdjustment {
+  id                 BigInt    @id @default(autoincrement()) @map("id")
+  targetType         String    @map("target_type") @db.VarChar(32)
+  targetId           BigInt    @map("target_id")
+  operation          String    @map("operation") @db.VarChar(32)
+  additionalDays     Int?      @map("additional_days")
+  previousExpiresAt  DateTime? @map("previous_expires_at") @db.Timestamptz(6)
+  newExpiresAt       DateTime  @map("new_expires_at") @db.Timestamptz(6)
+  reason             String    @map("reason") @db.VarChar(255)
+  actorUserId        BigInt    @map("actor_user_id")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([targetType, targetId], map: "idx_access_adjustments_target")
+  @@map("access_adjustments")
+}
+
+model OutboxEvent {
+  id            BigInt    @id @default(autoincrement()) @map("id")
+  eventType     String    @map("event_type") @db.VarChar(64)
+  payload       Json      @map("payload")
+  status        String    @default("PENDING") @map("status") @db.VarChar(20)
+  claimToken    String?   @map("claim_token") @db.VarChar(64)
+  lockedUntil   DateTime? @map("locked_until") @db.Timestamptz(6)
+  attempts      Int       @default(0) @map("attempts")
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  processedAt   DateTime? @map("processed_at") @db.Timestamptz(6)
+  error         String?   @map("error") @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, nextAttemptAt], map: "idx_outbox_events_status_next")
+  @@map("outbox_events")
+}
+
+model RentalAuditLog {
+  auditId        BigInt   @id @default(autoincrement()) @map("audit_id")
+  actorType      String   @map("actor_type") @db.VarChar(32)
+  actorUserId    BigInt?  @map("actor_user_id")
+  action         String   @db.VarChar(64)
+  targetType     String   @map("target_type") @db.VarChar(32)
+  targetId       BigInt   @map("target_id")
+  beforeState    String?  @map("before_state") @db.VarChar(64)
+  afterState     String?  @map("after_state") @db.VarChar(64)
+  amount         Decimal? @db.Decimal(15, 2)
+  correlationId  String?  @map("correlation_id") @db.VarChar(128)
+  idempotencyKey String?  @map("idempotency_key") @db.VarChar(128)
+  reason         String?  @db.VarChar(255)
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([targetType, targetId], map: "idx_rental_audit_target")
+  @@index([action, createdAt], map: "idx_rental_audit_action_created")
+  @@map("rental_audit_logs")
 }

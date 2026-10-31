@@ -17,6 +17,7 @@ export interface PayOSCreatePayoutResult {
     id: string;
     referenceId: string;
     approvalState: string;
+    amount?: number;
     transactions?: Array<{
       id: string;
       referenceId: string;
@@ -87,7 +88,13 @@ export class PayOSPayoutService {
     const signature = signPayoutRequest(params, checksumKey);
 
     // Support local mock or dry-run if PAYOS_MOCK_PAYOUT=true or clientId starts with 'test'/'mock'
-    if (process.env.PAYOS_MOCK_PAYOUT === 'true' || clientId === 'mock_client_id') {
+    const isMock = process.env.PAYOS_MOCK_PAYOUT === 'true' || clientId === 'mock_client_id';
+    const isAllowedMockEnv = ['test', 'development', 'local'].includes(process.env.NODE_ENV || '');
+
+    if (isMock) {
+      if (!isAllowedMockEnv) {
+        throw new BadRequestException('Chế độ giả lập PayOS Payout bị cấm tuyệt đối trên môi trường Staging/Production');
+      }
       this.logger.log(`[PayOS Payout Mock] Creating simulated payout for ref: ${params.referenceId}`);
       return {
         code: '00',
@@ -96,6 +103,7 @@ export class PayOSPayoutService {
           id: `payout_mock_${Date.now()}`,
           referenceId: params.referenceId,
           approvalState: 'PROCESSING',
+          amount: params.amount,
           transactions: [
             {
               id: `txn_mock_${Date.now()}`,
@@ -150,19 +158,32 @@ export class PayOSPayoutService {
   }
 
   async getPayout(payoutId: string): Promise<any> {
+    if (!payoutId || typeof payoutId !== 'string' || !payoutId.trim()) {
+      throw new BadRequestException('Mã payout ID không hợp lệ để tra cứu');
+    }
+    const cleanPayoutId = payoutId.trim();
+
     const { clientId, apiKey } = this.getCredentials();
     if (!clientId || !apiKey) {
       throw new InternalServerErrorException('PayOS credentials missing');
     }
 
-    if (process.env.PAYOS_MOCK_PAYOUT === 'true' || clientId === 'mock_client_id') {
+    const isMock = process.env.PAYOS_MOCK_PAYOUT === 'true' || clientId === 'mock_client_id';
+    const isAllowedMockEnv = ['test', 'development', 'local'].includes(process.env.NODE_ENV || '');
+
+    if (isMock) {
+      if (!isAllowedMockEnv) {
+        throw new BadRequestException('Chế độ giả lập PayOS Payout bị cấm tuyệt đối trên môi trường Staging/Production');
+      }
       return {
         code: '00',
         desc: 'success',
         data: {
-          id: payoutId,
+          id: cleanPayoutId,
+          referenceId: cleanPayoutId,
           approvalState: 'SUCCEEDED',
-          transactions: [{ id: `txn_${payoutId}`, state: 'SUCCEEDED' }],
+          amount: 200000,
+          transactions: [{ id: `txn_${cleanPayoutId}`, referenceId: cleanPayoutId, amount: 200000, state: 'SUCCEEDED' }],
         },
       };
     }
@@ -170,7 +191,8 @@ export class PayOSPayoutService {
     const abortController = new AbortController();
     const timeoutHandle = setTimeout(() => abortController.abort(), 8000);
     try {
-      const response = await fetch(`${this.baseUrl}/v1/payouts/${payoutId}`, {
+      const encodedPayoutId = encodeURIComponent(cleanPayoutId);
+      const response = await fetch(`${this.baseUrl}/v1/payouts/${encodedPayoutId}`, {
         method: 'GET',
         headers: {
           'x-client-id': clientId,

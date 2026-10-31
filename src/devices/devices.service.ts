@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  UnauthorizedException,
   Inject,
   Logger,
 } from '@nestjs/common';
@@ -739,13 +740,13 @@ export class DevicesService {
     const targetStoreId = BigInt(rawStoreId);
     const allocResult = await this.devicesRepo.allocateDevicesToStoreTx(targetStoreId, body.deviceIds);
 
-    this.eventsGateway.emitToStore(targetStoreId.toString(), 'devices:allocated', {
+    this.eventsGateway?.emitToStore(targetStoreId.toString(), 'devices:allocated', {
       storeId: targetStoreId.toString(),
       deviceIds: body.deviceIds,
       timestamp: new Date().toISOString(),
     });
     if (allocResult.ownerUserId) {
-      this.eventsGateway.emitToUser(allocResult.ownerUserId, 'devices:allocated', {
+      this.eventsGateway?.emitToUser(allocResult.ownerUserId, 'devices:allocated', {
         storeId: targetStoreId.toString(),
         deviceIds: body.deviceIds,
         timestamp: new Date().toISOString(),
@@ -761,6 +762,22 @@ export class DevicesService {
         deviceIds: body.deviceIds,
       },
     };
+  }
+
+  async getStoreDeviceInventory(storeId: bigint | string | number, user: any) {
+    if (!user) {
+      throw new UnauthorizedException('Yêu cầu xác thực tài khoản để truy cập kho nút');
+    }
+    const rawStoreId = BigInt(storeId);
+    const role = user.role || user.roleCode;
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(role);
+    if (!isAdmin) {
+      const userStoreId = user.storeId?.toString();
+      if (!userStoreId || rawStoreId.toString() !== userStoreId) {
+        throw new ForbiddenException('Bạn không có quyền truy cập vào kho nút của cửa hàng khác');
+      }
+    }
+    return this.devicesRepo.getStoreDeviceInventory(rawStoreId);
   }
 
   async lookupByCode(code: string) {

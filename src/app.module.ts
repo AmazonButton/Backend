@@ -13,6 +13,7 @@ import { RentalsModule } from './rentals/rentals.module';
 import { CustomersModule } from './customers/customers.module';
 import { StaffModule } from './staff/staff.module';
 import { DashboardCacheModule } from './common/cache/dashboard-cache.module';
+import { BillingChargesModule } from './billing-charges/billing-charges.module';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
@@ -69,6 +70,7 @@ import { AppController } from './app.controller';
     DashboardCacheModule,
     CustomersModule,
     StaffModule,
+    BillingChargesModule,
   ],
   controllers: [AppController],
 })

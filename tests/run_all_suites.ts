@@ -228,6 +228,76 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'analytics-dashboard-e2e.spec.ts')],
   },
+  {
+    name: '45. Platform Expansion: Billing Charges & Settlement Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'platform-button-rental-task1-billing-charge.spec.ts')],
+  },
+  {
+    name: '46. Platform Expansion: Store Shelf Fee & Device Inventory Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'platform-button-rental-task2-store-shelf-and-inventory.spec.ts')],
+  },
+  {
+    name: '47. Platform Expansion: Rental Lifecycle & Expiry Lock Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'platform-button-rental-task3-lifecycle-and-expiry.spec.ts')],
+  },
+  {
+    name: '48. Platform Expansion: Return Custody & Deposit Refund Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'platform-button-rental-task4-return-and-deposit-refund.spec.ts')],
+  },
+  {
+    name: '49. Platform Expansion: Notification Center & Wallet Separation Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'platform-button-rental-task5-notifications-and-outbox.spec.ts')],
+  },
+  {
+    name: '50. Platform Expansion: Deep Architectural, Concurrency & Invariants Verification Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'platform-button-rental-deep-fixes-verification.spec.ts')],
+  },
+  {
+    name: '51. Platform Expansion: Real HTTP BOLA & Tenant Isolation E2E Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'platform-button-rental-http-bola.spec.ts')],
+  },
+  {
+    name: '52. Platform Expansion Phase 1: PayOS Payment Request & Webhook Settlement Suite',
+    command: 'npx',
+    args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase1-payos-integration.spec.ts')],
+  },
+  {
+    name: '53. Platform Expansion Phase 2: Fulfillment Store & Device Assignment Engine Suite',
+    command: 'npx',
+    args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase2-store-device-assignment.spec.ts')],
+  },
+  {
+    name: '54. Platform Expansion Phase 3: Store Shelf Maintenance Fee & Catalog Protection Suite',
+    command: 'npx',
+    args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase3-store-subscription.spec.ts')],
+  },
+  {
+    name: '55. Platform Expansion Phase 4: Rental Expiry Cron & Dual-Layer Order Locking Suite',
+    command: 'npx',
+    args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase4-expiry-and-order-lock.spec.ts')],
+  },
+  {
+    name: '56. Platform Expansion Phase 5: Return Flow & Fail-Closed Payout Reconciliation Suite',
+    command: 'npx',
+    args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase5-return-and-deposit-payout.spec.ts')],
+  },
+  {
+    name: '57. Platform Expansion Phase 6: Outbox Producers & Notification Center Invariants Suite',
+    command: 'npx',
+    args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase6-outbox-and-notifications.spec.ts')],
+  },
+  {
+    name: '58. Platform Expansion Phase 7: API Validation DTOs, Strict BOLA & Audit Immutability Suite',
+    command: 'npx',
+    args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase7-api-validation-and-audit.spec.ts')],
+  },
 ];
 
 async function main() {

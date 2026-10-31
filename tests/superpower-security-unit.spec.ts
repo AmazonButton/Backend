@@ -4,7 +4,7 @@ import { StorefrontController } from '../src/orders/storefront.controller';
 import { PaymentsController } from '../src/payments/payments.controller';
 import { RentalsController } from '../src/rentals/rentals.controller';
 import { StoreWalletController } from '../src/store-wallet/store-wallet.controller';
-import { validateTestDatabaseUrl } from './test-db-guard';
+import { validateTestDatabaseUrl, assertTestDatabase } from './test-db-guard';
 import { AuthService } from '../src/auth/auth.service';
 import { UnauthorizedException, ConflictException } from '@nestjs/common';
 import { QueueService } from '../src/common/queues/queue.service';
@@ -119,6 +119,64 @@ async function runSuperpowersSecurityUnitSuite() {
     aliasRes.isValid === false && aliasRes.error?.includes('exact same database target'),
     'Test DB Guard blocks loopback alias bypass (localhost vs 127.0.0.1 pointing to same DB)',
   );
+
+  // Zero-Bypass verification: NODE_ENV=test or ALLOW_TEST_DB_RUN=true must NEVER bypass production URL
+  const originalEnvNodeEnv = process.env.NODE_ENV;
+  const originalAllowTestDb = process.env.ALLOW_TEST_DB_RUN;
+  const originalDbUrl = process.env.DATABASE_URL;
+  const originalTestDbUrl = process.env.TEST_DATABASE_URL;
+
+  try {
+    process.env.NODE_ENV = 'test';
+    process.env.ALLOW_TEST_DB_RUN = 'true';
+    process.env.TEST_DATABASE_URL = 'postgresql://postgres:pass@prod-db.amazonbutton.vn:5432/amazonbutton_prod';
+
+    let blockedWithNodeEnvTest = false;
+    try {
+      assertTestDatabase('Probe Suite');
+    } catch (err: any) {
+      if (err.message && err.message.includes('not in the allowed test database hosts')) {
+        blockedWithNodeEnvTest = true;
+      }
+    }
+    assert(
+      blockedWithNodeEnvTest === true,
+      'Test DB Guard strictly blocks production hostname prod-db even when NODE_ENV=test and ALLOW_TEST_DB_RUN=true',
+    );
+
+    // Also test without TEST_DATABASE_URL but DATABASE_URL pointing to prod
+    delete process.env.TEST_DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://postgres:pass@localhost:5432/amazonbutton_prod';
+    let blockedNonTestSuffix = false;
+    try {
+      assertTestDatabase('Probe Suite 2');
+    } catch (err: any) {
+      if (err.message && err.message.includes('_test')) {
+        blockedNonTestSuffix = true;
+      }
+    }
+    assert(
+      blockedNonTestSuffix === true,
+      'Test DB Guard strictly blocks non-test database name without _test suffix even when NODE_ENV=test',
+    );
+
+    // Test valid test URL binding to process.env.DATABASE_URL
+    process.env.TEST_DATABASE_URL = 'postgresql://postgres:pass@localhost:5432/smart_order_test';
+    const boundUrl = assertTestDatabase('Probe Suite 3');
+    assert(
+      boundUrl === 'postgresql://postgres:pass@localhost:5432/smart_order_test' &&
+        process.env.DATABASE_URL === 'postgresql://postgres:pass@localhost:5432/smart_order_test',
+      'Test DB Guard accepts valid localhost _test URL and securely binds process.env.DATABASE_URL',
+    );
+  } finally {
+    process.env.NODE_ENV = originalEnvNodeEnv;
+    if (originalAllowTestDb !== undefined) process.env.ALLOW_TEST_DB_RUN = originalAllowTestDb;
+    else delete process.env.ALLOW_TEST_DB_RUN;
+    if (originalDbUrl !== undefined) process.env.DATABASE_URL = originalDbUrl;
+    else delete process.env.DATABASE_URL;
+    if (originalTestDbUrl !== undefined) process.env.TEST_DATABASE_URL = originalTestDbUrl;
+    else delete process.env.TEST_DATABASE_URL;
+  }
 
   // ========================================================================
   // 3. P1 GOOGLE OAUTH SECURITY & DETERMINISTIC AUDIENCE VERIFICATION

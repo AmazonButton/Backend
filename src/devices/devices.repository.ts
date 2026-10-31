@@ -375,9 +375,9 @@ export class DevicesRepository {
         throw new BadRequestException('Cửa hàng đích không hoạt động');
       }
 
-      // Khóa các thiết bị bằng SELECT ... FOR UPDATE
+      // Khóa các thiết bị bằng SELECT ... FOR UPDATE (Select đầy đủ trường trạng thái)
       const lockedButtons = await tx.$queryRawUnsafe<any[]>(
-        'SELECT button_id, device_id, store_id, status FROM iot_button WHERE device_id = ANY($1::text[]) FOR UPDATE',
+        'SELECT button_id, device_id, store_id, custody_store_id, inventory_state, rental_id, customer_id, status FROM iot_button WHERE device_id = ANY($1::text[]) FOR UPDATE',
         deviceIds,
       );
 
@@ -390,26 +390,75 @@ export class DevicesRepository {
       }
 
       for (const b of lockedButtons) {
-        if (b.store_id && BigInt(b.store_id) !== targetStoreId) {
-          throw new BadRequestException(`Thiết bị ${b.device_id} đã được phân bổ cho cửa hàng khác`);
+        if (b.rental_id || b.customer_id) {
+          throw new BadRequestException(`Thiết bị ${b.device_id} đang được khách hàng thuê/sở hữu, không thể phân bổ vào kho`);
+        }
+        if (b.inventory_state === 'RETURN_IN_TRANSIT') {
+          throw new BadRequestException(`Thiết bị ${b.device_id} đang trong quá trình luân chuyển trả hàng`);
+        }
+        if (b.custody_store_id && BigInt(b.custody_store_id) !== targetStoreId) {
+          throw new BadRequestException(`Thiết bị ${b.device_id} đã được giữ bởi kho cửa hàng khác`);
         }
       }
 
+      // CẬP NHẬT: Chỉ cập nhật custodyStoreId và inventoryState, KHÔNG ghi đè storeId (Store routing đặt hàng)
       await tx.ioTButton.updateMany({
         where: { deviceId: { in: deviceIds } },
         data: {
-          storeId: targetStoreId,
+          custodyStoreId: targetStoreId,
+          inventoryState: 'ALLOCATED_TO_STORE',
           status: 'ACTIVE',
         },
       });
+
+      // Record device movements từ nguồn thực tế (từ custody hiện tại hoặc kho sàn)
+      for (const b of lockedButtons) {
+        const sourceStoreId = b.custody_store_id ? BigInt(b.custody_store_id) : null;
+        await tx.deviceMovement.create({
+          data: {
+            buttonId: BigInt(b.button_id),
+            sourceType: sourceStoreId ? 'STORE' : 'PLATFORM_WAREHOUSE',
+            sourceStoreId,
+            destType: 'STORE',
+            destStoreId: targetStoreId,
+            reason: 'Phân bổ nút từ kho sàn về kho cửa hàng',
+          },
+        });
+      }
 
       return {
         store,
         targetStoreId,
         ownerUserId: store.ownerUserId ? store.ownerUserId.toString() : (store.owner?.userId ? store.owner.userId.toString() : null),
         deviceIds,
+        inventoryState: 'ALLOCATED_TO_STORE',
+        custodyStoreId: targetStoreId,
       };
     });
   }
 
+  async getStoreDeviceInventory(storeId: bigint) {
+    const [inStockInStore, deployedOnStoreCatalog, rentedByCustomers, totalCustody] = await Promise.all([
+      this.prisma.ioTButton.count({
+        where: { custodyStoreId: storeId, inventoryState: 'ALLOCATED_TO_STORE', customerId: null },
+      }),
+      this.prisma.ioTButton.count({
+        where: { storeId, buttonProducts: { some: {} } },
+      }),
+      this.prisma.ioTButton.count({
+        where: { custodyStoreId: storeId, inventoryState: 'IN_CUSTOMER_CUSTODY' },
+      }),
+      this.prisma.ioTButton.count({
+        where: { custodyStoreId: storeId },
+      }),
+    ]);
+
+    return {
+      storeId: storeId.toString(),
+      inStockInStore,
+      deployedOnStoreCatalog,
+      rentedByCustomers,
+      totalCustody,
+    };
+  }
 }

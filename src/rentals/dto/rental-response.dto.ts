@@ -37,10 +37,25 @@ export class RentalResponseDto {
     name: string;
     status: string;
   }>;
+  effectiveExpiresAt?: Date | null;
+  paidThrough?: Date | null;
+  remainingSeconds: number;
+  canOrder: boolean;
+  serverNow: string;
   createdAt: Date;
   updatedAt: Date;
 
   static fromEntity(r: any): RentalResponseDto {
+    const now = new Date();
+    const effectiveExpiry = r.effectiveExpiresAt || r.paidThrough || r.endDate;
+    let remainingSeconds = 0;
+    let canOrder = true;
+    if (effectiveExpiry) {
+      const expiryTime = new Date(effectiveExpiry).getTime();
+      remainingSeconds = Math.max(0, Math.floor((expiryTime - now.getTime()) / 1000));
+      canOrder = remainingSeconds > 0 && r.status !== 'EXPIRED' && r.status !== 'RETURNED';
+    }
+
     return {
       rentalId: r.rentalId.toString(),
       rentalCode: r.rentalCode,
@@ -68,6 +83,11 @@ export class RentalResponseDto {
       depositAmount: Number(r.depositAmount || 0),
       startDate: r.startDate,
       endDate: r.endDate,
+      effectiveExpiresAt: r.effectiveExpiresAt || r.endDate || null,
+      paidThrough: r.paidThrough || r.endDate || null,
+      remainingSeconds,
+      canOrder,
+      serverNow: now.toISOString(),
       status: r.status,
       payments: (r.payments || []).map((p: any) => ({
         paymentTransactionId: p.paymentTransactionId.toString(),

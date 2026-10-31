@@ -376,4 +376,70 @@ export class NotificationsService {
 
     return record ? this.formatNotification(record) : null;
   }
+
+  /**
+   * 12. Phát thông báo sự kiện cho hệ thống thuê nút & hạn gói 60k (Pillar 5)
+   */
+  async dispatchRentalEventNotification(params: {
+    eventType: 'RENTAL_EXPIRED' | 'STORE_SUBSCRIPTION_EXPIRED' | 'RENTAL_RETURN_REQUESTED' | 'DEPOSIT_REFUND_APPROVED' | 'PAYMENT_RECEIVED' | 'DEPOSIT_REFUND_COMPLETED';
+    userId: bigint | number;
+    rentalCode?: string;
+    buttonCode?: string;
+    storeName?: string;
+    amount?: number;
+    recipientRole?: 'CUSTOMER' | 'STORE_OWNER' | 'ADMIN';
+    eventId?: string | bigint;
+    channel?: string;
+    periodRef?: string;
+  }) {
+    let title = 'Thông báo hệ thống';
+    let body = 'Có cập nhật mới từ hệ thống Smart Order';
+
+    switch (params.eventType) {
+      case 'RENTAL_EXPIRED':
+        title = 'Cảnh báo: Nút bấm thông minh đã hết hạn thuê';
+        body = `Hợp đồng thuê nút ${params.rentalCode || ''} (Mã nút: ${params.buttonCode || ''}) đã hết hạn. Nút bấm đã tạm dừng quyền đặt hàng. Vui lòng gia hạn 30.000đ/tháng để tiếp tục sử dụng.`;
+        break;
+      case 'STORE_SUBSCRIPTION_EXPIRED':
+        title = 'Cảnh báo: Gian hàng hết hạn gói duy trì kệ (60.000đ/tháng)';
+        body = `Gói duy trì kệ của gian hàng ${params.storeName || ''} đã hết hạn. Hệ thống đã tạm khóa quyền đăng sản phẩm mới. Vui lòng thanh toán 60.000đ/tháng để mở lại quyền đăng sản phẩm.`;
+        break;
+      case 'RENTAL_RETURN_REQUESTED':
+        title = 'Yêu cầu trả nút bấm & hoàn cọc mới';
+        body = `Khách hàng đã gửi yêu cầu trả nút cho hợp đồng ${params.rentalCode || ''}. Vui lòng kiểm tra và tiếp nhận tại kho cửa hàng.`;
+        break;
+      case 'DEPOSIT_REFUND_APPROVED':
+        title = 'Yêu cầu hoàn cọc đã được phê duyệt';
+        body = `Yêu cầu hoàn tiền cọc cho hợp đồng ${params.rentalCode || ''} đã được phê duyệt và chuyển sang lệnh chi trả Payout.`;
+        break;
+      case 'DEPOSIT_REFUND_COMPLETED':
+        title = 'Hoàn tiền cọc thành công';
+        body = `Số tiền cọc ${params.amount ? params.amount.toLocaleString('vi-VN') + 'đ' : ''} cho hợp đồng ${params.rentalCode || ''} đã được chuyển về tài khoản ngân hàng của bạn.`;
+        break;
+      case 'PAYMENT_RECEIVED':
+        title = 'Thanh toán thành công';
+        body = `Khoản thanh toán ${params.amount ? params.amount.toLocaleString('vi-VN') + 'đ' : ''} đã được xác nhận thành công.`;
+        break;
+    }
+
+    // Deterministic Idempotency Key theo chuẩn: eventId + recipientId + channel
+    const channel = params.channel || 'IN_APP';
+    const recipientId = params.userId.toString();
+    const entityRef = params.rentalCode || params.buttonCode || params.storeName || params.amount?.toString() || 'general';
+    const eventId = params.eventId
+      ? params.eventId.toString()
+      : params.periodRef
+        ? `${params.eventType}-${entityRef}-${params.periodRef}`
+        : `${params.eventType}-${entityRef}`;
+    const idempotencyKey = `notif:${eventId}:${recipientId}:${channel}`;
+
+    return this.createAndDispatchNotification({
+      userId: params.userId,
+      type: params.eventType,
+      title,
+      body,
+      data: params,
+      idempotencyKey,
+    });
+  }
 }

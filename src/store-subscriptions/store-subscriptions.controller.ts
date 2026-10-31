@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, BadRequestException, Query, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, BadRequestException, Query, Param, Inject, Optional, forwardRef } from '@nestjs/common';
 import { StoreSubscriptionsService } from './store-subscriptions.service';
 import { SubscribePlanDto } from './dto/subscription.dto';
 import { StoreSubscriptionQueryDto } from './dto/store-subscription-query.dto';
@@ -7,12 +7,16 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { buildPaginatedResponse } from '../common/utils/pagination.helper';
+import { BillingChargesService } from '../billing-charges/billing-charges.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('STORE_OWNER', 'STORE_MANAGER')
 @Controller('store/subscriptions')
 export class StoreSubscriptionsController {
-  constructor(private readonly subscriptionsService: StoreSubscriptionsService) {}
+  constructor(
+    private readonly subscriptionsService: StoreSubscriptionsService,
+    @Optional() @Inject(forwardRef(() => BillingChargesService)) private readonly billingChargesService?: any,
+  ) {}
 
   private extractStoreId(req: any, query?: { storeId?: string }): bigint {
     const isSuperAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(req.user?.role);
@@ -80,6 +84,37 @@ export class StoreSubscriptionsController {
     }
     const data = await this.subscriptionsService.subscribeWithWallet(storeId, body.planId, idempotencyKey);
     return { success: true, message: 'Đăng ký gói thuê gian hàng thành công!', data };
+  }
+
+  @Post('renew-charge')
+  async createRenewCharge(
+    @Request() req: any,
+    @Body() body: { returnUrl?: string; cancelUrl?: string },
+    @Query() query?: StoreQueryDto,
+  ) {
+    const storeId = this.extractStoreId(req, query);
+    if (!this.billingChargesService) {
+      throw new BadRequestException('Dịch vụ thu tiền BillingChargesService chưa sẵn sàng');
+    }
+
+    const charge = await this.billingChargesService.createStoreSubscriptionCharge({
+      storeId,
+      amount: 60000,
+      durationDays: 30,
+    });
+
+    const paymentLink = await this.billingChargesService.createPayosPaymentRequestForCharge(
+      charge.chargeId,
+      req.user,
+      body?.returnUrl,
+      body?.cancelUrl,
+    );
+
+    return {
+      success: true,
+      message: 'Tạo liên kết thanh toán phí duy trì gian hàng 60.000đ/tháng thành công',
+      data: paymentLink,
+    };
   }
 }
 

@@ -279,4 +279,24 @@ export class DevicesController {
   async simulatePress(@Param('id') id: string, @Body() body: SimulatePressDto, @Request() req: any) {
     return this.ordersService.simulateButtonPress({ deviceId: id, ...body }, req.user);
   }
+
+  /**
+   * Theo dõi trạng thái kho nút của Store:
+   * - Trong kho Store (ALLOCATED_TO_STORE)
+   * - Đang treo trên cửa hàng (deployedOnStoreCatalog)
+   * - Đang được User thuê (IN_CUSTOMER_CUSTODY)
+   */
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Get('stores/:storeId/inventory')
+  async getStoreDeviceInventory(
+    @Param('storeId') storeId: string,
+    @Request() req: any,
+  ) {
+    const data = await this.devicesService.getStoreDeviceInventory(storeId, req.user);
+    return {
+      success: true,
+      message: 'Lấy thông tin kho nút của cửa hàng thành công',
+      data,
+    };
+  }
 }

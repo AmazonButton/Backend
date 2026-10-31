@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
 import { StoreSubscriptionsRepository } from './store-subscriptions.repository';
 import { StoreWalletService } from '../store-wallet/store-wallet.service';
 import { SubscriptionPlanResponseDto } from './dto/subscription-plan-response.dto';
@@ -55,19 +55,16 @@ export class StoreSubscriptionsService {
     const currentSub = await this.getCurrentSubscription(rawStoreId);
 
     if (!currentSub) {
-      const totalPlans = await this.subscriptionsRepo.countTotalPlans();
-      if (totalPlans === 0) return true;
-
-      throw new BadRequestException(
-        'Cửa hàng chưa đăng ký hoặc đã hết hạn gói thuê gian hàng. Vui lòng gia hạn gói để tiếp tục đăng bán sản phẩm.',
+      throw new ForbiddenException(
+        'Gian hàng đã hết hạn hoặc chưa đăng ký gói duy trì kệ (60.000đ/tháng). Vui lòng thanh toán phí duy trì để tiếp tục đăng bán sản phẩm.',
       );
     }
 
     const currentProductsCount = await this.subscriptionsRepo.countStoreProducts(rawStoreId);
 
     if (currentProductsCount >= currentSub.plan.maxProducts) {
-      throw new BadRequestException(
-        `Cửa hàng đã đạt giới hạn tối đa ${currentSub.plan.maxProducts} sản phẩm của gói ${currentSub.plan.planName}. Vui lòng nâng cấp gói để đăng thêm.`,
+      throw new ForbiddenException(
+        `Gian hàng đã đạt giới hạn tối đa ${currentSub.plan.maxProducts} sản phẩm của gói ${currentSub.plan.planName}. Vui lòng nâng cấp gói để đăng thêm.`,
       );
     }
 

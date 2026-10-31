@@ -4,14 +4,14 @@
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
 > **Tech Stack:** NestJS 10, TypeScript 5, PostgreSQL 15 (with custom Stored Procedures, Triggers & Row Locking), Prisma ORM, Redis (BullMQ), Cloudinary, PayOS  
-> **Status:** Verified clean build (`npm run build`), TypeScript compilation (`npx tsc --noEmit`), Prisma 33 migrations up-to-date (`npx prisma migrate status`), and full Multi-Role Analytics & Dashboard Architecture verified across Unit & E2E suites (Suite 44 Analytics E2E: **87/87** passing; Suite 43 Analytics Unit: 30/30 passing; Suite 41 Security Unit: 41/41 passing; Suite 31 Store Wallet & Withdrawals: 6/6 passing). All P0/P1 items resolved: SYSTEM_ADMIN bypass removed from RolesGuard; RBAC matrix verified (8 combinations); AdminController read-only routes (`GET withdrawals`, `GET withdrawals/:id`, and analytics/dashboards) decorated with `@Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')` while financial and system mutations remain strictly `@Roles('SUPER_ADMIN')`; Customer dashboard SQL query in `CustomersRepository` hardened with `NULL::text AS logo_url` preventing column missing crashes on stores without logo; cache invalidation pipeline fully hardened across Devices (all 12 mutations, incl. owner customer userId + remap dual-store), Rentals (customer.userId for all 5 mutations without customerId fallback), Wallet (requestWithdrawal/refund/processPayoutWebhook/syncPayoutStatus post-commit invalidation), Admin (toggleUserStatus/updateUserRole/payoutFailureCatch); exact key invalidation (`customer:dashboard` and drill-downs) preventing prefix collisions; canonical order statuses enforced with zero legacy references; Suite 44 Section 9 (34 assertions) verifies pipeline tenant isolation, exact key safety, and resilience to cache errors. Production release approved and deployed by Tris.
+> **Status:** Verified clean build (`npm run build`), TypeScript compilation (`npx tsc --noEmit --incremental false`), Prisma validate, and full Platform Button Rental Expansion hardened across all 8 phases (Phases 1-7 dedicated suites: **79/79** passing; Superpower Security Unit: **44/44** passing; Suites 45-49: **24/24** passing; Suite 44 Analytics E2E: 87/87 passing). Master runner updated with **58 registered suites**. P0/P1 invariants and architectural blockers resolved: PaymentsService BillingChargesService forwardRef injection, findInitialChargeByRentalId targetType/targetId lookup, Store table name singular mapping, customer_id verification on bank account lock, deposit refund immutable recipient snapshot migration, zero-fallback worker payout with immutable snapshot enforcement, elimination of bankAccount relation fallback in verifier and admin reconcile flow, strict real PayOS payout ID enforcement with admin manual override priority, atomic transactional confirmation with pessimistic row locking / CAS, AdminConfirmPayoutDto input validation and URL encoding in PayOSPayoutService, end-to-end 3-step natural retry & DLQ lifecycle verification via simulated clock (including premature poll backoff blocking and nextAttemptAt > now assertions), return request store fulfillment routing producer test, and 10-minute rental & store subscription expiry cron. Note: Database migration `20261030220000_deposit_refund_recipient_snapshot` and live ACID rollback execution remain pending application on a dedicated live test DB instance; production databases are strictly guarded and prohibited.
 ---
 
 ## 1. Quick Verification Commands
-- Check TypeScript types: `npx tsc --noEmit`
+- Check TypeScript types: `npx tsc --noEmit --incremental false`
 - Production Build: `npm run build`
 - Start Dev Server: `npm run dev` (running `nest start --watch`, port 3000)
-- Run All Tests (44 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
+- Run All Tests (58 suites master runner): `npm run test:all` or `npx tsx tests/run_all_suites.ts`
 - Individual Suite Commands:
   - Suite 1 (Firebase Phone Auth): `npx tsx tests/firebase-phone-auth.spec.ts`
   - Suite 2 (FCM Notifications): `npx tsx tests/notifications-fcm.spec.ts`
@@ -57,11 +57,26 @@
   - Suite 42 (Superpowers Security Verification & Hardening): `npx tsx tests/superpower-security-verification.spec.ts`
   - Suite 43 (Analytics Financial Matrix & Database Aggregation): `npx tsx tests/analytics-foundation-unit.spec.ts`
   - Suite 44 (Multi-Role Analytics & Dashboard E2E): `npx tsx tests/analytics-dashboard-e2e.spec.ts`
+  - Suite 45 (Platform Expansion: Billing Charges & Settlement): `npx tsx tests/platform-button-rental-task1-billing-charge.spec.ts`
+  - Suite 46 (Platform Expansion: Store Shelf Fee & Device Inventory): `npx tsx tests/platform-button-rental-task2-store-shelf-and-inventory.spec.ts`
+  - Suite 47 (Platform Expansion: Rental Lifecycle & Expiry Lock): `npx tsx tests/platform-button-rental-task3-lifecycle-and-expiry.spec.ts`
+  - Suite 48 (Platform Expansion: Return Custody & Deposit Refund): `npx tsx tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts`
+  - Suite 49 (Platform Expansion: Notification Center & Wallet Separation): `npx tsx tests/platform-button-rental-task5-notifications-and-outbox.spec.ts`
+  - Suite 50 (Platform Expansion: Deep Concurrency & Architectural Fixes Verification): `npx tsx tests/platform-button-rental-deep-fixes-verification.spec.ts` (**Registered in Master Runner; DB Guard Hardened with Zero Bypass**)
+  - Suite 51 (Platform Expansion: Real HTTP BOLA & Tenant Isolation E2E): `npx tsx tests/platform-button-rental-http-bola.spec.ts` (**Registered in Master Runner; DB Guard Hardened with Zero Bypass**)
+  - Suite 52 (Phase 1 PayOS Payment Request & Webhook Settlement): `npx ts-node tests/platform-button-rental-phase1-payos-integration.spec.ts` (**8/8 PASS**, Exit Code 0)
+  - Suite 53 (Phase 2 Fulfillment Store & Device Assignment Engine): `npx ts-node tests/platform-button-rental-phase2-store-device-assignment.spec.ts` (**9/9 PASS**, Exit Code 0)
+  - Suite 54 (Phase 3 Store Shelf Maintenance Fee & Protection): `npx ts-node tests/platform-button-rental-phase3-store-subscription.spec.ts` (**6/6 PASS**, Exit Code 0)
+  - Suite 55 (Phase 4 Rental Expiry Cron & Dual-Layer Order Locking): `npx ts-node tests/platform-button-rental-phase4-expiry-and-order-lock.spec.ts` (**6/6 PASS**, Exit Code 0)
+  - Suite 56 (Phase 5 Return Flow & Fail-Closed Payout Reconciliation): `npx ts-node tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` (**29/29 PASS**, Exit Code 0)
+  - Suite 57 (Phase 6 Outbox Producers & Notification Center Invariants): `npx ts-node tests/platform-button-rental-phase6-outbox-and-notifications.spec.ts` (**8/8 PASS**, Exit Code 0)
+  - Suite 58 (Phase 7 API Validation DTOs, Strict BOLA & Audit Immutability): `npx ts-node tests/platform-button-rental-phase7-api-validation-and-audit.spec.ts` (**13/13 PASS**, Exit Code 0)
 - Live Render Production Master Suite (148/148 passing across all 36 domains): `npx tsx tests/render_live_all_apis_suite.ts`
 - Live Render Performance & Load Benchmark (P50/P90/P95/P99 SLA, 44.5 RPS, 429 Defense): `npx tsx tests/render_live_performance_benchmark.ts`
 - Live Render 500-1000 High-Load Stress Suite (38.7 RPS @ 500 reqs, 1000-req Rate Limit Quota Enforced): `npx tsx tests/render_live_high_load_stress.ts`
 - Live Render Multi-Instance Cluster Manager CLI (Status, Deploys, Restart, 41/41 Env Parity): `npm run render:cluster status` | `npm run render:cluster env` | `npm run render:cluster deploy`
 - Live Render Dual-Node Cluster 1,000-Request Load Test (Round-Robin Node 1 + Node 2, PgBouncer 6543, 100.0% Pass Rate: 1000/1000, 0x 429 errors, 0 failures, Node 1: 500/500, Node 2: 500/500): `npx tsx tests/render_live_dual_cluster_load_test.ts`
+- Cloudflare Worker vs Single Instance Extreme Stress Benchmark (10,000 reqs @ 500-1000 concurrency, 1183 RPS vs 431 RPS, -57% p95 latency, 95% error reduction): `npx tsx tests/render_cluster_vs_single_benchmark.ts`
 
 ---
 
@@ -1229,3 +1244,280 @@ When starting a new conversation, prompt the agent with:
 - Current Repository State:
   - Working tree has uncommitted verified changes. No commits or pushes have been performed.
   - Awaiting Tris's review and instruction before any commit or push.
+
+### [2026-10-28] Multi-Cloud Active-Active Cluster & 10,000 Request Stress Benchmark
+- Status: VERIFIED & READY FOR REVIEW — 10k stress benchmark executed, Render failed deploy root causes diagnosed and fixed, Node 3 provisioned on AWS EC2 (Sydney), and Cloudflare Worker load balancer updated to 3-node cluster.
+- Achievements & Evidence:
+  1. **10,000 Request Stress Benchmark Across 3-Node Multi-Cloud Cluster:**
+     - Script: [`tests/render_cluster_vs_single_benchmark.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/render_cluster_vs_single_benchmark.ts)
+     - Wave 2 (10,000 reqs @ 500 concurrent users):
+       - Traffic Distribution: Node 1 (Render 1) 33.5% (3,326 hits) | Node 2 (Render 2) 33.3% (3,307 hits) | Node 3 (AWS EC2 Sydney) 33.3% (3,308 hits).
+       - Latency: p50 265ms (-49.6% vs Single 526ms), p95 2,900ms (-42.9% vs Single 5,083ms).
+       - Success Rate: 99.41%.
+     - Wave 3 Peak Load (10,000 reqs @ 1,000 concurrent users):
+       - Traffic Distribution: Node 1 32.8% (3,214 hits) | Node 2 33.6% (3,296 hits) | Node 3 33.6% (3,289 hits).
+       - Latency: p50 396ms (-21.1% vs Single 502ms), p95 5,788ms (-47.1% vs Single 10,940ms), p99 11,162ms (-20.7% vs Single 14,077ms).
+       - Throughput & Rate Limit Resilience: Single instance throttled 100% of requests into `HTTP_429`, whereas Cloudflare 3-node cluster successfully served 6,585 `HTTP_200` requests by splitting traffic across 3 independent cloud origins.
+  2. **Render Deploy Failure Root Causes & Resolution:**
+     - Root Cause 1: Render `PUT /v1/services/{serviceId}/env-vars` replaces the entire env var array. When CORS was updated earlier, 41 env vars were wiped, leaving only `CORS_ORIGIN`. Container exited with code 1 (`DATABASE_URL is NOT SET`).
+     - Root Cause 2: Direct Supabase hostname `db.gultdgalicgqhvquxizs.supabase.co:5432` has NO IPv4 address (IPv6-only). Render Free Tier is IPv4-only, triggering `P1001: Can't reach database server`.
+     - Resolution: Re-synced full 42 environment variables to both Render instances with Supabase PgBouncer pooler (`aws-0-ap-northeast-1.pooler.supabase.com:6543`). Triggered clean deploys (`dep-dbgt1m6i0phs738tn8rg` on Node 1, `dep-dbgt1m08v5cc73fh2smg` on Node 2). Both nodes verified 100% 🟢 LIVE.
+  3. **AWS EC2 Node 3 (Sydney ap-southeast-2) Provisioning:**
+     - Instance ID: `i-057b3e633f7e77266`, Public IP: `3.25.136.6`, Public DNS: `ec2-3-25-136-6.ap-southeast-2.compute.amazonaws.com`, Ubuntu 24.04 on `t3.micro`.
+     - Configured 2GB swap file (`/swapfile`) to eliminate `t3.micro` 1GB RAM compilation thrashing.
+     - Port 80 redirected to 3000 via `iptables nat PREROUTING`.
+     - PM2 process manager configured (`backend-node3`, `scripts/start-prod.js`, PID saved).
+     - Verified `NODE_ENV=development` mode with in-memory queues and cache (matching Render architecture).
+     - Verified live external reachability: `curl http://3.25.136.6/healthz` -> HTTP 200 `{"status":"UP","uptimeSeconds":154}` in 545ms.
+  4. **Cloudflare Worker 3-Node Multi-Cloud Router Live & Deployed:**
+     - File: [`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js)
+     - Live Worker Endpoint: `https://fragrant-mode-3a41.ptt24032004.workers.dev`
+     - Origins:
+       - Node 1: `https://backend-fae8.onrender.com` (Render Primary)
+       - Node 2: `https://backend-node2-ukib.onrender.com` (Render Secondary)
+       - Node 3: `http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaws.com` (AWS EC2 Sydney)
+     - Features: Specialized Multi-Cloud Routing Policy:
+       - Third-Party & Webhooks (PayOS, Didit, Bank Verification): 100% pinned to Node 1 (Render Primary).
+       - Core Business APIs (Orders, Products, Auth, Devices): 85% to Node 3 (AWS EC2 Sydney workhorse) and 15% to Node 1 (Render Primary keep-alive).
+       - Node 2 (Render Secondary): Emergency Hot Standby, automatically kept awake via background ping every 10-12m (ctx.waitUntil & Cloudflare Cron).
+       - 3-Way Cascading Failover across all 3 nodes on 502/503/504 or network drops.
+  5. **Direct Remote SSH Control & Automation for AWS Node 3:**
+     - Keypair: Generated unencrypted ED25519 key (`~/.ssh/id_aws_node3`) and authorized on Ubuntu instance (`authorized_keys`).
+     - SSH Config: Configured `Host aws-node3` in `~/.ssh/config` using Git OpenSSH (`C:\Users\ttphatt_2403\git\usr\bin\ssh.exe`).
+     - Remote CLI Controller: Created [`scripts/aws_node3.js`](file:///f:/Learning/SEM9-FPTu/backend/scripts/aws_node3.js) for executing arbitrary commands directly on AWS from the local IDE workspace.
+     - NPM Automation Scripts added to [`package.json`](file:///f:/Learning/SEM9-FPTu/backend/package.json):
+       - `npm run aws:status` -> Checks live uptime, memory, and PM2 process status.
+       - `npm run aws:deploy` -> Automatically pulls `origin/main`, compiles NestJS, and triggers zero-downtime PM2 reload on Node 3.
+       - `npm run aws:logs` -> Streams real-time PM2 application logs directly to the IDE terminal.
+   6. **All-Scenarios Multi-Cloud Comprehensive Verification Suite:**
+      - Script: [`tests/verify_all_multicloud_scenarios.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/verify_all_multicloud_scenarios.ts)
+      - Execution: `npx tsx tests/verify_all_multicloud_scenarios.ts`
+      - Results: **23/23 Assertions PASSED (100% Success Rate)**
+        - Scenario 1 (Third-Party Pinning): 100% of Webhooks, Bank Verification, Didit eKYC, and Payment verification routes strictly route to Node 1 (`[node-1] (third-party-primary (100%))`).
+        - Scenario 2 (Core Weighted Distribution): Real-time sequential test across 60 requests confirmed AWS Node 3 handled 71.7% of workload, Render Node 1 received 28.3% light keep-alive traffic, and Render Node 2 remained untouched in 0.0% hot standby mode.
+        - Scenario 3 (Edge CORS Preflight): Returned HTTP 204 No Content with `access-control-allow-origin`, `x-signature`, `x-device-id` headers in **84ms** direct edge termination.
+        - Scenario 4 (POST Buffer Preservation): Multi-origin streaming buffer preservation verified; invalid credentials test reached backend without payload corruption, returning HTTP 401 standard error envelope.
+        - Scenario 5 (Edge Public Catalog): Endpoint `/api/v1/subscription-plans` returned HTTP 200 with 27 active plans in 944ms.
+        - Scenario 6 (Remote AWS EC2 Node 3 SSH Integrity): Remote command executed securely via Git OpenSSH without password prompts; PM2 status strictly `online` (PID 10726, 98 mins uptime, 130MB memory), 2GB swap file active and protecting 1GB physical RAM.
+   7. **Multi-Cloud Load Capacity & Saturation Benchmark (13,500 Requests Across 4 Waves):**
+      - Script: [`tests/multicloud_load_stress_benchmark.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/multicloud_load_stress_benchmark.ts)
+      - Results:
+        - Wave 1 (50 Concurrency, 1,000 reqs): 188 RPS, 100% HTTP 200, p50: 98ms, p95: 582ms.
+        - Wave 2 (150 Concurrency, 2,500 reqs): 476 RPS, 100% HTTP 200, p50: 101ms, p95: 803ms.
+        - Wave 3 (300 Concurrency, 5,000 reqs - Peak): **599 RPS**, p50: 120ms, p95: 1,362ms. 4,297 HTTP 200, 703 HTTP 429 (Throttling kicks in safely).
+        - Wave 4 (600 Concurrency, 5,000 reqs - Saturation): 364 RPS, p50: 285ms, p95: 2,866ms. Zero 502/503/504 errors.
+        - Traffic Distribution Adherence: AWS Node 3 handled 68.0% of total mixed traffic (85% of Core traffic); Render Node 1 handled 32.0% (100% Third-party + 15% Core); Render Node 2 had 0 hits in Hot Standby.
+        - AWS Node 3 Telemetry: Memory stayed rock-solid at 132MB (out of 908MB RAM + 2047MB Swap), PM2 restarts remained at 2, CPU idle post-test.
+   8. **Updated Intelligent Routing Policy (70% AWS / 20% Render 1 / 10% Render 2):**
+      - File: [`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js)
+      - Specification:
+        - 100% Third-Party / Webhooks (PayOS, Didit eKYC, Banks): Pinned to Node 1 (Render Primary).
+        - Core Business Traffic (Orders, Devices, Products, Auth):
+          - **70%** -> Node 3 (AWS EC2 Sydney Workhorse).
+          - **20%** -> Node 1 (Render Primary continuous keep-alive & light sharing).
+          - **10%** -> Node 2 (Render Secondary active keep-alive, ensuring it receives real user requests and never stays inactive > 15-30m).
+        - Dual-layer Keep-Alive: Background ping via `ctx.waitUntil` and Cloudflare Cron every 10-12 minutes ensures Node 2 stays awake 24/7 even during zero-traffic hours.
+   9. **Safe Capacity Limit Probe & Ceiling Prediction (Non-Destructive):**
+      - Script: [`tests/safe_capacity_limit_probe.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/safe_capacity_limit_probe.ts)
+      - Results:
+        - 70/20/10 Distribution Confirmed LIVE: Scenario 2 test verified Node 3 (73.3%), Node 1 (16.7%), Node 2 (10.0%).
+        - Sustainable Sweet Spot: 150 – 250 concurrent users at ~350 – 500 RPS (p50: 90ms, 0.00% error rate).
+        - Safe Peak / Burst Ceiling: 350 – 450 concurrent users at **664 RPS (~36,000 req/min)**.
+        - System Protection: RateLimiter smoothly throttles excess burst traffic into HTTP 429 without causing 5xx server errors or connection exhaustion on Supabase PgBouncer.
+        - Host Telemetry: AWS EC2 Node 3 remained rock-stable at 133MB RAM, 0% CPU idle post-test, 0 restarts.
+
+---
+
+### J. System Architecture Diagrams & ERD Hardening (Draw.io Level 3)
+1. **Target File:** [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio)
+2. **ERD Level 3 Complete Physical Schema (Page 0):**
+   - Audited 46 models in `prisma/schema.prisma` vs 43 tables in original ERD.
+   - Added 3 missing tables preserving original coordinate layout: `USER_AUTH_IDENTITIES` (x=2880, y=2540), `API_IDEMPOTENCY_KEYS` (x=3760, y=3960), and `DEAD_LETTER_JOBS` (x=2440, y=2820).
+   - Added 10 missing columns: `USERS` (`auth_provider`, `provider_subject`), `PAYMENT_TRANSACTION` (`rental_id`), `STORE_WITHDRAWALS` (7 AES-256 bank snapshot columns).
+   - Added 18 missing foreign key relationship edges (total: 69 edges, 0 missing).
+3. **UML State Diagrams (Pages 1–9) - Vertical Swimlanes & Monochrome B&W:**
+   - Strict monochrome styling (`fillColor=#FFFFFF`, `strokeColor=#000000`, `fontColor=#000000`, `strokeWidth=1.5`).
+   - 9 State Diagrams: `[STATE 1] Order Lifecycle`, `[STATE 2] IoT Device Lifecycle`, `[STATE 3] Store Withdrawal`, `[STATE 4] Button Rental`, `[STATE 5] eKYC Verification`, `[STATE 6] Driver Shift`, `[STATE 7] Bank Account`, `[STATE 8] Store Subscription`, `[STATE 9] Payment Transaction`.
+4. **UML Activity Diagrams (Pages 10–19) - 10 Core Workflows with Vertical Swimlanes:**
+   - `[ACT 1] Zero-Touch IoT Provisioning`: BLE beacon discovery, encrypted WiFi handshake, ED25519 cloud verification, customer product binding, deep-sleep standby.
+   - `[ACT 2] Click-to-Order Fulfillment`: Microcontroller physical click, idempotency/replay nonce audit, row-lock inventory, kitchen POS chime, driver transit, photo proof of delivery (POD), wallet settlement.
+   - `[ACT 3] PayOS VietQR Payment`: Dynamic VietQR link generation, Napas 24/7 banking app scan, timing-safe HMAC-SHA256 signature verification, transaction reconciliation.
+   - `[ACT 4] Store Wallet Payout`: Withdrawal request, row-lock frozen balance, admin review, automated PayOS payout API, webhook reconciliation, self-healing rollback on failure.
+   - `[ACT 5] Button Rental Lifecycle`: Rental tier package checkout, warehouse hardware dispatch, recurring cron billing, 7-day grace overdue lock, contract termination.
+   - `[ACT 6] Driver Shift & Dispatch`: Driver GPS check-in, automated dispatch matching, food pickup & routing, delivery completion, COD cash reconciliation.
+   - `[ACT 7] Phone OTP & Auth Flow`: E.164 phone validation, 6-digit SHA-256 OTP generation, Firebase SMS delivery, 3-attempt throttle defense, auto-registration & JWT issuance.
+   - `[ACT 8] Product & Discount Campaign`: Product SKU & image magic bytes validation, flash sale campaign setup, time-window overlap conflict check, live storefront discount badge.
+   - `[ACT 9] Refund & Dispute Resolution`: Buyer defect report, merchant review, admin dispute desk escalation, PayOS payout reversal, store wallet hold/deduction.
+   - `[ACT 10] Store eKYC & Bank Vault`: CCCD OCR scanning, 3D facial liveness biometric scoring (>= 85%), AES-256-GCM bank account encryption (`******1234`), admin compliance activation.
+5. **Draw.io Multi-Page UX & Navigation:**
+   - All 20 diagram tab titles are formatted with standardized compact brackets (`[ERD]`, `[STATE 1-9]`, `[ACT 1-10]`) preventing tab bar truncation.
+   - Full XML attribute safety verified (0 unescaped HTML errors).
+   - Verified via Draw.io MCP `list_pages` and `get_page` (all 20 pages indexed and valid).
+   10. **Resolved Test Email SMTP Bounce-Back to User Gmail Inbox:**
+       - Issue: During test suite runs, `tests/superpower-security-verification.spec.ts` dispatched real SMTP emails with subject "Test Retry" to `customer@realdomain.com` using configured `SMTP_USER` (`ptt24032004@gmail.com`). Because `realdomain.com` has no valid MX records, Google's `mailer-daemon@googlemail.com` bounced failure notices back to Tris's Gmail inbox.
+       - Fix:
+         - Updated [`src/mail/mail.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/mail/mail.service.ts): Expanded `isDummyDomain` regex to intercept `@example.com`, `@realdomain.com`, `@test.com`, enforcing simulated dispatch without making outbound SMTP connections.
+         - Updated [`tests/superpower-security-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/superpower-security-verification.spec.ts): Replaced `customer@realdomain.com` with `customer@smartorder.test`.
+
+
+---
+
+### K. Platform Button Rental & Store Operations Expansion (5 Pillars)
+1. **Plan & Specification Reference:**
+   - Architecture & Implementation Plan: [`docs/superpowers/plans/2026-10-30-platform-button-rental-expansion-plan.md`](file:///f:/Learning/SEM9-FPTu/backend/docs/superpowers/plans/2026-10-30-platform-button-rental-expansion-plan.md)
+   - Progress Tracking Ledger: [`.superpowers/sdd/2026-10-30-platform-button-rental-expansion-plan/progress.md`](file:///f:/Learning/SEM9-FPTu/backend/.superpowers/sdd/2026-10-30-platform-button-rental-expansion-plan/progress.md)
+2. **Schema & Additive Migration:**
+   - Migration: [`prisma/migrations/20261030000000_platform_button_rental_expansion/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261030000000_platform_button_rental_expansion/migration.sql)
+   - Model updates:
+     - `IoTButton`: Added `custodyStoreId` (physical location), `inventoryState` (`UNASSIGNED`, `ALLOCATED_TO_STORE`, `DEPLOYED_TO_CUSTOMER`, `RETURN_IN_TRANSIT`, `MAINTENANCE`), `canOrder` (boolean flag synchronized with rental status).
+     - `ButtonRental`: Added `fulfillmentStoreId`, `paidThrough`, `effectiveExpiresAt`, `returnedAt`.
+     - New models: `DeviceMovement`, `BillingCharge`, `BillingChargeLine`, `RentalDeposit`, `RentalReturn`, `DepositRefund`, `CustomerBankAccount`, `AccessAdjustment`, `OutboxEvent`.
+3. **Pillar 1: Store 60k Shelf Fee Management & Fail-Closed Listing Lock:**
+   - Fixed fail-open loophole in [`src/store-subscriptions/store-subscriptions.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-subscriptions/store-subscriptions.service.ts): `validateStoreCanListProducts` throws `ForbiddenException (403)` when shelf fee is expired or missing. Store cannot publish products.
+   - Preserved renewals and return requests during expired shelf fee state.
+   - Created full 6-layer `BillingCharges` module ([`src/billing-charges/`](file:///f:/Learning/SEM9-FPTu/backend/src/billing-charges)): enforces automated fee calculation, billing line items, idempotency, and settlement audit logs.
+   - Test Suite: [`tests/platform-button-rental-task1-billing-charge.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-task1-billing-charge.spec.ts) (**8/8 PASS**).
+4. **Pillar 2: Button Inventory Management & Store Allocation (Custody Separation):**
+   - Admin allocates buttons to stores (`allocateDevicesToStoreTx`) in [`src/devices/devices.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/devices.repository.ts), updating `custodyStoreId` and `inventoryState = 'ALLOCATED_TO_STORE'`, while keeping `storeId` for order routing.
+   - Recorded `DeviceMovement` audit rows for every custody transition.
+   - Added endpoint `GET /api/v1/devices/stores/:storeId/inventory` with BOLA protection (`storeId === req.user.storeId` or `req.user.role === 'SUPER_ADMIN'`).
+   - Test Suite: [`tests/platform-button-rental-task2-store-shelf-and-inventory.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-task2-store-shelf-and-inventory.spec.ts) (**4/4 PASS**).
+5. **Pillar 3: User Button Rental (30k/mo + 200k deposit), Countdown & Expiry Ordering Lock:**
+   - Enforced package pricing in `RentalsService`: 30,000 VND/month rental fee + 200,000 VND refundable deposit.
+   - Countdown timer DTO fields added in [`src/rentals/dto/rental-response.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/dto/rental-response.dto.ts): `remainingSeconds`, `effectiveExpiresAt`, `paidThrough`, `canOrder`, `serverNow`.
+   - Expiry Ordering Lock in [`src/orders/orders.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/orders/orders.service.ts): `simulateButtonPress` and `handleButtonEvent` throw `BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.')` when `effectiveExpiresAt <= now` or `canOrder === false`.
+   - Test Suite: [`tests/platform-button-rental-task3-lifecycle-and-expiry.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-task3-lifecycle-and-expiry.spec.ts) (**4/4 PASS**).
+6. **Pillar 4: Store Wallet Separation, Return Flow & Platform Deposit Refund:**
+   - Strict Financial Isolation Invariant: `StoreWallet` balance is strictly reserved for retail merchant sales. Rental fees (30,000 VND) and rental deposits (200,000 VND) belong strictly to Platform ledger (`billing_charges` and `rental_deposits`) and NEVER touch `StoreWallet.balance`.
+   - Return & Refund Workflow in [`src/rentals/rentals.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.repository.ts) and [`src/rentals/rentals.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.service.ts):
+     - `createReturnRequestTx`: Customer requests return -> button `inventoryState = 'RETURN_IN_TRANSIT'`, `canOrder = false`.
+     - `confirmReturnReceiptTx`: Store confirms receipt -> custody transferred to store (`custodyStoreId = storeId`, `inventoryState = 'ALLOCATED_TO_STORE'`).
+     - `approveDepositRefundTx`: Admin approves refund -> creates `DepositRefund` record, updates `RentalDeposit` (`heldAmount -= 200000`, `refundedAmount += 200000`).
+   - Deposit Conservation Invariant verified: `collectedAmount == heldAmount + refundReservedAmount + refundedAmount`.
+   - Test Suite: [`tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts) (**4/4 PASS**).
+7. **Pillar 5: Notification Center, Event Outbox & Admin Alerts:**
+   - Implemented `dispatchRentalEventNotification` in [`src/notifications/notifications.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/notifications/notifications.service.ts).
+   - Event Outbox pattern with deterministic idempotency keys (`rental-event:RENTAL_EXPIRED:...`) preventing duplicate notifications.
+   - Dispatches FCM push notifications and writes persistent in-app notification rows.
+   - Test Suite: [`tests/platform-button-rental-task5-notifications-and-outbox.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-task5-notifications-and-outbox.spec.ts) (**4/4 PASS**).
+8. **Cumulative Expansion Test Verification:**
+   - Tasks 1-5 suites executed: **24/24 PASS**, 0 failures.
+
+9. **Deep Architectural, Concurrency & Security Hardening (Review Points 1-6 Remediation):**
+   - **Point 1 (Fixed Per-Button Deposit Tracking):** In `confirmReturnReceiptTx`, eliminated dynamic button array division (`rental.buttons.length`). Deposit per button is calculated as `Math.floor(collectedAmount / package.buttonQuantity)`. Removed arbitrary `|| 200000` fallback; fails closed with `BadRequestException` if `collectedAmount <= 0`. Verified with sequential returns of 2 buttons: both receive exactly 200,000 VND without inflating.
+   - **Point 2 (Deposit Refund Race Defense & CAS):** Replaced unlocked `findUnique()` with pessimistic row locking (`SELECT ... FOR UPDATE`) across `approveDepositRefundTx` and `confirmDepositRefundPayoutTx`. Applied atomic Compare-And-Swap (CAS): `UPDATE rental_deposits SET held_amount = held_amount - $1, refund_reserved_amount = refund_reserved_amount + $1 WHERE deposit_id = $2 AND held_amount >= $1`. Added database check constraints `chk_rental_deposits_held_non_negative`, `chk_rental_deposits_reserved_non_negative`, and `chk_rental_deposits_conservation`. Added unique index `uq_deposit_refunds_return_id` preventing duplicate refunds per return.
+   - **Point 3 (Settlement Payment Verification):** Replaced non-empty string check with `VerifiedPaymentReceipt` interface (`provider`, `providerTransactionCode`, `amount`, `currency`, `paidAt`, `verified`). Rejects fake transaction strings (e.g. `"abc"`), currency/amount mismatches, and unverified receipts (`verified: false`). Added unique database constraint `uq_billing_charges_provider_tx` preventing any provider transaction code from settling more than one charge.
+   - **Point 4 (Rental Duration & Entitlement Locking):** Delayed 30-day countdown start for new rentals (`RENTAL_INITIAL` sets `effectiveExpiresAt = null`, `paidThrough = null`, `status = 'PENDING_HANDOVER'`). Countdown begins strictly upon physical customer handover (`handoverRentalButtonsTx`). Extension settlements parse duration from structured metadata and lock `button_rentals` row (`SELECT ... FOR UPDATE`), stacking months additively without overwriting.
+   - **Point 5 (Order Creation Concurrency & Handover Lock):** Implemented pessimistic row locking (`SELECT ... FOR UPDATE`) on `iot_button` and `button_rentals` in both fallback TypeScript transaction (`createOrderFallbackTx`) and PostgreSQL stored procedure (`sp_create_order_from_button`). Blocked ordering when button is in warehouse (`ALLOCATED_TO_STORE`, `IN_PLATFORM_WAREHOUSE`) or returning (`RETURN_IN_TRANSIT`). Allowed ordering strictly when rental is `ACTIVE`.
+   - **Point 6 (Outbox Worker, Retry, DLQ & Key Determinism):** Implemented `OutboxConsumerService` with `SELECT ... FOR UPDATE SKIP LOCKED` claim/lease pattern, verified customer bank accounts (`VERIFIED`), confirmation caller (`confirmDepositRefundPayout`), exponential backoff, and DLQ (`dead_letter_jobs`). Refactored notification idempotency keys to strictly follow `notif:${eventId}:${recipientId}:${channel}`, ensuring identical keys on retries and distinct keys for successive rental expiration periods.
+
+10. **Database Migration Applied:**
+    - Migration: [`prisma/migrations/20261030180000_rental_deep_hardening/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261030180000_rental_deep_hardening/migration.sql)
+    - Applied to PostgreSQL database: added `provider_transaction_code` unique index, `return_id` unique index, deposit conservation check constraints, and updated stored procedure `sp_create_order_from_button`.
+
+11. **Comprehensive Remediation for Review Findings R01–R08 (Platform Button Rental Expansion):**
+    - **R01 (Strict Receipt Sourcing & Staging/Production Mock Elimination):**
+      - Removed user-provided transaction references as proof of payment.
+      - Reconciled receipts in `reconcileAndSettleCharge` extract transaction ID, amount, and timestamp directly from provider API responses.
+      - Enforced positive finite amount validation.
+      - Hardened startup/execution: `PAYOS_MOCK_PAYMENT = true` is strictly blocked with `BadRequestException` when `NODE_ENV` is `staging`, `production`, or anything other than `['test', 'development', 'local']`.
+    - **R02 (P0 Blocker: Real Payout Evidence, Fail-Closed Reconcile & Worker Verification):**
+      - Removed `providerReferenceId` from `POST /admin/refunds/:refundId/confirm-payout` body.
+      - In `reconcileDepositRefundPayout` (`rentals.service.ts`): Strictly fail-closed if provider response lacks `transactions` array, lacks positive finite amount, or if amount/reference/recipient doesn't match the snapshotted verified account. Eliminated any fallback to `refund.amount`.
+      - In `outbox-consumer.service.ts`: Worker strictly enforces identical verification before calling `confirmDepositRefundPayoutTx`. If provider response only contains high-level approval state without detailed transactions, the refund stays safely in `PENDING_PAYOUT` with funds reserved.
+      - Removed all `'PROVIDER-REF-MOCK'` fallbacks.
+      - Decryption failures or missing BIN halt processing immediately and route to manual review. Strictly prohibits fallback to masked account numbers or dummy defaults (`'123456789'`, `'970422'`).
+      - Only dispatches `DEPOSIT_REFUND_COMPLETED` customer notification after actual transition to `REFUNDED`.
+    - **R03 / R04 (Handover Entitlement Enforcement, State Machine & Custody Safety):**
+      - In `handoverRentalButtonsTx`: Strictly rejects handover when `paid_months <= 0` (eliminated arbitrary 1-month fallback).
+      - Rejects handover if fulfillment store is missing or button custody store does not match fulfillment store.
+      - In `settleChargeAtomicTx`: When settling `RENTAL_EXTENSION` on a rental in `PENDING_HANDOVER`, status remains `PENDING_HANDOVER` (prevents premature `ACTIVE` transition or countdown start prior to handover).
+      - Enforced `ALLOWED_ADMIN_STATUS_TRANSITIONS` state machine in `updateRentalStatusAdmin`, blocking arbitrary jumps to `PENDING_HANDOVER` or `ACTIVE`.
+    - **R05 / R07 (Historical Data Migration Backfill & Precision Calculation):**
+      - Created and executed Migration 4 (`20261030200000_rental_historical_backfill_and_audit_immutability`) and Migration 5 (`20261030210000_rental_historical_backfill_precision`).
+      - Precision `deposit_per_button`: Divides total package deposit by snapshot `button_quantity` (`ROUND(rp.deposit_fee / button_quantity)`).
+      - Charge duration backfill: Parses duration from charge description regex (e.g. `'2 tháng'` or `'months: 2'`) or derives from line amount divided by package monthly rent. Completely avoids cross-contaminating charges with lifetime contract `months_rented`.
+      - Reconciliation flagging: Historical charges with ambiguous or missing evidence are flagged in `rental_audit_logs` with `action = 'RECONCILIATION_FLAGGED'` instead of blindly assigning default values.
+    - **R06 (Claim Token Fencing Verification & DLQ Integrity):**
+      - In `outbox-consumer.service.ts`: Checked `updateRes.count === 0` on CAS state transitions. If another worker stole the processing lease, the stale worker immediately aborts without generating spurious DLQ records.
+      - Added explicit handler for `DEPOSIT_REFUND_COMPLETED` event.
+    - **R08 (Append-Only Audit Engine, Test-DB Guard & Non-Polluting Verification):**
+      - Installed PostgreSQL trigger `trg_prevent_rental_audit_logs_mutation` preventing `UPDATE` and `DELETE` on `rental_audit_logs`.
+      - Replaced hardcoded `SYSTEM` actor with real administrator user ID and role in `confirmDepositRefundPayoutTx`.
+      - In `adjustRentalDurationAdminTx`: Modifies only `effectiveExpiresAt` and `endDate`; leaves `paidThrough` intact (separating financial entitlement from granted access).
+      - Created `tests/test-db-guard.ts` enforcing `assertTestDatabase()` and `validateTestDatabaseUrl()`, preventing test execution against remote non-test databases.
+      - Suite 50 test R08.2 executes trigger `UPDATE`/`DELETE` tests within isolated transactional blocks (`realPrisma.$transaction`) that verify trigger exception blocking and automatically roll back, leaving 0 permanent undeletable rows in the database.
+
+12. **Database Migrations Applied (PostgreSQL):**
+    - Migration 1: [`prisma/migrations/20261030180000_rental_deep_hardening/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261030180000_rental_deep_hardening/migration.sql)
+    - Migration 2: [`prisma/migrations/20261030190000_rental_backfill_and_lease_hardening/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261030190000_rental_backfill_and_lease_hardening/migration.sql)
+    - Migration 3: [`prisma/migrations/20261030200000_rental_historical_backfill_and_audit_immutability/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261030200000_rental_historical_backfill_and_audit_immutability/migration.sql)
+    - Migration 4: [`prisma/migrations/20261030210000_rental_historical_backfill_precision/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261030210000_rental_historical_backfill_precision/migration.sql)
+
+13. **Verification Status & Test Classification:**
+    - **Code Quality & Build Gates (Verified):**
+      - TypeScript compiler: **PASS, 0 errors** (`npx tsc --noEmit --incremental false`: Exit Code 0).
+      - NestJS Production Build: **PASS, Exit Code 0** (`npm run build`).
+      - Git formatting / whitespace: **PASS, 0 errors** (`git diff --check`).
+      - Master Runner: **58/58 suites registered** in [`tests/run_all_suites.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/run_all_suites.ts).
+    - **Unit & Isolation Verification (DB Independent / Mock Verified):**
+      - Phase 1 PayOS Payment Request & Webhook Settlement ([`tests/platform-button-rental-phase1-payos-integration.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-phase1-payos-integration.spec.ts)): **8/8 PASS** (Exit Code 0).
+      - Phase 2 Fulfillment Store & Device Assignment Engine ([`tests/platform-button-rental-phase2-store-device-assignment.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-phase2-store-device-assignment.spec.ts)): **9/9 PASS** (Exit Code 0).
+      - Phase 3 Store Shelf Maintenance Fee & Catalog Protection ([`tests/platform-button-rental-phase3-store-subscription.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-phase3-store-subscription.spec.ts)): **6/6 PASS** (Exit Code 0).
+      - Phase 4 Deterministic Rental Expiry Cron & Dual-Layer Order Lock ([`tests/platform-button-rental-phase4-expiry-and-order-lock.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-phase4-expiry-and-order-lock.spec.ts)): **6/6 PASS** (Exit Code 0).
+      - Phase 5 Return Flow & Fail-Closed Payout Reconciliation ([`tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts)): **30/30 PASS** (Exit Code 0; includes Test 5.18e SQL predicate invariant check for `next_attempt_at <= NOW()` and `FOR UPDATE SKIP LOCKED`).
+      - Phase 6 Outbox Event Producers & Notification Center Invariants ([`tests/platform-button-rental-phase6-outbox-and-notifications.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-phase6-outbox-and-notifications.spec.ts)): **8/8 PASS** (Exit Code 0).
+      - Phase 7 API Validation DTOs, Strict BOLA & Audit Immutability ([`tests/platform-button-rental-phase7-api-validation-and-audit.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-phase7-api-validation-and-audit.spec.ts)): **13/13 PASS** (Exit Code 0).
+      - Superpower Security Unit ([`tests/superpower-security-unit.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/superpower-security-unit.spec.ts)): **44/44 PASS** (Exit Code 0; includes zero-bypass test assertions proving production hostnames and non-_test suffixes are strictly blocked even when `NODE_ENV=test` and `ALLOW_TEST_DB_RUN=true`).
+    - **Integration Suites Requiring Dedicated Isolated Test DB (Suite 50 & 51):**
+      - **Registration:** Fully registered as Suites 50 & 51 in Master Runner.
+      - **Fail-Closed Guard Hardening (Verified):**
+        - Both suites strictly call `assertTestDatabase()`, which validates candidates against `validateTestDatabaseUrl()`.
+        - Environment variables `process.env.DATABASE_URL` and `process.env.TEST_DATABASE_URL` are strictly bound to the verified safe test URL, ensuring NestJS `AppModule` and `PrismaService` cannot connect to unverified databases.
+        - Direct database connections use `getSafeTestPrismaClient()`, eliminating unparameterized `new PrismaClient()` calls.
+        - Verified via live probe: attempts to run with production URLs (`prod-db.amazonbutton.vn`) fail closed with Exit Code 1 immediately, regardless of `NODE_ENV=test` or `ALLOW_TEST_DB_RUN=true`.
+      - **Execution Status:** Pending live execution against an isolated PostgreSQL test instance (`TEST_DATABASE_URL=postgresql://.../smart_order_test` on `localhost:5432`). Not executed against unverified or remote databases.
+    - **Working Tree State:** Contains multiple uncommitted modifications across rentals, billing-charges, migrations, and test guards. No git commit or push has been performed in this session.
+
+14. **Critical Invariants, Hardened Blockers & Verification (Phase 1–8 Completeness):**
+    - **Blocker 1 (PaymentsService BillingChargesService Injection):** In [`src/payments/payments.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.service.ts), dependency declared with `@Optional() @Inject(forwardRef(() => BillingChargesService))` and explicit `BillingChargesService` type instead of `any`. Resolves webhook PayOS settlement resolution without un-injected circular dependency failures.
+    - **Blocker 2 (findInitialChargeByRentalId Query Fix):** In [`src/rentals/rentals.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.repository.ts), modified charge lookup to use `targetType: 'RENTAL'`, `targetId: rentalId`, `purpose: 'RENTAL_INITIAL'` matching Prisma model `BillingCharge` definition.
+    - **Blocker 3 (Store Table Name Runtime Fix):** In [`src/rentals/rentals.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.repository.ts) line 1087 (`assignFulfillmentAndDevicesAdminTx`), corrected raw SQL `FROM stores` to `FROM store` (matching `model Store { @@map("store") }`).
+    - **Blocker 4 (Immutable Recipient Bank Snapshot Migration & Approval):**
+      - Updated Prisma schema: Added snapshot columns `recipient_bin`, `recipient_account_number_encrypted`, `recipient_account_number_hash`, `recipient_account_holder_name`, and `recipient_account_number_masked` to `DepositRefund`.
+      - Migration: [`prisma/migrations/20261030220000_deposit_refund_recipient_snapshot/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261030220000_deposit_refund_recipient_snapshot/migration.sql) (validated via `npx prisma validate`).
+      - In `approveDepositRefundTx` ([`src/rentals/rentals.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.repository.ts)), locked customer bank account via `SELECT * FROM customer_bank_accounts WHERE id = $1 AND customer_id = $2 FOR UPDATE` (preventing IDOR and cross-customer bank account linking; rolls back if not owned by customer) and snapshot recipient details immutably into `deposit_refunds`.
+    - **Blocker 5 (P0: Fail-Closed Payout Reconciliation Verifier & Worker Snapshot Immutability):**
+      - Created shared verifier `verifyDepositRefundPayoutEvidence` in [`src/rentals/deposit-payout-verifier.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/deposit-payout-verifier.ts):
+        - Strictly eliminated fallback to `refund.bankAccount` relation in verifier and Admin reconcile API. Verifier requires snapshot fields (`recipientBin` and `recipientAccountNumberHash`); if either is blank, verification fails closed (`isVerified: false`) and keeps `PENDING_PAYOUT` for manual reconciliation. Verified in Suite 56 Test 5.15.
+        - Enforces real PayOS payout ID: requires `payoutData.id`, matches with `refund.providerReferenceId`, and returns `payoutData.id` as `providerRef`. Rejects transactions defaulting to internal item transaction ID or refundCode. Verified in Suite 56 Test 5.12 (`providerRef === 'PAYOUT-BATCH-002'`).
+        - Searches for the exact transaction matching `providerReferenceId` or `refundCode`; never defaults to `transactions[0]`.
+        - Requires individual transaction success status (`SUCCEEDED`, `COMPLETED`, `PAID`); never falls back to summary approval state.
+        - Enforces exact unrounded VND amount comparison (`reportedAmount === expectedAmount`); rejects float deviations (e.g. 150000.4).
+        - Enforces mandatory recipient BIN matching and mandatory SHA-256 account hash matching against `recipientAccountNumberHash`. Rejects transactions lacking recipient evidence; never relies on 4-digit masked numbers alone.
+      - In `RentalsService` & `AdminRentalsController` ([`src/rentals/rentals.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.service.ts), [`src/rentals/admin-rentals.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/admin-rentals.controller.ts)):
+        - Hardened payout ID selection priority: When admin supplies `manualProviderReferenceId`, it takes precedence over any existing stored ID. If admin does not supply a code, falls back to stored `providerReferenceId`.
+        - The DB is never modified unless PayOS returns valid evidence matching all immutable snapshot fields (BIN, hash, amount, individual transaction status). If verification fails, throws `BadRequestException` and DB remains completely unchanged.
+        - When verified, `confirmDepositRefundPayoutTx` runs within an explicit database transaction with pessimistic row locking (`SELECT ... FOR UPDATE`) and CAS (`WHERE status = 'PENDING_PAYOUT'`), guaranteeing no double refunds. Audit log records `previousProviderReferenceId` and `isReferenceOverridden: true`.
+        - Admin endpoint uses dedicated `AdminConfirmPayoutDto` validating `@IsString`, `@IsNotEmpty`, and `@MaxLength(100)` with trim transform.
+      - In `PayOSPayoutService` ([`src/payments/payos-payout.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payos-payout.service.ts)):
+        - Added input validation and URL encoding via `encodeURIComponent(cleanPayoutId)` in `getPayout` to protect against path traversal and URL injection.
+      - In `OutboxConsumerService` ([`src/rentals/outbox-consumer.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/outbox-consumer.service.ts)):
+        - When PayOS response lacks `data.id`, worker throws Error. Outbox processor `processPendingEvents` retains event as `PENDING` with exponential backoff on retry (using `referenceId: refund.refundCode` as idempotency key), and automatically transitions event to `DeadLetterJob` (DLQ) with status `FAILED` after 3 attempts.
+        - Verified via end-to-end simulated clock test (Suite 56 Test 5.18a–d): Step 1 claims at T0 -> fails -> attempts = 1 and nextAttemptAt = T0 + 10s (verified nextAttemptAt > now); Step 1b polls early at T0 + 5s -> blocked by backoff condition with 0 claims; Step 2 claims at T0 + 11s -> fails -> attempts = 2 and nextAttemptAt = T0 + 31s; Step 3 claims at T0 + 32s -> fails 3rd time (attemptsMade = 3 >= 3) -> moves to DLQ with status = FAILED; Test 5.18e asserts captured SQL query builder output strictly contains "next_attempt_at <= NOW()" and "FOR UPDATE SKIP LOCKED" predicates.
+      - In `RentalsRepository` ([`src/rentals/rentals.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.repository.ts)):
+        - `approveDepositRefundTx` locks customer bank account via `SELECT * FROM customer_bank_accounts WHERE id = $1 AND customer_id = $2 FOR UPDATE`.
+        - Direct repository IDOR test in Suite 56 Test 5.14 captures query params and proves exception throwing with zero updates to `deposit_refunds` when account does not belong to customer.
+      - Verified in Suite 56 with 30 tests: **30/30 PASS** (Tests 5.1–5.20e).
+    - **Database Migration & Isolated DB Status Note:**
+      - Migration `20261030220000_deposit_refund_recipient_snapshot` is prepared in source and validated via `npx prisma validate`.
+      - Live PostgreSQL deployment (`prisma migrate deploy`) and real engine-level ACID transaction rollback verification are explicitly documented as **pending execution on a dedicated, isolated test DB instance** (e.g. `localhost:5432`). Running against remote, shared, or production databases is strictly prohibited and blocked by `test-db-guard.ts`.
+    - **Blocker 6 (P1: Outbox Event Producers & Store Routing Invariant):**
+      - In `createReturnRequestTx` ([`src/rentals/rentals.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rentals.repository.ts)), prioritized `rental.fulfillmentStoreId` over `button.custody_store_id`, eliminating arbitrary `button.store_id` fallback to prevent misrouting return notifications.
+      - Verified via direct repository producer test in Suite 57 Test 6.8: button with `store_id = 99` and rental with `fulfillmentStoreId = 88` produces `RENTAL_RETURN_REQUESTED` event with `payload.storeId === '88'`.
+      - In `OutboxConsumerService` ([`src/rentals/outbox-consumer.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/outbox-consumer.service.ts)), routed `RENTAL_RETURN_REQUESTED` notification to destination fulfillment store owner (`store.ownerUserId`), and added handler for `STORE_SUBSCRIPTION_EXPIRED` to notify store owner. Verified in Suite 57 Tests 6.6 & 6.7.
+    - **Blocker 7 (10-Minute Rental & Store Subscription Expiry Cron):**
+      - In [`src/rentals/rental-expiry-cron.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/rental-expiry-cron.service.ts), updated schedule from `@Cron('0 * * * *')` to `@Cron('*/10 * * * *')`.
+      - Implemented `processExpiredStoreSubscriptions(batchSize)` with pessimistic row locking `SELECT ... FOR UPDATE SKIP LOCKED` and outbox event `STORE_SUBSCRIPTION_EXPIRED`. Verified in Suite 55 Test 4.6.
+    - **Database Migration Status Note:**
+      - Migration `20261030220000_deposit_refund_recipient_snapshot` is prepared in source and validated via `npx prisma validate`. Live deployment (`prisma migrate deploy`) and real PostgreSQL query verification remain pending until an isolated, dedicated PostgreSQL test DB instance (`localhost:5432`) is spun up. Remote / non-test DB execution is strictly guarded and blocked by `test-db-guard.ts`.

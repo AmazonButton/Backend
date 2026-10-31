@@ -12,7 +12,8 @@ import {
 import { PaymentsRepository } from './payments.repository';
 import { CreatePaymentLinkDto, PayosWebhookDto } from './dto/payment.dto';
 import { signPaymentRequest, verifyWebhookSignature } from './payos.helper';
-import { Optional, Inject } from '@nestjs/common';
+import { Optional, Inject, forwardRef } from '@nestjs/common';
+import { BillingChargesService } from '../billing-charges/billing-charges.service';
 
 import { NotificationsService } from '../notifications/notifications.service';
 import { ChangePaymentMethodDto } from './dto/change-payment-method.dto';
@@ -25,6 +26,7 @@ export class PaymentsService {
     private readonly paymentsRepo: PaymentsRepository,
     @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
+    @Optional() @Inject(forwardRef(() => BillingChargesService)) private readonly billingChargesService?: BillingChargesService,
   ) {}
 
   async createPayosPaymentLink(dto: CreatePaymentLinkDto, userOrUserId?: any) {
@@ -374,6 +376,55 @@ export class PaymentsService {
     const transaction = await this.paymentsRepo.findTransactionByCode(orderCodeStr);
 
     if (!transaction) {
+      if (this.billingChargesService) {
+        const charge = await this.billingChargesService.findChargeByOrderCode(orderCodeStr, data?.paymentLinkId);
+        if (charge) {
+          if (code === '00' && data?.code === '00') {
+            if (!data?.amount || isNaN(Number(data.amount))) {
+              this.logger.warn('[PayOS Webhook] Missing or invalid mandatory field amount for charge');
+              return { success: false, message: 'Missing amount' };
+            }
+            if (data.currency?.toUpperCase() !== 'VND') {
+              this.logger.warn(`[PayOS Webhook] Invalid currency: ${data.currency} for charge: ${orderCodeStr}`);
+              return { success: false, message: 'Invalid currency' };
+            }
+            if (Number(data.amount) !== Number(charge.totalAmount)) {
+              this.logger.warn(`[PayOS Webhook] Amount mismatch: webhook=${data.amount}, charge=${charge.totalAmount} for orderCode: ${orderCodeStr}`);
+              return { success: false, message: 'Amount mismatch' };
+            }
+            if (charge.status === 'PAID') {
+              return { success: true, message: 'Already processed' };
+            }
+            const recordedLinkId = charge.paymentLinkId;
+            if (recordedLinkId && data.paymentLinkId && recordedLinkId !== data.paymentLinkId) {
+              this.logger.warn(`[PayOS Webhook] Payment link ID mismatch for charge ${orderCodeStr}: recorded="${recordedLinkId}", received="${data.paymentLinkId}"`);
+              return { success: false, message: 'Payment link ID mismatch' };
+            }
+
+            await this.billingChargesService.settleCharge(
+              charge.chargeId,
+              {
+                provider: 'PAYOS',
+                providerTransactionCode: (data.reference || orderCodeStr).toString(),
+                amount: Number(data.amount),
+                currency: data.currency,
+                paidAt: new Date(data.transactionDateTime || Date.now()),
+                verified: true,
+              },
+              {
+                userId: 'PAYOS_WEBHOOK',
+                role: 'SYSTEM',
+              },
+            );
+
+            return {
+              success: true,
+              message: 'Billing charge settled successfully',
+            };
+          }
+        }
+      }
+
       this.logger.warn(`[PayOS Webhook] Transaction not found for orderCode: ${orderCodeStr}`);
       return { success: false, message: 'Transaction not found' };
     }

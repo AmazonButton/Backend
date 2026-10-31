@@ -84,7 +84,6 @@ export function validateTestDatabaseUrl(
   }
 
   // 5. Database name check: Must strictly end with '_test'
-  // URL pathname is typically '/db_name'
   const rawPath = parsedTest.pathname.replace(/^\/+/, '');
   const dbName = rawPath.split('/')[0]?.toLowerCase();
   if (!dbName || !dbName.endsWith('_test')) {
@@ -151,21 +150,29 @@ export function validateTestDatabaseUrl(
 }
 
 /**
- * Enforces test database invariants and exits process with code 1 if violated.
+ * Enforces test database invariants and binds environment variables:
+ * - Validates candidate URL strictly (allowed host, _test suffix, non-production).
+ * - NODE_ENV=test or ALLOW_TEST_DB_RUN=true does NEVER bypass URL validation.
+ * - Forces process.env.DATABASE_URL and process.env.TEST_DATABASE_URL to safeUrl so Nest AppModule / PrismaService use it.
+ * - Throws an Error if validation fails.
  */
-export function assertSafeTestDatabaseUrl(suiteName: string): string {
-  const testUrl = process.env.TEST_DATABASE_URL;
-  const primaryUrl = process.env.DATABASE_URL;
+export function assertSafeTestDatabaseUrl(suiteName: string = 'Test Suite'): string {
+  const testUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+  const primaryUrl = process.env.PRIMARY_DATABASE_URL || (process.env.TEST_DATABASE_URL && process.env.TEST_DATABASE_URL !== process.env.DATABASE_URL ? process.env.DATABASE_URL : undefined);
 
   const validation = validateTestDatabaseUrl(testUrl, primaryUrl);
   if (!validation.isValid) {
-    console.error(`\n❌ [SECURITY GUARD] ${suiteName} REFUSED TO EXECUTE!`);
-    console.error(`   Reason: ${validation.error}`);
+    const errorMsg = `[SECURITY GUARD] ${suiteName} REFUSED TO EXECUTE! Reason: ${validation.error}`;
+    console.error(`\n❌ ${errorMsg}`);
     console.error(
       `   To run tests safely, provide TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/<db_name>_test\n`,
     );
-    process.exit(1);
+    throw new Error(`TEST-DB GUARD: ${errorMsg}`);
   }
+
+  // Strict binding: Overwrite environment variables to guarantee zero unparameterized leakage
+  process.env.DATABASE_URL = validation.normalizedTestUrl!;
+  process.env.TEST_DATABASE_URL = validation.normalizedTestUrl!;
 
   return validation.normalizedTestUrl!;
 }
@@ -196,4 +203,13 @@ export function getSafeTestPrismaService(suiteName: string): PrismaService {
       },
     },
   });
+}
+
+/**
+ * General Test Database Safety Guard
+ * Prevents running integration tests or data-modifying suites against staging or production databases.
+ * Guarantees zero bypass: NODE_ENV=test or ALLOW_TEST_DB_RUN=true is NEVER a bypass for an unverified/remote URL.
+ */
+export function assertTestDatabase(suiteName: string = 'Test Suite'): string {
+  return assertSafeTestDatabaseUrl(suiteName);
 }

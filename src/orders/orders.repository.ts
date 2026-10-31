@@ -24,6 +24,7 @@ export class OrdersRepository {
         store: true,
         customer: { include: { user: true } },
         buttonProducts: { include: { product: true } },
+        rental: true,
       },
     });
   }
@@ -35,6 +36,7 @@ export class OrdersRepository {
         customer: true,
         store: true,
         buttonProducts: { include: { product: true } },
+        rental: true,
       },
     });
   }
@@ -70,6 +72,51 @@ export class OrdersRepository {
         });
         if (existingOrder) {
           return existingOrder.orderId;
+        }
+      }
+
+      // 0.1 In-Transaction Rental & Ordering Eligibility Check with Pessimistic Row Lock
+      const lockedButtons = await tx.$queryRawUnsafe<any[]>(
+        'SELECT * FROM iot_button WHERE button_id = $1 FOR UPDATE',
+        button.buttonId,
+      );
+      if (!lockedButtons || lockedButtons.length === 0) {
+        throw new BadRequestException('Nút bấm không tồn tại');
+      }
+      const lockedButton = lockedButtons[0];
+
+      if (lockedButton.status !== 'ACTIVE') {
+        throw new BadRequestException('Nút bấm không ở trạng thái ACTIVE');
+      }
+      if (lockedButton.can_order === false) {
+        throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+      }
+      if (lockedButton.inventory_state === 'RETURN_IN_TRANSIT') {
+        throw new BadRequestException('Nút bấm đang trong quá trình yêu cầu trả hàng, không thể đặt hàng');
+      }
+      if (['IN_PLATFORM_WAREHOUSE', 'ALLOCATED_TO_STORE'].includes(lockedButton.inventory_state)) {
+        throw new BadRequestException('Nút bấm chưa được bàn giao cho khách hàng');
+      }
+
+      if (lockedButton.rental_id) {
+        const lockedRentals = await tx.$queryRawUnsafe<any[]>(
+          'SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE',
+          lockedButton.rental_id,
+        );
+        if (!lockedRentals || lockedRentals.length === 0) {
+          throw new BadRequestException('Không tìm thấy thông tin hợp đồng thuê hợp lệ cho nút bấm');
+        }
+        const lockedRental = lockedRentals[0];
+
+        // STRICT INVARIANT: Chỉ cho phép đặt hàng khi hợp đồng ở trạng thái ACTIVE (đã bàn giao thực tế)!
+        // Tuyệt đối không cho phép 'PAID' hoặc 'PENDING_HANDOVER' đặt hàng trước khi bàn giao!
+        if (lockedRental.status !== 'ACTIVE') {
+          throw new BadRequestException('Hợp đồng thuê nút bấm không ở trạng thái hoạt động để đặt hàng');
+        }
+
+        // R07: Thống nhất đặc tả eligibility với Stored Procedure: effective_expires_at IS NULL OR effective_expires_at <= NOW()
+        if (!lockedRental.effective_expires_at || new Date(lockedRental.effective_expires_at) <= new Date()) {
+          throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
         }
       }
 

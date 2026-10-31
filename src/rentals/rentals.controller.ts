@@ -11,6 +11,7 @@ import {
 import { RentalsService } from './rentals.service';
 import { CreateRentalOrderDto } from './dto/rentals.dto';
 import { RentalExtensionDto } from './dto/rental-extension.dto';
+import { CreateReturnRequestDto, ConfirmReturnReceiptDto } from './dto/return-request.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -93,11 +94,60 @@ export class RentalsController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':id/return-requests')
-  async requestReturn(@Param('id') id: string, @Request() req: any) {
-    const data = await this.rentalsService.requestRentalReturn(id, req.user);
+  async requestReturn(
+    @Param('id') id: string,
+    @Body() body: CreateReturnRequestDto,
+    @Request() req: any,
+  ) {
+    let buttonId = body?.buttonId;
+    if (!buttonId) {
+      // Nếu không chỉ định buttonId, tìm buttonId đầu tiên của rental
+      const rental = await this.rentalsService.getRentalDetail(id, req.user);
+      if (rental.buttons && rental.buttons.length > 0) {
+        buttonId = rental.buttons[0].buttonId.toString();
+      } else {
+        throw new ForbiddenException('Hợp đồng thuê không có nút bấm nào để hoàn trả');
+      }
+    }
+    const data = await this.rentalsService.createReturnRequest(id, buttonId, req.user);
     return {
       success: true,
-      message: 'Gửi yêu cầu trả nút IoT thành công',
+      message: 'Gửi yêu cầu trả nút IoT thành công (đang chuyển về kho)',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Post('returns/:returnId/confirm-receipt')
+  async confirmReturnReceipt(
+    @Param('returnId') returnId: string,
+    @Body() body: ConfirmReturnReceiptDto,
+    @Request() req: any,
+  ) {
+    const data = await this.rentalsService.confirmReturnReceipt(
+      returnId,
+      req.user,
+      body.inspectionNote,
+    );
+    return {
+      success: true,
+      message: 'Xác nhận tiếp nhận và kiểm tra nút trả kho thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Post('refunds/:refundId/approve')
+  async approveDepositRefund(
+    @Param('refundId') refundId: string,
+    @Request() req: any,
+  ) {
+    const data = await this.rentalsService.approveDepositRefund(refundId, req.user);
+    return {
+      success: true,
+      message: 'Duyệt yêu cầu hoàn cọc thành công (chuyển sang chờ chi trả Payout)',
       data,
     };
   }

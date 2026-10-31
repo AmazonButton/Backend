@@ -102,7 +102,7 @@ export class MailService implements OnModuleDestroy {
     const maskedText = options.text.replace(/\b\d{6}\b/g, '******');
 
     const isDummyDomain = /@.*\.(local|test|example|invalid)$/i.test(options.to) ||
-                          /@(smartorder\.local|smartorder\.test|localhost)$/i.test(options.to);
+                          /@(smartorder\.local|smartorder\.test|localhost|example\.com|realdomain\.com|test\.com)$/i.test(options.to);
     const isTestEnv = process.env.NODE_ENV === 'test' || process.env.DISABLE_REAL_EMAIL === 'true';
 
     // In production without configured SMTP: fail fast

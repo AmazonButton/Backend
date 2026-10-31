@@ -94,6 +94,35 @@ export class OrdersService {
       throw new BadRequestException('Nút bấm hiện đang bị tạm dừng hoặc khóa (INACTIVE/LOCKED)');
     }
 
+    if ((button as any).inventoryState === 'RETURN_IN_TRANSIT') {
+      throw new BadRequestException('Nút bấm đang trong quá trình yêu cầu trả hàng, không thể đặt hàng');
+    }
+    if (['IN_PLATFORM_WAREHOUSE', 'ALLOCATED_TO_STORE'].includes((button as any).inventoryState)) {
+      throw new BadRequestException('Nút bấm chưa được bàn giao cho khách hàng');
+    }
+
+    // Rental Lifecycle & Expiry Invariant Check (Fail-Closed)
+    if (button.rentalId || (button as any).rental) {
+      const rental = (button as any).rental;
+      if (!rental) {
+        throw new BadRequestException('Không tìm thấy thông tin hợp đồng thuê hợp lệ cho nút bấm');
+      }
+      const expiry = rental.effectiveExpiresAt || rental.paidThrough || rental.endDate;
+      if (expiry && new Date(expiry) <= new Date()) {
+        throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+      }
+      if (rental.status === 'EXPIRED') {
+        throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+      }
+      const allowedRentalStatuses = ['ACTIVE'];
+      if (!allowedRentalStatuses.includes(rental.status)) {
+        throw new BadRequestException('Hợp đồng thuê nút bấm không ở trạng thái hoạt động để đặt hàng');
+      }
+    }
+    if ((button as any).canOrder === false) {
+      throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+    }
+
     if (!button.buttonProducts || button.buttonProducts.length === 0) {
       throw new BadRequestException('Nút bấm chưa được cấu hình sản phẩm đặt hàng');
     }
@@ -255,6 +284,28 @@ export class OrdersService {
 
     if (!button) {
       throw new NotFoundException('Không tìm thấy nút bấm được chỉ định');
+    }
+
+    // Rental Lifecycle & Expiry Invariant Check (Fail-Closed)
+    if (button.rentalId || (button as any).rental) {
+      const rental = (button as any).rental;
+      if (!rental) {
+        throw new BadRequestException('Không tìm thấy thông tin hợp đồng thuê hợp lệ cho nút bấm');
+      }
+      const expiry = rental.effectiveExpiresAt || rental.paidThrough || rental.endDate;
+      if (expiry && new Date(expiry) <= new Date()) {
+        throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+      }
+      if (rental.status === 'EXPIRED') {
+        throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+      }
+      const allowedRentalStatuses = ['ACTIVE', 'PAID'];
+      if (!allowedRentalStatuses.includes(rental.status)) {
+        throw new BadRequestException('Hợp đồng thuê nút bấm không ở trạng thái hoạt động để đặt hàng');
+      }
+    }
+    if ((button as any).canOrder === false) {
+      throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
     }
 
     // BOLA Check

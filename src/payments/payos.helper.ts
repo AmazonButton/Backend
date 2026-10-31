@@ -61,6 +61,15 @@ export function verifyWebhookSignature(data: any, signature: string, checksumKey
   }
 }
 
+export function signWebhookData(data: Record<string, any>, checksumKey: string): string {
+  const sortedData = sortObjDataByKey(data);
+  const queryString = convertObjToQueryStr(sortedData);
+  return crypto
+    .createHmac('sha256', checksumKey)
+    .update(queryString)
+    .digest('hex');
+}
+
 /**
  * Deep sort object with optional array sorting (Official PayOS Payout specification)
  * @param obj Object data

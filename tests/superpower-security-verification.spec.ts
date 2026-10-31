@@ -931,7 +931,7 @@ async function runSuperpowersVerificationSuite() {
     try {
       await mailService.sendMail(
         {
-          to: 'customer@realdomain.com',
+          to: 'customer@smartorder.test',
           subject: 'Test Retry',
           text: 'Body content',
           html: '<p>Body</p>',

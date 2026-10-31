@@ -8,6 +8,7 @@ import { PaymentsRepository } from './payments.repository';
 import { PayOSPayoutService } from './payos-payout.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { StoreWalletModule } from '../store-wallet/store-wallet.module';
+import { BillingChargesModule } from '../billing-charges/billing-charges.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { StoreWalletModule } from '../store-wallet/store-wallet.module';
     WebSocketModule,
     NotificationsModule,
     forwardRef(() => StoreWalletModule),
+    forwardRef(() => BillingChargesModule),
   ],
   controllers: [PaymentsController, PayoutWebhookController],
   providers: [PaymentsService, PaymentsRepository, PayOSPayoutService],
