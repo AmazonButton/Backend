@@ -216,9 +216,10 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
           throw new Error(`Số tài khoản ngân hàng yêu cầu #${refundId} sau khi giải mã không hợp lệ`);
         }
 
-        // Kiểm tra đối sánh SHA-256 hash của số tài khoản giải mã với snapshot recipientAccountNumberHash
-        const verifyDecryptedHash = crypto.createHash('sha256').update(toAccountNumber.trim()).digest('hex');
-        if (verifyDecryptedHash !== accountHash) {
+        // Kiểm tra đối sánh SHA-256 hash của số tài khoản giải mã với snapshot recipientAccountNumberHash (hỗ trợ cả chuẩn SHA256 và HMAC legacy)
+        const verifyDecryptedHash = CryptoVaultUtil.computeDeterministicAccountHash(toAccountNumber);
+        const verifyLegacyHmacHash = CryptoVaultUtil.hashAccountNumber(toAccountNumber);
+        if (verifyDecryptedHash !== accountHash && verifyLegacyHmacHash !== accountHash) {
           this.logger.error(`[OutboxConsumer] Hash của số tài khoản giải mã không khớp với snapshot recipientAccountNumberHash trên refund #${refundId}!`);
           throw new Error(`Snapshot tài khoản ngân hàng của yêu cầu #${refundId} bị sai lệch hash. Giữ PENDING_PAYOUT.`);
         }

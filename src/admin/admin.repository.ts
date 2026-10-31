@@ -354,13 +354,64 @@ export class AdminRepository {
   }
 
   async markWithdrawalPendingReconciliation(withdrawalId: bigint, reason: string): Promise<any> {
-    return this.prisma.storeWithdrawal.update({
-      where: { withdrawalId },
-      data: {
-        status: 'PENDING_RECONCILIATION',
-        failureReason: reason,
-        updatedAt: new Date(),
-      },
+    await this.prisma.$executeRaw`
+      UPDATE store_withdrawals
+      SET status = 'PENDING_RECONCILIATION', failure_reason = ${reason}, updated_at = NOW()
+      WHERE withdrawal_id = ${withdrawalId} AND status = 'PROCESSING'
+    `;
+    return this.prisma.storeWithdrawal.findUnique({ where: { withdrawalId } });
+  }
+
+  async finalizeSucceededWithdrawalTransaction(withdrawalId: bigint, providerPayoutId?: string): Promise<any> {
+    return this.prisma.$transaction(async (tx) => {
+      const [lockedWithdrawal] = await tx.$queryRaw<Array<{
+        withdrawal_id: bigint;
+        status: string;
+        amount: any;
+        wallet_id: bigint;
+        withdrawal_code: string;
+      }>>`
+        SELECT withdrawal_id, status, amount, wallet_id, withdrawal_code
+        FROM store_withdrawals
+        WHERE withdrawal_id = ${withdrawalId}
+        FOR UPDATE
+      `;
+
+      if (!lockedWithdrawal) return null;
+      if (!['PROCESSING', 'PENDING_RECONCILIATION'].includes(lockedWithdrawal.status)) {
+        return tx.storeWithdrawal.findUnique({ where: { withdrawalId } });
+      }
+
+      const [wallet] = await tx.$queryRaw<Array<{
+        wallet_id: bigint;
+        balance: any;
+        frozen_balance: any;
+      }>>`
+        SELECT wallet_id, balance, frozen_balance
+        FROM store_wallets
+        WHERE wallet_id = ${lockedWithdrawal.wallet_id}
+        FOR UPDATE
+      `;
+
+      if (wallet) {
+        const amount = Number(lockedWithdrawal.amount);
+        const currentFrozen = Number(wallet.frozen_balance || 0);
+        const newFrozen = Math.max(0, currentFrozen - amount);
+        await tx.storeWallet.update({
+          where: { walletId: wallet.wallet_id },
+          data: { frozenBalance: newFrozen },
+        });
+      }
+
+      return tx.storeWithdrawal.update({
+        where: { withdrawalId },
+        data: {
+          status: 'SUCCEEDED',
+          ...(providerPayoutId ? { providerPayoutId } : {}),
+          processedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
     });
   }
 
@@ -391,8 +442,8 @@ export class AdminRepository {
 
       if (!lockedWithdrawal) return null;
 
-      // 2. Strict status check: only refund if status is PENDING or PROCESSING (prevent redundant refund on FAILED/SUCCEEDED/REJECTED)
-      if (!['PENDING', 'PROCESSING'].includes(lockedWithdrawal.status)) {
+      // 2. Strict status check: allow refund if status is PENDING, PROCESSING, or PENDING_RECONCILIATION
+      if (!['PENDING', 'PROCESSING', 'PENDING_RECONCILIATION'].includes(lockedWithdrawal.status)) {
         return tx.storeWithdrawal.findUnique({ where: { withdrawalId } });
       }
 

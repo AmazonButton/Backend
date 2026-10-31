@@ -320,9 +320,16 @@ export class CustomersRepository {
     accountNumberMasked: string;
     accountName: string;
     isDefault?: boolean;
+    verificationStatus?: string;
   }) {
     return this.prisma.$transaction(async (tx) => {
       if (data.isDefault) {
+        // Lock existing customer bank accounts exclusively to avoid concurrent race where two accounts stay default
+        await tx.$queryRaw`
+          SELECT id FROM customer_bank_accounts
+          WHERE customer_id = ${data.customerId}
+          FOR UPDATE
+        `;
         await tx.customerBankAccount.updateMany({
           where: { customerId: data.customerId },
           data: { isDefault: false },
@@ -339,7 +346,7 @@ export class CustomersRepository {
           accountNumberMasked: data.accountNumberMasked,
           accountName: data.accountName,
           isDefault: data.isDefault ?? true,
-          verificationStatus: 'VERIFIED',
+          verificationStatus: data.verificationStatus || 'PENDING',
         },
       });
     });

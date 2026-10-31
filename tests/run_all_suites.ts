@@ -298,6 +298,41 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['ts-node', path.join(__dirname, 'platform-button-rental-phase7-api-validation-and-audit.spec.ts')],
   },
+  {
+    name: '59. Security Hardening: Authority Resolution & Non-Escalation Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'auth_authority_hardening.spec.ts')],
+  },
+  {
+    name: '60. Security Hardening: Admin Payout & Reconciliation Invariants Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'admin_payout_invariants.spec.ts')],
+  },
+  {
+    name: '61. Security Hardening: BOLA Tenant & Data Isolation Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'data_isolation_bola.spec.ts')],
+  },
+  {
+    name: '62. Security Hardening: Order Delivery Transition Invariants Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'order_delivery_transition.spec.ts')],
+  },
+  {
+    name: '63. Security Hardening: Rental FSM & Bank Onboarding Invariants Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'rental_fsm_and_bank_onboarding.spec.ts')],
+  },
+  {
+    name: '64. Security Hardening: CORS Protection & Notification SQL Invariants Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'cors_and_notification.spec.ts')],
+  },
+  {
+    name: '65. Security Hardening: Admin Store Rename & DTO Validation Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'admin_store_rename.spec.ts')],
+  },
 ];
 
 async function main() {

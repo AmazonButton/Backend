@@ -28,17 +28,37 @@ async function run() {
     userId: BigInt(10),
   };
 
-  // Test: Generic updateOrderStatus must NOT allow jumping to DELIVERED without completeDelivery POD workflow
-  try {
-    await ordersService.updateOrderStatus(BigInt(1), 'DELIVERED', storeManagerUser);
-    assert.fail('SECURITY INVARIANT FLAW: Generic PATCH status allowed jumping to DELIVERED without POD workflow!');
-  } catch (err: any) {
-    assert.strictEqual(
-      err.message.includes('complete-delivery') || err.message.includes('DELIVERED'),
-      true,
-      `Expected error about POD / complete-delivery requirement but got: ${err.message}`,
-    );
-  }
+  // Test 1: Generic updateOrderStatus must NOT allow jumping to DELIVERED without completeDelivery POD workflow
+  await assert.rejects(
+    async () => {
+      await ordersService.updateOrderStatus(BigInt(1), 'DELIVERED', storeManagerUser);
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('complete-delivery') || err.message.includes('DELIVERED'),
+        true,
+        `Expected error about POD / complete-delivery requirement but got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected updateOrderStatus to reject transition to DELIVERED',
+  );
+
+  // Test 2: Generic updateOrderStatus must NOT allow jumping to DELIVERY_FAILED without failDelivery workflow
+  await assert.rejects(
+    async () => {
+      await ordersService.updateOrderStatus(BigInt(1), 'DELIVERY_FAILED', storeManagerUser);
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('chuyên dụng') || err.message.includes('DELIVERY_FAILED'),
+        true,
+        `Expected error about specialized workflow but got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected updateOrderStatus to reject transition to DELIVERY_FAILED',
+  );
 
   console.log('✅ Task 5 Order Delivery Transition Invariant tests PASSED!');
 }

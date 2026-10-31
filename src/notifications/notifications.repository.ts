@@ -103,14 +103,14 @@ export class NotificationsRepository {
       INSERT INTO notifications (user_id, type, title, body, data, idempotency_key, created_at)
       VALUES (${data.userId}, ${data.type}, ${data.title}, ${data.body}, ${jsonData}::jsonb, ${data.idempotencyKey}, NOW())
       ON CONFLICT (idempotency_key) DO NOTHING
-      RETURNING 
+      RETURNING
         notification_id AS "notificationId",
         user_id AS "userId",
         type,
         title,
         body,
         data,
-        is_read AS "isRead",
+        (read_at IS NOT NULL) AS "isRead",
         read_at AS "readAt",
         idempotency_key AS "idempotencyKey",
         created_at AS "createdAt";

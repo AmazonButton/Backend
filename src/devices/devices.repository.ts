@@ -105,6 +105,29 @@ export class DevicesRepository {
 
   async setButtonProducts(buttonId: bigint, products: { productId: bigint; quantity: number }[]) {
     return this.prisma.$transaction(async (tx) => {
+      const button = await tx.ioTButton.findUnique({
+        where: { buttonId },
+        select: { storeId: true },
+      });
+      if (!button) {
+        throw new NotFoundException('Không tìm thấy thiết bị IoT Button');
+      }
+
+      if (products.length > 0) {
+        const productIds = products.map((p) => p.productId);
+        const validProducts = await tx.product.findMany({
+          where: {
+            productId: { in: productIds },
+            storeId: button.storeId,
+          },
+          select: { productId: true },
+        });
+
+        if (validProducts.length !== productIds.length) {
+          throw new BadRequestException('Một hoặc nhiều sản phẩm không thuộc cửa hàng sở hữu nút bấm này.');
+        }
+      }
+
       await tx.buttonProduct.deleteMany({ where: { buttonId } });
       if (products.length > 0) {
         await tx.buttonProduct.createMany({
@@ -121,7 +144,7 @@ export class DevicesRepository {
           store: true,
           customer: { include: { user: true } },
           buttonProducts: { include: { product: true } },
-        deployedTemplate: true,
+          deployedTemplate: true,
         },
       });
     });

@@ -1554,8 +1554,19 @@ When starting a new conversation, prompt the agent with:
       - **Task 7: Admin Store Rename & Update API (`52ca648`):**
         - Implemented `PATCH /api/v1/admin/stores/:id` in `src/admin/admin.controller.ts`, guarded by `@Roles('SUPER_ADMIN')`, allowing platform administrators to update/rename any store with DTO validation (`UpdateAdminStoreDto`).
         - Unit test: `tests/admin_store_rename.spec.ts` (PASS).
+      - **Post-Audit Invariant Hardening & Integration Finalization:**
+        - Bank Account Hash Synchronization: Added `CryptoVaultUtil.computeDeterministicAccountHash` (standard SHA-256) across `CustomersService` and backward-compatible dual verification in `DepositPayoutVerifier` and `OutboxConsumerService`.
+        - Customer Bank Account Safety: Initial status set to `PENDING`, BIN validated against `/^\d{6}$/`, account number against `/^\d{6,20}$/`, and row lock `SELECT id FROM customer_bank_accounts ... FOR UPDATE` before clearing default flags.
+        - Admin Payout Engine Hardening: Added CAS (`WHERE status = 'PROCESSING'`) to `markWithdrawalPendingReconciliation`, created `finalizeSucceededWithdrawalTransaction` to deduct `frozen_balance` upon payout confirmation, and enabled refund from `PENDING_RECONCILIATION`.
+        - Centralized Authority Resolution: Routed `login`, `refreshToken`, and `loginWithPhone` through `this.resolveUserRole(user)`, preventing inadvertent elevation of `SYSTEM_ADMIN` to `SUPER_ADMIN` and strictly validating active staff status.
+        - OTP Verification Concurrency: Enforced row locking via `SELECT status FROM users WHERE user_id = $1 FOR UPDATE` in `verifyEmailAtomicTx`.
+        - Device Store Product Boundary: Centralized product ownership verification inside `DevicesRepository.setButtonProducts`.
+        - Order Delivery Transitions: Blocked generic PATCH status from jumping to `SHIPPING`, `DELIVERED`, or `DELIVERY_FAILED`, enforcing specialized driver workflows.
+        - Notification Schema Alignment: Corrected SQL query to use `(read_at IS NOT NULL) AS "isRead"`.
+        - Admin DTO Hardening: Added trimmed nonempty name, phone regex, and `ACTIVE|INACTIVE|SUSPENDED` status whitelist to `UpdateAdminStoreDto`.
+        - Test Suite Registration: Registered suites 59–65 in `tests/run_all_suites.ts` and eliminated test catch-block assertion traps.
     - **Verification Results:**
-      - All 7 new unit test suites: **PASS** (`tests/cors_and_notification.spec.ts`, `tests/auth_authority_hardening.spec.ts`, `tests/admin_payout_invariants.spec.ts`, `tests/data_isolation_bola.spec.ts`, `tests/order_delivery_transition.spec.ts`, `tests/rental_fsm_and_bank_onboarding.spec.ts`, `tests/admin_store_rename.spec.ts`).
+      - All 7 unit test suites: **PASS** (`tests/cors_and_notification.spec.ts`, `tests/auth_authority_hardening.spec.ts`, `tests/admin_payout_invariants.spec.ts`, `tests/data_isolation_bola.spec.ts`, `tests/order_delivery_transition.spec.ts`, `tests/rental_fsm_and_bank_onboarding.spec.ts`, `tests/admin_store_rename.spec.ts`).
+      - Master Test Suite Registration: Updated in `tests/run_all_suites.ts` (suites 1-65).
       - TypeScript compilation: `npx tsc --noEmit` exited code 0 with zero errors.
       - Production build: `npm run build` completed successfully.
-

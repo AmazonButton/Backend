@@ -75,6 +75,14 @@ export class CryptoVaultUtil {
   }
 
   /**
+   * Deterministic standard SHA-256 hash for deposit refund snapshots and payout evidence verification
+   */
+  static computeDeterministicAccountHash(accountNumber: string): string {
+    const cleanNumber = accountNumber.replace(/\s+/g, '').toUpperCase();
+    return crypto.createHash('sha256').update(cleanNumber).digest('hex');
+  }
+
+  /**
    * Mask account number for safe API response (e.g., '******789')
    */
   static maskAccountNumber(accountNumber: string): string {

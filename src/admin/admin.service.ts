@@ -399,10 +399,10 @@ export class AdminService {
 
     const state = String(statusData?.data?.approvalState || statusData?.data?.state || statusData?.data?.status || '').toUpperCase();
     if (['COMPLETED', 'PAID', 'SUCCEEDED'].includes(state)) {
-      await this.adminRepo.updateWithdrawal(rawWithdrawalId, {
-        status: 'SUCCEEDED',
-        processedAt: new Date(),
-      });
+      await this.adminRepo.finalizeSucceededWithdrawalTransaction(
+        rawWithdrawalId,
+        withdrawal.providerPayoutId || statusData?.data?.id
+      );
     } else if (['REJECTED', 'FAILED', 'CANCELLED'].includes(state)) {
       // Explicitly confirmed as failed by provider: safe to refund wallet now
       await this.adminRepo.refundFailedWithdrawalTransaction(

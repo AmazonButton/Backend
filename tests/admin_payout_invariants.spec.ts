@@ -43,8 +43,8 @@ async function run() {
 
   const adminService = new AdminService(
     mockAdminRepo as any,
-    {} as any,
     mockPayosPayoutService as any,
+    {} as any,
   );
   // Stub cache invalidation
   (adminService as any).invalidateAdminAndStoreCaches = async () => {};

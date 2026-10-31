@@ -8,7 +8,7 @@ async function run() {
   // Test 1: CryptoVaultUtil encrypts and hashes bank account cleanly
   const rawAcc = '19034567891234';
   const encrypted = CryptoVaultUtil.encryptAccountNumber(rawAcc);
-  const hash = CryptoVaultUtil.hashAccountNumber(rawAcc);
+  const deterministicHash = CryptoVaultUtil.computeDeterministicAccountHash(rawAcc);
   const masked = CryptoVaultUtil.maskAccountNumber(rawAcc);
 
   assert.notStrictEqual(encrypted, rawAcc, 'Account number must be encrypted');
@@ -27,7 +27,7 @@ async function run() {
       userId,
     }),
     createCustomerBankAccount: async (data: any) => {
-      persistedRecord = { id: BigInt(1), ...data, createdAt: new Date() };
+      persistedRecord = { id: BigInt(1), ...data, verificationStatus: data.verificationStatus || 'PENDING', createdAt: new Date() };
       return persistedRecord;
     },
     findCustomerBankAccounts: async () => [
@@ -39,7 +39,7 @@ async function run() {
         bankName: 'MB Bank',
         accountNumberMasked: masked,
         accountName: 'NGUYEN VAN A',
-        verificationStatus: 'VERIFIED',
+        verificationStatus: 'PENDING',
         isDefault: true,
         createdAt: new Date(),
       },
@@ -65,9 +65,43 @@ async function run() {
 
   // Verify database persisted record has encrypted and hashed columns
   assert.notStrictEqual(persistedRecord.accountNumberEncrypted, rawAcc);
-  assert.strictEqual(persistedRecord.accountNumberHash, hash);
+  assert.strictEqual(persistedRecord.accountNumberHash, deterministicHash);
+  assert.strictEqual(persistedRecord.verificationStatus, 'PENDING');
 
-  // Test 3: List customer bank accounts
+  // Test 3: Input validation rejection for invalid BIN and invalid account number
+  await assert.rejects(
+    async () => {
+      await customersService.addBankAccount(customerUser, {
+        bankBin: '123',
+        bankCode: 'MB',
+        bankName: 'MB Bank',
+        accountNumber: rawAcc,
+        accountName: 'NGUYEN VAN A',
+      });
+    },
+    (err: any) => {
+      assert.strictEqual(err.message.includes('Mã BIN'), true);
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    async () => {
+      await customersService.addBankAccount(customerUser, {
+        bankBin: '970422',
+        bankCode: 'MB',
+        bankName: 'MB Bank',
+        accountNumber: '1234',
+        accountName: 'NGUYEN VAN A',
+      });
+    },
+    (err: any) => {
+      assert.strictEqual(err.message.includes('Số tài khoản'), true);
+      return true;
+    },
+  );
+
+  // Test 4: List customer bank accounts
   const list = await customersService.getBankAccounts(customerUser);
   assert.strictEqual(list.length, 1);
   assert.strictEqual(list[0].accountNumberMasked, masked);

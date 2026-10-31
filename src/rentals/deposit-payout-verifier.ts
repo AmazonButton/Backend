@@ -1,5 +1,6 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import * as crypto from 'crypto';
+import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 
 export interface PayoutReconciliationResult {
   isVerified: boolean;
@@ -212,7 +213,11 @@ export function verifyDepositRefundPayoutEvidence(
     };
   }
 
-  if (reportedAccountHash !== expectedAccountHash) {
+  const isHashMatched =
+    reportedAccountHash === expectedAccountHash ||
+    (reportedAccountNumber ? CryptoVaultUtil.hashAccountNumber(reportedAccountNumber) === expectedAccountHash : false);
+
+  if (!isHashMatched) {
     return {
       isVerified: false,
       providerRef: payoutId,

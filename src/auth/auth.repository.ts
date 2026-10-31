@@ -226,16 +226,16 @@ export class AuthRepository {
       const otp = rows[0];
       const targetUserId = BigInt(otp.user_id);
 
-      const existingUser = await tx.user.findUnique({
-        where: { userId: targetUserId },
-        select: { status: true },
-      });
+      const userRows: any[] = await tx.$queryRaw<any[]>`
+        SELECT status FROM users WHERE user_id = ${targetUserId} FOR UPDATE
+      `;
 
-      if (!existingUser) {
+      if (!userRows || userRows.length === 0) {
         return { success: false, reason: 'Tài khoản không tồn tại.' };
       }
 
-      if (existingUser.status !== 'PENDING_VERIFICATION' && existingUser.status !== 'ACTIVE') {
+      const existingStatus = userRows[0].status;
+      if (existingStatus !== 'PENDING_VERIFICATION' && existingStatus !== 'ACTIVE') {
         return {
           success: false,
           reason: 'Tài khoản hiện đang bị vô hiệu hóa hoặc khóa, không thể tự kích hoạt qua email.',

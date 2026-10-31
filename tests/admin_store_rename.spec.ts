@@ -1,5 +1,8 @@
 import assert from 'node:assert';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 import { AdminService } from '../src/admin/admin.service';
+import { UpdateAdminStoreDto } from '../src/admin/dto/update-admin-store.dto';
 
 async function run() {
   console.log('🧪 Testing Task 7: Admin Store Rename & Update API...');
@@ -46,6 +49,23 @@ async function run() {
       true,
     );
   }
+
+  // Test 3: UpdateAdminStoreDto validation rules
+  const invalidDto = plainToInstance(UpdateAdminStoreDto, {
+    name: '   ',
+    phone: '123',
+    status: 'UNKNOWN_STATUS',
+  });
+  const validationErrors = await validate(invalidDto);
+  assert.strictEqual(validationErrors.length >= 3, true, 'Expected validation errors for name, phone, and status');
+
+  const validDto = plainToInstance(UpdateAdminStoreDto, {
+    name: 'Valid Store',
+    phone: '0987654321',
+    status: 'ACTIVE',
+  });
+  const validErrors = await validate(validDto);
+  assert.strictEqual(validErrors.length, 0, 'Expected no validation errors for valid DTO');
 
   console.log('✅ Task 7 Admin Store Rename & Update API tests PASSED!');
 }

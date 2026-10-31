@@ -1,4 +1,4 @@
-import { Injectable, Inject, Optional, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
 import { CustomersRepository } from './customers.repository';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { buildAnalyticsDateRange } from '../analytics/utils/analytics-date-range.util';
@@ -72,16 +72,25 @@ export class CustomersService {
       throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
     }
 
-    const cleanAcc = dto.accountNumber.replace(/\s+/g, '').toUpperCase();
-    const accountNumberHash = CryptoVaultUtil.hashAccountNumber(cleanAcc);
+    const cleanBin = (dto.bankBin || '').replace(/\s+/g, '');
+    if (!/^\d{6}$/.test(cleanBin)) {
+      throw new BadRequestException('Mã BIN ngân hàng phải gồm đúng 6 chữ số');
+    }
+
+    const cleanAcc = (dto.accountNumber || '').replace(/\s+/g, '').toUpperCase();
+    if (!/^\d{6,20}$/.test(cleanAcc)) {
+      throw new BadRequestException('Số tài khoản ngân hàng phải gồm từ 6 đến 20 chữ số');
+    }
+
+    const accountNumberHash = CryptoVaultUtil.computeDeterministicAccountHash(cleanAcc);
     const accountNumberEncrypted = CryptoVaultUtil.encryptAccountNumber(cleanAcc);
     const accountNumberMasked = CryptoVaultUtil.maskAccountNumber(cleanAcc);
 
     const created = await this.customersRepo.createCustomerBankAccount({
       customerId: profile.customerId,
-      bankBin: dto.bankBin,
+      bankBin: cleanBin,
       bankCode: dto.bankCode,
-      bankName: dto.bankName,
+      bankName: dto.bankName.trim(),
       accountNumberEncrypted,
       accountNumberHash,
       accountNumberMasked,

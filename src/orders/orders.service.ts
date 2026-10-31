@@ -634,9 +634,9 @@ export class OrdersService {
       );
     }
 
-    if (newStatus === 'DELIVERED') {
+    if (['SHIPPING', 'DELIVERED', 'DELIVERY_FAILED'].includes(newStatus)) {
       throw new BadRequestException(
-        'Không thể chuyển trạng thái sang DELIVERED qua cập nhật chung. Vui lòng sử dụng endpoint xác nhận giao hàng (complete-delivery) với bằng chứng giao hàng (POD) và xác thực tài xế.',
+        `Không thể chuyển trạng thái sang ${newStatus} qua cập nhật chung. Vui lòng sử dụng quy trình giao hàng chuyên dụng (claim-delivery / complete-delivery / fail-delivery) với bằng chứng giao hàng (POD) và xác thực tài xế.`,
       );
     }
 
