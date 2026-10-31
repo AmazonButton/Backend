@@ -895,8 +895,8 @@ export class RentalsRepository {
         if (BigInt(btn.custody_store_id) !== BigInt(rental.fulfillment_store_id)) {
           throw new BadRequestException(`Thiết bị ${btn.device_serial_number || btn.button_id} không thuộc kho của cửa hàng phụ trách bàn giao`);
         }
-        if (btn.inventory_state !== 'ALLOCATED_TO_STORE') {
-          throw new BadRequestException(`Thiết bị ${btn.device_serial_number || btn.button_id} không ở trạng thái ALLOCATED_TO_STORE (hiện tại: ${btn.inventory_state})`);
+        if (!['ASSIGNED_TO_RENTAL', 'ALLOCATED_TO_STORE'].includes(btn.inventory_state)) {
+          throw new BadRequestException(`Thiết bị ${btn.device_serial_number || btn.button_id} không ở trạng thái hợp lệ để bàn giao (hiện tại: ${btn.inventory_state})`);
         }
       }
 
@@ -937,6 +937,7 @@ export class RentalsRepository {
         await tx.ioTButton.update({
           where: { buttonId: btn.button_id },
           data: {
+            customerId: rental.customer_id ? BigInt(rental.customer_id) : undefined,
             custodyStoreId: null,
             inventoryState: 'IN_CUSTOMER_CUSTODY',
             status: 'ACTIVE',

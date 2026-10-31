@@ -309,4 +309,59 @@ export class CustomersRepository {
       })),
     };
   }
+
+  async createCustomerBankAccount(data: {
+    customerId: bigint;
+    bankBin: string;
+    bankCode?: string;
+    bankName: string;
+    accountNumberEncrypted: string;
+    accountNumberHash: string;
+    accountNumberMasked: string;
+    accountName: string;
+    isDefault?: boolean;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      if (data.isDefault) {
+        await tx.customerBankAccount.updateMany({
+          where: { customerId: data.customerId },
+          data: { isDefault: false },
+        });
+      }
+      return tx.customerBankAccount.create({
+        data: {
+          customerId: data.customerId,
+          bankBin: data.bankBin,
+          bankCode: data.bankCode,
+          bankName: data.bankName,
+          accountNumberEncrypted: data.accountNumberEncrypted,
+          accountNumberHash: data.accountNumberHash,
+          accountNumberMasked: data.accountNumberMasked,
+          accountName: data.accountName,
+          isDefault: data.isDefault ?? true,
+          verificationStatus: 'VERIFIED',
+        },
+      });
+    });
+  }
+
+  async findCustomerBankAccounts(customerId: bigint) {
+    return this.prisma.customerBankAccount.findMany({
+      where: { customerId },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        customerId: true,
+        bankBin: true,
+        bankCode: true,
+        bankName: true,
+        accountNumberMasked: true,
+        accountName: true,
+        verificationStatus: true,
+        isDefault: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
 }

@@ -1,9 +1,10 @@
-import { Controller, Get, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CreateCustomerBankAccountDto } from './dto/create-customer-bank-account.dto';
 
 @ApiTags('Customers')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -60,6 +61,30 @@ export class CustomersController {
     return {
       success: true,
       message: 'Lấy dữ liệu các gói thuê nút IoT thành công',
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Đăng ký tài khoản ngân hàng nhận tiền hoàn cọc của khách hàng' })
+  @Post('me/bank-accounts')
+  async createMyBankAccount(@Request() req: any, @Body() dto: CreateCustomerBankAccountDto) {
+    const data = await this.customersService.addBankAccount(req.user, dto);
+    return {
+      success: true,
+      message: 'Đăng ký tài khoản ngân hàng thành công',
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Lấy danh sách tài khoản ngân hàng của khách hàng' })
+  @Get('me/bank-accounts')
+  async getMyBankAccounts(@Request() req: any) {
+    const data = await this.customersService.getBankAccounts(req.user);
+    return {
+      success: true,
+      message: 'Lấy danh sách tài khoản ngân hàng thành công',
       data,
     };
   }
