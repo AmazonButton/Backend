@@ -191,13 +191,14 @@ export class CustomersService {
     const proofReference = `CUST_VRF_${account.bankBin}_${CryptoVaultUtil.generateReferenceCode('')}`.slice(0, 64);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes TTL
 
+    // CRITICAL: Initiation MUST always set PENDING. SUCCESS is ONLY granted upon independent confirmation from bank/provider!
     const proof = await this.customersRepo.createBankVerificationProof({
       proofReference,
       customerId: profile.customerId,
       accountId: account.id,
       bankBin: account.bankBin,
       accountNumberHash: (account as any).accountNumberHash,
-      status: 'SUCCESS', // Official verification record issued by provider / platform
+      status: 'PENDING',
       provider: 'PAYOS',
       expiresAt,
     });
@@ -207,8 +208,26 @@ export class CustomersService {
       proofReference: proof.proofReference,
       expiresAt: proof.expiresAt.toISOString(),
       status: proof.status,
-      message: 'Khởi tạo phiên xác minh tài khoản ngân hàng thành công',
+      message: 'Khởi tạo phiên xác minh tài khoản ngân hàng thành công. Phiên đang ở trạng thái PENDING, vui lòng chờ đối tác xác thực.',
     };
+  }
+
+  async confirmProviderBankVerification(params: {
+    proofReference: string;
+    customerId: bigint;
+    accountId: bigint;
+    bankBin: string;
+    accountNumberHash: string;
+    providerStatus: 'SUCCESS' | 'FAILED';
+  }) {
+    return this.customersRepo.confirmBankVerificationProof({
+      proofReference: params.proofReference,
+      customerId: params.customerId,
+      accountId: params.accountId,
+      bankBin: params.bankBin,
+      accountNumberHash: params.accountNumberHash,
+      status: params.providerStatus,
+    });
   }
 
   async verifyBankAccount(
@@ -228,58 +247,35 @@ export class CustomersService {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
     }
 
+    // Idempotent early return if already verified
     if (account.verificationStatus === 'VERIFIED') {
       return {
         id: account.id.toString(),
+        customerId: account.customerId.toString(),
+        bankBin: account.bankBin,
+        bankCode: account.bankCode,
+        bankName: account.bankName,
+        accountNumberMasked: account.accountNumberMasked,
+        accountName: account.accountName,
         verificationStatus: 'VERIFIED',
+        isDefault: account.isDefault,
         message: 'Tài khoản ngân hàng đã được xác minh trước đó',
       };
     }
 
-    // 1. Validate proofReference parameter
+    // Validate DTO parameter
     if (!dto?.proofReference || typeof dto.proofReference !== 'string' || dto.proofReference.trim().length === 0) {
       throw new BadRequestException('Mã tham chiếu xác minh (proofReference) không được để trống');
     }
 
-    // 2. Lookup proof record from database / provider
-    const proof = await this.customersRepo.findBankVerificationProof(dto.proofReference.trim());
-    if (!proof) {
-      throw new BadRequestException('Bằng chứng xác minh không tồn tại hoặc không hợp lệ');
-    }
+    // Execute atomic row-locked CAS transaction in repository
+    const result = await this.customersRepo.consumeBankVerificationProofTx({
+      proofReference: dto.proofReference.trim(),
+      customerId: profile.customerId,
+      accountId: rawAccountId,
+    });
 
-    // 3. Strict binding checks (customerId, accountId, BIN, account hash)
-    if (proof.customerId.toString() !== profile.customerId.toString()) {
-      throw new BadRequestException('Bằng chứng xác minh không thuộc về khách hàng này');
-    }
-    if (proof.accountId.toString() !== rawAccountId.toString()) {
-      throw new BadRequestException('Bằng chứng xác minh không khớp với tài khoản ngân hàng này');
-    }
-    if (proof.bankBin !== account.bankBin) {
-      throw new BadRequestException('Bằng chứng xác minh không khớp với mã ngân hàng (BIN)');
-    }
-    if (proof.accountNumberHash !== (account as any).accountNumberHash) {
-      throw new BadRequestException('Bằng chứng xác minh không khớp với số tài khoản ngân hàng');
-    }
-
-    // 4. Check verification result status
-    if (proof.status !== 'SUCCESS') {
-      throw new BadRequestException('Bằng chứng xác minh chưa được cổng thanh toán/ngân hàng xác nhận thành công');
-    }
-
-    // 5. Check expiration
-    if (new Date(proof.expiresAt).getTime() <= Date.now()) {
-      throw new BadRequestException('Bằng chứng xác minh đã hết hạn');
-    }
-
-    // 6. Check usage (anti-replay)
-    if (proof.usedAt !== null) {
-      throw new BadRequestException('Bằng chứng xác minh đã được sử dụng trước đó');
-    }
-
-    // 7. Atomically consume proof and mark account as VERIFIED
-    await this.customersRepo.consumeBankVerificationProof(proof.id, profile.customerId, rawAccountId);
     const updated = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
-
     return {
       id: updated!.id.toString(),
       customerId: updated!.customerId.toString(),
@@ -290,7 +286,9 @@ export class CustomersService {
       accountName: updated!.accountName,
       verificationStatus: updated!.verificationStatus,
       isDefault: updated!.isDefault,
-      message: 'Xác minh tài khoản ngân hàng thành công',
+      message: result.alreadyVerified
+        ? 'Tài khoản ngân hàng đã được xác minh trước đó'
+        : 'Xác minh tài khoản ngân hàng thành công',
     };
   }
 }

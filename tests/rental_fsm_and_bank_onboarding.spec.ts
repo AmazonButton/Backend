@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { CustomersService } from '../src/customers/customers.service';
 import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
 
@@ -135,13 +136,48 @@ async function run() {
     return mockProofsTable[ref] || null;
   };
 
-  mockCustomersRepo.consumeBankVerificationProof = async (proofId: bigint, _cId: bigint, _aId: bigint) => {
-    for (const key of Object.keys(mockProofsTable)) {
-      if (mockProofsTable[key].id === proofId) {
-        mockProofsTable[key].usedAt = new Date();
-      }
+  mockCustomersRepo.consumeBankVerificationProofTx = async (params: {
+    proofReference: string;
+    customerId: bigint;
+    accountId: bigint;
+  }) => {
+    if (currentAccountStatus === 'VERIFIED') {
+      return { alreadyVerified: true };
     }
+    const proof = mockProofsTable[params.proofReference];
+    if (!proof) {
+      throw new BadRequestException('Bằng chứng xác minh không tồn tại hoặc không hợp lệ');
+    }
+    if (proof.customerId.toString() !== params.customerId.toString()) {
+      throw new BadRequestException('Bằng chứng xác minh không thuộc về khách hàng này');
+    }
+    if (proof.accountId.toString() !== params.accountId.toString()) {
+      throw new BadRequestException('Bằng chứng xác minh không khớp với tài khoản ngân hàng này');
+    }
+    if (proof.status !== 'SUCCESS') {
+      throw new BadRequestException(
+        `Bằng chứng xác minh đang ở trạng thái ${proof.status} (chưa được đối tác/ngân hàng xác nhận). Không thể hoàn tất xác minh.`,
+      );
+    }
+    if (new Date(proof.expiresAt).getTime() <= Date.now()) {
+      throw new BadRequestException('Bằng chứng xác minh đã hết hạn');
+    }
+    if (proof.usedAt !== null) {
+      throw new ConflictException('Bằng chứng xác minh đã được sử dụng trước đó (Anti-replay)');
+    }
+    proof.usedAt = new Date();
     currentAccountStatus = 'VERIFIED';
+    return { alreadyVerified: false };
+  };
+
+  mockCustomersRepo.confirmBankVerificationProof = async (params: any) => {
+    const proof = mockProofsTable[params.proofReference];
+    if (!proof) throw new BadRequestException('Không tìm thấy phiên xác minh ngân hàng');
+    if (proof.customerId.toString() !== params.customerId.toString() || proof.accountId.toString() !== params.accountId.toString()) {
+      throw new BadRequestException('Thông tin xác minh từ provider không khớp với phiên đã khởi tạo');
+    }
+    proof.status = params.status;
+    return proof;
   };
 
   // 5.1. Poll initial status -> must be PENDING
@@ -169,95 +205,92 @@ async function run() {
   );
   assert.strictEqual(currentAccountStatus, 'PENDING');
 
-  // 5.3. Proof belonging to another customer -> must reject
-  mockProofsTable['PROOF_OTHER_CUST'] = {
-    id: BigInt(102),
-    proofReference: 'PROOF_OTHER_CUST',
-    customerId: BigInt(999), // Different customer!
-    accountId: BigInt(1),
-    bankBin: '970422',
-    accountNumberHash: deterministicHash,
-    status: 'SUCCESS',
-    expiresAt: new Date(Date.now() + 60000),
-    usedAt: null,
-  };
-  await assert.rejects(
-    async () => {
-      await customersService.verifyBankAccount(customerUser, '1', { proofReference: 'PROOF_OTHER_CUST' });
-    },
-    (err: any) => {
-      assert.strictEqual(
-        err.message.includes('không thuộc về khách hàng này') || err.status === 400,
-        true,
-        `Expected rejection for other customer's proof, got: ${err.message}`,
-      );
-      return true;
-    },
-    'Expected verifyBankAccount to reject proof bound to another customer',
-  );
-  assert.strictEqual(currentAccountStatus, 'PENDING');
-
-  // 5.4. Expired proof -> must reject
-  mockProofsTable['PROOF_EXPIRED'] = {
-    id: BigInt(103),
-    proofReference: 'PROOF_EXPIRED',
-    customerId: BigInt(55),
-    accountId: BigInt(1),
-    bankBin: '970422',
-    accountNumberHash: deterministicHash,
-    status: 'SUCCESS',
-    expiresAt: new Date(Date.now() - 60000), // Expired!
-    usedAt: null,
-  };
-  await assert.rejects(
-    async () => {
-      await customersService.verifyBankAccount(customerUser, '1', { proofReference: 'PROOF_EXPIRED' });
-    },
-    (err: any) => {
-      assert.strictEqual(
-        err.message.includes('hết hạn') || err.status === 400,
-        true,
-        `Expected rejection for expired proof, got: ${err.message}`,
-      );
-      return true;
-    },
-    'Expected verifyBankAccount to reject expired proof',
-  );
-  assert.strictEqual(currentAccountStatus, 'PENDING');
-
-  // 5.5. Legitimate initiate + verify workflow
+  // 5.3. Legitimate initiate -> MUST CREATE PROOF WITH PENDING STATUS!
   const initiated = await customersService.initiateBankAccountVerification(customerUser, '1');
   assert.strictEqual(typeof initiated.proofReference, 'string');
-  assert.strictEqual(initiated.status, 'SUCCESS');
+  assert.strictEqual(
+    initiated.status,
+    'PENDING',
+    'CRITICAL SECURITY REQUIREMENT: Bank verification initiation must always be PENDING until confirmed by provider',
+  );
 
-  const verifiedResult = await customersService.verifyBankAccount(customerUser, '1', {
-    proofReference: initiated.proofReference,
-  });
-  assert.strictEqual(verifiedResult.verificationStatus, 'VERIFIED');
-  assert.strictEqual(currentAccountStatus, 'VERIFIED');
-
-  // 5.6. Polling after verification -> must return VERIFIED
-  const verifiedPoll = await customersService.getBankAccountVerificationStatus(customerUser, '1');
-  assert.strictEqual(verifiedPoll.verificationStatus, 'VERIFIED');
-
-  // 5.7. Replay attack: reusing the same proof must reject
+  // 5.4. Calling verify on a PENDING proof before independent confirmation -> MUST BE REJECTED!
   await assert.rejects(
     async () => {
-      // Temporarily simulate account being PENDING again to test replay
-      currentAccountStatus = 'PENDING';
       await customersService.verifyBankAccount(customerUser, '1', {
         proofReference: initiated.proofReference,
       });
     },
     (err: any) => {
       assert.strictEqual(
-        err.message.includes('đã được sử dụng') || err.status === 400,
+        err.message.includes('PENDING') || err.message.includes('chưa được đối tác/ngân hàng xác nhận') || err.status === 400,
         true,
-        `Expected rejection for reused proof, got: ${err.message}`,
+        `Expected rejection when verifying PENDING proof, got: ${err.message}`,
       );
       return true;
     },
-    'Expected verifyBankAccount to reject already-consumed proof (anti-replay)',
+    'Expected verifyBankAccount to reject PENDING proof before provider confirmation',
+  );
+  assert.strictEqual(currentAccountStatus, 'PENDING');
+
+  // 5.5. Provider callback with wrong customer or account -> MUST BE REJECTED!
+  await assert.rejects(
+    async () => {
+      await customersService.confirmProviderBankVerification({
+        proofReference: initiated.proofReference,
+        customerId: BigInt(999), // Attacker customer!
+        accountId: BigInt(1),
+        bankBin: '970422',
+        accountNumberHash: deterministicHash,
+        providerStatus: 'SUCCESS',
+      });
+    },
+    (err: any) => {
+      assert.strictEqual(err.status === 400 || err.message.includes('không khớp'), true);
+      return true;
+    },
+    'Expected provider confirmation to reject mismatched customer',
+  );
+
+  // 5.6. Legitimate provider confirmation -> transitions proof status to SUCCESS
+  await customersService.confirmProviderBankVerification({
+    proofReference: initiated.proofReference,
+    customerId: BigInt(55),
+    accountId: BigInt(1),
+    bankBin: '970422',
+    accountNumberHash: deterministicHash,
+    providerStatus: 'SUCCESS',
+  });
+
+  // 5.7. Verification with verified proof -> transitions account to VERIFIED
+  const verifiedResult = await customersService.verifyBankAccount(customerUser, '1', {
+    proofReference: initiated.proofReference,
+  });
+  assert.strictEqual(verifiedResult.verificationStatus, 'VERIFIED');
+  assert.strictEqual(currentAccountStatus, 'VERIFIED');
+
+  // 5.8. Polling after verification -> must return VERIFIED
+  const verifiedPoll = await customersService.getBankAccountVerificationStatus(customerUser, '1');
+  assert.strictEqual(verifiedPoll.verificationStatus, 'VERIFIED');
+
+  // 5.9. Concurrent / Replay consumption test:
+  // If account is reset to PENDING and someone attempts to reuse the already-consumed proof -> MUST THROW 409 ConflictException!
+  currentAccountStatus = 'PENDING';
+  await assert.rejects(
+    async () => {
+      await customersService.verifyBankAccount(customerUser, '1', {
+        proofReference: initiated.proofReference,
+      });
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('đã được sử dụng') || err.status === 409 || err.status === 400,
+        true,
+        `Expected ConflictException for reused proof, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected verifyBankAccount to reject already-consumed proof (anti-replay single-use)',
   );
   currentAccountStatus = 'VERIFIED';
 

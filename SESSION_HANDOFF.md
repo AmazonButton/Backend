@@ -1573,3 +1573,43 @@ When starting a new conversation, prompt the agent with:
       - Master Test Suite Registration: Updated in `tests/run_all_suites.ts` (suites 1-65).
       - TypeScript compilation: `npx tsc --noEmit` exited code 0 with zero errors.
       - Production build: `npm run build` completed successfully.
+
+16. **Post-Audit 4 Core Invariants Hardening (Bank Verification, CAS & Payout Fail-Closed Recovery):**
+    - **Addressed Review Findings:**
+      1. **[P0] Customer Bank Verification Self-Verification Elimination:**
+         - Problem: `initiateBankAccountVerification` previously issued proofs with `status: 'SUCCESS'` directly in the DB without provider confirmation, turning the verification API into a self-service rubber stamp.
+         - Solution: In `src/customers/customers.service.ts` and `src/customers/customers.repository.ts`, initiation strictly sets `status: 'PENDING'`. Only independent provider confirmation via `confirmProviderBankVerification` / `confirmBankVerificationProof` can transition a proof to `SUCCESS` with validated binding (session reference, customerId, accountId, bankBin, accountNumberHash).
+         - Updated `verifyBankAccount` to reject any proof that is `PENDING`, expired, or already used.
+         - Updated `tests/rental_fsm_and_bank_onboarding.spec.ts` (Test 5): asserts initiation creates `PENDING`, rejects `verify` when pending, verifies provider confirmation, and rejects replays.
+         - **Status:** Source fixed; unit verified (exit code 0); real provider integration pending live sandbox integration.
+      2. **[P1] Bank Verification Proof CAS & Concurrency Guard:**
+         - Problem: Verification checked `usedAt` in memory before the transaction, and repository updated proof with only `WHERE id = proofId`, vulnerable to double-consumption race conditions.
+         - Solution: In `src/customers/customers.repository.ts`, `consumeBankVerificationProofTx` enforces a strict row-locking hierarchy: `customer_bank_accounts` row locked first (`FOR UPDATE`), followed by `customer_bank_verification_proofs` row locked second (`FOR UPDATE`). Proof consumption is executed via atomic conditional update (CAS):
+           `UPDATE customer_bank_verification_proofs SET used_at = NOW() WHERE id = $1 AND customer_id = $2 AND account_id = $3 AND status = 'SUCCESS' AND used_at IS NULL AND expires_at > NOW()`.
+           Requires `affectedRows === 1`; otherwise throws `ConflictException` (409). Account status is then updated to `VERIFIED`; if account update fails, the entire transaction rolls back `used_at`.
+         - **Status:** Source fixed; unit verified; multi-connection concurrency test on real PostgreSQL pending dedicated test DB.
+      3. **[P1] Payout Recipient Evidence & Account Number Validation:**
+         - Problem: `AdminService.syncPayoutStatus` previously skipped verification if either BIN or name was missing, and did not verify the destination bank account number against the immutable snapshot.
+         - Solution: In `src/admin/admin.service.ts`, mandatory recipient evidence matching is enforced before considering transaction state:
+           - Requires provider `toBin` matching immutable `bankBinSnapshot` (or `bankCode`).
+           - Requires provider `toAccountNumber`, hashes it deterministically using `CryptoVaultUtil.computeDeterministicAccountHash` (standard SHA-256) and HMAC-SHA256, and matches against `withdrawal.bankAccountHash` or decrypted `bankAccountEncrypted`. Plaintext account numbers are never logged or exposed.
+           - Matches normalized account name `toAccountName` against `bankAccountNameSnapshot`.
+           - Missing BIN, missing account identity, missing snapshot, or any mismatch immediately stops reconciliation with 0 financial updates, keeping status as `PENDING_RECONCILIATION`.
+         - **Status:** Source fixed; unit verified in `tests/admin_payout_invariants.spec.ts` (Tests 3.3, 3.4, 3.5, 3.6); integration on live PayOS pending.
+      4. **[P1] Payout Fail-Closed Transaction Selection & Payout ID Integrity:**
+         - Problem: Detail lookup previously fell back to root payout amount when `transactions` was missing/empty, fell back to `transactions[0]` when reference did not match, fell back to root approval state when transaction state was missing, conflated `transactionId` with `payoutId`, and did not verify detail ID matched requested payout ID.
+         - Solution: In `src/admin/admin.service.ts`:
+           - Verifies detail payout ID matches expected lookup ID (`verifiedPayoutId === expectedPayoutId`).
+           - Mandates non-empty `transactions` array; empty or missing transactions immediately halts with 0 updates.
+           - Matches exact `referenceId` against withdrawal reference or code. Exactly 1 transaction must match; 0 or >1 matches halt reconciliation.
+           - Mandates terminal `state` directly on the matched transaction (no inference from overall payout state).
+           - Enforces strictly positive, finite integer VND amount matching `withdrawal.amount` with zero tolerance.
+           - Strictly uses verified `payoutId` (not `tx.id`) when calling `finalizeSucceededWithdrawalTransaction`.
+         - **Status:** Source fixed; unit verified in `tests/admin_payout_invariants.spec.ts` (Tests 3.7, 3.8, 3.9, 3.10, 3.11); integration on live PayOS pending.
+    - **Verification Results:**
+      - `tests/rental_fsm_and_bank_onboarding.spec.ts`: **PASS** (Exit code 0)
+      - `tests/admin_payout_invariants.spec.ts`: **PASS** (Exit code 0)
+      - Regression suites (`data_isolation_bola`, `auth_authority_hardening`, `order_delivery_transition`, `admin_store_rename`, `cors_and_notification`): **ALL PASS** (Exit code 0)
+      - TypeScript Compiler (`npx tsc --noEmit`): **PASS** (Zero errors)
+      - Production Build (`npm run build`): **PASS** (Exit code 0)
+      - Git diff check (`git diff HEAD --check` & `git diff a5db316..HEAD --check`): **PASS**

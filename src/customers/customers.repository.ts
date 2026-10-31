@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 
@@ -409,16 +409,150 @@ export class CustomersRepository {
     });
   }
 
-  async consumeBankVerificationProof(proofId: bigint, customerId: bigint, accountId: bigint) {
+  async confirmBankVerificationProof(params: {
+    proofReference: string;
+    customerId: bigint;
+    accountId: bigint;
+    bankBin: string;
+    accountNumberHash: string;
+    status: 'SUCCESS' | 'FAILED';
+  }) {
     return this.prisma.$transaction(async (tx) => {
-      await tx.customerBankVerificationProof.update({
-        where: { id: proofId },
-        data: { usedAt: new Date(), updatedAt: new Date() },
+      const [proof] = await tx.$queryRaw<Array<{
+        id: bigint;
+        customer_id: bigint;
+        account_id: bigint;
+        bank_bin: string;
+        account_number_hash: string;
+        status: string;
+        expires_at: Date;
+      }>>`
+        SELECT id, customer_id, account_id, bank_bin, account_number_hash, status, expires_at
+        FROM customer_bank_verification_proofs
+        WHERE proof_reference = ${params.proofReference}
+        FOR UPDATE
+      `;
+      if (!proof) {
+        throw new NotFoundException('Không tìm thấy phiên xác minh ngân hàng');
+      }
+      if (
+        proof.customer_id.toString() !== params.customerId.toString() ||
+        proof.account_id.toString() !== params.accountId.toString() ||
+        proof.bank_bin !== params.bankBin ||
+        proof.account_number_hash !== params.accountNumberHash
+      ) {
+        throw new BadRequestException('Thông tin xác minh từ provider không khớp với phiên đã khởi tạo');
+      }
+      if (new Date(proof.expires_at).getTime() <= Date.now()) {
+        throw new BadRequestException('Phiên xác minh đã hết hạn');
+      }
+
+      return tx.customerBankVerificationProof.update({
+        where: { id: proof.id },
+        data: { status: params.status, updatedAt: new Date() },
       });
-      return tx.customerBankAccount.updateMany({
-        where: { id: accountId, customerId },
-        data: { verificationStatus: 'VERIFIED', updatedAt: new Date() },
-      });
+    });
+  }
+
+  async consumeBankVerificationProofTx(params: {
+    proofReference: string;
+    customerId: bigint;
+    accountId: bigint;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Lock customer bank account row exclusively FIRST (consistent lock hierarchy: account -> proof)
+      const [account] = await tx.$queryRaw<Array<{
+        id: bigint;
+        customer_id: bigint;
+        bank_bin: string;
+        account_number_hash: string;
+        verification_status: string;
+      }>>`
+        SELECT id, customer_id, bank_bin, account_number_hash, verification_status
+        FROM customer_bank_accounts
+        WHERE id = ${params.accountId} AND customer_id = ${params.customerId}
+        FOR UPDATE
+      `;
+      if (!account) {
+        throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
+      }
+
+      // Check idempotent early return if already VERIFIED
+      if (account.verification_status === 'VERIFIED') {
+        return { alreadyVerified: true };
+      }
+
+      // 2. Lock proof row exclusively SECOND
+      const [proof] = await tx.$queryRaw<Array<{
+        id: bigint;
+        customer_id: bigint;
+        account_id: bigint;
+        bank_bin: string;
+        account_number_hash: string;
+        status: string;
+        expires_at: Date;
+        used_at: Date | null;
+      }>>`
+        SELECT id, customer_id, account_id, bank_bin, account_number_hash, status, expires_at, used_at
+        FROM customer_bank_verification_proofs
+        WHERE proof_reference = ${params.proofReference}
+        FOR UPDATE
+      `;
+      if (!proof) {
+        throw new BadRequestException('Bằng chứng xác minh không tồn tại hoặc không hợp lệ');
+      }
+
+      // 3. In-transaction validation of all bindings & invariants
+      if (proof.customer_id.toString() !== params.customerId.toString()) {
+        throw new BadRequestException('Bằng chứng xác minh không thuộc về khách hàng này');
+      }
+      if (proof.account_id.toString() !== params.accountId.toString()) {
+        throw new BadRequestException('Bằng chứng xác minh không khớp với tài khoản ngân hàng này');
+      }
+      if (proof.bank_bin !== account.bank_bin) {
+        throw new BadRequestException('Bằng chứng xác minh không khớp với mã ngân hàng (BIN)');
+      }
+      if (proof.account_number_hash !== account.account_number_hash) {
+        throw new BadRequestException('Bằng chứng xác minh không khớp với số tài khoản ngân hàng');
+      }
+      if (proof.status !== 'SUCCESS') {
+        throw new BadRequestException(
+          `Bằng chứng xác minh đang ở trạng thái ${proof.status} (chưa được đối tác/ngân hàng xác nhận). Không thể hoàn tất xác minh.`,
+        );
+      }
+      if (new Date(proof.expires_at).getTime() <= Date.now()) {
+        throw new BadRequestException('Bằng chứng xác minh đã hết hạn');
+      }
+      if (proof.used_at !== null) {
+        throw new ConflictException('Bằng chứng xác minh đã được sử dụng trước đó (Anti-replay)');
+      }
+
+      // 4. Atomic conditional update (CAS) for single-use proof consumption
+      const affectedProofs = await tx.$executeRaw`
+        UPDATE customer_bank_verification_proofs
+        SET used_at = NOW(), updated_at = NOW()
+        WHERE id = ${proof.id}
+          AND customer_id = ${params.customerId}
+          AND account_id = ${params.accountId}
+          AND status = 'SUCCESS'
+          AND used_at IS NULL
+          AND expires_at > NOW()
+      `;
+      if (affectedProofs !== 1) {
+        throw new ConflictException('Xung đột đồng thời: Bằng chứng xác minh đã được tiêu thụ bởi yêu cầu khác hoặc đã hết hạn');
+      }
+
+      // 5. Update bank account status to VERIFIED
+      const affectedAccounts = await tx.$executeRaw`
+        UPDATE customer_bank_accounts
+        SET verification_status = 'VERIFIED', updated_at = NOW()
+        WHERE id = ${params.accountId} AND customer_id = ${params.customerId}
+      `;
+      if (affectedAccounts !== 1) {
+        throw new ConflictException('Không thể cập nhật trạng thái tài khoản ngân hàng');
+      }
+
+      return { alreadyVerified: false };
     });
   }
 
