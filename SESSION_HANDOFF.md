@@ -1521,3 +1521,41 @@ When starting a new conversation, prompt the agent with:
       - Implemented `processExpiredStoreSubscriptions(batchSize)` with pessimistic row locking `SELECT ... FOR UPDATE SKIP LOCKED` and outbox event `STORE_SUBSCRIPTION_EXPIRED`. Verified in Suite 55 Test 4.6.
     - **Database Migration Status Note:**
       - Migration `20261030220000_deposit_refund_recipient_snapshot` is prepared in source and validated via `npx prisma validate`. Live deployment (`prisma migrate deploy`) and real PostgreSQL query verification remain pending until an isolated, dedicated PostgreSQL test DB instance (`localhost:5432`) is spun up. Remote / non-test DB execution is strictly guarded and blocked by `test-db-guard.ts`.
+
+15. **Security Invariant Hardening & Admin Store Rename Session (Commits `0bca872`..`52ca648`):**
+    - **Context & Modal Divergence Resolution:** Addressed the discrepancies between Modal 1 (checklist audit showing ~96% happy-path compliance) and Modal 2 (`STATIC-CODE-REVIEW.md` in `run-2` listing 51 action items across failure edge cases, incomplete error branches, state machine deadlocks, and BOLA bypasses).
+    - **Hardening Fixes Implemented & Verified:**
+      - **Task 1: CORS & Runtime Hygiene (`0bca872`):**
+        - Added `x-idempotency-key`, `idempotency-key`, `X-Idempotency-Key`, `Idempotency-Key`, and `x-request-id` to CORS `allowedHeaders` in `src/main.ts`, preventing browser preflight rejection on idempotent POST requests.
+        - Made `formatNotification` defensive against both `camelCase` and `snake_case` input keys in `src/notifications/notifications.service.ts` and `src/notifications/notifications.repository.ts`, preventing runtime `TypeError` crashes.
+        - Unit test: `tests/cors_and_notification.spec.ts` (PASS).
+      - **Task 2: Identity & System Authority Hardening (`b79c5a4`):**
+        - Prevented role elevation: In `src/auth/auth.service.ts` and `src/auth/jwt.strategy.ts`, `SYSTEM_ADMIN` role resolution strictly retains exact role code and is never elevated to `SUPER_ADMIN`.
+        - Revoked inactive staff authority: Inactive staff (`status === 'INACTIVE'`) are strictly downgraded to `CUSTOMER` with `storeId = null`.
+        - Anti-reactivation of blocked/inactive accounts: `verifyEmailAtomicTx` in `src/auth/auth.repository.ts` now verifies existing user status, preventing blocked users from self-reactivating via OTP.
+        - Unit test: `tests/auth_authority_hardening.spec.ts` (PASS).
+      - **Task 3: Financial & Payout Invariant Hardening (`7615eee`):**
+        - Invariant PAY-01: In `src/admin/admin.service.ts` line 350, payout timeouts or network errors from PayOS do NOT auto-refund the wallet. Instead, the withdrawal status is moved to `PENDING_RECONCILIATION` to prevent double-payouts. Balance is only refunded once PayOS explicitly confirms a failed terminal state via `syncPayoutStatus`.
+        - Invariant PAY-02: In `src/admin/admin.repository.ts`, `rejectWithdrawalTransaction` now locks the `store_withdrawals` row exclusively with `SELECT ... FOR UPDATE` and validates `status === 'PENDING'`, eliminating concurrent payout vs reject race conditions.
+        - Unit test: `tests/admin_payout_invariants.spec.ts` (PASS).
+      - **Task 4: Data Isolation & BOLA Protections (`c462791`):**
+        - Invariant DATA-01: In `src/orders/orders.service.ts` `cancelOrder`, BOLA ownership check is now enforced at the very top of the method before checking `orderStatus === 'CANCELLED'`, blocking unauthorized callers from accessing cancelled order details.
+        - Invariant DATA-04: In `src/stores/dto/store-me-response.dto.ts` and `src/stores/stores.service.ts`, `wallet` balance is omitted for non-owner/non-manager store staff in `GET /stores/me`.
+        - Invariant DEV-01: In `src/devices/devices.service.ts` `assignProduct`, enforced store ownership verification via `findActiveProductInStore`, preventing cross-store product assignment tampering.
+        - Invariant DATA-05: Verified device responses strip `hmacSecret`.
+        - Unit test: `tests/data_isolation_bola.spec.ts` (PASS).
+      - **Task 5: Delivery Order Status Transition Invariant (`a838437`):**
+        - Invariant ORDER-01: In `src/orders/orders.service.ts` `updateOrderStatus`, generic status transition to `DELIVERED` is strictly blocked with a descriptive error directing callers to use the dedicated `completeDelivery` workflow requiring assigned driver verification and Proof of Delivery (POD).
+        - Unit test: `tests/order_delivery_transition.spec.ts` (PASS).
+      - **Task 6: Button Rental FSM & Customer Bank Account Onboarding (`39f6304`):**
+        - Invariant RENT-01: In `src/rentals/rentals.repository.ts` `handoverRentalButtonsTx`, resolved state machine deadlock by allowing `ASSIGNED_TO_RENTAL` (in addition to `ALLOCATED_TO_STORE`) and binding `customerId` to the `ioTButton` row upon handover.
+        - Invariant RENT-05: Implemented Customer Bank Account onboarding endpoints (`POST /api/v1/customers/me/bank-accounts`, `GET /api/v1/customers/me/bank-accounts`) in `src/customers/` using AES-256-GCM encryption (`accountNumberEncrypted`), blind HMAC-SHA-256 indexing (`accountNumberHash`), and masked display (`accountNumberMasked`).
+        - Unit test: `tests/rental_fsm_and_bank_onboarding.spec.ts` (PASS).
+      - **Task 7: Admin Store Rename & Update API (`52ca648`):**
+        - Implemented `PATCH /api/v1/admin/stores/:id` in `src/admin/admin.controller.ts`, guarded by `@Roles('SUPER_ADMIN')`, allowing platform administrators to update/rename any store with DTO validation (`UpdateAdminStoreDto`).
+        - Unit test: `tests/admin_store_rename.spec.ts` (PASS).
+    - **Verification Results:**
+      - All 7 new unit test suites: **PASS** (`tests/cors_and_notification.spec.ts`, `tests/auth_authority_hardening.spec.ts`, `tests/admin_payout_invariants.spec.ts`, `tests/data_isolation_bola.spec.ts`, `tests/order_delivery_transition.spec.ts`, `tests/rental_fsm_and_bank_onboarding.spec.ts`, `tests/admin_store_rename.spec.ts`).
+      - TypeScript compilation: `npx tsc --noEmit` exited code 0 with zero errors.
+      - Production build: `npm run build` completed successfully.
+
