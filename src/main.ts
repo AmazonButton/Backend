@@ -115,7 +115,9 @@ async function bootstrap() {
     origin: corsOrigins,
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: 'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature',
+    allowedHeaders:
+      'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature, x-idempotency-key, idempotency-key, X-Idempotency-Key, Idempotency-Key, x-request-id',
+    exposedHeaders: 'X-Idempotency-Status, X-Request-Id',
   });
 
   app.setGlobalPrefix('api/v1', {

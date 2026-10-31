@@ -99,18 +99,22 @@ export class NotificationsRepository {
     idempotencyKey: string;
   }) {
     const jsonData = data.data ? JSON.stringify(data.data) : null;
-    const rows = await this.prisma.$queryRawUnsafe<any[]>(
-      `INSERT INTO notifications (user_id, type, title, body, data, idempotency_key, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW())
-       ON CONFLICT (idempotency_key) DO NOTHING
-       RETURNING *;`,
-      data.userId,
-      data.type,
-      data.title,
-      data.body,
-      jsonData,
-      data.idempotencyKey,
-    );
+    const rows = await this.prisma.$queryRaw<any[]>`
+      INSERT INTO notifications (user_id, type, title, body, data, idempotency_key, created_at)
+      VALUES (${data.userId}, ${data.type}, ${data.title}, ${data.body}, ${jsonData}::jsonb, ${data.idempotencyKey}, NOW())
+      ON CONFLICT (idempotency_key) DO NOTHING
+      RETURNING 
+        notification_id AS "notificationId",
+        user_id AS "userId",
+        type,
+        title,
+        body,
+        data,
+        is_read AS "isRead",
+        read_at AS "readAt",
+        idempotency_key AS "idempotencyKey",
+        created_at AS "createdAt";
+    `;
 
     if (rows && rows.length > 0) {
       return rows[0];

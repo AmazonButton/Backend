@@ -262,16 +262,22 @@ export class NotificationsService {
   }
 
   private formatNotification(item: any) {
+    const notificationId = item.notificationId ?? item.notification_id;
+    const userId = item.userId ?? item.user_id;
+    const idempotencyKey = item.idempotencyKey ?? item.idempotency_key;
+    const readAt = item.readAt ?? item.read_at ?? null;
+    const createdAt = item.createdAt ?? item.created_at;
+
     return {
-      notificationId: item.notificationId.toString(),
-      userId: item.userId.toString(),
+      notificationId: notificationId != null ? notificationId.toString() : '',
+      userId: userId != null ? userId.toString() : '',
       type: item.type,
       title: item.title,
       body: item.body,
       data: item.data,
-      idempotencyKey: item.idempotencyKey,
-      readAt: item.readAt,
-      createdAt: item.createdAt,
+      idempotencyKey,
+      readAt,
+      createdAt,
     };
   }
 
