@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Put, Param, Body, UseGuards, Request, Inject, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Param, Body, UseGuards, Request, Inject, Query, BadRequestException } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
+import { UpdateAdminStoreDto } from './dto/update-admin-store.dto';
 import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
 import { CreateRentalPackageDto, UpdateRentalPackageDto } from './dto/rental-packages.dto';
 import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
@@ -30,6 +31,16 @@ export class AdminController {
   async listStores() {
     const data = await this.adminService.listAllStores();
     return { success: true, data };
+  }
+
+  @Patch('stores/:id')
+  async updateStore(
+    @Param('id') id: string,
+    @Body() dto: UpdateAdminStoreDto,
+    @Request() req: any,
+  ) {
+    const data = await this.adminService.updateStoreById(id, dto, req.user);
+    return { success: true, message: 'Cập nhật thông tin cửa hàng thành công', data };
   }
 
   @Post('stores/:id/approve')

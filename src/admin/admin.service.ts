@@ -1,4 +1,5 @@
 import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
+import { UpdateAdminStoreDto } from './dto/update-admin-store.dto';
 import { Injectable, NotFoundException, BadRequestException, Optional, Inject, Logger } from '@nestjs/common';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { AdminRepository } from './admin.repository';
@@ -53,6 +54,17 @@ export class AdminService {
 
   async listAllStores() {
     return this.adminRepo.findAllStores();
+  }
+
+  async updateStoreById(storeId: string | number | bigint, dto: UpdateAdminStoreDto, _adminUser?: any) {
+    const targetStoreId = BigInt(storeId);
+    const store = await this.adminRepo.findStoreById(targetStoreId);
+    if (!store) {
+      throw new NotFoundException('Không tìm thấy cửa hàng');
+    }
+    const updated = await this.adminRepo.updateStoreById(targetStoreId, dto);
+    await this.invalidateAdminAndStoreCaches(targetStoreId);
+    return updated;
   }
 
   async approveStore(storeId: string | number | bigint, _adminUser?: any) {

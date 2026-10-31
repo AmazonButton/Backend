@@ -44,6 +44,19 @@ export class AdminRepository {
     });
   }
 
+  async updateStoreById(storeId: bigint, data: { name?: string; email?: string; phone?: string; address?: string; status?: string }) {
+    return this.prisma.store.update({
+      where: { storeId },
+      data: {
+        ...(data.name && { name: data.name.trim() }),
+        ...(data.email !== undefined && { email: data.email ? data.email.trim() : null }),
+        ...(data.phone && { phone: data.phone.trim() }),
+        ...(data.address && { address: data.address.trim() }),
+        ...(data.status && { status: data.status }),
+      },
+    });
+  }
+
   async approveStore(storeId: bigint, ownerUserId: bigint) {
     return this.prisma.$transaction(async (tx) => {
       const s = await tx.store.update({
