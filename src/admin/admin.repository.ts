@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 
@@ -319,7 +319,12 @@ export class AdminRepository {
       const balanceBefore = Number(wallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
       const currentFrozen = Number(wallet.frozen_balance || 0);
-      const frozenAfter = Math.max(0, currentFrozen - refundAmount);
+      if (currentFrozen < refundAmount) {
+        throw new ConflictException(
+          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen}) nhỏ hơn số tiền từ chối hoàn (${refundAmount}). Rollback để bảo toàn dữ liệu tài chính.`
+        );
+      }
+      const frozenAfter = currentFrozen - refundAmount;
 
       await tx.storeWallet.update({
         where: { walletId: wallet.wallet_id },
@@ -393,15 +398,21 @@ export class AdminRepository {
         FOR UPDATE
       `;
 
-      if (wallet) {
-        const amount = Number(lockedWithdrawal.amount);
-        const currentFrozen = Number(wallet.frozen_balance || 0);
-        const newFrozen = Math.max(0, currentFrozen - amount);
-        await tx.storeWallet.update({
-          where: { walletId: wallet.wallet_id },
-          data: { frozenBalance: newFrozen },
-        });
+      if (!wallet) {
+        throw new NotFoundException('Ví không tồn tại');
       }
+      const amount = Number(lockedWithdrawal.amount);
+      const currentFrozen = Number(wallet.frozen_balance || 0);
+      if (currentFrozen < amount) {
+        throw new ConflictException(
+          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen}) nhỏ hơn số tiền rút (${amount}). Rollback để bảo toàn dữ liệu tài chính.`
+        );
+      }
+      const newFrozen = currentFrozen - amount;
+      await tx.storeWallet.update({
+        where: { walletId: wallet.wallet_id },
+        data: { frozenBalance: newFrozen },
+      });
 
       return tx.storeWithdrawal.update({
         where: { withdrawalId },
@@ -478,7 +489,12 @@ export class AdminRepository {
       const balanceBefore = Number(wallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
       const currentFrozen = Number(wallet.frozen_balance || 0);
-      const frozenAfter = Math.max(0, currentFrozen - refundAmount);
+      if (currentFrozen < refundAmount) {
+        throw new ConflictException(
+          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen}) nhỏ hơn số tiền hoàn (${refundAmount}). Rollback để bảo toàn dữ liệu tài chính.`
+        );
+      }
+      const frozenAfter = currentFrozen - refundAmount;
 
       await tx.storeWallet.update({
         where: { walletId: wallet.wallet_id },

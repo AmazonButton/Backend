@@ -10125,7 +10125,7 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="tbl_rental_audit_logs" parent="1" style="shape=table;startSize=30;container=1;collapsible=1;childLayout=tableLayout;fixedRows=1;rowLines=1;fontStyle=1;align=center;resizeLast=1;strokeColor=#000000;fillColor=#FFFFFF;fontColor=#000000;fontSize=12;" value="RENTAL_AUDIT_LOGS" vertex="1">
-          <mxGeometry height="394" width="340" x="1920" y="1744" as="geometry" />
+          <mxGeometry height="394" width="340" x="1710" y="1830" as="geometry" />
         </mxCell>
         <mxCell id="tbl_rental_audit_logs_r1" parent="tbl_rental_audit_logs" style="shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;bubblePosition=0;collapsible=0;dropTarget=0;fillColor=none;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;top=0;left=0;right=0;bottom=0;" value="" vertex="1">
           <mxGeometry height="26" width="340" y="30" as="geometry" />

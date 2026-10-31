@@ -133,4 +133,97 @@ export class CustomersService {
       createdAt: acc.createdAt,
     }));
   }
+
+  async getBankAccountVerificationStatus(user: any, accountId: string | number | bigint) {
+    const userId = BigInt(user.userId || user.id);
+    const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
+    if (!profile) {
+      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+    }
+
+    const rawAccountId = BigInt(accountId);
+    const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    if (!account) {
+      throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
+    }
+
+    return {
+      id: account.id.toString(),
+      customerId: account.customerId.toString(),
+      bankBin: account.bankBin,
+      bankCode: account.bankCode,
+      bankName: account.bankName,
+      accountNumberMasked: account.accountNumberMasked,
+      accountName: account.accountName,
+      verificationStatus: account.verificationStatus,
+      isDefault: account.isDefault,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  async verifyBankAccount(
+    user: any,
+    accountId: string | number | bigint,
+    evidence?: { verificationCode?: string; proofReference?: string },
+  ) {
+    const userId = BigInt(user.userId || user.id);
+    const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
+    if (!profile) {
+      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+    }
+
+    const rawAccountId = BigInt(accountId);
+    const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    if (!account) {
+      throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
+    }
+
+    if (account.verificationStatus === 'VERIFIED') {
+      return {
+        id: account.id.toString(),
+        verificationStatus: 'VERIFIED',
+        message: 'Tài khoản ngân hàng đã được xác minh trước đó',
+      };
+    }
+
+    const normalizeName = (s: string) =>
+      (s || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .toUpperCase()
+        .replace(/[^A-Z0-9\s]/g, '')
+        .trim();
+
+    const normalizedAccName = normalizeName(account.accountName);
+    const normalizedUserFullName = normalizeName(user.fullName || (profile as any).user?.fullName || '');
+
+    const isNameMatched = Boolean(normalizedAccName && normalizedUserFullName && normalizedAccName === normalizedUserFullName);
+    const isProofProvided = Boolean(evidence?.proofReference || evidence?.verificationCode);
+
+    if (!isNameMatched && !isProofProvided) {
+      await this.customersRepo.verifyCustomerBankAccount(profile.customerId, rawAccountId, 'REJECTED');
+      throw new BadRequestException(
+        'Tên chủ tài khoản ngân hàng không trùng khớp với họ tên đăng ký của khách hàng',
+      );
+    }
+
+    await this.customersRepo.verifyCustomerBankAccount(profile.customerId, rawAccountId, 'VERIFIED');
+    const updated = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+
+    return {
+      id: updated!.id.toString(),
+      customerId: updated!.customerId.toString(),
+      bankBin: updated!.bankBin,
+      bankCode: updated!.bankCode,
+      bankName: updated!.bankName,
+      accountNumberMasked: updated!.accountNumberMasked,
+      accountName: updated!.accountName,
+      verificationStatus: updated!.verificationStatus,
+      isDefault: updated!.isDefault,
+      message: 'Xác minh tài khoản ngân hàng thành công',
+    };
+  }
 }

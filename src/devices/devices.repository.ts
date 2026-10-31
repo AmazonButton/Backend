@@ -105,10 +105,12 @@ export class DevicesRepository {
 
   async setButtonProducts(buttonId: bigint, products: { productId: bigint; quantity: number }[]) {
     return this.prisma.$transaction(async (tx) => {
-      const button = await tx.ioTButton.findUnique({
-        where: { buttonId },
-        select: { storeId: true },
-      });
+      // 1. Lock button row exclusively FIRST to serialize against concurrent store remapping
+      const [button] = await tx.$queryRaw<Array<{ button_id: bigint; store_id: bigint }>>`
+        SELECT button_id, store_id FROM iot_buttons
+        WHERE button_id = ${buttonId}
+        FOR UPDATE
+      `;
       if (!button) {
         throw new NotFoundException('Không tìm thấy thiết bị IoT Button');
       }
@@ -118,7 +120,7 @@ export class DevicesRepository {
         const validProducts = await tx.product.findMany({
           where: {
             productId: { in: productIds },
-            storeId: button.storeId,
+            storeId: button.store_id,
           },
           select: { productId: true },
         });
@@ -239,7 +241,17 @@ export class DevicesRepository {
 
   async remapStore(buttonId: bigint, newStoreId: bigint, customerId?: bigint) {
     return this.prisma.$transaction(async (tx) => {
-      // 1. Clear old button products
+      // 1. Lock button row exclusively FIRST using identical lock order (button -> mappings)
+      const [button] = await tx.$queryRaw<Array<{ button_id: bigint; store_id: bigint }>>`
+        SELECT button_id, store_id FROM iot_buttons
+        WHERE button_id = ${buttonId}
+        FOR UPDATE
+      `;
+      if (!button) {
+        throw new NotFoundException('Không tìm thấy thiết bị IoT Button để remap');
+      }
+
+      // 2. Clear old button products
       await tx.buttonProduct.deleteMany({ where: { buttonId } });
 
       // 2. Update button store

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Param, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -85,6 +85,34 @@ export class CustomersController {
     return {
       success: true,
       message: 'Lấy danh sách tài khoản ngân hàng thành công',
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Polling trạng thái xác minh tài khoản ngân hàng của khách hàng' })
+  @Get('me/bank-accounts/:id/verification-status')
+  async getMyBankAccountVerificationStatus(@Request() req: any, @Param('id') id: string) {
+    const data = await this.customersService.getBankAccountVerificationStatus(req.user, id);
+    return {
+      success: true,
+      message: 'Lấy trạng thái xác minh tài khoản ngân hàng thành công',
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Xác minh tài khoản ngân hàng của khách hàng với bằng chứng hợp lệ' })
+  @Post('me/bank-accounts/:id/verify')
+  async verifyMyBankAccount(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() evidence?: { verificationCode?: string; proofReference?: string },
+  ) {
+    const data = await this.customersService.verifyBankAccount(req.user, id, evidence);
+    return {
+      success: true,
+      message: data.message || 'Xác minh tài khoản ngân hàng thành công',
       data,
     };
   }

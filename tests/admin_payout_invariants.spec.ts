@@ -78,6 +78,135 @@ async function run() {
     );
   }
 
+  // Test 3: Recovery via reference with list response shape (data.payouts)
+  let finalizedId: bigint | null = null;
+  const mockAdminRepoForSync = {
+    findWithdrawalById: async (_id: bigint) => ({
+      withdrawalId: BigInt(456),
+      withdrawalCode: 'WTH456',
+      storeId: BigInt(2),
+      amount: 100000,
+      walletId: BigInt(20),
+      status: 'PENDING_RECONCILIATION',
+      providerReferenceId: 'REF_WTH456',
+    }),
+    finalizeSucceededWithdrawalTransaction: async (id: bigint) => {
+      finalizedId = id;
+    },
+    refundFailedWithdrawalTransaction: async () => {},
+  };
+
+  const mockPayosWithList = {
+    getPayouts: async () => ({
+      code: '00',
+      desc: 'success',
+      data: {
+        payouts: [
+          {
+            id: 'pay_matched_1',
+            referenceId: 'REF_WTH456',
+            amount: 100000,
+            approvalState: 'SUCCEEDED',
+          },
+          {
+            id: 'pay_unrelated_2',
+            referenceId: 'REF_OTHER',
+            amount: 500000,
+            approvalState: 'SUCCEEDED',
+          },
+        ],
+      },
+    }),
+    getPayout: async (id: string) => ({
+      code: '00',
+      data: {
+        id,
+        referenceId: 'REF_WTH456',
+        amount: 100000,
+        approvalState: 'SUCCEEDED',
+      },
+    }),
+  };
+
+  const adminServiceSync = new AdminService(
+    mockAdminRepoForSync as any,
+    mockPayosWithList as any,
+    {} as any,
+  );
+  (adminServiceSync as any).invalidateAdminAndStoreCaches = async () => {};
+
+  await adminServiceSync.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(
+    finalizedId,
+    BigInt(456),
+    'Expected syncPayoutStatus to correctly resolve reference from payouts list and finalize withdrawal',
+  );
+
+  // Test 4: Financial Underflow Protection (No Clamping)
+  // Ensure that if currentFrozen < amount, finalize / refund / reject throw ConflictException instead of clamping to 0
+  const underflowWallet = {
+    wallet_id: BigInt(99),
+    balance: 50000,
+    frozen_balance: 30000, // Frozen is only 30k, but withdrawal is 100k!
+  };
+
+  const mockTxContext = {
+    $queryRaw: async (query: any) => {
+      const qStr = query.strings ? query.strings.join('') : String(query);
+      if (qStr.includes('store_withdrawals')) {
+        return [
+          {
+            withdrawal_id: BigInt(789),
+            status: 'PROCESSING',
+            amount: 100000,
+            wallet_id: BigInt(99),
+            withdrawal_code: 'WTH_UNDERFLOW',
+          },
+        ];
+      }
+      if (qStr.includes('store_wallets')) {
+        return [underflowWallet];
+      }
+      return [];
+    },
+    storeWallet: {
+      update: async () => {
+        assert.fail('CRITICAL FLAW: storeWallet.update should not be called when frozen balance is insufficient!');
+      },
+    },
+    storeWithdrawal: {
+      update: async () => {},
+      findUnique: async () => ({ status: 'PROCESSING' }),
+    },
+    walletTransaction: {
+      findFirst: async () => null,
+      create: async () => {},
+    },
+  };
+
+  const mockPrismaForUnderflow = {
+    $transaction: async (cb: any) => cb(mockTxContext),
+  };
+
+  const realAdminRepo = new (await import('../src/admin/admin.repository')).AdminRepository(
+    mockPrismaForUnderflow as any,
+  );
+
+  await assert.rejects(
+    async () => {
+      await realAdminRepo.finalizeSucceededWithdrawalTransaction(BigInt(789));
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('Sai lệch kế toán') || err.status === 409,
+        true,
+        `Expected ConflictException on frozen balance underflow, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected finalizeSucceededWithdrawalTransaction to reject on insufficient frozen balance without clamping',
+  );
+
   console.log('✅ Task 3 Payout invariant tests PASSED!');
 }
 

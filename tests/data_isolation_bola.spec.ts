@@ -122,6 +122,82 @@ async function run() {
     );
   }
 
+  // -------------------------------------------------------------
+  // Test 4: Synchronized row-locking & cross-store invariant in setButtonProducts and remapStore
+  // -------------------------------------------------------------
+  let lockedButtonInSetProducts = false;
+  let currentStoreId = BigInt(10);
+
+  const mockPrismaForDevices = {
+    $transaction: async (cb: any) => {
+      const tx = {
+        $queryRaw: async (query: any) => {
+          const qStr = query.strings ? query.strings.join('') : String(query);
+          if (qStr.includes('iot_buttons') && qStr.includes('FOR UPDATE')) {
+            lockedButtonInSetProducts = true;
+            return [{ button_id: BigInt(1), store_id: currentStoreId }];
+          }
+          return [];
+        },
+        product: {
+          findMany: async (args: any) => {
+            if (args.where.storeId === BigInt(10) && args.where.productId.in.includes(BigInt(101))) {
+              return [{ productId: BigInt(101) }];
+            }
+            return [];
+          },
+        },
+        buttonProduct: {
+          deleteMany: async () => {},
+          createMany: async () => {},
+        },
+        ioTButton: {
+          update: async (args: any) => {
+            currentStoreId = args.data.storeId;
+            return { buttonId: BigInt(1), storeId: currentStoreId };
+          },
+          findUnique: async () => ({
+            buttonId: BigInt(1),
+            storeId: currentStoreId,
+          }),
+        },
+        storeCustomer: {
+          findFirst: async () => null,
+          create: async () => {},
+        },
+      };
+      return cb(tx);
+    },
+  };
+
+  const realDevicesRepo = new (await import('../src/devices/devices.repository')).DevicesRepository(
+    mockPrismaForDevices as any,
+  );
+
+  // 4.1. Mapping Store 10 product while button is at Store 10 succeeds
+  await realDevicesRepo.setButtonProducts(BigInt(1), [{ productId: BigInt(101), quantity: 1 }]);
+  assert.strictEqual(lockedButtonInSetProducts, true, 'setButtonProducts must lock iot_buttons FOR UPDATE first');
+
+  // 4.2. Remap button to Store 20
+  await realDevicesRepo.remapStore(BigInt(1), BigInt(20));
+  assert.strictEqual(currentStoreId, BigInt(20));
+
+  // 4.3. Now trying to map Store 10 product (101) to the button must be rejected!
+  await assert.rejects(
+    async () => {
+      await realDevicesRepo.setButtonProducts(BigInt(1), [{ productId: BigInt(101), quantity: 1 }]);
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err.message.includes('không thuộc cửa hàng') || err.status === 400,
+        true,
+        `Expected rejection of Store 10 product on Store 20 button, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected setButtonProducts to reject products belonging to old store after remap',
+  );
+
   console.log('✅ Task 4 Data Isolation & BOLA tests PASSED!');
 }
 

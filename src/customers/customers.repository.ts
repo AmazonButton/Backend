@@ -324,9 +324,9 @@ export class CustomersRepository {
   }) {
     return this.prisma.$transaction(async (tx) => {
       if (data.isDefault) {
-        // Lock existing customer bank accounts exclusively to avoid concurrent race where two accounts stay default
+        // Lock customer profile exclusively so concurrent creations for the same customer are strictly serialized, even if no bank accounts exist yet
         await tx.$queryRaw`
-          SELECT id FROM customer_bank_accounts
+          SELECT customer_id FROM customer_profile
           WHERE customer_id = ${data.customerId}
           FOR UPDATE
         `;
@@ -349,6 +349,32 @@ export class CustomersRepository {
           verificationStatus: data.verificationStatus || 'PENDING',
         },
       });
+    });
+  }
+
+  async findCustomerBankAccountById(customerId: bigint, accountId: bigint) {
+    return this.prisma.customerBankAccount.findFirst({
+      where: { id: accountId, customerId },
+      select: {
+        id: true,
+        customerId: true,
+        bankBin: true,
+        bankCode: true,
+        bankName: true,
+        accountNumberMasked: true,
+        accountName: true,
+        verificationStatus: true,
+        isDefault: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  async verifyCustomerBankAccount(customerId: bigint, accountId: bigint, status: string = 'VERIFIED') {
+    return this.prisma.customerBankAccount.updateMany({
+      where: { id: accountId, customerId },
+      data: { verificationStatus: status, updatedAt: new Date() },
     });
   }
 

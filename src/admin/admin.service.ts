@@ -389,19 +389,78 @@ export class AdminService {
     }
 
     let statusData: any = null;
+    let targetPayout: any = null;
+
     if (withdrawal.providerPayoutId) {
       statusData = await this.payosPayoutService.getPayout(withdrawal.providerPayoutId);
+      targetPayout = statusData?.data;
     } else if (withdrawal.providerReferenceId) {
       statusData = await this.payosPayoutService.getPayouts({ referenceId: withdrawal.providerReferenceId });
+      const rawList = statusData?.data?.payouts || statusData?.data || [];
+      const payoutsList = Array.isArray(rawList) ? rawList : [];
+
+      const matched = payoutsList.filter(
+        (p: any) =>
+          p.referenceId === withdrawal.providerReferenceId ||
+          p.referenceId === withdrawal.withdrawalCode ||
+          p.id === withdrawal.providerReferenceId,
+      );
+
+      if (matched.length === 1) {
+        const found = matched[0];
+        if (found.id) {
+          try {
+            const detailRes = await this.payosPayoutService.getPayout(found.id);
+            targetPayout = detailRes?.data || found;
+          } catch {
+            targetPayout = found;
+          }
+        } else {
+          targetPayout = found;
+        }
+      } else {
+        return {
+          withdrawal,
+          message:
+            matched.length === 0
+              ? 'Không tìm thấy giao dịch payout phù hợp với referenceId trên PayOS, giữ trạng thái chờ đối soát'
+              : 'Có nhiều hơn một payout trùng referenceId trên PayOS, giữ trạng thái chờ đối soát thủ công',
+          statusData,
+        };
+      }
     } else {
       return { withdrawal, message: 'Chưa có thông tin provider reference id' };
     }
 
-    const state = String(statusData?.data?.approvalState || statusData?.data?.state || statusData?.data?.status || '').toUpperCase();
+    if (!targetPayout) {
+      return { withdrawal, message: 'Không thể trích xuất dữ liệu chi tiết payout từ provider', statusData };
+    }
+
+    const reportedAmount = Number(
+      targetPayout.amount ||
+      targetPayout.transactions?.[0]?.amount ||
+      0,
+    );
+    if (reportedAmount > 0 && Math.abs(reportedAmount - Number(withdrawal.amount)) > 0.01) {
+      return {
+        withdrawal,
+        message: `Số tiền trên cổng thanh toán (${reportedAmount}) không khớp với yêu cầu rút tiền (${withdrawal.amount}). Giữ trạng thái chờ đối soát.`,
+        statusData,
+      };
+    }
+
+    const state = String(
+      targetPayout.approvalState ||
+      targetPayout.state ||
+      targetPayout.status ||
+      targetPayout.transactions?.[0]?.state ||
+      '',
+    ).toUpperCase();
+
     if (['COMPLETED', 'PAID', 'SUCCEEDED'].includes(state)) {
       await this.adminRepo.finalizeSucceededWithdrawalTransaction(
         rawWithdrawalId,
-        withdrawal.providerPayoutId || statusData?.data?.id
+        targetPayout.id || withdrawal.providerPayoutId,
       );
     } else if (['REJECTED', 'FAILED', 'CANCELLED'].includes(state)) {
       // Explicitly confirmed as failed by provider: safe to refund wallet now
