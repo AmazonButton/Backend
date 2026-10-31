@@ -157,12 +157,21 @@ async function run() {
   );
   (adminServiceSync as any).invalidateAdminAndStoreCaches = async () => {};
 
-  await adminServiceSync.syncPayoutStatus(BigInt(456));
+  const syncSuccessRes = await adminServiceSync.syncPayoutStatus(BigInt(456));
   assert.strictEqual(
     finalizedId,
     BigInt(456),
     'Expected syncPayoutStatus to correctly resolve reference and finalize withdrawal when all evidence matches',
   );
+  assert.strictEqual(syncSuccessRes.reconciliation?.outcome, 'SUCCESS');
+  assert.strictEqual(syncSuccessRes.reconciliation?.reasonCode, 'PAYOUT_VERIFIED_SUCCESS');
+  assert.strictEqual((syncSuccessRes as any).statusData, undefined, 'Must NOT return raw statusData');
+
+  // Verify data leakage prevention across full serialized JSON response
+  const jsonStr = JSON.stringify(syncSuccessRes);
+  assert.strictEqual(jsonStr.includes(standardAccount), false, 'JSON must NOT contain plaintext account number');
+  assert.strictEqual(jsonStr.includes(standardAccountHash), false, 'JSON must NOT contain internal bankAccountHash');
+  assert.strictEqual(syncSuccessRes.withdrawal.bankAccountMasked.startsWith('******'), true, 'Withdrawal must be mapped with masked account');
 
   // 3.1. Missing amount or 0 or NaN must NOT finalize
   finalizedId = null;
@@ -263,16 +272,66 @@ async function run() {
   assert.strictEqual(finalizedId, null, 'Must NOT finalize when account number mismatches even if name and BIN match');
   assert.strictEqual(resMismatchAcc.message?.includes('Định danh số tài khoản'), true);
 
-  // 3.5. Missing snapshot in withdrawal record must NOT finalize (Finding 3)
+  // 3.5. Missing or inconsistent snapshot in withdrawal record (Finding 2 & 3)
+  // 3.5a: Only plaintext bankAccountNumber without hash or ciphertext -> MUST NOT finalize/refund
   finalizedId = null;
-  const adminServiceMissingSnapshot = new AdminService(
-    createMockRepo({ bankBinSnapshot: null, bankAccountHash: null }) as any,
+  const adminServicePlaintextOnly = new AdminService(
+    createMockRepo({ bankBinSnapshot: '970422', bankAccountHash: null, bankAccountEncrypted: null, bankAccountNumber: standardAccount }) as any,
     validPayosService as any,
     {} as any,
   );
-  (adminServiceMissingSnapshot as any).invalidateAdminAndStoreCaches = async () => {};
-  const resMissingSnapshot = await adminServiceMissingSnapshot.syncPayoutStatus(BigInt(456));
-  assert.strictEqual(finalizedId, null, 'Must NOT finalize when withdrawal is missing snapshot');
+  (adminServicePlaintextOnly as any).invalidateAdminAndStoreCaches = async () => {};
+  const resPlaintextOnly = await adminServicePlaintextOnly.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(finalizedId, null, 'Must NOT finalize when withdrawal only has plaintext and lacks snapshot');
+  assert.strictEqual(resPlaintextOnly.reconciliation?.reasonCode, 'MISSING_SNAPSHOT');
+
+  // 3.5b: Hash wrong but ciphertext right -> MUST detect inconsistent snapshot and halt
+  finalizedId = null;
+  const adminServiceTamperedHash = new AdminService(
+    createMockRepo({
+      bankBinSnapshot: '970422',
+      bankAccountHash: 'tampered_or_wrong_hash_value_123',
+      bankAccountEncrypted: CryptoVaultUtil.encryptAccountNumber(standardAccount),
+    }) as any,
+    validPayosService as any,
+    {} as any,
+  );
+  (adminServiceTamperedHash as any).invalidateAdminAndStoreCaches = async () => {};
+  const resTamperedHash = await adminServiceTamperedHash.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(finalizedId, null, 'Must NOT finalize when hash and ciphertext contradict each other');
+  assert.strictEqual(resTamperedHash.reconciliation?.reasonCode, 'INCONSISTENT_SNAPSHOT');
+
+  // 3.5c: Hash right but ciphertext represents a DIFFERENT account -> MUST detect inconsistent snapshot and halt
+  finalizedId = null;
+  const adminServiceContradictoryCiphertext = new AdminService(
+    createMockRepo({
+      bankBinSnapshot: '970422',
+      bankAccountHash: standardAccountHash,
+      bankAccountEncrypted: CryptoVaultUtil.encryptAccountNumber('98765432109876'), // Different account encrypted!
+    }) as any,
+    validPayosService as any,
+    {} as any,
+  );
+  (adminServiceContradictoryCiphertext as any).invalidateAdminAndStoreCaches = async () => {};
+  const resContradictoryCipher = await adminServiceContradictoryCiphertext.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(finalizedId, null, 'Must NOT finalize when ciphertext represents different account than hash');
+  assert.strictEqual(resContradictoryCipher.reconciliation?.reasonCode, 'INCONSISTENT_SNAPSHOT');
+
+  // 3.5d: Consistent snapshot (both hash and encrypted match same account) -> allows reconciliation
+  finalizedId = null;
+  const adminServiceConsistentSnapshot = new AdminService(
+    createMockRepo({
+      bankBinSnapshot: '970422',
+      bankAccountHash: standardAccountHash,
+      bankAccountEncrypted: CryptoVaultUtil.encryptAccountNumber(standardAccount),
+    }) as any,
+    validPayosService as any,
+    {} as any,
+  );
+  (adminServiceConsistentSnapshot as any).invalidateAdminAndStoreCaches = async () => {};
+  const resConsistent = await adminServiceConsistentSnapshot.syncPayoutStatus(BigInt(456));
+  assert.strictEqual(finalizedId, BigInt(456), 'Consistent snapshot must successfully finalize');
+  assert.strictEqual(resConsistent.reconciliation?.outcome, 'SUCCESS');
 
   // 3.6. Missing provider recipient evidence (toAccountNumber missing) must NOT finalize (Finding 3)
   finalizedId = null;

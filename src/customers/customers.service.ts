@@ -207,26 +207,29 @@ export class CustomersService {
       accountId: account.id.toString(),
       proofReference: proof.proofReference,
       expiresAt: proof.expiresAt.toISOString(),
-      status: proof.status,
-      message: 'Khởi tạo phiên xác minh tài khoản ngân hàng thành công. Phiên đang ở trạng thái PENDING, vui lòng chờ đối tác xác thực.',
+      status: 'PENDING',
+      integrationStatus: 'PENDING_PROVIDER_ADAPTER',
+      message:
+        'Phiên xác minh tài khoản đã được khởi tạo ở trạng thái PENDING. Tính năng xác minh tự động từ đối tác đang được hoàn thiện tích hợp adapter, tài khoản chưa thể tự động chuyển VERIFIED.',
     };
   }
 
   async confirmProviderBankVerification(params: {
     proofReference: string;
-    customerId: bigint;
-    accountId: bigint;
-    bankBin: string;
-    accountNumberHash: string;
     providerStatus: 'SUCCESS' | 'FAILED';
+    providerEventId?: string;
+    expectedBinding?: {
+      customerId?: bigint;
+      accountId?: bigint;
+      bankBin?: string;
+      accountNumberHash?: string;
+    };
   }) {
     return this.customersRepo.confirmBankVerificationProof({
       proofReference: params.proofReference,
-      customerId: params.customerId,
-      accountId: params.accountId,
-      bankBin: params.bankBin,
-      accountNumberHash: params.accountNumberHash,
       status: params.providerStatus,
+      providerEventId: params.providerEventId,
+      expectedBinding: params.expectedBinding,
     });
   }
 

@@ -1613,3 +1613,32 @@ When starting a new conversation, prompt the agent with:
       - TypeScript Compiler (`npx tsc --noEmit`): **PASS** (Zero errors)
       - Production Build (`npm run build`): **PASS** (Exit code 0)
       - Git diff check (`git diff HEAD --check` & `git diff a5db316..HEAD --check`): **PASS**
+
+17. **Security Hardening: Payout Leak Prevention, Snapshot Consistency & Callback Terminal Machine:**
+    - **Addressed Review Invariants:**
+      1. **[P1] API Đối Soát Data Leak Prevention:**
+         - Stripped raw `statusData` from all return branches in `AdminService.syncPayoutStatus`.
+         - Mapped withdrawal through `WalletMapper.toWithdrawalDto()`, masking bank account numbers (`******1234`) and stripping raw ciphertext/hash.
+         - Enforced whitelisted reconciliation envelope in `admin.controller.ts`: `{ success: true, message, data: { withdrawal, reconciliation: { outcome, reasonCode, payoutId } } }`.
+         - Unit verified in `tests/admin_payout_invariants.spec.ts`: asserted serialized JSON contains 0 plaintext account numbers, 0 hashes, and 0 raw provider payloads.
+      2. **[P1] Elimination of Plaintext Fallback & Snapshot Consistency Enforcement:**
+         - Completely removed `bankAccountNumber` plaintext fallback in `admin.service.ts`.
+         - Mandated strict snapshot consistency: When both `bankAccountHash` and `bankAccountEncrypted` exist, decrypts ciphertext and verifies that `computeDeterministicAccountHash(decrypted) === bankAccountHash`.
+         - Contradictory/tampered snapshot halts immediately with `reasonCode: 'INCONSISTENT_SNAPSHOT'`.
+         - Unit verified in `tests/admin_payout_invariants.spec.ts` across 4 distinct test cases (3.5a: plaintext-only -> `MISSING_SNAPSHOT`; 3.5b: tampered hash -> `INCONSISTENT_SNAPSHOT`; 3.5c: contradictory ciphertext -> `INCONSISTENT_SNAPSHOT`; 3.5d: consistent snapshot -> `SUCCESS`).
+      3. **Customer Bank Verification Functional Status Transparency:**
+         - `initiateBankAccountVerification` explicitly declares `status: 'PENDING'` and `integrationStatus: 'PENDING_PROVIDER_ADAPTER'`.
+         - Transparently communicates that automated partner adapter integration is in progress rather than claiming partner request was already dispatched.
+      4. **Callback State Machine Terminal Protection & Anti-Consumption Guard:**
+         - In `CustomersRepository.confirmBankVerificationProof`, strictly allows only `PENDING -> SUCCESS | FAILED`.
+         - Enforces idempotency for duplicate callbacks with identical status.
+         - Rejects out-of-order contradictory callbacks (e.g. `FAILED` arriving for `SUCCESS` proof) with `ConflictException` (409).
+         - Rejects callbacks arriving after proof consumption (`used_at IS NOT NULL`) with `ConflictException` (409).
+         - Binds to internal DB record rather than trusting caller-provided IDs.
+         - Unit verified in `tests/rental_fsm_and_bank_onboarding.spec.ts` (Tests 5.6a, 5.6b, 5.9b).
+    - **Verification Results:**
+      - `tests/rental_fsm_and_bank_onboarding.spec.ts`: **PASS** (Exit code 0)
+      - `tests/admin_payout_invariants.spec.ts`: **PASS** (Exit code 0)
+      - `npx tsc --noEmit`: **PASS** (Zero errors)
+      - `npm run build`: **PASS** (Exit code 0)
+      - `git diff a5db316..HEAD --check` & `git diff HEAD --check`: **PASS**

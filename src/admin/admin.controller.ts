@@ -177,10 +177,17 @@ export class AdminController {
     return { success: true, message: 'Đã gửi lệnh chi tiền PayOS thành công!', data: WalletMapper.toWithdrawalDto(data) };
   }
 
-    @Post('withdrawals/:id/sync-payout')
+  @Post('withdrawals/:id/sync-payout')
   async syncPayoutStatus(@Param('id') id: string) {
     const data = await this.adminService.syncPayoutStatus(id);
-    return { success: true, message: 'Đã đồng bộ trạng thái chi tiền PayOS!', data };
+    return {
+      success: true,
+      message: data.message || 'Đã đồng bộ trạng thái chi tiền PayOS!',
+      data: {
+        withdrawal: data.withdrawal,
+        reconciliation: data.reconciliation,
+      },
+    };
   }
 
   @Post('payos/payouts/batch')

@@ -172,9 +172,28 @@ async function run() {
 
   mockCustomersRepo.confirmBankVerificationProof = async (params: any) => {
     const proof = mockProofsTable[params.proofReference];
-    if (!proof) throw new BadRequestException('Không tìm thấy phiên xác minh ngân hàng');
-    if (proof.customerId.toString() !== params.customerId.toString() || proof.accountId.toString() !== params.accountId.toString()) {
-      throw new BadRequestException('Thông tin xác minh từ provider không khớp với phiên đã khởi tạo');
+    if (!proof) throw new NotFoundException('Không tìm thấy phiên xác minh ngân hàng');
+    if (proof.usedAt !== null) {
+      throw new ConflictException('Bằng chứng xác minh đã được sử dụng trước đó (đã tiêu thụ). Không thể thay đổi trạng thái.');
+    }
+    if (params.expectedBinding) {
+      if (
+        (params.expectedBinding.customerId && proof.customerId.toString() !== params.expectedBinding.customerId.toString()) ||
+        (params.expectedBinding.accountId && proof.accountId.toString() !== params.expectedBinding.accountId.toString())
+      ) {
+        throw new BadRequestException('Thông tin xác minh từ provider không khớp với phiên đã khởi tạo');
+      }
+    }
+    if (new Date(proof.expiresAt).getTime() <= Date.now()) {
+      throw new BadRequestException('Phiên xác minh đã hết hạn');
+    }
+    if (proof.status === params.status) {
+      return proof;
+    }
+    if (proof.status !== 'PENDING') {
+      throw new ConflictException(
+        `Phiên xác minh đã ở trạng thái kết thúc (${proof.status}). Không thể thay đổi sang ${params.status}`,
+      );
     }
     proof.status = params.status;
     return proof;
@@ -233,15 +252,15 @@ async function run() {
   );
   assert.strictEqual(currentAccountStatus, 'PENDING');
 
-  // 5.5. Provider callback with wrong customer or account -> MUST BE REJECTED!
+  // 5.5. Provider callback with wrong customer or account binding -> MUST BE REJECTED!
   await assert.rejects(
     async () => {
       await customersService.confirmProviderBankVerification({
         proofReference: initiated.proofReference,
-        customerId: BigInt(999), // Attacker customer!
-        accountId: BigInt(1),
-        bankBin: '970422',
-        accountNumberHash: deterministicHash,
+        expectedBinding: {
+          customerId: BigInt(999), // Attacker customer!
+          accountId: BigInt(1),
+        },
         providerStatus: 'SUCCESS',
       });
     },
@@ -253,14 +272,37 @@ async function run() {
   );
 
   // 5.6. Legitimate provider confirmation -> transitions proof status to SUCCESS
-  await customersService.confirmProviderBankVerification({
+  const confirmedProof = await customersService.confirmProviderBankVerification({
     proofReference: initiated.proofReference,
-    customerId: BigInt(55),
-    accountId: BigInt(1),
-    bankBin: '970422',
-    accountNumberHash: deterministicHash,
     providerStatus: 'SUCCESS',
   });
+  assert.strictEqual(confirmedProof.status, 'SUCCESS');
+
+  // 5.6a. Duplicate callback with SAME terminal status -> MUST BE IDEMPOTENT (no error)
+  const duplicateCallback = await customersService.confirmProviderBankVerification({
+    proofReference: initiated.proofReference,
+    providerStatus: 'SUCCESS',
+  });
+  assert.strictEqual(duplicateCallback.status, 'SUCCESS', 'Duplicate callback must be idempotent');
+
+  // 5.6b. Out-of-order contradictory callback (sending FAILED to SUCCESS proof) -> MUST BE REJECTED with ConflictException
+  await assert.rejects(
+    async () => {
+      await customersService.confirmProviderBankVerification({
+        proofReference: initiated.proofReference,
+        providerStatus: 'FAILED',
+      });
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err instanceof ConflictException || err.status === 409 || err.message.includes('trạng thái kết thúc'),
+        true,
+        `Expected ConflictException for contradictory callback, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected out-of-order contradictory callback to be rejected',
+  );
 
   // 5.7. Verification with verified proof -> transitions account to VERIFIED
   const verifiedResult = await customersService.verifyBankAccount(customerUser, '1', {
@@ -292,6 +334,25 @@ async function run() {
     },
     'Expected verifyBankAccount to reject already-consumed proof (anti-replay single-use)',
   );
+  // 5.9b. Callback after proof consumption -> MUST THROW ConflictException
+  await assert.rejects(
+    async () => {
+      await customersService.confirmProviderBankVerification({
+        proofReference: initiated.proofReference,
+        providerStatus: 'SUCCESS',
+      });
+    },
+    (err: any) => {
+      assert.strictEqual(
+        err instanceof ConflictException || err.status === 409 || err.message.includes('đã được sử dụng'),
+        true,
+        `Expected ConflictException when callback arrives after consumption, got: ${err.message}`,
+      );
+      return true;
+    },
+    'Expected callback after consumption to be rejected',
+  );
+
   currentAccountStatus = 'VERIFIED';
 
   // Test 6: Concurrency & Lock Order (Customer Profile Row Lock)

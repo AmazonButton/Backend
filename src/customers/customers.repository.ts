@@ -411,11 +411,14 @@ export class CustomersRepository {
 
   async confirmBankVerificationProof(params: {
     proofReference: string;
-    customerId: bigint;
-    accountId: bigint;
-    bankBin: string;
-    accountNumberHash: string;
     status: 'SUCCESS' | 'FAILED';
+    providerEventId?: string;
+    expectedBinding?: {
+      customerId?: bigint;
+      accountId?: bigint;
+      bankBin?: string;
+      accountNumberHash?: string;
+    };
   }) {
     return this.prisma.$transaction(async (tx) => {
       const [proof] = await tx.$queryRaw<Array<{
@@ -426,8 +429,9 @@ export class CustomersRepository {
         account_number_hash: string;
         status: string;
         expires_at: Date;
+        used_at: Date | null;
       }>>`
-        SELECT id, customer_id, account_id, bank_bin, account_number_hash, status, expires_at
+        SELECT id, customer_id, account_id, bank_bin, account_number_hash, status, expires_at, used_at
         FROM customer_bank_verification_proofs
         WHERE proof_reference = ${params.proofReference}
         FOR UPDATE
@@ -435,16 +439,41 @@ export class CustomersRepository {
       if (!proof) {
         throw new NotFoundException('Không tìm thấy phiên xác minh ngân hàng');
       }
-      if (
-        proof.customer_id.toString() !== params.customerId.toString() ||
-        proof.account_id.toString() !== params.accountId.toString() ||
-        proof.bank_bin !== params.bankBin ||
-        proof.account_number_hash !== params.accountNumberHash
-      ) {
-        throw new BadRequestException('Thông tin xác minh từ provider không khớp với phiên đã khởi tạo');
+
+      // 1. Guard against updating already consumed proofs
+      if (proof.used_at !== null) {
+        throw new ConflictException('Bằng chứng xác minh đã được sử dụng trước đó (đã tiêu thụ). Không thể thay đổi trạng thái.');
       }
+
+      // 2. Validate binding if caller provided expectedBinding
+      if (params.expectedBinding) {
+        if (
+          (params.expectedBinding.customerId && proof.customer_id.toString() !== params.expectedBinding.customerId.toString()) ||
+          (params.expectedBinding.accountId && proof.account_id.toString() !== params.expectedBinding.accountId.toString()) ||
+          (params.expectedBinding.bankBin && proof.bank_bin !== params.expectedBinding.bankBin) ||
+          (params.expectedBinding.accountNumberHash && proof.account_number_hash !== params.expectedBinding.accountNumberHash)
+        ) {
+          throw new BadRequestException('Thông tin xác minh từ provider không khớp với phiên đã khởi tạo');
+        }
+      }
+
+      // 3. Guard against expired proof
       if (new Date(proof.expires_at).getTime() <= Date.now()) {
         throw new BadRequestException('Phiên xác minh đã hết hạn');
+      }
+
+      // 4. Idempotency: duplicate callback with the same status returns current record without error
+      if (proof.status === params.status) {
+        return tx.customerBankVerificationProof.findUnique({
+          where: { id: proof.id },
+        });
+      }
+
+      // 5. Terminal state guard: only allow transition from PENDING -> SUCCESS | FAILED
+      if (proof.status !== 'PENDING') {
+        throw new ConflictException(
+          `Phiên xác minh đã ở trạng thái kết thúc (${proof.status}). Không thể thay đổi sang ${params.status} (chặn callback trái thứ tự / mâu thuẫn).`,
+        );
       }
 
       return tx.customerBankVerificationProof.update({
