@@ -31,14 +31,14 @@ export class StoresService {
     if (!store) {
       throw new NotFoundException('Cửa hàng không tồn tại');
     }
-    return StoreMeResponseDto.fromEntity(store);
+    return StoreMeResponseDto.fromEntity(store, user?.role);
   }
 
   async updateStoreMe(user: any, dto: UpdateStoreMeDto): Promise<StoreMeResponseDto> {
     const storeId = await this.resolveStoreId(user);
     await this.storesRepo.updateStore(storeId, dto);
     const updated = await this.storesRepo.findStoreForMe(storeId);
-    return StoreMeResponseDto.fromEntity(updated);
+    return StoreMeResponseDto.fromEntity(updated, user?.role);
   }
 
   async listActiveStores(query: { search?: string; page?: number; pageSize?: number; limit?: number }) {

@@ -514,6 +514,14 @@ export class DevicesService {
     const existing = this.formatButton(button);
     const targetProductId = BigInt(body.productId);
 
+    // Enforce store ownership check: product must belong to button's store
+    if (button.storeId) {
+      const activeProd = await this.devicesRepo.findActiveProductInStore(targetProductId, BigInt(button.storeId));
+      if (!activeProd) {
+        throw new BadRequestException('Sản phẩm không thuộc cửa hàng sở hữu nút bấm này hoặc không ở trạng thái ACTIVE');
+      }
+    }
+
     await this.devicesRepo.setButtonProducts(BigInt(existing.buttonId), [
       { productId: targetProductId, quantity: body.quantity || 1 },
     ]);

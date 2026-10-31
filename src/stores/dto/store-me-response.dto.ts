@@ -31,9 +31,10 @@ export class StoreMeResponseDto {
   createdAt: Date;
   updatedAt: Date;
 
-  static fromEntity(store: any): StoreMeResponseDto {
+  static fromEntity(store: any, userRole?: string): StoreMeResponseDto {
     const activeSub = store.subscriptions?.[0] || null;
     const verifiedBank = store.bankAccounts?.find((b: any) => b.verificationStatus === 'VERIFIED') || store.bankAccounts?.[0] || null;
+    const canViewFinancials = !userRole || ['STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(userRole);
 
     return {
       storeId: store.storeId.toString(),
@@ -63,7 +64,7 @@ export class StoreMeResponseDto {
         status: verifiedBank?.verificationStatus || 'UNVERIFIED',
         isVerified: verifiedBank?.verificationStatus === 'VERIFIED',
       },
-      wallet: store.wallet
+      wallet: canViewFinancials && store.wallet
         ? {
             balance: Number(store.wallet.balance || 0),
             lockedBalance: Number(store.wallet.frozenBalance ?? 0),

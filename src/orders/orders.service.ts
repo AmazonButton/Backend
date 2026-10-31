@@ -536,6 +536,19 @@ export class OrdersService {
       throw new NotFoundException('Đơn hàng không tồn tại');
     }
 
+    // BOLA / IDOR Protection: verify ownership BEFORE checking status or returning order details
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      const isCustomerOwner = user.customerProfileId && order.customerId === BigInt(user.customerProfileId);
+      const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
+      if (!isCustomerOwner && !isStoreOwner) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền hủy đơn hàng này.',
+        });
+      }
+    }
+
     if (order.orderStatus === 'CANCELLED') {
       return toOrderResponseDto(order);
     }
@@ -577,19 +590,6 @@ export class OrdersService {
 
     if (!['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING'].includes(order.orderStatus)) {
       throw new BadRequestException('Đơn hàng đã được xử lý giao hàng hoặc hoàn tất, không thể hủy');
-    }
-
-    // BOLA / IDOR Protection
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      const isCustomerOwner = user.customerProfileId && order.customerId === BigInt(user.customerProfileId);
-      const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
-      if (!isCustomerOwner && !isStoreOwner) {
-        throw new ForbiddenException({
-          success: false,
-          code: 'ACCESS_DENIED',
-          message: 'Bạn không có quyền hủy đơn hàng này.',
-        });
-      }
     }
 
     const updated = await this.ordersRepo.cancelOrderAtomicTx(targetOrderId, reason, user?.userId || user?.id);
