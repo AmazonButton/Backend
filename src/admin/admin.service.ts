@@ -348,13 +348,18 @@ export class AdminService {
       await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
       return updated;
     } catch (err: any) {
-      // Auto-refund and mark FAILED on PayOS failure, network error, or exception
-      await this.adminRepo.refundFailedWithdrawalTransaction(
+      // Invariant PAY-01: Never auto-refund wallet on timeout or uncertain provider error!
+      // Auto-refunding while the remote provider might have accepted or queued the payout
+      // exposes the business to double payout vulnerability.
+      // Funds must remain frozen under status PENDING_RECONCILIATION until explicitly reconciled.
+      await this.adminRepo.markWithdrawalPendingReconciliation(
         rawWithdrawalId,
         err.message || 'Lỗi kết nối hoặc xử lý từ PayOS'
       );
       await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
-      throw new BadRequestException(`Xuất lệnh chi hộ PayOS thất bại: ${err.message || 'Lỗi cổng PayOS'}`);
+      throw new BadRequestException(
+        `Xuất lệnh chi hộ PayOS chưa rõ kết quả: ${err.message || 'Lỗi cổng PayOS'}. Yêu cầu được giữ ở trạng thái PENDING_RECONCILIATION để đối soát, số dư ví không tự ý hoàn lại để chống chi kép.`
+      );
     }
   }
 
@@ -371,15 +376,32 @@ export class AdminService {
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }
 
+    let statusData: any = null;
     if (withdrawal.providerPayoutId) {
-      const statusData = await this.payosPayoutService.getPayout(withdrawal.providerPayoutId);
-      return { withdrawal, statusData };
+      statusData = await this.payosPayoutService.getPayout(withdrawal.providerPayoutId);
     } else if (withdrawal.providerReferenceId) {
-      const listData = await this.payosPayoutService.getPayouts({ referenceId: withdrawal.providerReferenceId });
-      return { withdrawal, listData };
+      statusData = await this.payosPayoutService.getPayouts({ referenceId: withdrawal.providerReferenceId });
+    } else {
+      return { withdrawal, message: 'Chưa có thông tin provider reference id' };
     }
 
-        return { withdrawal, message: 'Chưa có thông tin provider reference id' };
+    const state = String(statusData?.data?.approvalState || statusData?.data?.state || statusData?.data?.status || '').toUpperCase();
+    if (['COMPLETED', 'PAID', 'SUCCEEDED'].includes(state)) {
+      await this.adminRepo.updateWithdrawal(rawWithdrawalId, {
+        status: 'SUCCEEDED',
+        processedAt: new Date(),
+      });
+    } else if (['REJECTED', 'FAILED', 'CANCELLED'].includes(state)) {
+      // Explicitly confirmed as failed by provider: safe to refund wallet now
+      await this.adminRepo.refundFailedWithdrawalTransaction(
+        rawWithdrawalId,
+        statusData?.desc || `PayOS xác nhận chi hộ thất bại (${state})`
+      );
+    }
+
+    await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+    const fresh = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    return { withdrawal: fresh || withdrawal, statusData };
   }
 
   async createBatchPayout(params: CreatePayosBatchPayoutDto) {

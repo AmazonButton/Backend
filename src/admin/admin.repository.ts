@@ -269,6 +269,27 @@ export class AdminRepository {
 
   async rejectWithdrawalTransaction(withdrawal: any, reason: string, adminUserId?: bigint) {
     return this.prisma.$transaction(async (tx) => {
+      // Lock withdrawal row exclusively first to prevent concurrent payout / claim race condition
+      const [lockedWithdrawal] = await tx.$queryRaw<Array<{
+        withdrawal_id: bigint;
+        status: string;
+        amount: any;
+        wallet_id: bigint;
+        withdrawal_code: string;
+      }>>`
+        SELECT withdrawal_id, status, amount, wallet_id, withdrawal_code
+        FROM store_withdrawals
+        WHERE withdrawal_id = ${withdrawal.withdrawalId}
+        FOR UPDATE
+      `;
+
+      if (!lockedWithdrawal) throw new Error('Yêu cầu rút tiền không tồn tại');
+      if (lockedWithdrawal.status !== 'PENDING') {
+        throw new Error(
+          `Yêu cầu rút tiền đang ở trạng thái ${lockedWithdrawal.status}, không thể từ chối`
+        );
+      }
+
       const [wallet] = await tx.$queryRaw<Array<{
         wallet_id: bigint;
         balance: any;
@@ -276,12 +297,12 @@ export class AdminRepository {
       }>>`
         SELECT wallet_id, balance, frozen_balance
         FROM store_wallets
-        WHERE wallet_id = ${withdrawal.walletId}
+        WHERE wallet_id = ${lockedWithdrawal.wallet_id}
         FOR UPDATE
       `;
       if (!wallet) throw new Error('Ví không tồn tại');
 
-      const refundAmount = Number(withdrawal.amount);
+      const refundAmount = Number(lockedWithdrawal.amount);
       const balanceBefore = Number(wallet.balance);
       const balanceAfter = balanceBefore + refundAmount;
       const currentFrozen = Number(wallet.frozen_balance || 0);
@@ -302,13 +323,13 @@ export class AdminRepository {
           type: 'WITHDRAWAL_REFUND',
           balanceBefore,
           balanceAfter,
-          referenceId: withdrawal.withdrawalCode,
-          description: `Hoàn tiền yêu cầu rút #${withdrawal.withdrawalCode} bị từ chối: ${reason}`,
+          referenceId: lockedWithdrawal.withdrawal_code,
+          description: `Hoàn tiền yêu cầu rút #${lockedWithdrawal.withdrawal_code} bị từ chối: ${reason}`,
         },
       });
 
       return tx.storeWithdrawal.update({
-        where: { withdrawalId: withdrawal.withdrawalId },
+        where: { withdrawalId: lockedWithdrawal.withdrawal_id },
         data: {
           status: 'REJECTED',
           rejectionReason: reason,
@@ -316,6 +337,17 @@ export class AdminRepository {
           processedAt: new Date(),
         },
       });
+    });
+  }
+
+  async markWithdrawalPendingReconciliation(withdrawalId: bigint, reason: string): Promise<any> {
+    return this.prisma.storeWithdrawal.update({
+      where: { withdrawalId },
+      data: {
+        status: 'PENDING_RECONCILIATION',
+        failureReason: reason,
+        updatedAt: new Date(),
+      },
     });
   }
 
