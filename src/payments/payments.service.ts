@@ -652,7 +652,18 @@ export class PaymentsService {
       if (!isCustomerOwner && !isStoreOwner) {
         throw new ForbiddenException('Bạn không có quyền truy cập hoặc thao tác yêu cầu thanh toán này');
       }
+      return;
     }
+
+    if (this.billingChargesService) {
+      const charge = await this.billingChargesService.findChargeByOrderCode(String(orderCodeOrId));
+      if (charge) {
+        await this.billingChargesService.getChargeById(charge.chargeId, user);
+        return;
+      }
+    }
+
+    throw new NotFoundException('Không tìm thấy thông tin giao dịch hoặc yêu cầu thanh toán trong hệ thống');
   }
 
   async getPaymentLinkInformation(orderCodeOrId: number | string, user?: any) {

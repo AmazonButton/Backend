@@ -201,25 +201,23 @@ export class AuthRepository {
     const normalizedEmail = params.email ? params.email.toLowerCase().trim() : null;
 
     return this.prisma.$transaction(async (tx) => {
-      const rows: any[] = await tx.$queryRawUnsafe(
-        `UPDATE auth_otps
-         SET consumed_at = NOW()
-         WHERE id = (
-           SELECT id FROM auth_otps
-           WHERE token_hash = $1
-             AND purpose = 'EMAIL_VERIFICATION'
-             AND ($2::text IS NULL OR LOWER(email) = LOWER($2))
-             AND consumed_at IS NULL
-             AND expires_at > CURRENT_TIMESTAMP
-             AND attempts < max_attempts
-           ORDER BY id DESC
-           LIMIT 1
-           FOR UPDATE
-         )
-         RETURNING id, user_id, email;`,
-        params.tokenHash,
-        normalizedEmail,
-      );
+      const rows: any[] = await tx.$queryRaw<any[]>`
+        UPDATE auth_otps
+        SET consumed_at = NOW()
+        WHERE id = (
+          SELECT id FROM auth_otps
+          WHERE token_hash = ${params.tokenHash}
+            AND purpose = 'EMAIL_VERIFICATION'
+            AND (${normalizedEmail}::text IS NULL OR LOWER(email) = LOWER(${normalizedEmail}))
+            AND consumed_at IS NULL
+            AND expires_at > CURRENT_TIMESTAMP
+            AND attempts < max_attempts
+          ORDER BY id DESC
+          LIMIT 1
+          FOR UPDATE
+        )
+        RETURNING id, user_id, email;
+      `;
 
       if (!rows || rows.length === 0) {
         return { success: false, reason: 'Mã xác thực không hợp lệ hoặc đã được sử dụng.' };
@@ -227,6 +225,22 @@ export class AuthRepository {
 
       const otp = rows[0];
       const targetUserId = BigInt(otp.user_id);
+
+      const existingUser = await tx.user.findUnique({
+        where: { userId: targetUserId },
+        select: { status: true },
+      });
+
+      if (!existingUser) {
+        return { success: false, reason: 'Tài khoản không tồn tại.' };
+      }
+
+      if (existingUser.status !== 'PENDING_VERIFICATION' && existingUser.status !== 'ACTIVE') {
+        return {
+          success: false,
+          reason: 'Tài khoản hiện đang bị vô hiệu hóa hoặc khóa, không thể tự kích hoạt qua email.',
+        };
+      }
 
       const user = await tx.user.update({
         where: { userId: targetUserId },

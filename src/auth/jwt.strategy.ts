@@ -76,18 +76,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
         .split(',')
         .map((e) => e.trim().toLowerCase());
-      const isPlatformAdmin =
-        payload.role === 'SUPER_ADMIN' ||
-        payload.role === 'SYSTEM_ADMIN' ||
-        payload.role === 'ADMIN' ||
+      const isExplicitSuperAdmin =
         superAdminEmails.includes((user.email || '').toLowerCase()) ||
-        user.username === 'admin' ||
-        user.storeStaffs?.some(
-          (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
-        );
+        user.username === 'admin';
+      const activePlatformStaff = user.storeStaffs?.find(
+        (s: any) =>
+          s.status === 'ACTIVE' &&
+          (s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN' || s.role?.roleCode === 'ADMIN'),
+      );
 
-      if (isPlatformAdmin) {
-        role = payload.role || 'SUPER_ADMIN';
+      if (isExplicitSuperAdmin) {
+        role = 'SUPER_ADMIN';
+      } else if (activePlatformStaff) {
+        role = activePlatformStaff.role?.roleCode || payload.role || 'SYSTEM_ADMIN';
       } else if (user.ownedStores && user.ownedStores.length > 0) {
         storeId = user.ownedStores[0].storeId.toString();
         role = 'STORE_OWNER';

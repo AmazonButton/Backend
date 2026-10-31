@@ -22,7 +22,7 @@
     "test:audit": "node tests/verify_all_8_audit_fixes.js",
     "render:cluster": "tsx scripts/render_cluster_manager.ts",
     "aws:status": "node scripts/aws_node3.js \"pm2 status\"",
-    "aws:deploy": "node scripts/aws_node3.js \"cd ~/Backend/Backend && git pull origin main && npm run build && pm2 reload backend-node3\"",
+    "aws:deploy": "node scripts/aws_node3.js \"cd ~/Backend/Backend && git pull origin main && npx prisma generate && npm run build && pm2 reload backend-node3\"",
     "aws:logs": "node scripts/aws_node3.js \"pm2 logs --lines 50\"",
     "test:multicloud": "tsx tests/verify_all_multicloud_scenarios.ts",
     "benchmark:stress": "tsx tests/multicloud_load_stress_benchmark.ts",

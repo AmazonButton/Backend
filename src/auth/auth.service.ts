@@ -60,21 +60,30 @@ export class AuthService {
     const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
       .split(',')
       .map((e) => e.trim().toLowerCase());
-    const isSuperAdmin =
-      user.storeStaffs?.some(
-        (s: any) => s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN',
-      ) ||
+    const isExplicitSuperAdmin =
       superAdminEmails.includes((user.email || '').toLowerCase()) ||
       user.username === 'admin';
 
-    if (isSuperAdmin) {
+    const activePlatformStaff = user.storeStaffs?.find(
+      (s: any) => s.status === 'ACTIVE' && (s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN'),
+    );
+
+    if (isExplicitSuperAdmin) {
       role = 'SUPER_ADMIN';
+    } else if (activePlatformStaff) {
+      role = activePlatformStaff.role.roleCode;
     } else if (user.ownedStores && user.ownedStores.length > 0) {
       role = 'STORE_OWNER';
       storeId = user.ownedStores[0].storeId.toString();
     } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = user.storeStaffs[0].storeId.toString();
+      const activeStaff = user.storeStaffs.find((s: any) => s.status === 'ACTIVE');
+      if (activeStaff) {
+        role = activeStaff.role?.roleCode || 'STORE_STAFF';
+        storeId = activeStaff.storeId.toString();
+      } else {
+        role = 'CUSTOMER';
+        storeId = null;
+      }
     }
 
     return { role, storeId };
