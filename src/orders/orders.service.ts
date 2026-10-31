@@ -634,6 +634,12 @@ export class OrdersService {
       );
     }
 
+    if (newStatus === 'DELIVERED') {
+      throw new BadRequestException(
+        'Không thể chuyển trạng thái sang DELIVERED qua cập nhật chung. Vui lòng sử dụng endpoint xác nhận giao hàng (complete-delivery) với bằng chứng giao hàng (POD) và xác thực tài xế.',
+      );
+    }
+
     let updated: any;
     if (newStatus === 'COMPLETED') {
       updated = await this.ordersRepo.completeOrderAtomicTx(targetOrderId);
