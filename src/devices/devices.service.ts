@@ -456,9 +456,11 @@ export class DevicesService {
       { productId: targetProductId, quantity: body.quantity || 1 },
     ]);
 
-    if (body.customName) {
-      await this.devicesRepo.update(BigInt(existing.buttonId), { buttonName: body.customName.trim() });
-    }
+    // Tự động kích hoạt status: 'ACTIVE' khi gán sản phẩm
+    await this.devicesRepo.update(BigInt(existing.buttonId), {
+      status: 'ACTIVE',
+      ...(body.customName ? { buttonName: body.customName.trim() } : {}),
+    });
 
     const logList = this.deviceAuditLogs.get(existing.deviceId) || [];
     logList.unshift({
@@ -838,6 +840,11 @@ export class DevicesService {
     if (body.productId) {
       await this.assignProduct(rawButton.buttonId.toString(), body, user);
     }
+    // Tự động kích hoạt status: 'ACTIVE' khi gán sản phẩm/cấu hình
+    await this.devicesRepo.update(BigInt(rawButton.buttonId), {
+      status: 'ACTIVE',
+      ...(body.customName ? { buttonName: body.customName.trim() } : {}),
+    });
     return this.getById(rawButton.buttonId.toString(), user);
   }
 }

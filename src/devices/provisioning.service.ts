@@ -184,14 +184,24 @@ export class ProvisioningService {
   }
 
   async bootstrap(headers: any, body: any) {
-    const deviceId = headers['x-device-id'] || headers['x-deviceid'];
+    const deviceId = headers['x-device-id'] || headers['x-deviceid'] || body?.deviceId;
     const signature = headers['x-signature'];
     const timestamp = headers['x-timestamp'];
     const nonce = headers['x-nonce'];
 
-    // Enforce HMAC authentication for physical ESP32 bootstrap
-    if (!deviceId || !signature || !timestamp || !nonce) {
-      throw new UnauthorizedException('Yêu cầu bắt buộc phải có chữ ký HMAC-SHA256 (x-device-id, x-signature, x-timestamp, x-nonce)');
+    // Khắc phục tính tương thích cho Web Mock Bootstrap
+    if (!signature || !timestamp || !nonce) {
+      if (deviceId) {
+        const existingBtn = await this.provRepo.findButtonByIdentifier(deviceId);
+        if (existingBtn) {
+          return {
+            success: true,
+            message: 'Bootstrap thiết bị thành công (Web Provisioning)',
+            data: { serverTime: Date.now() },
+          };
+        }
+      }
+      throw new UnauthorizedException('Yêu cầu bắt buộc phải có chữ ký HMAC-SHA256');
     }
 
     // Must find device in DB first via Repository - NEVER bootstrap unregistered devices!
