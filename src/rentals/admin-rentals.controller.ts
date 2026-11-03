@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   Request,
+  BadRequestException,
 } from '@nestjs/common';
 import { RentalsService } from './rentals.service';
 import { OutboxConsumerService } from './outbox-consumer.service';
@@ -33,11 +34,16 @@ export class AdminRentalsController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('status') status?: string,
+    @Query('pricingReviewRequired') pricingReviewRequired?: string,
   ) {
+    if (pricingReviewRequired !== undefined && !['true', 'false'].includes(pricingReviewRequired)) {
+      throw new BadRequestException('pricingReviewRequired must be true or false');
+    }
     const result = await this.rentalsService.listAllRentalsAdmin({
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
       status,
+      pricingReviewRequired: pricingReviewRequired === undefined ? undefined : pricingReviewRequired === 'true',
     });
 
     return buildPaginatedResponse(

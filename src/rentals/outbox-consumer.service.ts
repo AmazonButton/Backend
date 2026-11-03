@@ -6,6 +6,8 @@ import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 import { verifyDepositRefundPayoutEvidence } from './deposit-payout-verifier';
 import * as crypto from 'crypto';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
+import { invalidateRentalMutationCaches } from './rental-cache-invalidation';
 
 @Injectable()
 export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
@@ -17,6 +19,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     @Inject(RentalsRepository) private readonly rentalsRepo: RentalsRepository,
     @Inject(NotificationsService) private readonly notificationsService: NotificationsService,
     @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
+    @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
   ) {}
 
   onModuleInit() {
@@ -92,6 +95,16 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     for (const event of events) {
       try {
         await this.handleSingleEvent(event);
+        if (this.cacheService) {
+          const payload = event.payload || {};
+          const rentalId = payload.rentalId ?? (['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(payload.purpose) ? payload.targetId : null);
+          if (rentalId && /^[1-9]\d*$/.test(String(rentalId))) {
+            try {
+              const rental = await this.prisma.buttonRental.findUnique({ where: { rentalId: BigInt(rentalId) }, include: { customer: true } });
+              await invalidateRentalMutationCaches(this.cacheService, rental?.customer?.userId, [rental?.fulfillmentStoreId]);
+            } catch { /* Event business effects already completed; cache cannot trigger another payout. */ }
+          }
+        }
         // Mark COMPLETED với điều kiện claimToken hợp lệ
         const updateRes = await this.prisma.outboxEvent.updateMany({
           where: { id: event.id, claimToken: event.claimToken },

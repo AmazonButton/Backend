@@ -17,6 +17,9 @@ import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { BillingChargesService } from '../billing-charges/billing-charges.service';
 import { verifyDepositRefundPayoutEvidence } from './deposit-payout-verifier';
+import { calculateRentalPricing } from './rental-pricing';
+import { invalidateRentalMutationCaches } from './rental-cache-invalidation';
+import { toRentalRefundDto, toRentalRefundOperationDto } from './dto/rental-refund-response.dto';
 
 @Injectable()
 export class RentalsService {
@@ -51,10 +54,12 @@ export class RentalsService {
         promises.push(
           this.cacheService.invalidateKey(`customer:dashboard:${id}`),
           this.cacheService.invalidateKey(`customer:rentals:${id}`),
+          this.cacheService.invalidateKey(`customer:devices:${id}`),
         );
       }
       if (storeId != null) {
         promises.push(this.cacheService.invalidatePrefix(`dash:store:${storeId.toString()}:`));
+        promises.push(this.cacheService.invalidatePrefix(`staff:dashboard:store:${storeId.toString()}:`));
       }
       await Promise.all(promises);
     } catch (error) {
@@ -77,13 +82,14 @@ export class RentalsService {
       throw new NotFoundException('Gói thuê nút không tồn tại hoặc đã tạm dừng cung cấp');
     }
 
-    const months = Number(dto.monthsRented) || 1;
-    const monthlyPrice = Number(pkg.monthlyPrice);
-    const depositFee = Number(pkg.depositFee || 0);
-    const totalRentAmount = monthlyPrice * months + depositFee;
-    const buttonQuantity = (pkg as any).buttonQuantity || 1;
-    const depositPerButton = Math.floor(depositFee / buttonQuantity);
-    const rentPerButton = Math.floor((monthlyPrice * months) / buttonQuantity);
+    const months = Number(dto.monthsRented ?? 1);
+    const buttonQuantity = (pkg as any).buttonQuantity ?? 1;
+    const pricing = calculateRentalPricing({
+      buttonQuantity,
+      months,
+      monthlyPackagePrice: pkg.monthlyPrice,
+      packageDepositFee: pkg.depositFee || 0,
+    });
 
     const startDate = new Date();
     const endDate = new Date(startDate.getTime() + months * 30 * 24 * 60 * 60 * 1000);
@@ -94,14 +100,17 @@ export class RentalsService {
       customerId: rawCustomerId,
       packageId: rawPackageId,
       monthsRented: months,
-      totalRentAmount,
-      depositAmount: depositFee,
+      totalRentAmount: pricing.totalAmount,
+      depositAmount: pricing.depositTotal,
       buttonQuantity,
-      depositPerButton,
-      rentPerButton,
+      depositPerButton: pricing.depositPerButton,
+      rentPerButton: pricing.rentPerButton,
+      monthlyRentPerButtonSnapshot: pricing.monthlyRentPerButton,
+      pricingReviewRequired: false,
       startDate,
       endDate,
       status: 'PENDING_PAYMENT',
+      pricing,
     });
 
     await this.invalidateRentalCaches(created.customer?.userId);
@@ -201,21 +210,15 @@ export class RentalsService {
     const rentalId = BigInt(rentalIdStr);
     const rental = await this.verifyRentalOwnership(rentalId, user);
 
-    if (['TERMINATED', 'CANCELLED'].includes(rental.status)) {
+    if (!['PENDING_HANDOVER', 'ACTIVE', 'EXPIRED'].includes(rental.status)) {
       throw new BadRequestException('Không thể gia hạn hợp đồng thuê đã kết thúc hoặc hủy');
     }
 
-    const months = dto.additionalMonths || 1;
-    const monthlyPrice = Number(rental.package?.monthlyPrice || 30000);
-    const additionalAmount = monthlyPrice * months;
-
-    const buttonQuantity = (rental as any).buttonQuantity || rental.package?.buttonQuantity || 1;
+    const months = dto.additionalMonths ?? 1;
     const charge = await this.rentalsRepo.createRentalExtensionCharge(
       rentalId,
       months,
-      additionalAmount,
-      monthlyPrice,
-      buttonQuantity,
+      BigInt(user.userId || user.id || user.sub),
     );
 
     return {
@@ -224,7 +227,7 @@ export class RentalsService {
       status: rental.status,
       chargeId: charge.chargeId.toString(),
       chargeCode: charge.chargeCode,
-      totalAmount: additionalAmount,
+      totalAmount: Number(charge.totalAmount),
       months,
       paymentMethod: charge.paymentMethod,
       message: 'Tạo yêu cầu gia hạn thành công. Vui lòng thanh toán để cộng thời hạn thuê.',
@@ -245,12 +248,14 @@ export class RentalsService {
       throw new BadRequestException('Lý do điều chỉnh thời hạn thuê là bắt buộc');
     }
 
-    return this.rentalsRepo.adjustRentalDurationAdminTx(
+    const result = await this.rentalsRepo.adjustRentalDurationAdminTx(
       rentalId,
       additionalDays,
       reason,
       adminUser,
     );
+    await this.invalidateRentalCaches(rental.customer?.userId, rental.fulfillmentStoreId);
+    return result;
   }
 
   async requestRentalReturn(rentalIdStr: string | bigint, user: any): Promise<RentalResponseDto> {
@@ -302,15 +307,19 @@ export class RentalsService {
     return this.handoverRental(rawRentalId, actor || { role: 'SYSTEM' });
   }
 
-  async listAllRentalsAdmin(query: { page?: number; pageSize?: number; status?: string }) {
-    const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
+  async listAllRentalsAdmin(query: { page?: number; pageSize?: number; status?: string; pricingReviewRequired?: boolean }) {
+    const page = Number(query.page ?? 1);
+    const pageSize = Number(query.pageSize ?? 20);
+    if (!Number.isSafeInteger(page) || !Number.isSafeInteger(pageSize) || page < 1 || pageSize < 1 || pageSize > 100 || (page - 1) * pageSize > 1_000_000) {
+      throw new BadRequestException('Invalid pagination or offset');
+    }
     const skip = (page - 1) * pageSize;
 
     const { total, items } = await this.rentalsRepo.listAllRentalsAdmin({
       skip,
       take: pageSize,
       status: query.status,
+      pricingReviewRequired: query.pricingReviewRequired,
     });
 
     return {
@@ -361,7 +370,8 @@ export class RentalsService {
 
     const createdReturn = await this.rentalsRepo.createReturnRequestTx(rentalId, buttonId);
     await this.invalidateRentalCaches(rental.customer?.userId);
-    return createdReturn;
+    return { returnId: String(createdReturn.returnId), returnCode: createdReturn.returnCode,
+      rentalId: String(rentalId), buttonId: String(buttonId), status: createdReturn.status, createdAt: createdReturn.createdAt };
   }
 
   async confirmReturnReceipt(
@@ -370,7 +380,20 @@ export class RentalsService {
     inspectionNote?: string,
   ) {
     const returnId = BigInt(returnIdStr);
-    return this.rentalsRepo.confirmReturnReceiptTx(returnId, user, inspectionNote);
+    const result = await this.rentalsRepo.confirmReturnReceiptTx(returnId, user, inspectionNote);
+    if (this.cacheService) {
+      try {
+        const rentalId = result.depositRefund?.rentalId;
+        const rental = rentalId ? await this.rentalsRepo.findRentalById(rentalId) : null;
+        await invalidateRentalMutationCaches(this.cacheService, rental?.customer?.userId, [result.button?.custodyStoreId, rental?.fulfillmentStoreId]);
+      } catch { /* Post-commit best effort. */ }
+    }
+    return { returnId: String(result.returnId), status: result.status, movementLogged: result.movementLogged,
+      rentalCompleted: result.rentalCompleted,
+      button: { buttonId: String(result.button.buttonId), customerId: result.button.customerId?.toString() ?? null,
+        rentalId: result.button.rentalId?.toString() ?? null, custodyStoreId: result.button.custodyStoreId?.toString() ?? null,
+        inventoryState: result.button.inventoryState, canOrder: result.button.canOrder },
+      depositRefund: toRentalRefundDto(result.depositRefund) };
   }
 
   async approveDepositRefund(
@@ -378,7 +401,9 @@ export class RentalsService {
     adminUser: any,
   ) {
     const refundId = BigInt(refundIdStr);
-    return this.rentalsRepo.approveDepositRefundTx(refundId, adminUser);
+    const result = await this.rentalsRepo.approveDepositRefundTx(refundId, adminUser);
+    await this.invalidateRefundCaches(refundId);
+    return toRentalRefundOperationDto(result);
   }
 
   async reconcileDepositRefundPayout(
@@ -391,7 +416,7 @@ export class RentalsService {
     if (!refund) throw new NotFoundException('Yêu cầu hoàn cọc không tồn tại');
 
     if (refund.status === 'REFUNDED') {
-      return { alreadyConfirmed: true, refund };
+      return toRentalRefundOperationDto({ alreadyConfirmed: true, refund });
     }
 
     if (refund.status !== 'PENDING_PAYOUT') {
@@ -424,13 +449,23 @@ export class RentalsService {
           success: false,
           status: refund.status,
           message: `${verification.reason}. Tiền cọc tiếp tục được giữ an toàn ở quỹ dự phòng (refund_reserved_amount).`,
-          data: refund,
+          data: toRentalRefundDto(refund),
         };
       }
       throw new BadRequestException(verification.reason);
     }
 
-    return this.rentalsRepo.confirmDepositRefundPayoutTx(refundId, verification.providerRef, actor);
+    const result = await this.rentalsRepo.confirmDepositRefundPayoutTx(refundId, verification.providerRef, actor);
+    await this.invalidateRefundCaches(refundId);
+    return toRentalRefundOperationDto(result);
+  }
+
+  private async invalidateRefundCaches(refundId: bigint) {
+    if (!this.cacheService) return;
+    try {
+      const refund = await this.rentalsRepo.findDepositRefundById(refundId);
+      await invalidateRentalMutationCaches(this.cacheService, refund?.customer?.userId);
+    } catch { /* Never turn a committed refund into an HTTP failure. */ }
   }
 
   async confirmDepositRefundPayout(

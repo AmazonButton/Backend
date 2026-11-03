@@ -1,7 +1,11 @@
 import { Injectable, Inject, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { calculateRentalPricing } from './rental-pricing';
+import { randomUUID } from 'node:crypto';
+import { lockRentalRenewalContext, priceRentalRenewal, RENEWABLE_RENTAL_STATES } from './rental-renewal.transaction';
 import { Decimal } from '@prisma/client/runtime/library';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
+import { handoverRentalButtonsInTx } from './rental-handover.transaction';
 
 @Injectable()
 export class RentalsRepository {
@@ -21,9 +25,24 @@ export class RentalsRepository {
   }
 
   async createRental(data: any) {
+    const { pricing, ...rentalData } = data;
+    const computedPricing = pricing || calculateRentalPricing({
+      buttonQuantity: rentalData.buttonQuantity ?? 1,
+      months: rentalData.monthsRented ?? 1,
+      monthlyPackagePrice: rentalData.rentPerButton == null ? NaN : new Decimal(rentalData.rentPerButton)
+        .mul(rentalData.buttonQuantity ?? 1).div(rentalData.monthsRented ?? 1),
+      packageDepositFee: rentalData.depositAmount ?? NaN,
+    });
+    rentalData.monthlyRentPerButtonSnapshot = computedPricing.monthlyRentPerButton;
+    rentalData.pricingReviewRequired = false;
+    rentalData.totalRentAmount = computedPricing.totalAmount;
+    rentalData.depositAmount = computedPricing.depositTotal;
+    rentalData.depositPerButton = computedPricing.depositPerButton;
+    rentalData.rentPerButton = computedPricing.rentPerButton;
+
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.buttonRental.create({
-        data,
+        data: rentalData,
         include: {
           package: true,
           customer: {
@@ -35,10 +54,7 @@ export class RentalsRepository {
         },
       });
 
-      // Tạo khoản thu BillingCharge tương ứng ngay trong cùng transaction
       const chargeCode = `CHG-RENTAL_INITIAL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const rentAmount = Number(data.totalRentAmount) - Number(data.depositAmount || 0);
-      const depositAmount = Number(data.depositAmount || 0);
 
       await tx.billingCharge.create({
         data: {
@@ -47,26 +63,26 @@ export class RentalsRepository {
           targetType: 'RENTAL',
           targetId: created.rentalId,
           currency: 'VND',
-          totalAmount: data.totalRentAmount,
+          totalAmount: computedPricing.totalAmount,
           status: 'PENDING',
           paymentMethod: 'PAYOS',
           lines: {
             create: [
               {
                 lineType: 'RENT',
-                amount: rentAmount,
-                description: `Phí thuê nút thông minh (${data.monthsRented || 1} tháng)`,
+                amount: computedPricing.lines.rent.amount,
+                description: computedPricing.lines.rent.description,
                 durationUnit: 'MONTH',
-                durationCount: data.monthsRented || 1,
-                quantity: data.buttonQuantity || 1,
-                unitPrice: data.rentPerButton ? Number(data.rentPerButton) : rentAmount,
+                durationCount: computedPricing.lines.rent.durationCount,
+                quantity: computedPricing.lines.rent.quantity,
+                unitPrice: computedPricing.lines.rent.unitPrice,
               },
               {
                 lineType: 'DEPOSIT',
-                amount: depositAmount,
-                description: 'Tiền cọc thiết bị nút bấm thông minh (hoàn lại khi trả nút)',
-                quantity: data.buttonQuantity || 1,
-                unitPrice: data.depositPerButton ? Number(data.depositPerButton) : depositAmount,
+                amount: computedPricing.lines.deposit.amount,
+                description: computedPricing.lines.deposit.description,
+                quantity: computedPricing.lines.deposit.quantity,
+                unitPrice: computedPricing.lines.deposit.unitPrice,
               },
             ],
           },
@@ -248,8 +264,10 @@ export class RentalsRepository {
     skip: number;
     take: number;
     status?: string;
+    pricingReviewRequired?: boolean;
   }) {
     const where: any = {};
+    if (typeof options.pricingReviewRequired === 'boolean') where.pricingReviewRequired = options.pricingReviewRequired;
     if (options.status) {
       where.status = options.status;
     }
@@ -395,12 +413,27 @@ export class RentalsRepository {
       const lockedLedger = lockedLedgers && lockedLedgers.length > 0 ? lockedLedgers[0] : null;
 
       // Kiểm tra fulfillmentStoreId
-      const targetStoreId = rental.fulfillmentStoreId || rawButton.store_id;
+      const targetStoreId = rental.fulfillmentStoreId;
+      if (!targetStoreId) throw new BadRequestException('Rental has no authorized fulfillment store for returns');
       const staffStoreId = storeStaffUser.storeId ? BigInt(storeStaffUser.storeId) : null;
       const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(storeStaffUser.role || storeStaffUser.roleCode);
 
       if (!isAdmin && (!staffStoreId || staffStoreId.toString() !== targetStoreId.toString())) {
         throw new ForbiddenException('Bạn không thuộc cửa hàng chịu trách nhiệm nhận trả thiết bị cho hợp đồng này');
+      }
+
+      if (!storeStaffUser.userId) throw new ForbiddenException('Authenticated return receiver required');
+      if (!isAdmin) {
+        const authority = await tx.$queryRawUnsafe<any[]>(
+          `SELECT s.store_id FROM store s JOIN users u ON u.user_id = $2
+           WHERE s.store_id = $1 AND s.status = 'ACTIVE' AND u.status = 'ACTIVE'
+             AND (s.owner_user_id = u.user_id OR EXISTS (
+               SELECT 1 FROM store_staff ss JOIN roles ro ON ro.role_id = ss.role_id
+               WHERE ss.store_id = s.store_id AND ss.user_id = u.user_id AND ss.status = 'ACTIVE'
+                 AND ro.role_code IN ('STORE_MANAGER', 'STAFF_BUTTON')
+             ))`, targetStoreId, BigInt(storeStaffUser.userId),
+        );
+        if (!authority.length) throw new ForbiddenException('Active return receiver membership required');
       }
 
       const receiptStoreId = staffStoreId || targetStoreId;
@@ -429,7 +462,7 @@ export class RentalsRepository {
           custodyStoreId: receiptStoreId,
           inventoryState: 'ALLOCATED_TO_STORE',
           status: 'INACTIVE',
-          canOrder: true,
+          canOrder: false,
         },
       });
 
@@ -453,10 +486,12 @@ export class RentalsRepository {
       }
 
       const totalDepositCollected = Number(lockedLedger.collected_amount);
-      const snapshotQuantity = rental.buttonQuantity || rental.package?.buttonQuantity || 1;
-      const snapshotPerButton = rental.depositPerButton
-        ? Number(rental.depositPerButton)
-        : Math.floor(totalDepositCollected / snapshotQuantity);
+      const snapshotQuantity = rental.buttonQuantity;
+      const snapshotPerButton = Number(rental.depositPerButton);
+      if (!Number.isInteger(snapshotQuantity) || snapshotQuantity < 1 || !Number.isSafeInteger(snapshotPerButton) ||
+          snapshotPerButton * snapshotQuantity !== totalDepositCollected) {
+        throw new BadRequestException('RECONCILIATION_REQUIRED: inconsistent per-button deposit snapshot');
+      }
 
       const fixedPerButtonDeposit = snapshotPerButton;
 
@@ -850,147 +885,7 @@ export class RentalsRepository {
    * Kiểm tra đủ số lượng serial, đúng custody kho, không bàn giao khi thiết bị = 0
    */
   async handoverRentalButtonsTx(rentalId: bigint, staffUser: any, handoverDate?: Date) {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Khóa bi-quan các nút được gán cho hợp đồng theo thứ tự button_id ASC (tránh deadlock)
-      const lockedButtons = await tx.$queryRawUnsafe<any[]>(
-        'SELECT * FROM iot_button WHERE rental_id = $1 ORDER BY button_id ASC FOR UPDATE',
-        rentalId,
-      );
-
-      // 2. Khóa bi-quan hợp đồng thuê sau khi đã khóa thiết bị
-      const lockedRentals = await tx.$queryRawUnsafe<any[]>(
-        'SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE',
-        rentalId,
-      );
-      if (!lockedRentals || lockedRentals.length === 0) {
-        throw new NotFoundException(`Hợp đồng thuê #${rentalId} không tồn tại`);
-      }
-      const rental = lockedRentals[0];
-
-      if (rental.status !== 'PENDING_HANDOVER') {
-        throw new BadRequestException(`Chỉ có thể bàn giao nút cho hợp đồng ở trạng thái PENDING_HANDOVER (hiện tại: ${rental.status})`);
-      }
-
-      // R04: Kiểm tra nghiêm ngặt danh sách thiết bị
-      if (!lockedButtons || lockedButtons.length === 0) {
-        throw new BadRequestException('Hợp đồng thuê không có thiết bị nút bấm nào được gán để bàn giao');
-      }
-
-      const expectedQuantity = rental.button_quantity || 1;
-      if (lockedButtons.length !== expectedQuantity) {
-        throw new BadRequestException(`Số lượng thiết bị được giữ chỗ (${lockedButtons.length}) không khớp với gói thuê (${expectedQuantity})`);
-      }
-
-      if (!rental.fulfillment_store_id) {
-        throw new BadRequestException('Hợp đồng thuê chưa được phân bổ cửa hàng phụ trách bàn giao');
-      }
-
-      for (const btn of lockedButtons) {
-        if (btn.rental_id !== rentalId) {
-          throw new BadRequestException(`Thiết bị ${btn.device_serial_number || btn.button_id} thuộc hợp đồng thuê khác`);
-        }
-        if (!btn.custody_store_id) {
-          throw new BadRequestException(`Thiết bị ${btn.device_serial_number || btn.button_id} thiếu thông tin kho cửa hàng tạm giữ`);
-        }
-        if (BigInt(btn.custody_store_id) !== BigInt(rental.fulfillment_store_id)) {
-          throw new BadRequestException(`Thiết bị ${btn.device_serial_number || btn.button_id} không thuộc kho của cửa hàng phụ trách bàn giao`);
-        }
-        if (!['ASSIGNED_TO_RENTAL', 'ALLOCATED_TO_STORE'].includes(btn.inventory_state)) {
-          throw new BadRequestException(`Thiết bị ${btn.device_serial_number || btn.button_id} không ở trạng thái hợp lệ để bàn giao (hiện tại: ${btn.inventory_state})`);
-        }
-      }
-
-      // R03: Bàn giao tính theo số kỳ ĐÃ THANH TOÁN, không dùng bộ đếm yêu cầu gia hạn chưa trả tiền
-      const paidCharges = await tx.$queryRawUnsafe<any[]>(
-        `SELECT COALESCE(SUM(bcl.duration_count), 0) as paid_months
-         FROM billing_charges bc
-         JOIN billing_charge_lines bcl ON bc.charge_id = bcl.charge_id
-         WHERE bc.target_type = 'RENTAL' AND bc.target_id = $1
-           AND bc.status = 'PAID' AND bcl.line_type = 'RENT'`,
-        rentalId,
-      );
-      const rawPaidMonths = Number(paidCharges?.[0]?.paid_months || 0);
-      if (rawPaidMonths <= 0) {
-        throw new BadRequestException('Hợp đồng thuê chưa có kỳ hạn nào được thanh toán để bàn giao');
-      }
-      const paidMonths = rawPaidMonths;
-
-      const effectiveStart = handoverDate || new Date();
-      const effectiveExpiry = new Date(effectiveStart.getTime() + paidMonths * 30 * 24 * 60 * 60 * 1000);
-
-      // Kích hoạt hợp đồng
-      const updatedRental = await tx.buttonRental.update({
-        where: { rentalId },
-        data: {
-          status: 'ACTIVE',
-          startDate: effectiveStart,
-          endDate: effectiveExpiry,
-          paidThrough: effectiveExpiry,
-          effectiveExpiresAt: effectiveExpiry,
-          monthsRented: paidMonths,
-        },
-      });
-
-      // Cập nhật từng nút sang IN_CUSTOMER_CUSTODY, canOrder = true, và ghi nhận DeviceMovement
-      const staffUserId = staffUser?.userId ? BigInt(staffUser.userId) : null;
-      for (const btn of lockedButtons) {
-        await tx.ioTButton.update({
-          where: { buttonId: btn.button_id },
-          data: {
-            customerId: rental.customer_id ? BigInt(rental.customer_id) : undefined,
-            custodyStoreId: null,
-            inventoryState: 'IN_CUSTOMER_CUSTODY',
-            status: 'ACTIVE',
-            canOrder: true,
-            installedAt: effectiveStart,
-          },
-        });
-
-        await tx.deviceMovement.create({
-          data: {
-            buttonId: btn.button_id,
-            sourceType: 'STORE',
-            sourceStoreId: btn.custody_store_id ? BigInt(btn.custody_store_id) : (rental.fulfillment_store_id ? BigInt(rental.fulfillment_store_id) : null),
-            destType: 'CUSTOMER',
-            rentalId,
-            actorUserId: staffUserId,
-            reason: 'Bàn giao nút thông minh cho khách hàng kích hoạt dịch vụ',
-          },
-        });
-      }
-
-      // R08: Audit Log
-      if ((tx as any).rentalAuditLog) {
-        await (tx as any).rentalAuditLog.create({
-          data: {
-            actorType: staffUser?.role ? (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(staffUser.role) ? 'ADMIN' : 'STAFF') : 'STAFF',
-            actorUserId: staffUserId,
-            action: 'HANDOVER_RENTAL',
-            targetType: 'RENTAL',
-            targetId: rentalId,
-            beforeState: rental.status,
-            afterState: 'ACTIVE',
-            correlationId: rental.rental_code,
-            metadata: {
-              handoverDate: effectiveStart,
-              effectiveExpiry,
-              paidMonths,
-              buttonCount: lockedButtons.length,
-              buttonIds: lockedButtons.map((b) => b.button_id.toString()),
-            },
-          },
-        });
-      }
-
-      return {
-        rentalId,
-        status: 'ACTIVE',
-        effectiveExpiresAt: effectiveExpiry,
-        handoverDate: effectiveStart,
-        paidMonths,
-        buttonCount: lockedButtons.length,
-      };
-    });
+    return this.prisma.$transaction((tx) => handoverRentalButtonsInTx(tx, rentalId, staffUser, handoverDate));
   }
 
   async findDepositRefundById(refundId: bigint) {
@@ -1007,40 +902,19 @@ export class RentalsRepository {
     });
   }
 
-  async createRentalExtensionCharge(
-    rentalId: bigint,
-    months: number,
-    additionalAmount: number,
-    monthlyPrice: number,
-    buttonQuantity: number,
-  ) {
-    const chargeCode = `CHG-RENTAL_EXTENSION-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-    return this.prisma.billingCharge.create({
-      data: {
-        chargeCode,
-        purpose: 'RENTAL_EXTENSION',
-        targetType: 'RENTAL',
-        targetId: rentalId,
-        currency: 'VND',
-        totalAmount: additionalAmount,
-        status: 'PENDING',
-        paymentMethod: 'PAYOS',
-        lines: {
-          create: [
-            {
-              lineType: 'RENT',
-              amount: additionalAmount,
-              description: `Gia hạn thuê nút thông minh (${months} tháng)`,
-              durationUnit: 'MONTH',
-              durationCount: months,
-              quantity: buttonQuantity,
-              unitPrice: monthlyPrice,
-            },
-          ],
-        },
-      },
-      include: { lines: true },
-    });
+  async createRentalExtensionCharge(rentalId: bigint, months: number, actorUserId: bigint) {
+    return runWithTransactionRetry(() => this.prisma.$transaction(async tx => {
+      const { rental, quantity } = await lockRentalRenewalContext(tx, rentalId, actorUserId);
+      if (!RENEWABLE_RENTAL_STATES.includes(rental.status)) throw new BadRequestException('Rental cannot be renewed in this state');
+      if (rental.pricing_review_required) throw new BadRequestException('RECONCILIATION_REQUIRED: rental price is not verified');
+      const pricing = priceRentalRenewal(rental.monthly_rent_per_button_snapshot, quantity, months);
+      return tx.billingCharge.create({ data: {
+        chargeCode: 'CHG-RENEW-' + randomUUID(), purpose: 'RENTAL_EXTENSION', targetType: 'RENTAL',
+        targetId: rentalId, currency: 'VND', totalAmount: pricing.amount, status: 'PENDING', paymentMethod: 'PAYOS',
+        lines: { create: [{ lineType: 'RENT', amount: pricing.amount, durationUnit: 'MONTH',
+          durationCount: months, quantity, unitPrice: pricing.periodPricePerButton }] },
+      }, include: { lines: true } });
+    }), { operationName: 'CreateRentalRenewalQuote' });
   }
 
   async adjustRentalDurationAdminTx(
@@ -1049,18 +923,27 @@ export class RentalsRepository {
     reason: string,
     adminUser: any,
   ) {
+    if (!adminUser?.userId || !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(adminUser.role || adminUser.roleCode)) {
+      throw new ForbiddenException('An authenticated platform administrator is required');
+    }
+    if (!Number.isInteger(additionalDays) || additionalDays === 0 || Math.abs(additionalDays) > 365 || !reason?.trim()) {
+      throw new BadRequestException('Invalid duration adjustment or reason');
+    }
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe('SELECT button_id FROM iot_button WHERE rental_id = $1 ORDER BY button_id FOR UPDATE', rentalId);
       const locked = await tx.$queryRawUnsafe<any[]>(
         'SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE',
         rentalId,
       );
       if (!locked || locked.length === 0) throw new NotFoundException('Hợp đồng không tồn tại');
       const r = locked[0];
+      if (!['ACTIVE', 'EXPIRED'].includes(r.status) || !r.effective_expires_at) {
+        throw new BadRequestException('Only handed-over ACTIVE/EXPIRED rentals may have entitlement adjusted');
+      }
 
-      const currentExpiry = r.effective_expires_at
-        ? new Date(r.effective_expires_at)
-        : (r.end_date ? new Date(r.end_date) : new Date());
+      const currentExpiry = new Date(r.effective_expires_at);
       const newExpiry = new Date(currentExpiry.getTime() + additionalDays * 24 * 60 * 60 * 1000);
+      const newStatus = newExpiry > new Date() ? 'ACTIVE' : 'EXPIRED';
 
       // R08: Chỉ cập nhật effectiveExpiresAt và endDate cho quyền sử dụng, KHÔNG chạm vào paidThrough (đã trả tiền đến ngày nào)
       await tx.buttonRental.update({
@@ -1068,10 +951,18 @@ export class RentalsRepository {
         data: {
           effectiveExpiresAt: newExpiry,
           endDate: newExpiry,
+          status: newStatus,
         },
       });
 
       const adminUserId = adminUser?.userId ? BigInt(adminUser.userId) : null;
+      await tx.$executeRawUnsafe(
+        `UPDATE iot_button b SET can_order = (
+           $1 > clock_timestamp() AND b.status = 'ACTIVE' AND b.inventory_state = 'IN_CUSTOMER_CUSTODY'
+           AND NOT EXISTS (SELECT 1 FROM rental_returns rr WHERE rr.rental_id = $2 AND rr.button_id = b.button_id
+                           AND rr.status IN ('PENDING_RECEIPT', 'RECEIVED'))
+         ), updated_at = NOW() WHERE b.rental_id = $2 AND b.customer_id = $3`, newExpiry, rentalId, r.customer_id,
+      );
       await tx.accessAdjustment.create({
         data: {
           targetType: 'RENTAL',
@@ -1081,7 +972,7 @@ export class RentalsRepository {
           previousExpiresAt: currentExpiry,
           newExpiresAt: newExpiry,
           reason,
-          actorUserId: adminUserId || BigInt(1),
+          actorUserId: adminUserId!,
         },
       });
 
@@ -1096,7 +987,7 @@ export class RentalsRepository {
             targetType: 'RENTAL',
             targetId: rentalId,
             beforeState: r.status,
-            afterState: r.status,
+            afterState: newStatus,
             reason,
             metadata: {
               additionalDays,

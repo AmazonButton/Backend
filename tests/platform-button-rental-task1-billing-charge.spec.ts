@@ -76,8 +76,12 @@ async function runTask1TestSuite() {
       } as any;
     };
 
+    const settledChargeIds = new Set<string>();
     mockRepo.settleChargeAtomicTx = async (chargeId: bigint) => {
+      const alreadySettled = settledChargeIds.has(chargeId.toString());
+      settledChargeIds.add(chargeId.toString());
       return {
+        alreadySettled,
         chargeId,
         status: 'PAID',
         settledDeposit: {

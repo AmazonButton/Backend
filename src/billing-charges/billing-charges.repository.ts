@@ -1,5 +1,7 @@
 import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { recordRentalPayosReceiptInTx } from '../store-cash/store-cash-settlement.transaction';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 
 export interface CreateChargeInput {
   rentalId?: bigint;
@@ -32,6 +34,7 @@ export interface VerifiedPaymentReceipt {
   paidAt?: Date;
   verified: true;
   metadata?: Record<string, any>;
+  paymentLinkId?: string;
 }
 
 @Injectable()
@@ -114,7 +117,7 @@ export class BillingChargesRepository {
       throw new BadRequestException('Tiền tệ thanh toán trong biên lai (currency) là bắt buộc');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return runWithTransactionRetry(() => this.prisma.$transaction(async (tx) => {
       // 1. Khóa bi-quan bản ghi BillingCharge
       const lockedCharges = await tx.$queryRawUnsafe<any[]>(
         'SELECT * FROM billing_charges WHERE charge_id = $1 FOR UPDATE',
@@ -124,6 +127,12 @@ export class BillingChargesRepository {
         throw new NotFoundException(`Billing charge #${chargeId} not found`);
       }
       const rawCharge = lockedCharges[0];
+
+      if (['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(rawCharge.purpose)) {
+        const result = await recordRentalPayosReceiptInTx(tx, rawCharge, receipt, actor);
+        const charge = await tx.billingCharge.findUnique({ where: { chargeId }, include: { lines: true } });
+        return { ...result, charge, status: result.overpayment ? 'PENDING_RECONCILIATION' : charge!.status };
+      }
 
       if (rawCharge.status === 'PAID') {
         const fullCharge = await tx.billingCharge.findUnique({
@@ -176,92 +185,8 @@ export class BillingChargesRepository {
       let subscriptionUpdated: any = null;
       let rentalUpdated: any = null;
 
-      // Handle RENTAL_INITIAL settlement
-      if (rawCharge.purpose === 'RENTAL_INITIAL') {
-        const rentalId = BigInt(rawCharge.target_id);
-        const depositLine = lines.find((l) => l.lineType === 'DEPOSIT');
-        const depositAmount = depositLine ? Number(depositLine.amount) : 0;
-
-        // 1. Record deposit in dedicated rental_deposits ledger
-        settledDeposit = await tx.rentalDeposit.upsert({
-          where: { rentalId },
-          create: {
-            rentalId,
-            collectedAmount: depositAmount,
-            heldAmount: depositAmount,
-            refundReservedAmount: 0,
-            refundedAmount: 0,
-          },
-          update: {
-            collectedAmount: depositAmount,
-            heldAmount: depositAmount,
-          },
-        });
-
-        // 2. Cập nhật rental: trạng thái PENDING_HANDOVER, KHÔNG đếm lùi ngày trước khi bàn giao!
-        // effectiveExpiresAt và paidThrough giữ nguyên null để bắt đầu đếm lùi khi bàn giao
-        rentalUpdated = await tx.buttonRental.update({
-          where: { rentalId },
-          data: {
-            status: 'PENDING_HANDOVER',
-            paidThrough: null,
-            effectiveExpiresAt: null,
-          },
-        });
-      } else if (rawCharge.purpose === 'RENTAL_EXTENSION') {
-        const rentalId = BigInt(rawCharge.target_id);
-        // Khóa bi-quan hợp đồng thuê để cộng dồn an toàn
-        const lockedRentals = await tx.$queryRawUnsafe<any[]>(
-          'SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE',
-          rentalId,
-        );
-        if (!lockedRentals || lockedRentals.length === 0) {
-          throw new NotFoundException(`Hợp đồng thuê #${rentalId} không tồn tại`);
-        }
-        const rental = lockedRentals[0];
-
-        // Lấy số tháng gia hạn từ dữ liệu cấu trúc (dòng charge hoặc metadata)
-        const rentLine = lines.find((l) => l.lineType === 'RENT');
-        let durationMonths = rentLine?.durationCount || 1;
-        if (!rentLine?.durationCount && rentLine?.description) {
-          const match = rentLine.description.match(/months:\s*(\d+)/i) || rentLine.description.match(/(\d+)\s*tháng/i);
-          if (match) {
-            durationMonths = parseInt(match[1], 10);
-          }
-        }
-        const additionalMs = durationMonths * 30 * 24 * 60 * 60 * 1000;
-
-        const newMonthsRented = Number(rental.months_rented || 0) + durationMonths;
-
-        if (rental.status === 'PENDING_HANDOVER') {
-          // R03/R04: Nếu hợp đồng chưa bàn giao (PENDING_HANDOVER), thanh toán gia hạn giữ nguyên PENDING_HANDOVER!
-          // KHÔNG kích hoạt ACTIVE và KHÔNG đếm lùi ngày trước khi bàn giao thực tế.
-          rentalUpdated = await tx.buttonRental.update({
-            where: { rentalId },
-            data: {
-              status: 'PENDING_HANDOVER',
-              monthsRented: newMonthsRented,
-            },
-          });
-        } else {
-          // Đang hoạt động: Cộng nối tiếp từ effectiveExpiresAt hiện tại nếu còn hạn, nếu hết hạn thì tính từ now
-          const now = new Date();
-          const currentExpiry = rental.effective_expires_at && new Date(rental.effective_expires_at) > now
-            ? new Date(rental.effective_expires_at)
-            : now;
-          const newExpiry = new Date(currentExpiry.getTime() + additionalMs);
-
-          rentalUpdated = await tx.buttonRental.update({
-            where: { rentalId },
-            data: {
-              paidThrough: newExpiry,
-              effectiveExpiresAt: newExpiry,
-              monthsRented: newMonthsRented,
-              status: 'ACTIVE',
-            },
-          });
-        }
-      } else if (rawCharge.purpose === 'STORE_SUBSCRIPTION') {
+      // Rental charges are handled above by the shared receipt/settlement path.
+      if (rawCharge.purpose === 'STORE_SUBSCRIPTION') {
         const storeId = BigInt(rawCharge.target_id);
         // Khóa bi quan gian hàng
         await tx.$queryRawUnsafe('SELECT * FROM store WHERE store_id = $1 FOR UPDATE', storeId);
@@ -351,7 +276,7 @@ export class BillingChargesRepository {
         rentalUpdated,
         storeWalletCredited: false, // Critical invariant: StoreWallet is NEVER credited!
       };
-    });
+    }), { operationName: 'BillingChargeSettlement' });
   }
 
   async findChargeByOrderCode(orderCode: string, paymentLinkId?: string) {

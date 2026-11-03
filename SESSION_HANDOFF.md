@@ -1,5 +1,154 @@
 # Project Handoff & Session Context
 
+### [2026-11-03] Rental closeout implementation — Isolated PostgreSQL Acceptance Verified (Suite 71 PASS)
+- Status: ISOLATED DB ACCEPTANCE VERIFIED (Suite 71 PASS). Production deploy / live PayOS gateway approval remains separate.
+- Implemented: additive immutable monthly price snapshot and evidence-only backfill (`20261103120000_rental_monthly_price_snapshot`); pricing-review flag/filter; snapshot-based renewal quote and settlement; durable receipts/liabilities for initial/extension money independent of cash intake; expiry/manual-lock separation; safe DTO entitlement and financial response mapping; exact customer cache invalidation; reserved-device preview/count/pagination and paid handover access when intake disabled.
+- Migrations: 42 historical migrations baselined and 3 new migrations deployed successfully to isolated disposable test database `smart_order_test` on Neon:
+  1. `20261103100000_store_cash_collection_foundations`
+  2. `20261103110000_store_cash_receipt_request_hash`
+  3. `20261103120000_rental_monthly_price_snapshot`
+- Verified Test Suites:
+  * Suite 68 (`tests/rental-closeout-regression.spec.ts`): PASS (unpaid DTO, exact customer cache invalidation, intake-disabled late money, returned rental check, expiry vs manual lock, refund replay mapping, operational enable check).
+  * Suite 69 (`tests/rental-renewal-receipt.spec.ts`): PASS (snapshot stability, partial quantity, manual lock preservation, terminal-state money and replay).
+  * Suite 70 (`tests/rental-closeout-http.spec.ts`): PASS (Nest HTTP: role/scope, 400/401/403/404/503, preview, pagination, receipt mapping, idempotency header).
+  * Suite 71 (`tests/rental-closeout-postgres.spec.ts`): PASS (Exit code 0 on isolated PostgreSQL Neon test DB `smart_order_test`):
+    - Added fail-fast barrier wrapper `waitForBarrier(barrier, failurePromise, timeoutMs = 10000, context)` with early-failure race and finite timeout across all 4 barriers (wallet lock 1, cash in-tx lock 3A, payos in-tx lock 3B, deposit refund lock 4).
+    - Verified all 7 scenarios cleanly on Neon:
+    1. Cash/cash overlap: verified real `wait_event_type = 'Lock'` in `pg_stat_activity`, exactly one debit, one ledger entry, frozen unchanged.
+    2. Late PayOS settlement with cash intake disabled: recorded `OVERPAYMENT_RECEIPT` obligation, zero duplicate deposit.
+    3. Concurrency race (Cash in-tx barrier vs queuing PayOS): real in-transaction proxy barrier holds `billing_charges FOR UPDATE` on client `a`, PayOS queues on client `b` with verified `wait_event_type = 'Lock'`, barrier released -> Cash commits, PayOS unblocks and records `OVERPAYMENT_RECEIPT` obligation (zero duplicate deposit).
+    4. Concurrency race (PayOS in-tx barrier vs queuing Cash): real in-transaction proxy barrier holds `billing_charges FOR UPDATE` on client `a`, Cash queues on client `b` with verified `wait_event_type = 'Lock'`, barrier released -> PayOS commits, Cash unblocks and rejects with `ConflictException: Khoản thu đã thanh toán online` (wallet un-debited, 0 cash receipts).
+    5. Repository lifecycle + verifier integration: 3-button handover (`IMMEDIATE`) -> return 1 button (anti-duplicate check) with 2 buttons remaining operational -> store return receipt -> real AES-256-GCM bank account ciphertext round-trip verified -> concurrent approval with observed `wait_event_type = 'Lock'` (ledger moves 200k from `heldAmount` to `refundReservedAmount`, zero wallet debit) -> provider evidence verification via `verifyDepositRefundPayoutEvidence` (tampered amount/account rejected, matching evidence verified) -> payout confirmed to `REFUNDED` (ledger strictly conserved: `400k held + 0 reserved + 200k refunded === 600k collected`).
+    6. Real transactional rollback: simulated fault after SQL receipt INSERT verified wallet, voucher, charge, ledger, and deposit cleanly rolled back.
+    7. SQL Snapshot Immutability: database trigger rejects update with exact error `'Rental monthly price snapshot is immutable'`, re-read verified snapshot untouched at 30,000 VND.
+  * Worker & Provider E2E Suites:
+    - Phase 5 (`tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`): 30/30 PASS (payout reconciliation, missing fields fail-closed, exact amount check, worker backoff / retry / DLQ, admin override).
+    - Phase 6 (`tests/platform-button-rental-phase6-outbox-and-notifications.spec.ts`): 8/8 PASS (outbox event consumer, idempotency key generation, fail-closed unhandled events, notification center).
+  * TypeScript & Build: `npx tsc --noEmit` and `npm run build` PASS (0 errors, exit code 0).
+- Git & Environment Fingerprint:
+  * Commit: `0f5e06a50adc0468527dec7977efd3e6444a889e` on branch `feature/security-invariant-hardening`.
+  * Neon Isolated Test DB: `smart_order_test` on `ep-winter-haze-b36uyvah.c-4.ap-southeast-1.aws.neon.tech` (compute ID: `ep-winter-haze-b36uyvah`).
+  * Uncommitted Core Working Tree Hashes (SHA-256):
+    - `src/rentals/rental-pricing.ts`: `FDD658624113C0EA37147B89D3EE33B8454EC9BEA2CEE021CFBD6E1B1CB3F25C`
+    - `src/rentals/rental-renewal.transaction.ts`: `4295E43D720C543EA0793C57F4624F4FF41FC398793A5233166F358867A4EF27`
+    - `src/rentals/rental-handover.transaction.ts`: `6A800CAD48958B723B04BCE3BA6352EFD7B20D07EEE293696A6D514B2A93F42B`
+    - `src/rentals/rental-cache-invalidation.ts`: `A531F45407A0F0974318E5B045D5A9D2C69DE2B8C138B0474D3C6E22FB1881E8`
+    - `src/rentals/deposit-payout-verifier.ts`: `1BB6D18CF734BC779C71AB08E40764AEF51C725DF2B982EEE679A39B3C245D2D`
+    - `src/store-cash/store-cash.repository.ts`: `FDB8F0E03368B440182C5BE1A89C009432A30A10BF42816575D75753629AF862`
+    - `src/store-cash/store-cash-settlement.transaction.ts`: `79E1846952C41C5B72157504B30FFAAD14B2362DDA8E2BE5597565A465C50D6E`
+    - `tests/rental-closeout-postgres.spec.ts`: `774FD129FC646497F88884B99A719362B77364556D76EAFDB9EDF7D6A313BB34`
+    - `tests/rental-closeout-http.spec.ts`: `D109837E9330761EDE28704322FC89427090FF9170BA2B46EB69B87C2B81B055`
+    - `tests/rental-closeout-regression.spec.ts`: `4E442E2E98124653C3847A9CA0B6C2A2AAEE86431FECDB67B1895C122075251E`
+    - `tests/rental-renewal-receipt.spec.ts`: `9D1C72E2B9395EB19D147B27FB6F2D711CC1F0A3456A8A7D84089B206257D678`
+- Safety Guard Compliance: Isolated DB `smart_order_test` validated with `test-db-guard.ts` (suffix `_test`, allowed host). Zero credentials/passwords stored in git or handoff files. No migrations applied to live production DB.
+- Remaining Gates: Live PayOS money testing / staging verification before production deployment.
+
+### [2026-11-03] IoT Button Rental End-to-End Closeout — Pricing Domain, Preview BOLA Scope, Safe Pagination & Cache Invalidation
+- Status: COMPLETED. Executed end-to-end closeout requirements per `docs/superpowers/plans/2026-11-03-button-rental-end-to-end-closeout.md`:
+  * 1. R1 Single Pricing Source & Multi-Button Kit Semantics:
+    - Implemented pure domain helper `src/rentals/rental-pricing.ts` (`calculateRentalPricing`) with exact Decimal division verification and kit semantics (1 button = 30k rent + 200k deposit = 230k; 3 buttons = 90k rent + 600k deposit = 690k; 3 buttons x 3 months = 270k rent + 600k deposit = 870k; indivisible amounts cleanly throw domain error).
+    - Wired `calculateRentalPricing` into `RentalsService.createRentalContract` and `RentalsRepository.createRental` ensuring atomic creation of `ButtonRental` and `BillingCharge` in the same transaction with exact line items (`lineType = RENT`, `lineType = DEPOSIT`).
+  * 2. R2 Preview BOLA, Scope Enforcement & HTTP Contracts:
+    - Enforced strict two-layer check in `StoreCashRepository.getHandoverPreview`:
+      (1) Caller authority: active owner or active staff (`STORE_MANAGER`, `STAFF_BUTTON`) of the requested store.
+      (2) Rental scope: `rental.fulfillmentStoreId === storeId` OR valid active unexpired cash voucher issued by customer designating this rental and store. Unlinked requests return HTTP 404 (zero data leakage).
+    - `canFulfillImmediately` strictly checks: pickup status (`['PENDING_PAYMENT', 'PENDING_HANDOVER'].includes(status)`), correct fulfillment store, and complete available button inventory (`custodyStoreId = storeId`, `ALLOCATED_TO_STORE`, unassigned). Rental states like `CANCELLED`, `RETURNED`, `TERMINATED`, `ACTIVE`, `EXPIRED` return `canFulfillImmediately: false`.
+    - Safe pagination in `src/store-cash/dto/store-cash.dto.ts`: bounded string length, safe integer, `pageSize <= 100`, and `MAX_PAGINATION_OFFSET = 1_000_000` refinement (`(page - 1) * pageSize <= 1_000_000`).
+  * 3. R6 Context-Aware Post-Commit Cache Invalidation:
+    - `StoreCashRepository.collect` returns `{ receipt, idempotent, context: { customerUserId, collectingStoreId, fulfillmentStoreId, affectedButtonIds } }`.
+    - `StoreCashService.invalidateAffectedCaches` evicts exact Redis keys post-commit: collecting store (`dash:store:${storeId}:`, `staff:dashboard:store:${storeId}:`, `wallet:${storeId}:`, `store:wallet:${storeId}:`), fulfillment store if different, customer keys (`customer:dashboard:${customerUserId}`, `customer:rentals:${customerUserId}`, `customer:devices:${customerUserId}`), and admin keys (`admin:dashboard:`, `admin:revenue:`, `admin:operations`, `admin:stores-leaderboard:`, `admin:growth:`).
+  * 4. Multi-Button Kit Automated Acceptance (Tests 1 through 13 in `tests/store-cash-collection-and-wallet-offset.spec.ts`):
+    - Test 9A: Contract with 3 buttons ($90k rent + $600k deposit = $690k total). Debits store wallet by $690k, credits deposit ledger with $600k, activates all 3 buttons (`IN_CUSTOMER_CUSTODY`, `can_order = true`), sets contract `ACTIVE`.
+    - Test 9B: Attempting handover with only 2 buttons rejects with `HANDOVER_ASSIGNMENT_MISMATCH`. Zero wallet debit.
+    - Test 10: R1 Pure Domain Pricing & Multi-Button Kit Invariants (1 button 1 month, 3 buttons 1 month, 3 buttons 3 months, indivisible remainder validation).
+    - Test 11: R2 Handover Preview BOLA & Scope Verification (404 on unlinked stores, 200 on voucher match, CANCELLED returns `canFulfillImmediately: false`).
+    - Test 12: R2 Safe Pagination & MAX_OFFSET Protection (`pageSize <= 100`, offset <= 1,000,000 limit boundary checks).
+    - Test 13: R6 Context-Aware Post-Commit Cache Invalidation (eviction verified across collecting store, fulfillment store, customer, and admin keys).
+- Verification Evidence:
+  * `npx tsx tests/store-cash-collection-and-wallet-offset.spec.ts` — PASS (All 13 comprehensive tests passed).
+  * `npx tsx tests/store-cash-contract.spec.ts` — PASS.
+  * `npx tsx tests/store-cash-settlement.spec.ts` — PASS.
+  * `npx tsx tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts` — PASS (5/5 tests passed).
+  * `npx tsc --noEmit` — PASS (0 errors).
+  * `npm run build` — PASS (Nest CLI build succeeded with exit code 0).
+- Feature Flags: `STORE_CASH_COLLECTION_ENABLED = false` by default in environment. No migrations applied to live production DB. No commit/push made. Ready for user review.
+
+### [2026-11-02] UML Expert Standard Synchronization for all 19 State & Activity Diagrams
+- Integrated Skill: Successfully authored and registered [.agents/skills/uml-diagram-expert/SKILL.md](file:///f:/Learning/SEM9-FPTu/backend/.agents/skills/uml-diagram-expert/SKILL.md) for UML 2.x standard compliance.
+- Diagram Upgrades across `BRD/ERD_Level_3_Editable.drawio` (Page 1 ERD strictly untouched):
+  * **State Machine Diagrams (9 pages):** Standardized all transition arrows with explicit UML 2.x trigger/guard/effect syntax (`trigger [guard] / effect`). Removed unstructured action phrases on transition lines. Aligned state names strictly to classifier conditions (`PENDING`, `PREPARING`, `READY_FOR_DELIVERY`, `SHIPPING`, `DELIVERED`, `COMPLETED`, `CANCELLED`, `REJECTED`, `EXPIRED`, `ACTIVE`, `RETURNED`, `SUCCEEDED`, `FAILED`).
+  * **Activity Diagrams (10 pages):** Labeled all Decision diamonds (`rhombus`) with explicit evaluation criteria (`WiFi Connected?`, `Signature & Nonce Valid?`, `Valid Nonce & Entitlement?`, `Valid HMAC & Binding?`, `Provider Response?`, etc.). Ensured clean Verb + Object action naming across all partitions (`Validate Timing-Safe Signature`, `CAS Activate Bank Account`, `Pessimistic Lock & Reserve`, `Deduct Frozen Balance`, `Call PayOS Payout API`, etc.).
+- Verification:
+  * Total diagram pages: 20 pages intact.
+  * 100% Swimlane coverage across all 19 workflow and lifecycle pages.
+  * Broken / dangling edges: **0 broken edges** across all 20 pages.
+  * ERD schema integrity: 60 tables and 90 relationships preserved with 0 changes.
+
+### [2026-11-02] BRD 19 State & Activity Diagrams Standardized with Full Swimlanes & UML Notations
+- Scope: Standardized all 19 State Machine and Activity diagram pages in `BRD/ERD_Level_3_Editable.drawio`. Preserved Page 1 (`[ERD] 60 Tables Schema`) completely intact without any edits.
+- Swimlane & UML Notation Modernization:
+  * Updated 8 remaining flat diagram pages into structured vertical Swimlanes (`pool` and `lane` architecture) matching the standard 11 pages:
+    1. `[STATE 3] Store Withdrawal`: 4 lanes (*Store Owner, Admin Reviewer, Backend Wallet Service, PayOS Payout Gateway*).
+    2. `[STATE 4] Button Rental`: 4 lanes (*Customer, Fulfillment Store Staff, Rental Engine & DB, System Cron & PayOS*).
+    3. `[STATE 6] Driver Shift`: 3 lanes (*Delivery Driver, Store Shift Manager, Shift Service & Driver Duty Engine*).
+    4. `[STATE 7] Customer Bank Verification & Refund`: 4 lanes (*Customer App, PayOS Webhook Gateway, Bank Verification Service, Automatic Refund Worker*).
+    5. `[STATE 8] Store Subscription`: 3 lanes (*Store Owner, Billing & Subscription Service, Daily Expiry Cron Worker*).
+    6. `[ACT 4] Store Wallet Payout`: 4 lanes (*Store Owner, System Admin, Backend Wallet Service, PayOS Gateway*).
+    7. `[ACT 5] Button Rental Lifecycle`: 4 lanes (*Customer, Fulfillment Store Staff, Rental Engine & DB, PayOS Gateway & Expiry Cron*).
+    8. `[ACT 10] Customer Bank 2.000đ Verification & Refund`: 4 lanes (*Customer App, PayOS Webhook Gateway, Bank Verification Service, Refund Worker*).
+  * Incorporated standard UML notation elements across all pages: Initial Nodes (`ellipse;fillColor=#000000`), Activity/State Final Nodes (`ellipse;shape=endState;fillColor=#000000`), Decision/Merge Nodes (`rhombus`), and rounded Action/State boxes with strict architectural guard labels (CAS transitions, pessimistic row locking, timing-safe HMAC checks, and tenant isolation).
+- Verification:
+  * Total diagram pages: exactly 20 pages intact.
+  * Swimlane coverage across all 19 diagram pages: **100% (19/19 pages contain active swimlanes)**.
+  * Broken / dangling edges check: **0 broken edges across the entire document (100% connected)**.
+  * ERD integrity: verified zero modifications to Page 1 schema.
+
+### [2026-11-02] BRD ERD Page 1 Updated to 60 Tables Schema
+- Scope: Synchronized Page 1 (`[ERD] 60 Tables Schema`) of `BRD/ERD_Level_3_Editable.drawio` with current Prisma Schema (60 models) and applied all 5 requirements:
+  1. Added 4 missing tables: `customer_bank_verification_proofs` (21 rows), `customer_bank_inbound_transactions` (20 rows), `customer_bank_refund_obligations` (16 rows), `customer_bank_refund_payout_attempts` (13 rows) with zero spatial collisions.
+  2. Added 6 primary relationships + 2 scoped intra-session/intra-obligation pointers for new tables (`edge_proof_verified_by_txn` and `edge_obligation_active_attempt` styled with dashed edges and explicit labels).
+  3. Added missing relationships between existing tables: `store -> iot_button` (`custody_store_id`), `store -> button_rentals` (`fulfillment_store_id`), `users -> driver_shifts` (`confirmed_by_user_id`), `iot_button -> rental_returns` (`button_id`), `button_rentals -> deposit_refunds` (`rental_id`), `customer_profile -> deposit_refunds` (`customer_id`), and updated `category` self-reference to `(store_id, parent_category_id)`.
+  4. Reconnected all 8 dangling edges (`product -> inventory`, `customer_profile -> iot_button`, `product -> button_product`, `orders -> order_status_history`, `users -> notifications`, `users -> user_fcm_tokens`, `store_wallets -> store_withdrawals`, `button_rentals -> rental_deposits`) and cleaned up 2 redundant edges (`30A9bzpUEQ7j0Tngwrvw-1206`, `30A9bzpUEQ7j0Tngwrvw-1455`).
+  5. Corrected cardinalities to 1-to-0..1 (`users -> customer_profile`, `store -> store_wallets`, `users -> driver_duties`, `button_rentals -> rental_deposits`, `rental_returns -> deposit_refunds`).
+- Verification:
+  * Total diagram pages: exactly 20 pages intact.
+  * Page 1 table containers: exactly 60 tables.
+  * Connected edges: 90 edges with 0 broken edges and 0 missing source/targets.
+
+### [2026-11-02] BRD diagram review (ERD read-only)
+- Scope: user authorized direct file editing instead of unavailable Draw.io MCP. Reviewed 20 pages in `BRD/ERD_Level_3_Editable.drawio`; changed only 19 activity/state pages (8 graph rewrites, 11 label/scope corrections). Existing user edits preserved outside those pages.
+- ERD unchanged: UTF-8 diagram-block SHA-256 before/after `E72CE7D5255178EEB4D68ACB0C64E5404636A7822CE2988311882C989EC3D976`.
+- Report: `BRD/DIAGRAM_REVIEW_2026-11-02.md` lists missing 4 bank-verification tables, 10 unbound relation edges, cardinality/relationship omissions, and source evidence per page. ERD findings were NOT applied.
+- Corrections: payout ambiguity retains frozen funds; rental payment waits for handover; expiry has no assumed 7-day grace; shift status separated from duty; Firebase phone verification corrected; bank activation separated from actual-amount refunds; order-dispute flow explicitly proposed, not implemented.
+- Verification: PowerShell XmlDocument parse, 20 pages, unique cell IDs, flow parent/source/target/geometry checks — PASS (0 issues); ERD hash comparison — PASS; `git diff --check` — PASS (LF/CRLF warnings only).
+- Limitations: no desktop-render visual check (executable not found via checked paths; registry discovery encountered cast error), no database/provider/backend tests. This is documentation alignment, not backend certification. No source/migration/config changes, no commit/push.
+
+### [2026-11-01] Unification of Superpowers Artifacts & Context Directory
+- Status: COMPLETED — Merged `.superpowers/sdd` into `docs/superpowers/sdd` and unified workspace structure via NTFS Directory Junctions (`.superpowers` and `superpowers` pointing directly to `docs/superpowers`).
+- Root Cause & Invariant: Different AI assistant models and skills referenced either `docs/superpowers/` (for plans/specs) or `.superpowers/` (for subagent SDD progress ledgers). To prevent fragmented plans, specs, and SDD progress ledgers across models, `docs/superpowers` is now the single canonical home.
+- Directory Architecture:
+  * Canonical path: `docs/superpowers/` containing `plans/`, `specs/`, and `sdd/`.
+  * Transparent Junctions: `/.superpowers` -> `docs/superpowers`, `/superpowers` -> `docs/superpowers`.
+  * Git ignore safety: Configured root-scoped `/.superpowers/` and `/superpowers/` in `.gitignore` to prevent tracking junctions while preserving `docs/superpowers/plans` and `docs/superpowers/specs` in version control.
+- Verification:
+  * Junction creation: `mklink /J .superpowers docs\superpowers` and `mklink /J superpowers docs\superpowers` — PASS.
+  * Bidirectional synchronization test: verified file creation and deletion via junction instantly mirrors in `docs/superpowers` — PASS.
+  * Git status check: `git status -s` verified junctions are cleanly ignored, zero untracked junction noise — PASS.
+
+### [2026-11-01] Step 1 & Step 2 Acceptance: Live PayOS Gateway Contract Verified
+- Status: VERIFIED — Step 1 (PostgreSQL Concurrency/Rollback) passed 100% on Neon test DB. Step 2 (Live PayOS Verification) tested against live PayOS API endpoints.
+- Step 1 DB Concurrency (Neon `smart_order_test`):
+  * `tests/customers_repository_postgres_concurrency_spec.ts`: 11/11 PASSED (Exit code 0).
+  * 2 concurrent client connections: row-locking, single creation, idempotent second request, exactly 1 refund obligation (1:1).
+  * Scoped trigger fault injection: 100% full rollback verified across all 4 entities (zero orphan inbounds, zero duplicate obligations, observations preserved unlinked, session active, account pending).
+  * Unit/Service State Machine Suite: 36/36 PASSED (Exit code 0).
+- Step 2 Live PayOS Contract Verification:
+  * Payment Link (Kênh Thu 2.000đ): Verified live call to `POST https://api-merchant.payos.vn/v2/payment-requests`. Response `code: "00", desc: "success"`, valid VietQR generated.
+  * Payment Link Recovery: Verified live call to `GET https://api-merchant.payos.vn/v2/payment-requests/:orderCode`. Response `code: "00", desc: "success"`, correctly recovered existing checkout URL without duplicate link generation.
+  * Payout (Kênh Chi 2.000đ): Live call to `GET https://api-merchant.payos.vn/v1/payouts-account/balance` returned `code: "403", desc: "Địa chỉ IP không được phép truy cập hệ thống"`. Current machine public IP identified as `171.248.97.196`. Must be added to PayOS Dashboard IP Whitelist before live payout execution. Fail-closed error handling verified (keeps `PENDING_RECONCILIATION`).
+- Feature Flags: Remain strictly `false` (`CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED = false`, `FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED = false`).
+- Next Actions: Tris to whitelist IP `171.248.97.196` on PayOS Payout Dashboard, confirm available balance for 2.000đ + fees, then authorize live controlled round-trip transaction.
+
 > **Agent continuity:** Follow [`docs/AGENT_CONTEXT_POLICY.md`](file:///f:/Learning/SEM9-FPTu/backend/docs/AGENT_CONTEXT_POLICY.md) when reading or updating this handoff. This file must contain verified project state only and must never contain secrets.
 
 > **Project:** Sem 9 FPTu - IoT Amazon Button Backend E-Commerce Platform  
@@ -1642,3 +1791,128 @@ When starting a new conversation, prompt the agent with:
       - `npx tsc --noEmit`: **PASS** (Zero errors)
       - `npm run build`: **PASS** (Exit code 0)
       - `git diff a5db316..HEAD --check` & `git diff HEAD --check`: **PASS**
+
+18. **Penny-Deposit Verification & Refund Master Plan (Phases 1 & 2 Execution):**
+    - **Phase 1 Assessment (PARTIAL — Awaiting Provider & Outbound Whitelist Verification):**
+      - Payment link creation for 2,000 VND: Verified on production gateway (returns code "00", link ID created). Note: Only proves link creation; inbound webhook receipt and actual bank settlement remain to be tested with controlled transaction.
+      - Payout Gateway Access: Returns 403 Forbidden due to outbound server IP whitelisting requirement on PayOS Dashboard (`my.payos.vn`).
+      - Webhook Source Account Data: PayOS documentation explicitly limits full `counterAccount` support to MB Bank, ACB, and KienlongBank; not guaranteed for all sender banks.
+      - Payout Minimum Limit & Fees: Specific threshold and fee agreement must be verified directly against the merchant agreement/dashboard before assuming 1,000/2,000 VND floor.
+      - Frontend Policy Adjustment: When source account data is missing, system registers refund obligation but does not promise automated refund to untrusted destinations. Message specifies manual review: *"Đã nhận 2.000đ nhưng chưa đủ thông tin tài khoản nguồn để xác nhận và hoàn tự động. Khoản tiền đang chờ xử lý hoàn; vui lòng liên hệ hỗ trợ."*
+      - Core Rule: Never activate live 2,000 VND collection for real users until payout refund path is certified.
+    - **Phase 2 Status: DRAFT / PARTIAL (Fortified 4-Entity Architecture & Draft Migration):**
+      - Status classification: **DRAFT / PARTIAL** (Schema & draft migration prepared with strict financial constraints; pending isolated PostgreSQL execution and provider evidence).
+      - Replaced single-table draft with rigorous 4-entity relational hierarchy:
+        1. **`VerificationSession` (`customer_bank_verification_proofs`):**
+           - Tracks session lifecycle (`session_status`: `ACTIVE`, `EXPIRED`, `CONSUMED`, `ABANDONED`) and legacy proof status (`status`: `PENDING`, `SUCCESS`, `FAILED`) for 100% backward compatibility.
+           - Decoupled business verification outcome (`verification_status`: `PENDING`, `VERIFIED`, `FAILED_MISMATCH`, `PENDING_SOURCE_EVIDENCE`).
+           - Explicit evidence pointer `verified_by_transaction_id` with composite FK `("id", "verified_by_transaction_id") REFERENCES "customer_bank_inbound_transactions"("proof_id", "id") ON DELETE SET NULL`, mathematically preventing linking transactions of session A to session B.
+        2. **`InboundTransaction` (`customer_bank_inbound_transactions`):**
+           - Immutable receipt ledger of all inbound transfers. `proof_id` is **NULLABLE** (`session_match_status`: `MATCHED_SESSION`, `UNMATCHED_NO_SESSION`, `AMBIGUOUS_MATCH`) ensuring out-of-session or late orphan payments are captured without creating fake sessions.
+           - Scoped provider uniqueness: `UNIQUE("provider", "channel", "provider_transaction_ref")`.
+           - Positive amount check constraint: `CHECK ("amount" > 0)`.
+           - Audit defense: `ON DELETE RESTRICT` on session link.
+        3. **`RefundObligation` (`customer_bank_refund_obligations`):**
+           - Financial liability ledger: Exactly 1 obligation per inbound transaction (`inbound_transaction_id` UNIQUE FK with `ON DELETE RESTRICT`). Created atomically in the same database transaction as the inbound transaction.
+           - Exact refund amount guarantee: `refund_amount = inbound_transaction.amount` with `CHECK ("refund_amount" > 0)`.
+           - Redundant `proof_id` removed to eliminate drift.
+           - Active attempt pointer `active_payout_attempt_id` strictly scoped via composite FK `("id", "active_payout_attempt_id") REFERENCES "customer_bank_refund_payout_attempts"("obligation_id", "id") ON DELETE SET NULL`.
+        4. **`RefundPayoutAttempt` (`customer_bank_refund_payout_attempts`):**
+           - Dispatch & reconciliation history. Strict sequential attempts: `UNIQUE("obligation_id", "attempt_number")`, `CHECK ("attempt_number" > 0)`.
+           - Default status is `PREPARING` (not `SUBMITTED`), transitioning to `SUBMITTED -> PENDING_RECONCILIATION -> SUCCESS | FAILED`.
+           - Single in-flight attempt guarantee: Partial unique index `CREATE UNIQUE INDEX "uq_cust_bank_active_attempt_per_obligation" ON "customer_bank_refund_payout_attempts"("obligation_id") WHERE "status" IN ('PREPARING', 'SUBMITTED', 'PENDING_RECONCILIATION')`.
+      - **Draft Migration File:** [`prisma/migrations/20261101130000_customer_bank_penny_deposit_four_entities/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261101130000_customer_bank_penny_deposit_four_entities/migration.sql).
+      - **Invariants Enforced:**
+        - Zero financial cascade (`ON DELETE RESTRICT` across all accounting tables).
+        - Activation must evaluate `expires_at > NOW()` directly within the transaction.
+        - Exact field mapping maintained: `customer_bank_accounts.verificationStatus`.
+        - Real money collection remains strictly disabled until payout refund path is certified.
+    - **Focused Security & Invariant Hardening Sweep (6 P0/P1 Remediations - Single Pass):**
+      - **1. [P0] Server-Controlled Channel (Anti-Replay):**
+        * In `CustomerBankPennyVerificationService.processPayosVerificationWebhook`, removed dynamic extraction of `body.channel`.
+        * Fixed `channel = 'PAYOS_WEBHOOK'` bound to the server's authentication key set.
+        * Unauthenticated envelope fields are strictly forbidden from acting as deduplication scopes. Identical payload and signature sent with different `body.channel` values now map to the same `(provider, channel, provider_transaction_ref)` key, resulting in strictly ONE inbound transaction and ONE obligation.
+      - **2. [P0] Strict Fail-Closed Payout Verifier:**
+        * Overhauled `verifyPayosPayoutEvidence` in [`src/payments/payos-payout-verifier.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payos-payout-verifier.ts) to eliminate fail-open risks.
+        * Required recipient BIN (`targetBankBin`) and account hash (`targetAccountHash`) snapshots from system records; rejects with fail-closed if missing.
+        * Strictly requires reported BIN and account hash from PayOS detail; rejects if missing (no fail-open).
+        * Filters transactions strictly by `referenceId` or `reference`; disallows `transaction.id` from substituting for reference. Rejects if matching transactions count !== 1 (rejects duplicates).
+        * Enforces `expectedPayoutId` equality check when concrete payout ID is known.
+        * Enforces positive integer amount check (`Number.isInteger(amount) && amount > 0 && amount === expectedAmount`).
+      - **3. [P0] Payout Failure Rejection Verification Overhaul (Fail-Closed Terminal Failure):**
+        * Completely eliminated summary-only rejection fallback (`if (isOverallTerminalRejected) return true`) in `verifyPayosPayoutRejectionEvidence`.
+        * Requires non-empty `transactions` array and strictly ONE matching transaction on `referenceId` or `reference`.
+        * Transaction must be in accepted terminal failed state (`FAILED`, `REJECTED`, `CANCELLED`). Non-terminal transaction states (`SUCCEEDED`, `PROCESSING`, `PENDING`) return unverified.
+        * Root/detail conflict protection: if root `approvalState` or `state` is `COMPLETED`, `SUCCEEDED`, or incomplete (`PROCESSING`, `PENDING`, `PENDING_APPROVAL`, `APPROVED`, `IN_PROGRESS`, `EXECUTING`) while transaction is failed, returns unverified (held for reconciliation).
+        * Strictly verifies positive integer amount equality (`amount === expectedAmount`) and enforces matching recipient bank BIN (`reportedBin === expectedBin`) and recipient account hash (`reportedHash === expectedHash`) against immutable snapshot (fail-closed).
+        * Full 5+ case test matrix verified:
+          - Tổng FAILED, transaction SUCCEEDED -> Không finalize FAILED.
+          - Tổng FAILED, transaction PROCESSING -> Không finalize FAILED.
+          - Tổng FAILED, không có transactions -> Chờ đối soát.
+          - Đúng reference nhưng sai amount hoặc sai tài khoản/BIN -> Chờ đối soát.
+          - Mâu thuẫn Tổng COMPLETED/SUCCEEDED, transaction FAILED -> Chờ đối soát.
+          - Đủ bằng chứng thất bại đúng giao dịch và người nhận -> Mới finalize FAILED.
+      - **4. [P1] State Machine Active Pointer Guard & Anti-Overwrite:**
+        * In `CustomersRepository.finalizePayoutAttemptTx`, requires `obligation.active_payout_attempt_id?.toString() === attempt.id.toString()` for any in-flight attempt update. If pointer is null or points to a newer attempt, throws `409 ConflictException`.
+        * For already finalized terminal attempts (`SUCCESS` or `FAILED`), duplicate callbacks matching the current status are accepted idempotently (`{ success: true, idempotent: true }`), while contradictory callbacks throw `409 ConflictException` and are routed to audit.
+      - **5. [P1] Payment Link Multi-Instance Safety, Provider Recovery & CAS Loser Fallback:**
+        * Clarified architectural boundary: `inFlightLinkCreations` Map is an in-process single-flight request coalescer, NOT a distributed lease. Multi-instance safety is anchored by: (1) DB row lock `FOR UPDATE` on `customer_bank_accounts` during session creation with stable `paymentOrderCode`, (2) PayOS provider-side `orderCode` uniqueness/idempotency, and (3) CAS update (`attachPaymentLinkToSessionCAS`) with loser fallback reloading committed session from DB.
+        * In `CustomerBankPennyVerificationService.initiateVerificationSession`, if CAS loser condition occurs, reloads committed session from DB and returns stored `checkoutUrl` cleanly without errors or link duplication.
+        * Client POST timeout automatically recovers via `GET /v2/payment-requests/:orderCode` returning provider data structure.
+      - **6. [P1] Unreferenced Intake Observation Separation & Financial Metrics Isolation:**
+        * In `CustomerBankPennyVerificationService` (`getVerificationStatus` and `getVerificationHistory`), partitions inbounds into `confirmedReceipts` vs `unconfirmedObservations`.
+        * Excludes unconfirmed observations (`UNREF_OBS_...`, `FLAGGED_MISSING_PROVIDER_REF`, `MERGED_INTO_CONFIRMED`, `RECONCILED_MERGED`, `mergedIntoInboundId != null`) from `paymentStatus = 'PAID'`, `receivedAmount`, and `totalObligationAmount`.
+        * Unconfirmed observations display as `PENDING_RECONCILIATION` with 0đ received amount and 0đ obligation amount.
+        * Overhauled `reconcileObservationsIntoConfirmedReceiptTx` in repository and service:
+          - Requires explicit `observationIds: bigint[]` selection; prohibits auto-selecting all observations in session (ensuring two distinct transfers in the same session are not accidentally merged).
+          - Locks requested observations `FOR UPDATE` and verifies all IDs exist, belong to session, and are valid observations.
+          - Mandatory observation data matching: enforces matching `provider` AND `channel` (preventing cross-channel mixing), exact `amount` (different amounts such as 10.000đ vs 2.000đ cannot be merged into the same confirmed receipt), and matching source account info (`sourceBankBin`, `sourceAccountHash`) if present in observation. Does not sum amounts of repeated callbacks.
+          - Safe existing transaction branch (Idempotency & Attaching):
+            * If all requested observations are already linked -> returns `idempotent: true`, no new obligation.
+            * If valid compatible observations are not yet linked -> locks, updates FK `mergedIntoInboundId`, returns `idempotent: false`, without creating duplicate obligations (no false success).
+            * If any observation is missing, belongs to wrong session, or points to another transaction -> rejects immediately with 404/400/409.
+            * `mergedObservationsCount` accurately reflects actual linked rows from database.
+          - Enforces canonical lock order and verification: `customer_bank_accounts FOR UPDATE` first, then `customer_bank_verification_proofs FOR UPDATE`.
+          - Validates all binding criteria: BIN, accountHash, exact 2.000đ policy amount, unexpired session, unused session, unverified account.
+          - Zero separate activation shortcut: Ineligible transactions (e.g. 5.000đ amount or mismatched account/BIN) still record confirmed receipt and refund obligation (5.000đ), but strictly keep the bank account `PENDING` (not verified!).
+          - Saves observation link via explicit foreign key `merged_into_inbound_id` on `customer_bank_inbound_transactions` and `match_decision = 'MERGED_INTO_CONFIRMED'`.
+    - **Phase 9 Master Verification Results:**
+      - `tests/customer_bank_penny_deposit_comprehensive_spec.ts`: **ALL PASS (36/36 tests passed)**:
+        * Classification: Service Unit / Domain State Machine Invariant Test Suite.
+        1. [PASS] TEST 1: Khởi tạo phiên xác minh tài khoản 2.000đ thành công với checkoutUrl PayOS thật.
+        2. [PASS] TEST 2: Tái sử dụng phiên xác minh đang hoạt động trong 15 phút (Idempotent).
+        3. [PASS] TEST 3 [P1]: Phục hồi Payment Link sau Timeout bằng GET /v2/payment-requests/:orderCode, không tạo phiên mới (Mock).
+        4. [PASS] TEST 4 [P0]: Cùng chữ ký, thay đổi body.channel -> Server cố định channel PAYOS_WEBHOOK, vẫn chỉ 1 inbound và 1 obligation.
+        5. [PASS] TEST 5 [P0]: Payout Verifier loại bỏ Fail-Open (8/8 sub-checks: thiếu BIN/Hash, provider thiếu BIN/Hash, trùng reference, tx ID thay reference, sai payout ID, amount không nguyên).
+        6. [PASS] TEST 6 [P0]: Payout thất bại kiểm tra ma trận 5 trường hợp fail-closed: tổng FAILED tx SUCCEEDED, tổng FAILED tx PROCESSING, tổng FAILED không có tx, sai amount/tài khoản, mâu thuẫn tổng COMPLETED tx FAILED, và đủ chứng từ mới finalize FAILED; lỗi 403 / timeout provider giữ nguyên PENDING_RECONCILIATION.
+        7. [PASS] TEST 7 [P1]: State Machine: Active Pointer Guard (pointer null / mismatched pointer rejected với 409), duplicate idempotent success, và chống ghi đè terminal.
+        8. [PASS] TEST 8 [P1]: Gửi lặp 3 thông báo thiếu reference -> Lưu 3 quan sát, không tạo obligation, API trả PENDING_RECONCILIATION và 0đ tiền thực nhận.
+        9. [PASS] TEST 9 [P1]: Đối soát ghép các quan sát cụ thể thành giao dịch xác định (9 sub-checks):
+           - 9a [PASS]: Ghép 2 quan sát được chọn với FK mergedIntoInboundId, kích hoạt tài khoản đúng chuẩn.
+           - 9b [PASS]: Hai khoản khác nhau cùng phiên: Quan sát thứ 3 không nằm trong danh sách chọn không bị gộp vào giao dịch 1.
+           - 9c [PASS]: Ghép lại cùng reference giao dịch -> Trả kết quả idempotent, không tạo nghĩa vụ hoàn tiền mới.
+           - 9d [PASS]: Chặn đứng việc đổi liên kết audit: Observation đã ghép không thể bị ghép sang giao dịch khác (409 Conflict).
+           - 9e [PASS]: Khoản đối soát sai số tiền (5.000đ): Tạo nghĩa vụ hoàn tiền 5.000đ nhưng TUYỆT ĐỐI KHÔNG xác nhận tài khoản (tài khoản giữ PENDING).
+           - 9f [PASS]: Giao dịch đã tồn tại, bổ sung observation chưa liên kết: Ghép thành công vào giao dịch hiện có, không tạo obligation mới.
+           - 9g [PASS]: Từ chối khi danh sách chứa observation ID không tồn tại (404 Not Found) hoặc sai phiên (400 Bad Request).
+           - 9h [PASS]: Mâu thuẫn số tiền hoặc tài khoản/BIN nguồn: Từ chối tự động ghép observation có số tiền (10.000đ) hoặc BIN (970400) khác với giao dịch xác nhận (409 Conflict).
+           - 9i [PASS]: Hai request đồng thời cùng ghép: Chỉ sinh duy nhất 1 nghĩa vụ hoàn trả (1:1), request còn lại trả kết quả idempotent an toàn.
+        10. [PASS] TEST 10 [P1]: Multi-Instance Link Recovery & CAS Loser Fallback: Instance thua CAS nạp lại phiên đã commit từ DB và trả về checkoutUrl an toàn (In-process Mock).
+      - `tests/customers_repository_postgres_concurrency_spec.ts`:
+        * Classification: Real PostgreSQL Integration & Concurrency Acceptance Test Suite.
+        * Instantiates real `CustomersRepository(prisma)` without mocks; tests multi-connection row-locking (`FOR UPDATE`), unique constraints, and fault-injection atomic rollback.
+        * Hardened Guard: Mandatory `TEST_DATABASE_URL` validated via `validateTestDatabaseUrl()`; strictly throws error if missing, pointing to Supabase cloud, or lacking `_test` suffix (exit code 1 guaranteed).
+        * Exact Prisma Schema Alignment: Fixed fixture models (`customerProfile`, `customerId`, `paymentOrderCode`, only valid proof fields, `Prisma.Decimal`, `receivedAt`), verified via targeted `tsc --noEmit`.
+        * Real Repository Rollback via DB Trigger: Directly calls `CustomersRepository.reconcileObservationsIntoConfirmedReceiptTx()`, uses scoped PostgreSQL trigger `trg_fail_recon_test` to induce failure at step 9, confirming full rollback across all 4 entities (no ghost inbounds, no orphan obligations, observation link untouched, session/account unverified).
+        * Robust Error & Exit Code Handling: Uses `Promise.allSettled`, rethrows setup/cleanup errors, and strictly asserts `passed === EXPECTED_ASSERTIONS (9)` and `failed === 0`.
+      - `tests/bank-account-verification.spec.ts`: **ALL PASS (39/39 tests passed)**.
+      - Static Typing & Build:
+        * `npx prisma validate`: **PASS (Schema valid)**
+        * `npm run build`: **PASS (Exit code 0)**
+        * `git diff --check`: **PASS (Zero whitespace errors)**
+      - **Pending External & Cluster Verifications (Unverified on Live / Staging):**
+        * Hợp đồng PayOS GET `/v2/payment-requests/:orderCode` thực tế (chờ response thật che dữ liệu từ môi trường sandbox/live).
+        * Concurrency đa tiến trình phân tán (multi-instance cluster) trên cơ sở dữ liệu thật.
+      - **Feature Flags Status (Strictly Guarded):**
+        * `CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED = false`
+        * `FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED = false`

@@ -83,6 +83,29 @@ export class DevicesRepository {
   }
 
   async update(buttonId: bigint, data: any) {
+    if (data.status === 'ACTIVE') {
+      // A manual enable clears the operational stop, not the rental/payment boundary.
+      return this.prisma.$transaction(async tx => {
+        const rows = await tx.$queryRawUnsafe<any[]>('SELECT * FROM iot_button WHERE button_id = $1 FOR UPDATE', buttonId);
+        const button = rows[0];
+        if (!button) throw new NotFoundException('Không tìm thấy thiết bị IoT Button');
+        let update = data;
+        if (button.rental_id != null) {
+          const rentals = await tx.$queryRawUnsafe<any[]>('SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE', button.rental_id);
+          const rental = rentals[0];
+          const returning = await tx.rentalReturn.count({ where: { rentalId: button.rental_id, buttonId,
+            status: { in: ['PENDING_RECEIPT', 'RECEIVED'] } } });
+          const allowed = rental?.status === 'ACTIVE' && rental.customer_id === button.customer_id &&
+            rental.effective_expires_at != null && new Date(rental.effective_expires_at) > new Date() &&
+            button.inventory_state === 'IN_CUSTOMER_CUSTODY' && returning === 0;
+          update = { ...data, canOrder: allowed };
+        }
+        return tx.ioTButton.update({ where: { buttonId }, data: update, include: {
+          store: true, customer: { include: { user: true } }, address: true,
+          buttonProducts: { include: { product: true } }, deployedTemplate: true,
+        } });
+      });
+    }
     return this.prisma.ioTButton.update({
       where: { buttonId },
       data,

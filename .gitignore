@@ -10,7 +10,7 @@ dist/
 logs/
 *.log
 
-.superpowers/
+/.superpowers/
 
 .revoked_tokens.json
 
@@ -20,3 +20,8 @@ logs/
 secrets/
 firebase-service-account.json
 *.err
+.neon
+
+# Context & Scratch Directory
+context/
+scratch/

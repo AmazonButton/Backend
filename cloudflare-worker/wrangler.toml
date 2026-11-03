@@ -1,0 +1,6 @@
+name = "smart-order-cluster-lb"
+main = "worker.js"
+compatibility_date = "2026-10-28"
+
+[observability]
+enabled = true

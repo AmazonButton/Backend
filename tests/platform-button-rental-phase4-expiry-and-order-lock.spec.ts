@@ -123,7 +123,8 @@ async function runPhase4ExpiryAndOrderLockSuite() {
             for (const b of buttonsMap.values()) {
               if (b.rentalId === id) {
                 b.canOrder = false;
-                b.status = 'INACTIVE';
+                // Expiry changes rental access, not the independent operational status.
+                if (sql.includes("status = 'INACTIVE'")) b.status = 'INACTIVE';
               }
             }
           } else if (sql.includes('UPDATE store_subscriptions')) {
@@ -167,8 +168,8 @@ async function runPhase4ExpiryAndOrderLockSuite() {
     assert(
       r1.status === 'EXPIRED' &&
         b101.canOrder === false &&
-        b101.status === 'INACTIVE',
-      '4.2 Cập nhật hợp đồng sang EXPIRED, vô hiệu hóa quyền đặt hàng của nút (canOrder = false, status = INACTIVE)',
+        b101.status === 'ACTIVE',
+      '4.2 Rental EXPIRED disables canOrder while preserving operational device status',
     );
 
     // Test 3: Rental 2 remains ACTIVE and its button canOrder remains true

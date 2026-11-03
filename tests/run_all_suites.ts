@@ -333,6 +333,32 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'admin_store_rename.spec.ts')],
   },
+  {
+    name: '66. Store Cash v1: Offline DTO, Token & Schema Contract (not DB concurrency)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'store-cash-contract.spec.ts')],
+  },
+  {
+    name: '67. Store Cash v1: Collection, Wallet Offset & Double-Payment Race Invariants Suite',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'store-cash-collection-and-wallet-offset.spec.ts')],
+  },
+  {
+    name: '68. Rental Closeout Regression (Offline)', command: 'npx',
+    args: ['tsx', path.join(__dirname, 'rental-closeout-regression.spec.ts')],
+  },
+  {
+    name: '69. Rental Renewal & Receipt Invariants (Offline)', command: 'npx',
+    args: ['tsx', path.join(__dirname, 'rental-renewal-receipt.spec.ts')],
+  },
+  {
+    name: '70. Rental Closeout Nest HTTP Pipeline (Build Required; Fixture Auth/DB)', command: 'npx',
+    args: ['tsx', path.join(__dirname, 'rental-closeout-http.spec.ts')],
+  },
+  {
+    name: '71. Rental Closeout Real PostgreSQL (Explicit Disposable Test DB Required)', command: 'npx',
+    args: ['tsx', path.join(__dirname, 'rental-closeout-postgres.spec.ts')],
+  },
 ];
 
 async function main() {

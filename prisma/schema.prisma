@@ -57,6 +57,7 @@ model User {
   notifications                Notification[]
   apiIdempotencyKeys           ApiIdempotencyKey[]
   authIdentities               UserAuthIdentity[]
+  collectedCashReceipts         StoreCashReceipt[]
 
   @@unique([authProvider, providerSubject], map: "uq_users_auth_provider_subject")
   @@map("users")
@@ -93,6 +94,7 @@ model Store {
   bankAccounts                StoreBankAccount[]
   custodyButtons              IoTButton[]                   @relation("StoreCustodyButtons")
   fulfillmentRentals          ButtonRental[]                @relation("StoreFulfillmentRentals")
+  cashVouchers                StoreCashVoucher[]
 
   @@map("store")
 }
@@ -550,6 +552,8 @@ model ButtonRental {
   buttonQuantity      Int             @default(1) @map("button_quantity")
   depositPerButton    Decimal         @default(0) @map("deposit_per_button") @db.Decimal(15, 2)
   rentPerButton       Decimal         @default(0) @map("rent_per_button") @db.Decimal(15, 2)
+  monthlyRentPerButtonSnapshot Decimal? @map("monthly_rent_per_button_snapshot") @db.Decimal(15, 2)
+  pricingReviewRequired Boolean       @default(true) @map("pricing_review_required")
   monthsRented        Int             @default(1) @map("months_rented")
   totalRentAmount     Decimal         @map("total_rent_amount") @db.Decimal(15, 2)
   depositAmount       Decimal         @default(0) @map("deposit_amount") @db.Decimal(15, 2)
@@ -567,7 +571,9 @@ model ButtonRental {
   deposit             RentalDeposit?
   returns             RentalReturn[]
   refunds             DepositRefund[]
+  cashVouchers        StoreCashVoucher[]
 
+  @@unique([rentalId, customerId], map: "uq_rental_customer_cash_binding")
   @@index([customerId, status], map: "idx_button_rentals_customer_status")
   @@index([packageId, status], map: "idx_button_rentals_package_status")
   @@index([fulfillmentStoreId, status], map: "idx_button_rentals_fulfillment_status")
@@ -603,6 +609,7 @@ model WalletTransaction {
   referenceId   String?     @map("reference_id")
   description   String?     @map("description")
   createdAt     DateTime    @default(now()) @map("created_at")
+  cashReceipt   StoreCashReceipt?
 
   @@unique([walletId, type, referenceId], name: "uq_wallet_tx_idempotency")
   @@map("wallet_transactions")
@@ -1024,10 +1031,101 @@ model BillingCharge {
   updatedAt               DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   lines                   BillingChargeLine[]
+  cashVouchers            StoreCashVoucher[]
+  paymentReceipts         BillingPaymentReceipt[]
 
+  @@unique([chargeId, targetType, targetId, totalAmount], map: "uq_charge_cash_binding")
   @@index([targetType, targetId, status], map: "idx_billing_charges_target")
   @@index([status, createdAt(sort: Desc)], map: "idx_billing_charges_status_created")
   @@map("billing_charges")
+}
+
+// Cash v1 foundations only. Runtime endpoints remain unregistered until settlement
+// and webhook overpayment processing are implemented and verified together.
+model StoreCashVoucher {
+  id                BigInt       @id @default(autoincrement())
+  tokenHash         String       @unique(map: "uq_cash_voucher_token_hash") @map("token_hash") @db.VarChar(64)
+  customerId        BigInt       @map("customer_id")
+  rentalId          BigInt       @map("rental_id")
+  chargeId          BigInt       @map("charge_id")
+  targetType        String       @default("RENTAL") @map("target_type") @db.VarChar(32)
+  collectingStoreId BigInt       @map("collecting_store_id")
+  amount            Decimal      @db.Decimal(15, 2)
+  status            String       @default("ACTIVE") @db.VarChar(16)
+  expiresAt         DateTime     @map("expires_at") @db.Timestamptz(6)
+  consumedAt        DateTime?    @map("consumed_at") @db.Timestamptz(6)
+  revokedAt         DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  rental ButtonRental @relation(fields: [rentalId, customerId], references: [rentalId, customerId], onDelete: Restrict, onUpdate: Restrict)
+  charge BillingCharge @relation(fields: [chargeId, targetType, rentalId, amount], references: [chargeId, targetType, targetId, totalAmount], onDelete: Restrict, onUpdate: Restrict)
+  collectingStore Store @relation(fields: [collectingStoreId], references: [storeId], onDelete: Restrict, onUpdate: Restrict)
+  receipt StoreCashReceipt?
+
+  @@unique([id, chargeId, collectingStoreId, amount], map: "uq_cash_voucher_receipt_binding")
+  @@index([collectingStoreId, status, expiresAt], map: "idx_cash_voucher_store_expiry")
+  @@index([chargeId], map: "idx_cash_voucher_charge")
+  @@index([rentalId, customerId], map: "idx_cash_voucher_rental_customer")
+  // One ACTIVE voucher per rental is enforced by a partial index in SQL.
+  @@map("store_cash_vouchers")
+}
+
+model StoreCashReceipt {
+  id                  BigInt     @id @default(autoincrement())
+  chargeId            BigInt     @unique(map: "uq_cash_receipt_charge") @map("charge_id")
+  voucherId           BigInt     @unique(map: "uq_cash_receipt_voucher") @map("voucher_id")
+  collectingStoreId   BigInt     @map("collecting_store_id")
+  amount              Decimal    @db.Decimal(15, 2)
+  walletTransactionId BigInt     @unique(map: "uq_cash_receipt_wallet_tx") @map("wallet_transaction_id")
+  requestHash         String?    @map("request_hash") @db.VarChar(64)
+  collectedByUserId   BigInt     @map("collected_by_user_id")
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  voucher StoreCashVoucher @relation(fields: [voucherId, chargeId, collectingStoreId, amount], references: [id, chargeId, collectingStoreId, amount], onDelete: Restrict, onUpdate: Restrict, map: "store_cash_receipts_voucher_binding_fkey")
+  walletTransaction WalletTransaction @relation(fields: [walletTransactionId], references: [transactionId], onDelete: Restrict, onUpdate: Restrict)
+  collectedBy User @relation(fields: [collectedByUserId], references: [userId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([voucherId, chargeId, collectingStoreId, amount], map: "uq_cash_receipt_voucher_binding")
+  @@index([collectingStoreId, createdAt], map: "idx_cash_receipt_store_created")
+  @@index([collectedByUserId], map: "idx_cash_receipt_actor")
+  @@map("store_cash_receipts")
+}
+
+model BillingPaymentReceipt {
+  id                     BigInt    @id @default(autoincrement())
+  chargeId               BigInt    @map("charge_id")
+  provider               String    @db.VarChar(32)
+  channel                String    @db.VarChar(64)
+  providerTransactionRef String    @map("provider_transaction_ref") @db.VarChar(128)
+  amount                 Decimal   @db.Decimal(15, 2)
+  currency               String    @default("VND") @db.VarChar(10)
+  classification         String    @db.VarChar(32)
+  receivedAt             DateTime  @map("received_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  charge BillingCharge @relation(fields: [chargeId], references: [chargeId], onDelete: Restrict, onUpdate: Restrict)
+  overpaymentObligation BillingOverpaymentObligation?
+
+  @@unique([provider, channel, providerTransactionRef], map: "uq_billing_receipt_provider_channel_ref")
+  @@unique([id, amount, classification], map: "uq_billing_receipt_obligation_binding")
+  @@index([chargeId, receivedAt], map: "idx_billing_receipt_charge_received")
+  @@map("billing_payment_receipts")
+}
+
+// V1 records a liability only. No automatic payout or assumed recipient.
+model BillingOverpaymentObligation {
+  id                    BigInt    @id @default(autoincrement())
+  receiptId             BigInt    @unique(map: "uq_billing_overpayment_receipt") @map("receipt_id")
+  amount                Decimal   @db.Decimal(15, 2)
+  receiptClassification String    @default("OVERPAYMENT_RECEIPT") @map("receipt_classification") @db.VarChar(32)
+  status                String    @default("PENDING_RECONCILIATION") @db.VarChar(32)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  receipt BillingPaymentReceipt @relation(fields: [receiptId, amount, receiptClassification], references: [id, amount, classification], onDelete: Restrict, onUpdate: Restrict, map: "billing_overpayment_obligations_receipt_binding_fkey")
+
+  @@unique([receiptId, amount, receiptClassification], map: "uq_billing_overpayment_binding")
+  @@index([status, createdAt], map: "idx_billing_overpayment_queue")
+  @@map("billing_overpayment_obligations")
 }
 
 model BillingChargeLine {
@@ -1117,7 +1215,7 @@ model DepositRefund {
 model CustomerBankAccount {
   id                     BigInt          @id @default(autoincrement()) @map("id")
   customerId             BigInt          @map("customer_id")
-  customer               CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  customer               CustomerProfile @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
   bankBin                String          @map("bank_bin") @db.VarChar(10)
   bankCode               String?         @map("bank_code") @db.VarChar(20)
   bankName               String          @map("bank_name") @db.VarChar(100)
@@ -1142,20 +1240,130 @@ model CustomerBankVerificationProof {
   id                BigInt              @id @default(autoincrement()) @map("id")
   proofReference    String              @unique(map: "uq_cust_bank_proof_ref") @map("proof_reference") @db.VarChar(128)
   customerId        BigInt              @map("customer_id")
-  customer          CustomerProfile     @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  customer          CustomerProfile     @relation(fields: [customerId], references: [customerId], onDelete: Restrict)
   accountId         BigInt              @map("account_id")
-  bankAccount       CustomerBankAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  bankAccount       CustomerBankAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   bankBin           String              @map("bank_bin") @db.VarChar(10)
   accountNumberHash String              @map("account_number_hash") @db.VarChar(64)
-  status            String              @default("PENDING") @map("status") @db.VarChar(32)
+  status            String              @default("PENDING") @map("status") @db.VarChar(32) // Legacy compatibility (PENDING, SUCCESS, FAILED)
+  sessionStatus     String              @default("ACTIVE") @map("session_status") @db.VarChar(32) // Session lifecycle (ACTIVE, EXPIRED, CONSUMED, ABANDONED)
   provider          String              @default("PAYOS") @map("provider") @db.VarChar(32)
   expiresAt         DateTime            @map("expires_at") @db.Timestamptz(6)
   usedAt            DateTime?           @map("used_at") @db.Timestamptz(6)
+
+  // Payment Session Tracking
+  paymentOrderCode    BigInt?   @unique(map: "uq_cust_bank_payment_order_code") @map("payment_order_code")
+  paymentLinkId       String?   @map("payment_link_id") @db.VarChar(128)
+  paymentCheckoutUrl  String?   @map("payment_checkout_url") @db.Text
+
+  // Business Verification Status (Decoupled)
+  verificationStatus      String    @default("PENDING") @map("verification_status") @db.VarChar(32)
+  verifiedAt              DateTime? @map("verified_at") @db.Timestamptz(6)
+  verifiedByTransactionId BigInt?   @map("verified_by_transaction_id")
+  verifiedByTransaction   CustomerBankInboundTransaction? @relation("VerifiedByTransaction", fields: [verifiedByTransactionId], references: [id], onDelete: SetNull)
+  rejectionReason         String?   @map("rejection_reason") @db.VarChar(255)
+
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  inboundTransactions CustomerBankInboundTransaction[] @relation("SessionInboundTransactions")
+
   @@index([customerId, accountId], map: "idx_cust_bank_proof_cust_acc")
   @@map("customer_bank_verification_proofs")
+}
+
+model CustomerBankInboundTransaction {
+  id                     BigInt                         @id @default(autoincrement()) @map("id")
+  proofId                BigInt?                        @map("proof_id")
+  proof                  CustomerBankVerificationProof? @relation("SessionInboundTransactions", fields: [proofId], references: [id], onDelete: Restrict)
+  provider               String                         @default("PAYOS") @map("provider") @db.VarChar(32)
+  channel                String                         @default("DEFAULT") @map("channel") @db.VarChar(64)
+  providerTransactionRef String                         @map("provider_transaction_ref") @db.VarChar(128)
+  amount                 Decimal                        @map("amount") @db.Decimal(15, 2)
+  receivedAt             DateTime                       @map("received_at") @db.Timestamptz(6)
+  isLatePayment          Boolean                        @default(false) @map("is_late_payment")
+
+  // Source Account Evidence
+  sourceBankBin          String?                        @map("source_bank_bin") @db.VarChar(10)
+  sourceAccountMasked    String?                        @map("source_account_masked") @db.VarChar(32)
+  sourceAccountHash      String?                        @map("source_account_hash") @db.VarChar(64)
+  sourceAccountEncrypted String?                        @map("source_account_encrypted") @db.Text
+  sourceAccountName      String?                        @map("source_account_name") @db.VarChar(255)
+  hasSufficientEvidence  Boolean                        @default(false) @map("has_sufficient_evidence")
+
+  // Match & Session Binding Assessment
+  sessionMatchStatus     String                         @default("MATCHED_SESSION") @map("session_match_status") @db.VarChar(32)
+  matchDecision          String                         @default("PENDING") @map("match_decision") @db.VarChar(32)
+  rawPayloadChecksum     String?                        @map("raw_payload_checksum") @db.VarChar(64)
+  reconciliationFlag     String?                        @map("reconciliation_flag") @db.VarChar(64)
+
+  // Explicit Merged Observation FK Link
+  mergedIntoInboundId    BigInt?                        @map("merged_into_inbound_id")
+  mergedIntoInbound      CustomerBankInboundTransaction? @relation("MergedObservations", fields: [mergedIntoInboundId], references: [id], onDelete: Restrict)
+  mergedObservations     CustomerBankInboundTransaction[] @relation("MergedObservations")
+
+  createdAt              DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  verifiedProofs         CustomerBankVerificationProof[] @relation("VerifiedByTransaction")
+  refundObligation       CustomerBankRefundObligation?
+
+  @@unique([provider, channel, providerTransactionRef], map: "uq_cust_bank_inbound_provider_channel_ref")
+  @@index([proofId], map: "idx_cust_bank_inbound_proof_id")
+  @@index([sessionMatchStatus], map: "idx_cust_bank_inbound_match_status")
+  @@index([mergedIntoInboundId], map: "idx_cust_bank_inbound_merged_into")
+  @@map("customer_bank_inbound_transactions")
+}
+
+model CustomerBankRefundObligation {
+  id                    BigInt                         @id @default(autoincrement()) @map("id")
+  inboundTransactionId  BigInt                         @unique(map: "uq_cust_bank_refund_inbound_tx") @map("inbound_transaction_id")
+  inboundTransaction    CustomerBankInboundTransaction @relation(fields: [inboundTransactionId], references: [id], onDelete: Restrict)
+  refundAmount          Decimal                        @map("refund_amount") @db.Decimal(15, 2)
+  refundStatus          String                         @default("PENDING_REFUND") @map("refund_status") @db.VarChar(32)
+
+  // Target Destination Snapshot
+  targetBankBin          String?                       @map("target_bank_bin") @db.VarChar(10)
+  targetAccountMasked    String?                       @map("target_account_masked") @db.VarChar(32)
+  targetAccountHash      String?                       @map("target_account_hash") @db.VarChar(64)
+  targetAccountEncrypted String?                       @map("target_account_encrypted") @db.Text
+  targetAccountName      String?                       @map("target_account_name") @db.VarChar(255)
+
+  refundPayoutReference String                         @unique(map: "uq_cust_bank_refund_payout_ref") @map("refund_payout_reference") @db.VarChar(128)
+  activePayoutAttemptId BigInt?                        @map("active_payout_attempt_id")
+  activePayoutAttempt   CustomerBankRefundPayoutAttempt? @relation("ActivePayoutAttempt", fields: [activePayoutAttemptId], references: [id], onDelete: SetNull)
+  refundedAt            DateTime?                      @map("refunded_at") @db.Timestamptz(6)
+  failureReason         String?                        @map("failure_reason") @db.VarChar(255)
+
+  createdAt             DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payoutAttempts        CustomerBankRefundPayoutAttempt[] @relation("ObligationAttempts")
+
+  @@index([refundStatus], map: "idx_cust_bank_refund_status")
+  @@map("customer_bank_refund_obligations")
+}
+
+model CustomerBankRefundPayoutAttempt {
+  id               BigInt                       @id @default(autoincrement()) @map("id")
+  obligationId     BigInt                       @map("obligation_id")
+  obligation       CustomerBankRefundObligation @relation("ObligationAttempts", fields: [obligationId], references: [id], onDelete: Restrict)
+  attemptNumber    Int                          @map("attempt_number")
+  payoutProvider   String                       @default("PAYOS") @map("payout_provider") @db.VarChar(32)
+  payoutReference  String                       @map("payout_reference") @db.VarChar(128)
+  providerPayoutId String?                      @map("provider_payout_id") @db.VarChar(128)
+  status           String                       @default("PREPARING") @map("status") @db.VarChar(32)
+  dispatchedAt     DateTime?                    @map("dispatched_at") @db.Timestamptz(6)
+  reconciledAt     DateTime?                    @map("reconciled_at") @db.Timestamptz(6)
+  responseCode     String?                      @map("response_code") @db.VarChar(32)
+  failureReason    String?                      @map("failure_reason") @db.Text
+  createdAt        DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  activeForObligations CustomerBankRefundObligation[]   @relation("ActivePayoutAttempt")
+
+  @@unique([obligationId, attemptNumber], map: "uq_cust_bank_attempt_obligation_number")
+  @@unique([payoutProvider, payoutReference], map: "uq_cust_bank_attempt_provider_ref")
+  @@index([obligationId], map: "idx_cust_bank_attempt_obligation_id")
+  @@map("customer_bank_refund_payout_attempts")
 }
 
 model AccessAdjustment {

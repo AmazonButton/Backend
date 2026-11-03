@@ -14,6 +14,7 @@ import { CreatePaymentLinkDto, PayosWebhookDto } from './dto/payment.dto';
 import { signPaymentRequest, verifyWebhookSignature } from './payos.helper';
 import { Optional, Inject, forwardRef } from '@nestjs/common';
 import { BillingChargesService } from '../billing-charges/billing-charges.service';
+import { storeCashEnabled } from '../store-cash/store-cash-settlement.transaction';
 
 import { NotificationsService } from '../notifications/notifications.service';
 import { ChangePaymentMethodDto } from './dto/change-payment-method.dto';
@@ -335,7 +336,7 @@ export class PaymentsService {
 
   async handlePayosWebhook(body: PayosWebhookDto) {
     // 1. PayOS Webhook URL confirmation handshake (sent when updating webhook URL on PayOS dashboard)
-    if (body?.webhookUrl || (body as any)?.webhook_url) {
+    if ((body?.webhookUrl || (body as any)?.webhook_url) && !body?.data && !body?.signature) {
       const confirmedUrl = body.webhookUrl || (body as any).webhook_url;
       this.logger.log(`[PayOS Webhook] Acknowledged confirmation ping for webhookUrl: ${confirmedUrl}`);
       return {
@@ -349,16 +350,6 @@ export class PaymentsService {
 
     const { code, data, signature } = body || {};
 
-    // 2. PayOS test sample ping (e.g. orderCode 123 or test description during setup)
-    if (data?.orderCode === 123 || (typeof data?.description === 'string' && data.description.toLowerCase().includes('test'))) {
-      this.logger.log(`[PayOS Webhook] Test sample ping acknowledged: orderCode=${data?.orderCode}`);
-      return {
-        code: '00',
-        desc: 'success',
-        message: 'Test webhook acknowledged',
-        data,
-      };
-    }
 
     if (body?.success !== true) {
       this.logger.warn(`[PayOS Webhook] Rejected: body.success must be true, received: ${body?.success}`);
@@ -380,6 +371,7 @@ export class PaymentsService {
         const charge = await this.billingChargesService.findChargeByOrderCode(orderCodeStr, data?.paymentLinkId);
         if (charge) {
           if (code === '00' && data?.code === '00') {
+            const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose);
             if (!data?.amount || isNaN(Number(data.amount))) {
               this.logger.warn('[PayOS Webhook] Missing or invalid mandatory field amount for charge');
               return { success: false, message: 'Missing amount' };
@@ -388,38 +380,42 @@ export class PaymentsService {
               this.logger.warn(`[PayOS Webhook] Invalid currency: ${data.currency} for charge: ${orderCodeStr}`);
               return { success: false, message: 'Invalid currency' };
             }
-            if (Number(data.amount) !== Number(charge.totalAmount)) {
+            if (Number(data.amount) !== Number(charge.totalAmount) && !receiptLedgerEnabled) {
               this.logger.warn(`[PayOS Webhook] Amount mismatch: webhook=${data.amount}, charge=${charge.totalAmount} for orderCode: ${orderCodeStr}`);
               return { success: false, message: 'Amount mismatch' };
             }
-            if (charge.status === 'PAID') {
+            if (charge.status === 'PAID' && !receiptLedgerEnabled) {
               return { success: true, message: 'Already processed' };
             }
             const recordedLinkId = charge.paymentLinkId;
+            if (receiptLedgerEnabled && (!data.reference || !recordedLinkId || data.paymentLinkId !== recordedLinkId)) {
+              throw new BadRequestException('Verified transaction reference and payment link binding are required');
+            }
             if (recordedLinkId && data.paymentLinkId && recordedLinkId !== data.paymentLinkId) {
               this.logger.warn(`[PayOS Webhook] Payment link ID mismatch for charge ${orderCodeStr}: recorded="${recordedLinkId}", received="${data.paymentLinkId}"`);
               return { success: false, message: 'Payment link ID mismatch' };
             }
 
-            await this.billingChargesService.settleCharge(
+            const settlement: any = await this.billingChargesService.settleCharge(
               charge.chargeId,
               {
                 provider: 'PAYOS',
                 providerTransactionCode: (data.reference || orderCodeStr).toString(),
                 amount: Number(data.amount),
-                currency: data.currency,
+                currency: data.currency.toUpperCase(),
                 paidAt: new Date(data.transactionDateTime || Date.now()),
                 verified: true,
+                paymentLinkId: data.paymentLinkId,
               },
               {
-                userId: 'PAYOS_WEBHOOK',
                 role: 'SYSTEM',
               },
             );
 
             return {
               success: true,
-              message: 'Billing charge settled successfully',
+              message: settlement.overpayment ? 'Payment recorded for reconciliation'
+                : settlement.alreadySettled ? 'Already processed' : 'Billing charge settled successfully',
             };
           }
         }

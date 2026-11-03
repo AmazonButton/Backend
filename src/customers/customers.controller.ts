@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, Query, Param, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
+import { CustomerBankPennyVerificationService } from './customer-bank-penny-verification.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -12,7 +13,10 @@ import { VerifyCustomerBankAccountDto } from './dto/verify-customer-bank-account
 @Roles('CUSTOMER')
 @Controller('customers')
 export class CustomersController {
-  constructor(private readonly customersService: CustomersService) {}
+  constructor(
+    private readonly customersService: CustomersService,
+    private readonly pennyVerificationService: CustomerBankPennyVerificationService,
+  ) {}
 
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Lấy dữ liệu tổng quan dashboard của khách hàng hiện tại' })
@@ -91,22 +95,43 @@ export class CustomersController {
   }
 
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Lấy lịch sử các phiên xác minh tài khoản ngân hàng của khách hàng' })
+  @Get('me/bank-accounts/verification-history')
+  async getMyBankAccountVerificationHistory(
+    @Request() req: any,
+    @Query('page') page?: number,
+    @Query('pageSize') pageSize?: number,
+  ) {
+    const result = await this.pennyVerificationService.getVerificationHistory(req.user, { page, pageSize });
+    return {
+      success: true,
+      message: 'Lấy lịch sử xác minh tài khoản thành công',
+      data: result.items,
+      pagination: {
+        page: result.page,
+        pageSize: result.pageSize,
+        total: result.total,
+      },
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Polling trạng thái xác minh tài khoản ngân hàng của khách hàng' })
   @Get('me/bank-accounts/:id/verification-status')
   async getMyBankAccountVerificationStatus(@Request() req: any, @Param('id') id: string) {
-    const data = await this.customersService.getBankAccountVerificationStatus(req.user, id);
+    const data = await this.pennyVerificationService.getVerificationStatus(req.user, id);
     return {
       success: true,
-      message: 'Lấy trạng thái xác minh tài khoản ngân hàng thành công',
+      message: data.message || 'Lấy trạng thái xác minh tài khoản ngân hàng thành công',
       data,
     };
   }
 
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Khởi tạo phiên xác minh tài khoản ngân hàng của khách hàng' })
+  @ApiOperation({ summary: 'Khởi tạo phiên xác minh tài khoản ngân hàng của khách hàng (2.000đ penny deposit)' })
   @Post('me/bank-accounts/:id/initiate-verification')
   async initiateMyBankAccountVerification(@Request() req: any, @Param('id') id: string) {
-    const data = await this.customersService.initiateBankAccountVerification(req.user, id);
+    const data = await this.pennyVerificationService.initiateVerificationSession(req.user, id);
     return {
       success: true,
       message: data.message || 'Khởi tạo quy trình xác minh tài khoản ngân hàng thành công',

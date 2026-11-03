@@ -41,7 +41,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     } else if (exception instanceof Error) {
       const errAny = exception as any;
-      if (
+      if (errAny.name === 'ZodError' || Array.isArray(errAny.issues)) {
+        status = HttpStatus.BAD_REQUEST;
+        message = 'Dữ liệu đầu vào không hợp lệ';
+        errorCode = 'VALIDATION_ERROR';
+        errors = errAny.issues?.map((i: any) => ({
+          field: Array.isArray(i.path) ? i.path.join('.') : String(i.path),
+          message: i.message,
+        })) || [];
+        if (errors.length > 0 && errors[0].message) {
+          message = errors[0].message;
+        }
+      } else if (
         errAny.status === 413 ||
         errAny.statusCode === 413 ||
         errAny.type === 'entity.too.large' ||

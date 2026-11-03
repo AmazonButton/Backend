@@ -1,5 +1,6 @@
 import { RentalsService } from '../src/rentals/rentals.service';
 import { BadRequestException } from '@nestjs/common';
+import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
 
 async function runTask4TestSuite() {
   console.log('================================================================================');
@@ -40,6 +41,9 @@ async function runTask4TestSuite() {
         status: 'PENDING_PAYOUT',
         amount: 200000,
         providerReferenceId: 'PAYOS-PAYOUT-REF-99',
+        refundCode: 'REF-TEST-004',
+        recipientBin: '970415',
+        recipientAccountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash('123456789'),
       }),
     };
 
@@ -56,6 +60,9 @@ async function runTask4TestSuite() {
               id: 'TXN-999',
               amount: 200000,
               reference: 'PAYOS-PAYOUT-REF-99',
+              state: 'COMPLETED',
+              toBin: '970415',
+              toAccountNumber: '123456789',
             },
           ],
         },
@@ -165,7 +172,7 @@ async function runTask4TestSuite() {
       },
     });
 
-    const payoutConfirmed: any = await rentalsService.confirmDepositRefundPayout('1', 'PAYOS-PAYOUT-REF-99');
+    const payoutConfirmed: any = await rentalsService.confirmDepositRefundPayout('1', { userId: '1', role: 'SUPER_ADMIN' }, 'PAYOS-PAYOUT-REF-99');
     assert(
       payoutConfirmed.status === 'REFUNDED' &&
         payoutConfirmed.depositLedger.refundedAmount === 200000 &&

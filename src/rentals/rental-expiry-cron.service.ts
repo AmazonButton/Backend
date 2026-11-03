@@ -1,4 +1,6 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
+import { invalidateRentalMutationCaches } from './rental-cache-invalidation';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -6,7 +8,8 @@ import { PrismaService } from '../prisma/prisma.service';
 export class RentalExpiryCronService {
   private readonly logger = new Logger(RentalExpiryCronService.name);
 
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService) {}
 
   @Cron('*/10 * * * *')
   async handleCron() {
@@ -22,7 +25,7 @@ export class RentalExpiryCronService {
     const now = new Date();
     const limit = Math.max(1, Math.min(200, batchSize));
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // 1. Lock expired ACTIVE rentals with SKIP LOCKED to avoid concurrency collisions across workers
       const expiredRentals = await tx.$queryRawUnsafe<Array<{
         rental_id: bigint;
@@ -60,7 +63,7 @@ export class RentalExpiryCronService {
         // Lock and disable all buttons assigned to this rental
         await tx.$executeRawUnsafe(
           `UPDATE iot_button
-           SET can_order = false, status = 'INACTIVE', updated_at = NOW()
+           SET can_order = false, updated_at = NOW()
            WHERE rental_id = $1`,
           r.rental_id,
         );
@@ -108,6 +111,15 @@ export class RentalExpiryCronService {
         expiredRentalIds,
       };
     });
+    if (this.cacheService) {
+      for (const id of result.expiredRentalIds) {
+        try {
+          const rental = await this.prisma.buttonRental.findUnique({ where: { rentalId: BigInt(id) }, include: { customer: true } });
+          await invalidateRentalMutationCaches(this.cacheService, rental?.customer?.userId, [rental?.fulfillmentStoreId]);
+        } catch { /* Expiry was committed; the next read must not depend on Redis availability. */ }
+      }
+    }
+    return result;
   }
 
   async processExpiredStoreSubscriptions(batchSize: number = 50) {

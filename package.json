@@ -29,6 +29,7 @@
     "probe:capacity": "tsx tests/safe_capacity_limit_probe.ts"
   },
   "dependencies": {
+    "@neon/env": "^0.0.0",
     "@nestjs/common": "^10.4.22",
     "@nestjs/core": "^10.4.22",
     "@nestjs/jwt": "^10.2.0",
@@ -64,6 +65,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@neon/config": "^1.10.0",
     "@nestjs/cli": "^10.4.9",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",

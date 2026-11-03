@@ -1,10 +1,15 @@
-import { Injectable, Inject, NotFoundException, BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { BillingChargesRepository, CreateChargeInput } from './billing-charges.repository';
+import { Prisma } from '@prisma/client';
+import { calculateRentalPricing } from '../rentals/rental-pricing';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
+import { invalidateRentalMutationCaches } from '../rentals/rental-cache-invalidation';
 
 @Injectable()
 export class BillingChargesService {
   constructor(
     @Inject(BillingChargesRepository) private readonly repository: BillingChargesRepository,
+    @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
   ) {}
 
   async createInitialRentalCharge(params: {
@@ -13,74 +18,29 @@ export class BillingChargesService {
     rentAmount: number;
     depositAmount: number;
     months?: number;
+    buttonQuantity?: number;
     paymentMethod?: string;
   }) {
-    const rent = params.rentAmount || 30000;
-    const deposit = params.depositAmount || 200000;
-    const totalAmount = rent + deposit;
-
-    const chargeInput: CreateChargeInput = {
-      rentalId: params.rentalId,
-      customerId: params.customerId,
-      purpose: 'RENTAL_INITIAL',
-      targetType: 'RENTAL',
-      targetId: params.rentalId,
-      totalAmount,
-      lines: [
-        {
-          lineType: 'RENT',
-          amount: rent,
-          description: `Phí thuê nút thông minh (${params.months || 1} tháng)`,
-          durationUnit: 'MONTH',
-          durationCount: params.months || 1,
-          quantity: 1,
-          unitPrice: rent,
-        },
-        {
-          lineType: 'DEPOSIT',
-          amount: deposit,
-          description: 'Tiền cọc thiết bị nút bấm thông minh (hoàn lại khi trả nút)',
-          quantity: 1,
-          unitPrice: deposit,
-        },
-      ],
+    const quantity = params.buttonQuantity ?? 1;
+    const months = params.months ?? 1;
+    const totalRent = new Prisma.Decimal(params.rentAmount ?? 30000 * quantity * months);
+    const pricing = calculateRentalPricing({
+      buttonQuantity: quantity, months,
+      monthlyPackagePrice: totalRent.div(months),
+      packageDepositFee: params.depositAmount ?? 200000 * quantity,
+    });
+    return this.repository.createChargeWithLines({
+      rentalId: params.rentalId, customerId: params.customerId, purpose: 'RENTAL_INITIAL',
+      targetType: 'RENTAL', targetId: params.rentalId, totalAmount: pricing.totalAmount.toNumber(),
       paymentMethod: params.paymentMethod || 'PAYOS',
-    };
-
-    return this.repository.createChargeWithLines(chargeInput);
+      lines: [pricing.lines.rent, pricing.lines.deposit].map(line => ({
+        lineType: line.lineType, amount: line.amount.toNumber(), description: line.description,
+        quantity: line.quantity, unitPrice: line.unitPrice.toNumber(),
+        durationUnit: line.durationUnit ?? undefined, durationCount: line.durationCount ?? undefined,
+      })),
+    });
   }
 
-  async createRenewalRentalCharge(params: {
-    rentalId: bigint;
-    customerId: bigint;
-    rentAmount?: number;
-    months?: number;
-  }) {
-    const rent = params.rentAmount || 30000;
-
-    const chargeInput: CreateChargeInput = {
-      rentalId: params.rentalId,
-      customerId: params.customerId,
-      purpose: 'RENTAL_EXTENSION',
-      targetType: 'RENTAL',
-      targetId: params.rentalId,
-      totalAmount: rent,
-      lines: [
-        {
-          lineType: 'RENT',
-          amount: rent,
-          description: `Gia hạn thuê nút thông minh (${params.months || 1} tháng)`,
-          durationUnit: 'MONTH',
-          durationCount: params.months || 1,
-          quantity: 1,
-          unitPrice: rent,
-        },
-      ],
-      paymentMethod: 'PAYOS',
-    };
-
-    return this.repository.createChargeWithLines(chargeInput);
-  }
 
   async createStoreSubscriptionCharge(params: {
     storeId: bigint;
@@ -127,7 +87,7 @@ export class BillingChargesService {
       throw new NotFoundException(`Khoản thu #${chargeId} không tồn tại`);
     }
 
-    if (charge.status === 'PAID') {
+    if (charge.status === 'PAID' && !['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose)) {
       return {
         alreadySettled: true,
         status: 'PAID',
@@ -136,7 +96,7 @@ export class BillingChargesService {
       };
     }
 
-    return this.repository.settleChargeAtomicTx(chargeId, receipt, actor);
+    return this.settleAndInvalidate(chargeId, receipt, actor, charge);
   }
 
   async reconcileAndSettleCharge(chargeId: bigint, providerTransactionCode: string, actor: any) {
@@ -149,7 +109,7 @@ export class BillingChargesService {
       throw new NotFoundException(`Khoản thu #${chargeId} không tồn tại`);
     }
 
-    if (charge.status === 'PAID') {
+    if (charge.status === 'PAID' && !['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose)) {
       return {
         alreadySettled: true,
         status: 'PAID',
@@ -191,7 +151,14 @@ export class BillingChargesService {
           throw new BadRequestException(`Giao dịch trên PayOS chưa hoàn tất thanh toán (trạng thái: ${result.data?.status || result.desc})`);
         }
 
-        const providerTx = result.data.transactions?.[0];
+        const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose);
+        const providerTx = receiptLedgerEnabled
+          ? result.data.transactions?.find((item: any) => item.reference === providerTransactionCode.trim())
+          : result.data.transactions?.[0];
+        if (receiptLedgerEnabled && (!providerTx ||
+            (result.data.paymentLinkId || result.data.id) !== charge.paymentLinkId)) {
+          throw new BadRequestException('Verified transaction reference and payment link binding are required');
+        }
         const reportedTxCode = (providerTx?.reference || result.data.id?.toString() || '').trim();
         if (providerTransactionCode && reportedTxCode && providerTransactionCode !== reportedTxCode) {
           throw new BadRequestException(
@@ -204,7 +171,7 @@ export class BillingChargesService {
         if (!Number.isFinite(reportedAmount) || reportedAmount <= 0) {
           throw new BadRequestException('Số tiền thanh toán từ cổng thanh toán không hợp lệ');
         }
-        if (reportedAmount !== Number(charge.totalAmount)) {
+        if (reportedAmount !== Number(charge.totalAmount) && !receiptLedgerEnabled) {
           throw new BadRequestException(`Số tiền thanh toán trên PayOS (${reportedAmount}) không khớp với khoản thu (${charge.totalAmount})`);
         }
         paidAmount = reportedAmount;
@@ -225,10 +192,22 @@ export class BillingChargesService {
       currency: charge.currency || 'VND',
       paidAt,
       verified: true,
+      paymentLinkId: charge.paymentLinkId,
       metadata: { reconciledBy: actor?.userId?.toString() || 'SYSTEM' },
     };
 
-    return this.repository.settleChargeAtomicTx(chargeId, verifiedReceipt, actor);
+    return this.settleAndInvalidate(chargeId, verifiedReceipt, actor, charge);
+  }
+
+  private async settleAndInvalidate(chargeId: bigint, receipt: any, actor: any, charge: any) {
+    const result = await this.repository.settleChargeAtomicTx(chargeId, receipt, actor);
+    if (this.cacheService && charge.targetType === 'RENTAL') {
+      try {
+        const rental = await this.repository.findRentalWithCustomer(charge.targetId);
+        await invalidateRentalMutationCaches(this.cacheService, rental?.customer?.userId, [rental?.fulfillmentStoreId]);
+      } catch { /* Financial transaction already committed; never report a failed payment due to cache. */ }
+    }
+    return result;
   }
 
   async getChargeById(chargeId: bigint, user: any) {
