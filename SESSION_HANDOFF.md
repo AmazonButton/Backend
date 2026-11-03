@@ -26,7 +26,7 @@
     - Phase 6 (`tests/platform-button-rental-phase6-outbox-and-notifications.spec.ts`): 8/8 PASS (outbox event consumer, idempotency key generation, fail-closed unhandled events, notification center).
   * TypeScript & Build: `npx tsc --noEmit` and `npm run build` PASS (0 errors, exit code 0).
 - Git & Environment Fingerprint:
-  * Commit: `a42239d63efb3d67ab45de37fb15969841902d69` on branch `feature/security-invariant-hardening`.
+  * Commit: `6d64e13` on branch `feature/security-invariant-hardening`.
   * Neon Isolated Test DB: `smart_order_test` on `ep-winter-haze-b36uyvah.c-4.ap-southeast-1.aws.neon.tech` (compute ID: `ep-winter-haze-b36uyvah`).
   * Uncommitted Core Working Tree Hashes (SHA-256):
     - `src/rentals/rental-pricing.ts`: `FDD658624113C0EA37147B89D3EE33B8454EC9BEA2CEE021CFBD6E1B1CB3F25C`
