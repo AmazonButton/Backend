@@ -28,17 +28,15 @@ function timeoutPromise(ms: number, message: string): Promise<never> {
   });
 }
 
-async function waitForBarrier(barrier: { promise: Promise<void> }, failurePromise?: Promise<any>, timeoutMs = 10000, context = 'barrier') {
-  const earlyFailure = failurePromise?.then(res => {
-    if (res && 'e' in res && res.e) throw res.e;
-    if (res && 'error' in res && res.error) throw res.error;
+async function waitForBarrier(barrier: { promise: Promise<void> }, failurePromise: Promise<any>, timeoutMs = 10000, context = 'barrier') {
+  const earlyFailure = failurePromise.then(res => {
+    if (res && 'e' in res) throw res.e;
   });
-  const races: Promise<any>[] = [
+  await Promise.race([
     barrier.promise,
+    earlyFailure,
     timeoutPromise(timeoutMs, `Timeout waiting for ${context} after ${timeoutMs}ms`),
-  ];
-  if (earlyFailure) races.push(earlyFailure);
-  await Promise.race(races);
+  ]);
 }
 
 async function main() {
@@ -112,8 +110,7 @@ async function main() {
       await tx.$queryRawUnsafe('SELECT wallet_id FROM store_wallets WHERE wallet_id = $1 FOR UPDATE', wallet.walletId);
       held1.resolve(); await release1.promise;
     }, { timeout: 15000 });
-    const observedHolder1 = holder1.catch(e => ({ error: e }));
-    await waitForBarrier(held1, observedHolder1, 10000, 'wallet lock barrier 1');
+    await held1.promise;
     const concurrentCash = Promise.all([
       new StoreCashRepository(a as any).collect(store.storeId, first.rental.rentalId, owner.userId, first.input),
       new StoreCashRepository(b as any).collect(store.storeId, first.rental.rentalId, owner.userId, first.input),
@@ -170,7 +167,7 @@ async function main() {
 
     const cashRun = new StoreCashRepository(cashBarrierPrisma).collect(store.storeId, cashFirst.rental.rentalId, owner.userId, cashFirst.input);
     const observedCashRun = cashRun.then(v => ({ v }), e => ({ e }));
-    await waitForBarrier(cashLocked, observedCashRun, 10000, 'cash in-transaction lock barrier 3A');
+    await cashLocked.promise;
 
     const queuedPayos = new BillingChargesRepository(b as any).settleChargeAtomicTx(cashFirst.charge.chargeId, {
       provider: 'PAYOS', providerTransactionCode: cashFirst.code + '_race_late', amount: 690000,
@@ -222,7 +219,7 @@ async function main() {
       currency: 'VND', verified: true as const, paymentLinkId: payosFirst.code,
     });
     const observedPayosRun = payosRun.then(v => ({ v }), e => ({ e }));
-    await waitForBarrier(payosLocked, observedPayosRun, 10000, 'payos in-transaction lock barrier 3B');
+    await payosLocked.promise;
 
     const queuedCash = new StoreCashRepository(b as any).collect(store.storeId, payosFirst.rental.rentalId, owner.userId, payosFirst.input);
     const observedCashQueued = queuedCash.then(v => ({ v }), e => ({ e }));
@@ -335,8 +332,7 @@ async function main() {
       await tx.$queryRawUnsafe('SELECT refund_id FROM deposit_refunds WHERE refund_id = $1 FOR UPDATE', refundRecord.refundId);
       held4.resolve(); await release4.promise;
     }, { timeout: 15000 });
-    const observedHolder4 = holder4.catch(e => ({ error: e }));
-    await waitForBarrier(held4, observedHolder4, 10000, 'deposit refund lock barrier 4');
+    await held4.promise;
     const queuedApproveB = new RentalsRepository(b as any).approveDepositRefundTx(refundRecord.refundId, { userId: owner.userId });
     const observedB = queuedApproveB.then(value => ({ value }), error => ({ error }));
     try {
