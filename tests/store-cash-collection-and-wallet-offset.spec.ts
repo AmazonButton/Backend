@@ -612,8 +612,17 @@ async function runStoreCashTestSuite() {
           inventory_state: 'ALLOCATED_TO_STORE',
         }));
       }
+      if (sql.includes('extension_months')) {
+        return [{ extension_months: 0 }];
+      }
+      if (sql.includes('initial_rent_months')) {
+        return [{ initial_rent_months: 1 }];
+      }
+      if (sql.includes("bcl.line_type = 'DEPOSIT'")) {
+        return [{ count: 1 }];
+      }
       if (sql.includes('SELECT COALESCE(SUM(bcl.duration_count)')) {
-        return [{ paid_months: 1 }];
+        return [{ paid_months: 1, initial_rent_months: 1, extension_months: 0, count: 1 }];
       }
       if (sql.includes('clock_timestamp()')) return [{ now: new Date() }];
       return [];

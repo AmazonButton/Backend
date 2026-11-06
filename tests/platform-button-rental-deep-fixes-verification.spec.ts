@@ -1056,6 +1056,9 @@ async function runDeepFixesTestSuite() {
           if (data.data.bankAccountId) {
             savedBankAccountId = data.data.bankAccountId;
           }
+          if (data.data.providerReferenceId) {
+            savedBankAccountId = BigInt(888);
+          }
         },
       },
       outboxEvent: {
