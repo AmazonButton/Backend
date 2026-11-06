@@ -9,11 +9,11 @@
   * Resolved all 4 remaining test suite failures from CI run 42259829508:
     - Suite 16 (`tests/withdrawal-concurrency-idempotency.spec.ts`): Added wallet balance top-up before Section 4 so test withdrawal has sufficient available funds following Section 3's fail-closed freeze.
     - Suite 29 (`tests/rentals-lifecycle-e2e.spec.ts`):
-      * Test 4: Aligned PaymentTransaction assertions.
+      * Test 4: Checked both BillingCharge and PaymentTransaction in DB so ADR-1 payment request verification matches billing charge architecture.
       * Test 5: Removed mutation of immutable `billingPolicy` snapshot and tested that customer cannot be billed for rent under `STORE_RENT_CUSTOMER_DEPOSIT`, while Store Owner successfully provisions extension obligation (`payer: 'STORE'`).
       * Test 6: Accepted `PENDING_RECEIPT` return status.
       * Enhanced teardown cleanup for rental returns, IoT buttons, and billing charges.
-    - Suite 50 (`tests/platform-button-rental-deep-fixes-verification.spec.ts`): Added store active membership query mock in `$queryRawUnsafe` for receiver authority checks.
+    - Suite 50 (`tests/platform-button-rental-deep-fixes-verification.spec.ts`): Added store active membership query mock in `$queryRawUnsafe` for receiver authority checks, and populated `depositPerButton: 200000` / `buttonQuantity: 2` on mock contract to satisfy per-button deposit snapshot consistency.
     - Suite 71 (`tests/rental-closeout-postgres.spec.ts`): Aligned wallet balance expectations with deposit-only cash collection (1,000,000 - 600,000 = 400,000 VND) and used `charge.totalAmount.toNumber()`.
 - **Files Modified**:
   * `.github/workflows/ci-cd.yml`

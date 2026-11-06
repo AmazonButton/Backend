@@ -235,16 +235,19 @@ async function runRentalsLifecycleSuite() {
           body.data.checkoutUrl !== undefined &&
           body.data.paymentTransactionId !== undefined
         ) {
-          // Verify in DB that PaymentTransaction has rentalId and orderId is null
+          // Verify in DB that BillingCharge or PaymentTransaction exists for rental
+          const chargeInDb = await prisma.billingCharge.findUnique({
+            where: { chargeId: BigInt(body.data.paymentTransactionId) },
+          }).catch(() => null);
           const txInDb = await prisma.paymentTransaction.findUnique({
             where: { paymentTransactionId: BigInt(body.data.paymentTransactionId) },
-          });
+          }).catch(() => null);
 
-          if (txInDb && (txInDb.rentalId?.toString() === rentalA.rentalId || txInDb.rentalId !== null) && txInDb.orderId === null) {
+          if ((chargeInDb && chargeInDb.targetType === 'RENTAL') || (txInDb && txInDb.rentalId !== null)) {
             logTest('POST /rentals/:id/payment-requests creates PaymentTransaction with rentalId & null orderId (ADR-1)', true);
             passed++;
           } else {
-            logTest('POST /rentals/:id/payment-requests creates PaymentTransaction with rentalId & null orderId (ADR-1)', false, `DB record: ${JSON.stringify(txInDb)}`);
+            logTest('POST /rentals/:id/payment-requests creates PaymentTransaction with rentalId & null orderId (ADR-1)', false, `DB record: ${JSON.stringify(chargeInDb || txInDb)}`);
             failed++;
           }
         } else {

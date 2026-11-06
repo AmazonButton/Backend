@@ -99,6 +99,8 @@ async function runDeepFixesTestSuite() {
             findUnique: async () => ({
               rentalId: BigInt(10),
               depositAmount: 400000,
+              depositPerButton: 200000,
+              buttonQuantity: 2,
               customerId: BigInt(88),
               fulfillmentStoreId: BigInt(5),
               package: { buttonQuantity: 2 }, // Hợp đồng 2 nút gốc
