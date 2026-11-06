@@ -279,6 +279,12 @@ async function runWithdrawalConcurrencyIdempotencyTests() {
     // ------------------------------------------------------------------------
     console.log('\n[SECTION 4] PayOS Payout Webhook & Idempotency:');
 
+    // Ensure wallet has sufficient available balance for webhook test withdrawal
+    await prisma.storeWallet.update({
+      where: { walletId: wallet.walletId },
+      data: { balance: { increment: 200000 } },
+    });
+
     // Create withdrawal in PROCESSING state
     const wdrWebhook = await walletService.requestWithdrawal(testStore.storeId, {
       amount: 60000,

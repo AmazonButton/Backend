@@ -123,7 +123,7 @@ async function main() {
     if ('error' in outcomeCash) throw outcomeCash.error;
     assert.deepEqual(outcomeCash.value.map(r => r.idempotent).sort(), [false, true]);
     const after = await a.storeWallet.findUniqueOrThrow({ where: { walletId: wallet.walletId } });
-    assert.equal(after.balance.toNumber(), 310000); assert.equal(after.frozenBalance.toNumber(), 100000);
+    assert.equal(after.balance.toNumber(), 400000); assert.equal(after.frozenBalance.toNumber(), 100000);
     assert.equal(await a.storeCashReceipt.count({ where: { chargeId: first.charge.chargeId } }), 1);
     assert.equal(await a.walletTransaction.count({ where: { walletId: wallet.walletId, type: 'RENTAL_CASH_COLLECTION_OFFSET', referenceId: String(first.charge.chargeId) } }), 1);
     const deposit = await a.rentalDeposit.findUniqueOrThrow({ where: { rentalId: first.rental.rentalId } });
@@ -132,7 +132,7 @@ async function main() {
 
     // 2. Late money still recorded with intake disabled; replay across connections.
     delete process.env.STORE_CASH_COLLECTION_ENABLED;
-    const paidReceipt = { provider: 'PAYOS', providerTransactionCode: first.code + '_bank_ref', amount: 690000,
+    const paidReceipt = { provider: 'PAYOS', providerTransactionCode: first.code + '_bank_ref', amount: first.charge.totalAmount.toNumber(),
       currency: 'VND', verified: true as const, paymentLinkId: first.code };
     await new BillingChargesRepository(a as any).settleChargeAtomicTx(first.charge.chargeId, paidReceipt);
     await new BillingChargesRepository(b as any).settleChargeAtomicTx(first.charge.chargeId, paidReceipt);
@@ -171,7 +171,7 @@ async function main() {
     await cashLocked.promise;
 
     const queuedPayos = new BillingChargesRepository(b as any).settleChargeAtomicTx(cashFirst.charge.chargeId, {
-      provider: 'PAYOS', providerTransactionCode: cashFirst.code + '_race_late', amount: 690000,
+      provider: 'PAYOS', providerTransactionCode: cashFirst.code + '_race_late', amount: cashFirst.charge.totalAmount.toNumber(),
       currency: 'VND', verified: true as const, paymentLinkId: cashFirst.code,
     });
     const observedPayos = queuedPayos.then(v => ({ v }), e => ({ e }));
@@ -185,7 +185,7 @@ async function main() {
     if ('e' in resPayos) throw resPayos.e;
 
     assert.equal(await a.storeCashReceipt.count({ where: { chargeId: cashFirst.charge.chargeId } }), 1);
-    assert.equal((await a.storeWallet.findUniqueOrThrow({ where: { walletId: wallet.walletId } })).balance.toNumber(), 310000);
+    assert.equal((await a.storeWallet.findUniqueOrThrow({ where: { walletId: wallet.walletId } })).balance.toNumber(), 400000);
     const lateReceipt = await a.billingPaymentReceipt.findFirstOrThrow({ where: { chargeId: cashFirst.charge.chargeId } });
     assert.equal(lateReceipt.classification, 'OVERPAYMENT_RECEIPT');
     assert.equal(await a.billingOverpaymentObligation.count({ where: { receiptId: lateReceipt.id } }), 1);
@@ -216,7 +216,7 @@ async function main() {
     };
 
     const payosRun = new BillingChargesRepository(payosBarrierPrisma).settleChargeAtomicTx(payosFirst.charge.chargeId, {
-      provider: 'PAYOS', providerTransactionCode: payosFirst.code + '_race_early', amount: 690000,
+      provider: 'PAYOS', providerTransactionCode: payosFirst.code + '_race_early', amount: payosFirst.charge.totalAmount.toNumber(),
       currency: 'VND', verified: true as const, paymentLinkId: payosFirst.code,
     });
     const observedPayosRun = payosRun.then(v => ({ v }), e => ({ e }));

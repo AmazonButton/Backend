@@ -90,6 +90,9 @@ async function runDeepFixesTestSuite() {
                 refunded_amount: 0,
               }];
             }
+            if (sql.includes('store') && sql.includes('store_id')) {
+              return [{ store_id: BigInt(5) }];
+            }
             return [];
           },
           buttonRental: {
@@ -164,12 +167,16 @@ async function runDeepFixesTestSuite() {
             if (sql.includes('rental_deposits')) {
               return [{ rental_id: BigInt(10), collected_amount: 0, held_amount: 0 }];
             }
+            if (sql.includes('store') && sql.includes('store_id')) {
+              return [{ store_id: BigInt(5) }];
+            }
             return [];
           },
           buttonRental: {
             findUnique: async () => ({
               rentalId: BigInt(10),
               depositAmount: 0, // Không thu cọc
+              fulfillmentStoreId: BigInt(5),
               package: { buttonQuantity: 1 },
             }),
           },
