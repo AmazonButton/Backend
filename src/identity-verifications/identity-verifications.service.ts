@@ -19,6 +19,13 @@ export interface SessionResponseDto {
   status: string;
   verificationUrl: string;
   metadata?: any;
+  user?: {
+    userId: string;
+    fullName: string;
+    email: string | null;
+    phone: string | null;
+    kycStatus: string;
+  };
   expiresAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -35,7 +42,14 @@ export class IdentityVerificationsService {
     private readonly diditClient: DiditClientService,
   ) {}
 
-  private mapToDto(session: IdentityVerificationSession): SessionResponseDto {
+  private checkIsAdmin(user: any): boolean {
+    const adminRoles = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'];
+    if (adminRoles.includes(user?.role)) return true;
+    if (Array.isArray(user?.roles) && user.roles.some((r: string) => adminRoles.includes(r))) return true;
+    return false;
+  }
+
+  private mapToDto(session: any): SessionResponseDto {
     return {
       sessionId: session.id.toString(),
       userId: session.userId.toString(),
@@ -44,6 +58,15 @@ export class IdentityVerificationsService {
       status: session.status,
       verificationUrl: session.verificationUrl,
       metadata: session.metadata,
+      user: session.user
+        ? {
+            userId: session.user.userId.toString(),
+            fullName: session.user.fullName,
+            email: session.user.email,
+            phone: session.user.phone,
+            kycStatus: session.user.kycStatus,
+          }
+        : undefined,
       expiresAt: session.expiresAt ? session.expiresAt.toISOString() : null,
       completedAt: session.completedAt ? session.completedAt.toISOString() : null,
       createdAt: session.createdAt.toISOString(),
@@ -100,7 +123,7 @@ export class IdentityVerificationsService {
 
     // BOLA Authorization Check
     const isOwner = session.userId === BigInt(user.id);
-    const isAdmin = user.role === 'ADMIN' || (user.roles && user.roles.includes('ADMIN'));
+    const isAdmin = this.checkIsAdmin(user);
 
     if (!isOwner && !isAdmin) {
       throw new ForbiddenException('Bạn không có quyền truy cập phiên xác minh này');
@@ -120,7 +143,7 @@ export class IdentityVerificationsService {
 
     // BOLA Authorization Check
     const isOwner = session.userId === BigInt(user.id);
-    const isAdmin = user.role === 'ADMIN' || (user.roles && user.roles.includes('ADMIN'));
+    const isAdmin = this.checkIsAdmin(user);
 
     if (!isOwner && !isAdmin) {
       throw new ForbiddenException('Bạn không có quyền truy cập phiên xác minh này');
@@ -159,7 +182,7 @@ export class IdentityVerificationsService {
     const ps = Math.min(100, Math.max(1, pageSize));
     const skip = (p - 1) * ps;
 
-    const isAdmin = user.role === 'ADMIN' || (user.roles && user.roles.includes('ADMIN'));
+    const isAdmin = this.checkIsAdmin(user);
 
     let sessions: IdentityVerificationSession[];
     let totalItems: number;

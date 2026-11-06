@@ -989,6 +989,7 @@ export class AuthService {
         phone: user.phone,
         avatarUrl: user.avatarUrl || null,
         role,
+        kycStatus: user.kycStatus,
         status: user.status,
         storeId,
         customerProfileId: user.customerProfile?.customerId?.toString() || null,
