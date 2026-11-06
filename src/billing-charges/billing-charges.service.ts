@@ -31,13 +31,19 @@ export class BillingChargesService {
     });
     return this.repository.createChargeWithLines({
       rentalId: params.rentalId, customerId: params.customerId, purpose: 'RENTAL_INITIAL',
-      targetType: 'RENTAL', targetId: params.rentalId, totalAmount: pricing.totalAmount.toNumber(),
+      targetType: 'RENTAL', targetId: params.rentalId, totalAmount: pricing.depositTotal.toNumber(),
       paymentMethod: params.paymentMethod || 'PAYOS',
-      lines: [pricing.lines.rent, pricing.lines.deposit].map(line => ({
-        lineType: line.lineType, amount: line.amount.toNumber(), description: line.description,
-        quantity: line.quantity, unitPrice: line.unitPrice.toNumber(),
-        durationUnit: line.durationUnit ?? undefined, durationCount: line.durationCount ?? undefined,
-      })),
+      lines: [
+        {
+          lineType: pricing.lines.deposit.lineType,
+          amount: pricing.lines.deposit.amount.toNumber(),
+          description: pricing.lines.deposit.description,
+          quantity: pricing.lines.deposit.quantity,
+          unitPrice: pricing.lines.deposit.unitPrice.toNumber(),
+          durationUnit: undefined,
+          durationCount: undefined,
+        },
+      ],
     });
   }
 
@@ -223,7 +229,46 @@ export class BillingChargesService {
     const role = user.role || user.roleCode;
     const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(role);
     if (!isAdmin) {
-      if (charge.targetType === 'RENTAL') {
+      const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STAFF'].includes(role);
+      const isStorePayer = charge.payerStoreId != null || charge.lines?.some((l: any) => l.lineType === 'STORE_RENT');
+
+      if (isStorePayer) {
+        if (!isStoreRole) {
+          throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu dành cho Cửa hàng');
+        }
+        const userStoreId = user.storeId ? BigInt(user.storeId) : null;
+        if (!userStoreId) {
+          throw new ForbiddenException('Tài khoản không được liên kết với Cửa hàng');
+        }
+        const activeStore = await this.repository.findActiveStoreById(userStoreId);
+        if (!activeStore) {
+          throw new ForbiddenException('Cửa hàng không tồn tại hoặc chưa được kích hoạt');
+        }
+        if (!charge.payerStoreId) {
+          throw new ForbiddenException('Khoản thu thiếu thông tin Cửa hàng chi trả');
+        }
+        if (BigInt(charge.payerStoreId) !== userStoreId) {
+          throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của Cửa hàng khác');
+        }
+        if (charge.targetType === 'RENTAL') {
+          const rental = await this.repository.findRentalWithCustomer(charge.targetId);
+          if (!rental) {
+            throw new NotFoundException(`Hợp đồng thuê #${charge.targetId} không tồn tại`);
+          }
+          if (!rental.fulfillmentStoreId) {
+            throw new ForbiddenException('Hợp đồng thuê thiếu thông tin Cửa hàng phụ trách');
+          }
+          if (BigInt(rental.fulfillmentStoreId) !== userStoreId) {
+            throw new ForbiddenException('Hợp đồng thuê không thuộc quyền phụ trách của Cửa hàng');
+          }
+        } else if (charge.targetType === 'STORE' || charge.targetType === 'STORE_SUBSCRIPTION') {
+          if (!charge.targetId || BigInt(charge.targetId) !== userStoreId) {
+            throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của Cửa hàng khác');
+          }
+        } else {
+          throw new ForbiddenException('Loại đối tượng của khoản thu không được hỗ trợ');
+        }
+      } else if (charge.targetType === 'RENTAL') {
         const rental = await this.repository.findRentalWithCustomer(charge.targetId);
         const customerProfileId = user.customerProfileId?.toString();
         const userId = (user.userId || user.id || user.sub)?.toString();
@@ -237,9 +282,13 @@ export class BillingChargesService {
           throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu này');
         }
       } else if (charge.targetType === 'STORE' || charge.targetType === 'STORE_SUBSCRIPTION') {
-        const userStoreId = user.storeId?.toString();
-        if (!userStoreId || charge.targetId.toString() !== userStoreId) {
+        const userStoreId = user.storeId ? BigInt(user.storeId) : null;
+        if (!userStoreId || BigInt(charge.targetId) !== userStoreId) {
           throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của cửa hàng khác');
+        }
+        const activeStore = await this.repository.findActiveStoreById(userStoreId);
+        if (!activeStore) {
+          throw new ForbiddenException('Cửa hàng không tồn tại hoặc chưa được kích hoạt');
         }
       } else {
         throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu này');

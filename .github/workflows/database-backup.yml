@@ -1,0 +1,44 @@
+name: Automated Database Backup (Zero Cost)
+
+on:
+  schedule:
+    # Runs daily at 02:00 UTC (09:00 AM VN Time)
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
+
+jobs:
+  backup:
+    name: Dump and Secure Database
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL Client Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Perform Logical Database Backup (pg_dump)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+        run: |
+          BACKUP_DATE=$(date +'%Y-%m-%d_%H%M%S')
+          BACKUP_FILE="smart_order_backup_${BACKUP_DATE}.sql.gz"
+          echo "Starting backup at $(date)..."
+          
+          # Dump complete schema and data with clean DROP TABLE IF EXISTS statements
+          pg_dump "$DATABASE_URL" \
+            --no-owner \
+            --no-privileges \
+            --clean \
+            --if-exists \
+            --format=plain | gzip -9 > "$BACKUP_FILE"
+            
+          echo "BACKUP_FILE=$BACKUP_FILE" >> $GITHUB_ENV
+          echo "Backup file created: $BACKUP_FILE ($(du -h $BACKUP_FILE | cut -f1))"
+
+      - name: Upload Backup to GitHub Artifacts (Free 90-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-daily-backup
+          path: ${{ env.BACKUP_FILE }}
+          retention-days: 90
+

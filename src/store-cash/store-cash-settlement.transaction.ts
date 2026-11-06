@@ -29,11 +29,16 @@ export async function settleInitialRentalInTx(
   const rent = lines.filter(l => l.lineType === 'RENT');
   const deposit = lines.filter(l => l.lineType === 'DEPOSIT');
   const amount = new Prisma.Decimal(charge.total_amount);
-  if (rent.length !== 1 || deposit.length !== 1 || lines.length !== 2 ||
-      !Number.isInteger(rent[0].durationCount) || rent[0].durationCount! <= 0 ||
-      rent[0].durationUnit !== 'MONTH' || !rent[0].amount.gt(0) || deposit[0].amount.lt(0) ||
-      !rent[0].amount.plus(deposit[0].amount).eq(amount) ||
-      !deposit[0].amount.eq(rental.deposit_amount)) {
+
+  const isDepositOnly = deposit.length === 1 && lines.length === 1 && deposit[0].amount.gt(0) &&
+    deposit[0].amount.eq(amount) && deposit[0].amount.eq(rental.deposit_amount);
+
+  const isLegacyCombined = rent.length === 1 && deposit.length === 1 && lines.length === 2 &&
+    Number.isInteger(rent[0].durationCount) && rent[0].durationCount! > 0 &&
+    rent[0].durationUnit === 'MONTH' && rent[0].amount.gt(0) && !deposit[0].amount.lt(0) &&
+    rent[0].amount.plus(deposit[0].amount).eq(amount) && deposit[0].amount.eq(rental.deposit_amount);
+
+  if (!isDepositOnly && !isLegacyCombined) {
     cashConflict('INVALID_INITIAL_CHARGE_LINES', 'Charge lines do not match the rental deposit and paid term');
   }
   const changed = await tx.billingCharge.updateMany({

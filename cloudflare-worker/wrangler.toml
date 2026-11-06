@@ -4,3 +4,6 @@ compatibility_date = "2026-10-28"
 
 [observability]
 enabled = true
+
+[triggers]
+crons = ["*/5 * * * *"]

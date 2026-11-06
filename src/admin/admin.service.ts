@@ -49,12 +49,14 @@ export class AdminService {
     }
   }
 
-  async listPendingStores() {
-    return this.adminRepo.findPendingStores();
+  async listPendingStores(query?: any) {
+    const res = await this.adminRepo.findPendingStores(query);
+    return res;
   }
 
-  async listAllStores() {
-    return this.adminRepo.findAllStores();
+  async listAllStores(query?: any) {
+    const res = await this.adminRepo.findAllStores(query);
+    return res;
   }
 
   async updateStoreById(storeId: string | number | bigint, dto: UpdateAdminStoreDto, _adminUser?: any) {
@@ -120,14 +122,20 @@ export class AdminService {
     return this.getAuditLogs();
   }
 
-  async listUsers() {
-    const users = await this.adminRepo.findUsers();
-    return users.map((u: any) => ({
+  async listUsers(query?: any) {
+    const res = await this.adminRepo.findUsers(query);
+    const items = res.items.map((u: any) => ({
       ...u,
       id: u.userId.toString(),
       userId: u.userId.toString(),
       role: u.customerProfile ? 'CUSTOMER' : (u.ownedStores && u.ownedStores.length > 0 ? 'STORE_OWNER' : 'USER'),
     }));
+    return {
+      items,
+      total: res.total,
+      page: res.page,
+      pageSize: res.pageSize,
+    };
   }
 
   async toggleUserStatus(userId: string | number | bigint, status?: string, _adminUser?: any) {
@@ -242,8 +250,14 @@ export class AdminService {
     return this.adminRepo.updateRentalPackage(packageId, body);
   }
 
-  async listAllWithdrawals() {
-    return this.adminRepo.findWithdrawals();
+  async listAllWithdrawals(query?: any) {
+    const res = await this.adminRepo.findWithdrawals(query);
+    return {
+      items: WalletMapper.toWithdrawalDtoList(res.items),
+      total: res.total,
+      page: res.page,
+      pageSize: res.pageSize,
+    };
   }
 
   async listWithdrawals() {

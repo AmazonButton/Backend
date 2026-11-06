@@ -9,18 +9,43 @@ export class DevicesRepository {
     return this.prisma.ioTButton.count({ where: whereClause });
   }
 
-  async findMany(whereClause: any) {
-    return this.prisma.ioTButton.findMany({
-      where: whereClause,
-      include: {
-        store: true,
-        customer: { include: { user: true } },
-        address: true,
-        buttonProducts: { include: { product: true } },
-        deployedTemplate: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  async findMany(whereClause: any, pagination?: { page?: number; pageSize?: number }) {
+    const rawPage = Number(pagination?.page);
+    const rawPageSize = Number(pagination?.pageSize);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    const [items, total] = await Promise.all([
+      this.prisma.ioTButton.findMany({
+        where: whereClause,
+        include: {
+          store: true,
+          customer: { include: { user: true } },
+          address: true,
+          buttonProducts: { include: { product: true } },
+          deployedTemplate: true,
+          rental: {
+            select: {
+              rentalId: true,
+              rentalCode: true,
+              status: true,
+              startDate: true,
+              endDate: true,
+              paidThrough: true,
+              effectiveExpiresAt: true,
+            },
+          },
+        },
+        orderBy: [{ createdAt: 'desc' }, { buttonId: 'desc' }],
+        skip,
+        take,
+      }),
+      this.prisma.ioTButton.count({ where: whereClause }),
+    ]);
+
+    return { items, total, page, pageSize };
   }
 
   async findById(buttonId: bigint) {
@@ -32,6 +57,17 @@ export class DevicesRepository {
         address: true,
         buttonProducts: { include: { product: true } },
         deployedTemplate: true,
+        rental: {
+          select: {
+            rentalId: true,
+            rentalCode: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+            paidThrough: true,
+            effectiveExpiresAt: true,
+          },
+        },
       },
     });
   }
@@ -45,6 +81,17 @@ export class DevicesRepository {
         address: true,
         buttonProducts: { include: { product: true } },
         deployedTemplate: true,
+        rental: {
+          select: {
+            rentalId: true,
+            rentalCode: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+            paidThrough: true,
+            effectiveExpiresAt: true,
+          },
+        },
       },
     });
   }
@@ -65,6 +112,17 @@ export class DevicesRepository {
         address: true,
         buttonProducts: { include: { product: true } },
         deployedTemplate: true,
+        rental: {
+          select: {
+            rentalId: true,
+            rentalCode: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+            paidThrough: true,
+            effectiveExpiresAt: true,
+          },
+        },
       },
     });
   }
@@ -78,6 +136,17 @@ export class DevicesRepository {
         address: true,
         buttonProducts: { include: { product: true } },
         deployedTemplate: true,
+        rental: {
+          select: {
+            rentalId: true,
+            rentalCode: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+            paidThrough: true,
+            effectiveExpiresAt: true,
+          },
+        },
       },
     });
   }
@@ -115,6 +184,17 @@ export class DevicesRepository {
         address: true,
         buttonProducts: { include: { product: true } },
         deployedTemplate: true,
+        rental: {
+          select: {
+            rentalId: true,
+            rentalCode: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+            paidThrough: true,
+            effectiveExpiresAt: true,
+          },
+        },
       },
     });
   }
@@ -396,6 +476,17 @@ export class DevicesRepository {
           address: true,
           buttonProducts: { include: { product: true } },
           deployedTemplate: true,
+          rental: {
+            select: {
+              rentalId: true,
+              rentalCode: true,
+              status: true,
+              startDate: true,
+              endDate: true,
+              paidThrough: true,
+              effectiveExpiresAt: true,
+            },
+          },
         },
       });
 

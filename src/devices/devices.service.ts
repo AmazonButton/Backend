@@ -148,6 +148,42 @@ export class DevicesService {
 
   private formatButton(b: any) {
     if (!b) return null;
+
+    const isButtonActive = b.status === 'ACTIVE';
+    const isNotInTransit = b.inventoryState !== 'RETURN_IN_TRANSIT';
+    const flagCanOrder = b.canOrder !== false;
+    let isRentalActive = true;
+    let rentalReason: string | null = null;
+    let remainingSeconds = 0;
+
+    if (b.rental) {
+      if (b.rental.status !== 'ACTIVE') {
+        isRentalActive = false;
+        rentalReason = `Hợp đồng thuê đang ở trạng thái ${b.rental.status}`;
+      } else if (b.rental.effectiveExpiresAt) {
+        const expiryTime = new Date(b.rental.effectiveExpiresAt).getTime();
+        remainingSeconds = Math.max(0, Math.floor((expiryTime - Date.now()) / 1000));
+        if (remainingSeconds <= 0) {
+          isRentalActive = false;
+          rentalReason = 'Hợp đồng thuê đã hết hạn sử dụng';
+        }
+      }
+    }
+
+    const canOrder = isButtonActive && isNotInTransit && flagCanOrder && isRentalActive;
+    let canOrderReason: string | null = null;
+    if (!canOrder) {
+      if (!isButtonActive) {
+        canOrderReason = `Thiết bị chưa được kích hoạt (${b.status})`;
+      } else if (!isNotInTransit) {
+        canOrderReason = 'Thiết bị đang trong quá trình trả hàng';
+      } else if (!flagCanOrder) {
+        canOrderReason = 'Quyền đặt hàng qua thiết bị đang bị tạm dừng';
+      } else if (rentalReason) {
+        canOrderReason = rentalReason;
+      }
+    }
+
     return {
       id: b.buttonId.toString(),
       buttonId: b.buttonId.toString(),
@@ -157,6 +193,21 @@ export class DevicesService {
       name: b.buttonName || 'Smart Order Button',
       buttonName: b.buttonName || 'Smart Order Button',
       customName: b.buttonName || 'Smart Order Button',
+      canOrder,
+      canOrderReason,
+      inventoryState: b.inventoryState || 'IN_PLATFORM_WAREHOUSE',
+      rentalId: b.rentalId ? b.rentalId.toString() : (b.rental?.rentalId ? b.rental.rentalId.toString() : null),
+      rentalStatus: b.rental?.status || null,
+      rental: b.rental ? {
+        rentalId: b.rental.rentalId.toString(),
+        rentalCode: b.rental.rentalCode || null,
+        status: b.rental.status,
+        startDate: b.rental.startDate || null,
+        endDate: b.rental.endDate || null,
+        paidThrough: b.rental.paidThrough || null,
+        effectiveExpiresAt: b.rental.effectiveExpiresAt || null,
+        remainingSeconds,
+      } : null,
       storeId: b.storeId ? b.storeId.toString() : null,
       customerId: b.customerId ? b.customerId.toString() : null,
       addressId: b.addressId ? b.addressId.toString() : null,
@@ -310,8 +361,25 @@ export class DevicesService {
     if (query?.status) {
       whereClause.status = query.status;
     }
-    const buttons = await this.devicesRepo.findMany(whereClause);
-    return buttons.map((b) => this.formatButton(b));
+    if (query?.search?.trim()) {
+      const s = query.search.trim();
+      whereClause.OR = [
+        { buttonCode: { contains: s, mode: 'insensitive' } },
+        { deviceId: { contains: s, mode: 'insensitive' } },
+        { buttonName: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+    const rawPage = Number(query?.page);
+    const rawPageSize = Number(query?.pageSize) || Number(query?.limit);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const { items, total } = await this.devicesRepo.findMany(whereClause, { page, pageSize });
+    return {
+      items: items.map((b) => this.formatButton(b)),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async registerDevice(dto: any, user: any) {
@@ -736,8 +804,8 @@ export class DevicesService {
   }
 
   async getUnassignedDevices() {
-    const buttons = await this.devicesRepo.findMany({ status: 'INACTIVE' });
-    return buttons.map((b) => this.formatButton(b));
+    const { items } = await this.devicesRepo.findMany({ status: 'INACTIVE' }, { page: 1, pageSize: 50 });
+    return items.map((b) => this.formatButton(b));
   }
 
   async allocateDevicesToStore(body: { storeId?: string; targetStoreId?: string; deviceIds: string[]; productId?: string }, user: any) {

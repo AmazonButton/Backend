@@ -6,11 +6,11 @@
  * 1. Third-Party Integrations (PayOS, Didit eKYC, Bank Verification):
  *    -> 100% routed to Node 1 (Render Primary)
  * 2. Core Business APIs (Orders, Devices, Products, Auth):
- *    -> 70% to Node 3 (AWS EC2 Sydney - High-Performance Workhorse)
- *    -> 20% to Node 1 (Render Primary - Continuous Keep-Alive & Light Sharing)
- *    -> 10% to Node 2 (Render Secondary - Active Keep-Alive, never stays idle > 15-30m)
+ *    -> 50% to Node 1 (Render Primary - Fast latency, keep-alive active)
+ *    -> 35% to Node 2 (Render Secondary - High-throughput, keep-alive active)
+ *    -> 15% to Node 3 (AWS EC2 Sydney - Fallback workhorse, avoiding cross-ocean RTT penalty)
  * 3. 3-Way Cascading Failover across all 3 nodes on 502/503/504 or network drops
- * 4. Background Keep-Alive: Node 2 pinged every 10-12 minutes via ctx.waitUntil & Cron
+ * 4. Background Keep-Alive: Both Render Nodes pinged every 5-10 minutes via ctx.waitUntil & Cron
  */
 
 const NODE1_RENDER = 'https://backend-fae8.onrender.com';
@@ -55,16 +55,22 @@ export default {
       });
     }
 
-    // 2. Background Keep-Alive for Node 2 (Render Secondary)
-    // Ensures Node 2 stays awake 24/7 without adding ANY latency to user requests
+    // 2. Background Keep-Alive for Both Render Nodes (Node 1 & Node 2)
+    // Ensures both stay awake 24/7 without adding ANY latency to user requests
     const now = Date.now();
     if (now - lastNode2PingTimestamp > NODE2_PING_INTERVAL_MS) {
       lastNode2PingTimestamp = now;
       ctx.waitUntil(
-        fetch(`${NODE2_RENDER}/healthz`, {
-          headers: { 'User-Agent': 'Cloudflare-Worker-AutoPing/1.0' },
-          signal: AbortSignal.timeout(10000),
-        }).catch((err) => console.warn('[AutoKeepAlive] Node 2 ping notice:', err.message)),
+        Promise.allSettled([
+          fetch(`${NODE1_RENDER}/healthz`, {
+            headers: { 'User-Agent': 'Cloudflare-Worker-AutoPing/1.0' },
+            signal: AbortSignal.timeout(10000),
+          }),
+          fetch(`${NODE2_RENDER}/healthz`, {
+            headers: { 'User-Agent': 'Cloudflare-Worker-AutoPing/1.0' },
+            signal: AbortSignal.timeout(10000),
+          }),
+        ]).catch((err) => console.warn('[AutoKeepAlive] Ping notice:', err.message))
       );
     }
 
@@ -80,26 +86,27 @@ export default {
         { url: NODE2_RENDER, node: 'node-2', role: 'emergency-standby' },
       ];
     } else {
-      // Core Business APIs: 70% AWS EC2, 20% Render Node 1, 10% Render Node 2
+      // Core Business APIs: 50% Render Node 1, 35% Render Node 2, 15% AWS EC2
+      // Render nodes connect significantly faster to Supabase Tokyo (~500ms vs ~1300ms Sydney RTT)
       const rand = Math.random() * 100;
-      if (rand < 20) {
-        // 20% to Node 1 (Render Primary - Continuous Keep-Alive)
+      if (rand < 50) {
+        // 50% to Node 1 (Render Primary - Fast & low latency)
         candidateOrigins = [
-          { url: NODE1_RENDER, node: 'node-1', role: 'render-shared-20pct' },
-          { url: NODE3_AWS,    node: 'node-3', role: 'aws-primary-fallback' },
+          { url: NODE1_RENDER, node: 'node-1', role: 'render-primary-50pct' },
           { url: NODE2_RENDER, node: 'node-2', role: 'render-secondary-fallback' },
+          { url: NODE3_AWS,    node: 'node-3', role: 'aws-fallback' },
         ];
-      } else if (rand < 30) {
-        // 10% to Node 2 (Render Secondary Active Keep-Alive - never stays off > 15-30m)
+      } else if (rand < 85) {
+        // 35% to Node 2 (Render Secondary - High-throughput & low latency)
         candidateOrigins = [
-          { url: NODE2_RENDER, node: 'node-2', role: 'render-warm-10pct' },
-          { url: NODE3_AWS,    node: 'node-3', role: 'aws-primary-fallback' },
+          { url: NODE2_RENDER, node: 'node-2', role: 'render-secondary-35pct' },
           { url: NODE1_RENDER, node: 'node-1', role: 'render-primary-fallback' },
+          { url: NODE3_AWS,    node: 'node-3', role: 'aws-fallback' },
         ];
       } else {
-        // 70% to Node 3 (AWS EC2 Sydney Workhorse)
+        // 15% to Node 3 (AWS EC2 Sydney - Failover & backup)
         candidateOrigins = [
-          { url: NODE3_AWS,    node: 'node-3', role: 'aws-core-70pct' },
+          { url: NODE3_AWS,    node: 'node-3', role: 'aws-backup-15pct' },
           { url: NODE1_RENDER, node: 'node-1', role: 'render-primary-fallback' },
           { url: NODE2_RENDER, node: 'node-2', role: 'render-secondary-fallback' },
         ];
@@ -191,13 +198,18 @@ export default {
     );
   },
 
-  // Cloudflare Cron Trigger (Runs every 10-15m if configured in Cloudflare Dashboard)
+  // Cloudflare Cron Trigger (Runs every 5m configured in Cloudflare Dashboard)
   async scheduled(controller, env, ctx) {
-    console.log('[CronKeepAlive] Scheduled ping to keep Node 2 awake...');
+    console.log('[CronKeepAlive] Scheduled ping to keep Node 1 and Node 2 awake 24/7...');
     ctx.waitUntil(
-      fetch(`${NODE2_RENDER}/healthz`, {
-        headers: { 'User-Agent': 'Cloudflare-Worker-Cron/1.0' },
-      }).catch((e) => console.warn('[CronKeepAlive] Failed:', e.message)),
+      Promise.allSettled([
+        fetch(`${NODE1_RENDER}/healthz`, {
+          headers: { 'User-Agent': 'Cloudflare-Worker-Cron/1.0' },
+        }),
+        fetch(`${NODE2_RENDER}/healthz`, {
+          headers: { 'User-Agent': 'Cloudflare-Worker-Cron/1.0' },
+        }),
+      ]).catch((e) => console.warn('[CronKeepAlive] Failed:', e.message))
     );
   },
 };

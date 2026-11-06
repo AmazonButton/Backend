@@ -12,14 +12,18 @@ export function buildPaginationMetadata(
   page: number = 1,
   pageSize: number = 20,
 ): PaginationMetadata {
-  const safePage = Math.max(1, page);
-  const safePageSize = Math.max(1, Math.min(100, pageSize));
-  const totalPages = Math.ceil(totalItems / safePageSize);
+  const safeTotal = Number.isSafeInteger(Number(totalItems)) && Number(totalItems) >= 0 ? Number(totalItems) : 0;
+  const safePage = Number.isSafeInteger(Number(page)) && Number(page) >= 1 ? Number(page) : 1;
+  const safePageSize =
+    Number.isSafeInteger(Number(pageSize)) && Number(pageSize) >= 1
+      ? Math.min(100, Number(pageSize))
+      : 20;
+  const totalPages = Math.ceil(safeTotal / safePageSize);
 
   return {
     page: safePage,
     pageSize: safePageSize,
-    totalItems,
+    totalItems: safeTotal,
     totalPages,
     hasNextPage: safePage < totalPages,
     hasPrevPage: safePage > 1,

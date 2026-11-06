@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Param, Body, UseGuards, Request, Inject, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Param, Body, UseGuards, Request, Inject, Query, BadRequestException, ValidationPipe } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { UpdateAdminStoreDto } from './dto/update-admin-store.dto';
@@ -10,6 +10,13 @@ import {
   AdminTimeseriesAnalyticsQueryDto,
   AdminStoresLeaderboardQueryDto,
 } from './dto/admin-analytics-query.dto';
+import {
+  AdminStoresQueryDto,
+  AdminUsersQueryDto,
+  AdminWithdrawalQueryDto,
+} from './dto/admin-list-query.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { buildPaginatedResponse } from '../common/utils/pagination.helper';
 import { WalletMapper } from '../store-wallet/mappers/wallet.mapper';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -22,15 +29,31 @@ export class AdminController {
   constructor(@Inject(AdminService) private readonly adminService: AdminService) {}
 
   @Get('stores/pending')
-  async listPendingStores() {
-    const data = await this.adminService.listPendingStores();
-    return { success: true, data };
+  async listPendingStores(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: PaginationQueryDto,
+  ) {
+    const result = await this.adminService.listPendingStores(query);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách cửa hàng chờ duyệt thành công',
+    );
   }
 
   @Get('stores')
-  async listStores() {
-    const data = await this.adminService.listAllStores();
-    return { success: true, data };
+  async listStores(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: AdminStoresQueryDto,
+  ) {
+    const result = await this.adminService.listAllStores(query);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách cửa hàng thành công',
+    );
   }
 
   @Patch('stores/:id')
@@ -68,9 +91,17 @@ export class AdminController {
   }
 
   @Get('users')
-  async listUsers() {
-    const data = await this.adminService.listUsers();
-    return { success: true, data };
+  async listUsers(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: AdminUsersQueryDto,
+  ) {
+    const result = await this.adminService.listUsers(query);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách người dùng thành công',
+    );
   }
 
   @Post('users/:id/toggle-status')
@@ -126,9 +157,17 @@ export class AdminController {
   // Withdrawals
   @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
   @Get('withdrawals')
-  async listAllWithdrawals() {
-    const data = await this.adminService.listAllWithdrawals();
-    return { success: true, data: WalletMapper.toWithdrawalDtoList(data) };
+  async listAllWithdrawals(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: AdminWithdrawalQueryDto,
+  ) {
+    const result = await this.adminService.listAllWithdrawals(query);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách yêu cầu rút tiền thành công',
+    );
   }
 
   @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')

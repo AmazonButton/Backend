@@ -13,6 +13,7 @@ import {
   Inject,
   ParseIntPipe,
   HttpStatus,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
@@ -50,19 +51,21 @@ export class ProductsController {
   @ApiOperation({ summary: 'Xem danh sách sản phẩm và tồn kho' })
   async list(
     @Request() req: any,
-    @Query() query: ProductQueryDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: ProductQueryDto,
   ) {
     const targetStoreId = req.user.storeId || query.storeId;
     const effectivePageSize = query.pageSize || query.limit;
-    const pagination = {
+    const options = {
       page: query.page,
       pageSize: effectivePageSize,
+      search: query.search,
+      category: query.category,
     };
-    const res = await this.productsService.list(targetStoreId, pagination);
+    const res = await this.productsService.list(targetStoreId, options);
     return {
       success: true,
       data: res.data,
-      ...(res.pagination ? { pagination: res.pagination } : {}),
+      pagination: res.pagination,
     };
   }
 

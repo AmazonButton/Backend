@@ -44,18 +44,41 @@ export async function lockRentalRenewalContext(tx: Prisma.TransactionClient, ren
 export async function settleRentalRenewalInTx(tx: Prisma.TransactionClient, charge: any, providerReference: string) {
   const { rental, eligibleButtons, quantity } = await lockRentalRenewalContext(tx, charge.target_id);
   if (!RENEWABLE_RENTAL_STATES.includes(rental.status) || rental.monthly_rent_per_button_snapshot == null ||
-      rental.pricing_review_required || quantity < 1) return false;
+      rental.pricing_review_required || rental.billing_policy_review_required || quantity < 1) return false;
   const lines = await tx.billingChargeLine.findMany({ where: { chargeId: charge.charge_id } });
   const line = lines[0];
-  if (lines.length !== 1 || line.lineType !== 'RENT' || line.quantity !== quantity ||
+  if (lines.length !== 1 || !['RENT', 'STORE_RENT'].includes(line.lineType) || line.quantity !== quantity ||
       line.durationUnit !== 'MONTH' || !Number.isInteger(line.durationCount) || line.durationCount! < 1 || line.durationCount! > 120) return false;
+
+  let isStorePayer = false;
+  if (line.lineType === 'STORE_RENT') {
+    if (rental.billing_policy !== 'STORE_RENT_CUSTOMER_DEPOSIT') return false;
+    if (!charge.payer_store_id || !rental.fulfillment_store_id) return false;
+    if (BigInt(charge.payer_store_id) !== BigInt(rental.fulfillment_store_id)) return false;
+    isStorePayer = true;
+  } else if (line.lineType === 'RENT') {
+    if (rental.billing_policy !== 'LEGACY_CUSTOMER_RENT') return false;
+    if (charge.payer_store_id != null) return false;
+    isStorePayer = false;
+  } else {
+    return false;
+  }
+
   const pricing = priceRentalRenewal(rental.monthly_rent_per_button_snapshot, quantity, line.durationCount!);
   if (!pricing.amount.eq(charge.total_amount) || !line.amount.eq(pricing.amount) ||
       !line.unitPrice?.eq(pricing.periodPricePerButton)) return false;
   const now = new Date();
   const additionalMs = line.durationCount! * 30 * 86400000;
   const next = (value: Date | null) => new Date(Math.max(value ? new Date(value).getTime() : 0, now.getTime()) + additionalMs);
-  const paidThrough = rental.status === 'PENDING_HANDOVER' ? null : next(rental.paid_through);
+
+  // R08 & P1: Đồng bộ paidThrough theo snapshot chính sách:
+  // Nếu là hợp đồng cũ LEGACY_CUSTOMER_RENT (khách tự trả tiền thuê): cập nhật paidThrough.
+  // Nếu là hợp đồng mới STORE_RENT_CUSTOMER_DEPOSIT (Store chịu phí thuê): KHÔNG ghi paidThrough như kỳ thuê khách đã trả tiền!
+  // Chỉ cấp hạn quyền sử dụng effectiveExpiresAt & endDate.
+  const isLegacy = rental.billing_policy === 'LEGACY_CUSTOMER_RENT';
+  const paidThrough = rental.status === 'PENDING_HANDOVER'
+    ? null
+    : (isLegacy ? next(rental.paid_through) : (rental.paid_through ?? null));
   // Keep financial paidThrough separate from granted/reduced effective entitlement.
   const effectiveExpiry = rental.status === 'PENDING_HANDOVER' ? null : next(rental.effective_expires_at);
   const updated = await tx.billingCharge.updateMany({ where: { chargeId: charge.charge_id, status: 'PENDING' },
@@ -72,9 +95,16 @@ export async function settleRentalRenewalInTx(tx: Prisma.TransactionClient, char
   await tx.outboxEvent.create({ data: { eventType: 'BILLING_CHARGE_SETTLED', status: 'PENDING', payload: {
     chargeId: String(charge.charge_id), purpose: 'RENTAL_EXTENSION', targetId: String(rental.rental_id), totalAmount: pricing.amount.toNumber(),
   } } });
-  await tx.rentalAuditLog.create({ data: { actorType: 'SYSTEM', action: 'RENEW_RENTAL', targetType: 'RENTAL',
+  await tx.rentalAuditLog.create({ data: { actorType: isStorePayer ? 'STORE' : 'SYSTEM', action: 'RENEW_RENTAL', targetType: 'RENTAL',
     targetId: rental.rental_id, beforeState: rental.status, afterState: rental.status === 'PENDING_HANDOVER' ? rental.status : 'ACTIVE',
-    amount: pricing.amount, metadata: { chargeId: String(charge.charge_id), quantity, months: line.durationCount },
+    amount: pricing.amount, metadata: {
+      chargeId: String(charge.charge_id),
+      quantity,
+      months: line.durationCount,
+      payer: isStorePayer ? 'STORE' : 'CUSTOMER',
+      payerStoreId: charge.payer_store_id ? String(charge.payer_store_id) : null,
+      billingPolicy: rental.billing_policy,
+    },
   } });
   return true;
 }

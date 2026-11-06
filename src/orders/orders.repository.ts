@@ -325,9 +325,21 @@ export class OrdersRepository {
         where: whereClause,
         include: {
           items: { include: { product: true } },
-          button: true,
-          customer: { include: { user: true } },
-          store: true,
+          button: {
+            select: { buttonId: true, buttonCode: true, deviceId: true, buttonName: true },
+          },
+          customer: {
+            select: {
+              customerId: true,
+              phone: true,
+              user: {
+                select: { userId: true, fullName: true, phone: true, email: true },
+              },
+            },
+          },
+          store: {
+            select: { storeId: true, name: true, code: true, phone: true, address: true },
+          },
           assignedDriver: {
             select: { userId: true, fullName: true, phone: true },
           },

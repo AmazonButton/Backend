@@ -15,24 +15,67 @@ const SAFE_USER_SELECT = {
 export class AdminRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async findPendingStores() {
-    return this.prisma.store.findMany({
-      where: { status: 'INACTIVE' },
-      include: {
-        owner: { select: SAFE_USER_SELECT },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  async findPendingStores(pagination?: { page?: number; pageSize?: number }) {
+    const rawPage = Number(pagination?.page);
+    const rawPageSize = Number(pagination?.pageSize);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    const where: any = { status: 'INACTIVE' };
+    const [items, total] = await Promise.all([
+      this.prisma.store.findMany({
+        where,
+        include: {
+          owner: { select: SAFE_USER_SELECT },
+        },
+        orderBy: [{ createdAt: 'desc' }, { storeId: 'desc' }],
+        skip,
+        take,
+      }),
+      this.prisma.store.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
   }
 
-  async findAllStores() {
-    return this.prisma.store.findMany({
-      orderBy: { name: 'asc' },
-      include: {
-        owner: { select: SAFE_USER_SELECT },
-        _count: { select: { iotButtons: true, products: true, orders: true } },
-      },
-    });
+  async findAllStores(query?: { page?: number; pageSize?: number; search?: string; status?: string }) {
+    const rawPage = Number(query?.page);
+    const rawPageSize = Number(query?.pageSize);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    const where: any = {};
+    if (query?.status?.trim()) {
+      where.status = query.status.trim();
+    }
+    if (query?.search?.trim()) {
+      const s = query.search.trim();
+      where.OR = [
+        { name: { contains: s, mode: 'insensitive' } },
+        { code: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.store.findMany({
+        where,
+        orderBy: [{ name: 'asc' }, { storeId: 'asc' }],
+        include: {
+          owner: { select: SAFE_USER_SELECT },
+          _count: { select: { iotButtons: true, products: true, orders: true } },
+        },
+        skip,
+        take,
+      }),
+      this.prisma.store.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
   }
 
   async findStoreById(storeId: bigint) {
@@ -138,21 +181,58 @@ export class AdminRepository {
     ]);
   }
 
-  async findUsers() {
-    return this.prisma.user.findMany({
-      select: {
-        userId: true,
-        email: true,
-        username: true,
-        fullName: true,
-        phone: true,
-        status: true,
-        createdAt: true,
-        customerProfile: true,
-        ownedStores: { select: { name: true, code: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  async findUsers(query?: { page?: number; pageSize?: number; search?: string; role?: string; status?: string }) {
+    const rawPage = Number(query?.page);
+    const rawPageSize = Number(query?.pageSize);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    const where: any = {};
+    if (query?.status?.trim()) {
+      where.status = query.status.trim();
+    }
+    if (query?.search?.trim()) {
+      const s = query.search.trim();
+      where.OR = [
+        { fullName: { contains: s, mode: 'insensitive' } },
+        { username: { contains: s, mode: 'insensitive' } },
+        { email: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+    if (query?.role?.trim()) {
+      const role = query.role.trim().toUpperCase();
+      if (role === 'CUSTOMER') {
+        where.customerProfile = { isNot: null };
+      } else if (role === 'STORE_OWNER') {
+        where.ownedStores = { some: {} };
+      }
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          userId: true,
+          email: true,
+          username: true,
+          fullName: true,
+          phone: true,
+          status: true,
+          createdAt: true,
+          customerProfile: true,
+          ownedStores: { select: { name: true, code: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }, { userId: 'desc' }],
+        skip,
+        take,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
   }
 
   async findUserById(userId: bigint) {
@@ -256,14 +336,46 @@ export class AdminRepository {
     return this.prisma.rentalPackage.update({ where: { packageId }, data });
   }
 
-  async findWithdrawals() {
-    return this.prisma.storeWithdrawal.findMany({
-      include: {
-        wallet: { include: { store: true } },
-        approvedByUser: { select: SAFE_USER_SELECT },
-      },
-      orderBy: { requestedAt: 'desc' },
-    });
+  async findWithdrawals(query?: { page?: number; pageSize?: number; status?: string; storeId?: string; fromDate?: string; toDate?: string }) {
+    const rawPage = Number(query?.page);
+    const rawPageSize = Number(query?.pageSize);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    const where: any = {};
+    if (query?.status?.trim()) {
+      where.status = query.status.trim().toUpperCase();
+    }
+    if (query?.storeId?.trim()) {
+      try {
+        where.wallet = { storeId: BigInt(query.storeId.trim()) };
+      } catch {
+        // ignore
+      }
+    }
+    if (query?.fromDate || query?.toDate) {
+      where.requestedAt = {};
+      if (query.fromDate) where.requestedAt.gte = new Date(query.fromDate);
+      if (query.toDate) where.requestedAt.lte = new Date(query.toDate);
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.storeWithdrawal.findMany({
+        where,
+        include: {
+          wallet: { include: { store: true } },
+          approvedByUser: { select: SAFE_USER_SELECT },
+        },
+        orderBy: [{ requestedAt: 'desc' }, { withdrawalId: 'desc' }],
+        skip,
+        take,
+      }),
+      this.prisma.storeWithdrawal.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
   }
 
   async findWithdrawalById(withdrawalId: bigint) {

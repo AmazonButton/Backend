@@ -123,18 +123,39 @@ export class RentalsService {
     return items.map(RentalResponseDto.fromEntity);
   }
 
-  private async verifyRentalOwnership(rentalId: bigint, user: any) {
+  private async authorizeRentalAccess(rentalId: bigint, user: any) {
     const rental = await this.rentalsRepo.findRentalById(rentalId);
     if (!rental) {
       throw new NotFoundException('Hợp đồng thuê không tồn tại');
     }
 
     const role = user?.role || user?.roleCode;
-    const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'SYSTEM_ADMIN';
+    const isAdmin = ['ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(role);
     if (isAdmin) {
-      return rental;
+      return { rental, actorType: 'ADMIN' as const, storeId: null };
     }
 
+    // Check Store Owner / Manager / Staff
+    const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STAFF'].includes(role);
+    const userStoreId = user?.storeId ? BigInt(user.storeId) : null;
+
+    if (isStoreRole && userStoreId) {
+      const store = await this.rentalsRepo.findActiveStoreById(userStoreId);
+      if (!store || store.status !== 'ACTIVE') {
+        throw new ForbiddenException('Cửa hàng của bạn chưa được kích hoạt hoặc đã tạm dừng hoạt động');
+      }
+
+      if (!rental.fulfillmentStoreId) {
+        throw new BadRequestException('Hợp đồng thuê chưa được phân bổ Cửa hàng phụ trách');
+      }
+      if (BigInt(rental.fulfillmentStoreId) !== userStoreId) {
+        throw new ForbiddenException('Bạn không có quyền truy cập vào hợp đồng của Cửa hàng khác');
+      }
+
+      return { rental, actorType: 'STORE' as const, storeId: userStoreId };
+    }
+
+    // Check Customer
     const currentCustomerProfileId = user?.customerProfileId?.toString();
     const currentUserId = (user?.userId || user?.id || user?.sub)?.toString();
 
@@ -142,10 +163,15 @@ export class RentalsService {
       (rental.customerId != null && rental.customerId.toString() === currentCustomerProfileId) ||
       rental.customer?.userId?.toString() === currentUserId;
 
-    if (!isCustomerMatch) {
-      throw new ForbiddenException('Bạn không có quyền truy cập vào hợp đồng thuê này');
+    if (isCustomerMatch) {
+      return { rental, actorType: 'CUSTOMER' as const, storeId: null };
     }
 
+    throw new ForbiddenException('Bạn không có quyền truy cập vào hợp đồng thuê này');
+  }
+
+  private async verifyRentalOwnership(rentalId: bigint, user: any) {
+    const { rental } = await this.authorizeRentalAccess(rentalId, user);
     return rental;
   }
 
@@ -171,7 +197,7 @@ export class RentalsService {
       }
     }
 
-    const amount = Number(rental.totalRentAmount);
+    const amount = Number(rental.depositAmount || rental.totalRentAmount);
     const txCode = `PAY-RNT-${rental.rentalCode}-${Date.now().toString().slice(-4)}`;
     const paymentLinkId = `pl_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const checkoutUrl = `https://pay.payos.vn/web/${paymentLinkId}`;
@@ -208,13 +234,55 @@ export class RentalsService {
     user: any,
   ): Promise<any> {
     const rentalId = BigInt(rentalIdStr);
-    const rental = await this.verifyRentalOwnership(rentalId, user);
+    const { rental, actorType, storeId } = await this.authorizeRentalAccess(rentalId, user);
 
     if (!['PENDING_HANDOVER', 'ACTIVE', 'EXPIRED'].includes(rental.status)) {
       throw new BadRequestException('Không thể gia hạn hợp đồng thuê đã kết thúc hoặc hủy');
     }
 
+    if (rental.pricingReviewRequired) {
+      throw new BadRequestException('RECONCILIATION_REQUIRED: Hợp đồng có chứng từ thu chưa được đối soát');
+    }
+
     const months = dto.additionalMonths ?? 1;
+
+    // P1: Phân nhánh chính sách billingPolicy
+    if (rental.billingPolicy === 'STORE_RENT_CUSTOMER_DEPOSIT') {
+      if (actorType === 'CUSTOMER') {
+        throw new BadRequestException(
+          'Hợp đồng thuộc chính sách Cửa hàng chi trả phí thuê (STORE_RENT_CUSTOMER_DEPOSIT). Khách hàng không phải đóng phí gia hạn thuê. Phí duy trì do Store phụ trách.',
+        );
+      }
+
+      const targetStoreId = rental.fulfillmentStoreId ? BigInt(rental.fulfillmentStoreId) : storeId;
+      if (!targetStoreId) {
+        throw new BadRequestException('Hợp đồng thuê chưa được phân bổ Cửa hàng phụ trách để tạo nghĩa vụ thanh toán');
+      }
+
+      const charge = await this.rentalsRepo.createStoreRentalExtensionObligation(
+        rentalId,
+        months,
+        targetStoreId,
+        BigInt(user.userId || user.id || user.sub),
+      );
+
+      return {
+        rentalId: rentalId.toString(),
+        rentalCode: rental.rentalCode,
+        status: rental.status,
+        billingPolicy: rental.billingPolicy,
+        payer: 'STORE',
+        storeId: targetStoreId.toString(),
+        chargeId: charge.chargeId.toString(),
+        chargeCode: charge.chargeCode,
+        totalAmount: Number(charge.totalAmount),
+        months,
+        paymentMethod: charge.paymentMethod,
+        message: 'Tạo nghĩa vụ gia hạn phí thuê cho Cửa hàng thành công.',
+      };
+    }
+
+    // LEGACY_CUSTOMER_RENT: Khách hàng chi trả qua PayOS
     const charge = await this.rentalsRepo.createRentalExtensionCharge(
       rentalId,
       months,
@@ -225,6 +293,8 @@ export class RentalsService {
       rentalId: rentalId.toString(),
       rentalCode: rental.rentalCode,
       status: rental.status,
+      billingPolicy: rental.billingPolicy,
+      payer: 'CUSTOMER',
       chargeId: charge.chargeId.toString(),
       chargeCode: charge.chargeCode,
       totalAmount: Number(charge.totalAmount),

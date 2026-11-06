@@ -1,3 +1,53 @@
+export interface RentalReturnSummaryDto {
+  returnId: string;
+  returnCode: string;
+  buttonId: string;
+  status: string;
+  requestedAt: Date;
+  receivedAt: Date | null;
+  inspectedAt: Date | null;
+  inspectionNote: string | null;
+}
+
+export interface DepositRefundSummaryDto {
+  refundId: string;
+  refundCode: string;
+  returnId: string | null;
+  amount: number;
+  status: string;
+  recipientBankBin: string | null;
+  recipientBankCode: string | null;
+  recipientBankName: string | null;
+  recipientAccountNumberMasked: string | null;
+  recipientAccountHolderName: string | null;
+  refundedAt: Date | null;
+  failureReason: string | null;
+  createdAt: Date;
+}
+
+export interface DepositLedgerBalancesDto {
+  collectedAmount: number;
+  heldAmount: number;
+  reservedAmount: number;
+  refundedAmount: number;
+}
+
+export interface RefundProgressDto {
+  pendingApprovalAmount: number;
+  pendingPayoutAmount: number;
+  refundedAmount: number;
+  totalPendingAmount: number;
+}
+
+export interface DepositBreakdownDto {
+  depositAmount: number;
+  holdingAmount: number;
+  pendingRefundAmount: number;
+  refundedAmount: number;
+  ledgerBalances: DepositLedgerBalancesDto;
+  refundProgress: RefundProgressDto;
+}
+
 export class RentalResponseDto {
   rentalId: string;
   rentalCode: string;
@@ -36,11 +86,18 @@ export class RentalResponseDto {
     buttonCode: string;
     name: string;
     status: string;
+    inventoryState: string;
+    canOrder: boolean;
   }>;
+  returns: RentalReturnSummaryDto[];
+  refunds: DepositRefundSummaryDto[];
+  depositBreakdown: DepositBreakdownDto;
   effectiveExpiresAt?: Date | null;
   paidThrough?: Date | null;
   monthlyRentPerButtonSnapshot?: number | null;
   pricingReviewRequired?: boolean;
+  billingPolicyReviewRequired?: boolean;
+  billingPolicy: string;
   remainingSeconds: number;
   canOrder: boolean;
   serverNow: string;
@@ -58,6 +115,70 @@ export class RentalResponseDto {
       remainingSeconds = Math.max(0, Math.floor((expiryTime - now.getTime()) / 1000));
       canOrder = remainingSeconds > 0 && r.status === 'ACTIVE';
     }
+
+    const returns: RentalReturnSummaryDto[] = (r.returns || []).map((ret: any) => ({
+      returnId: ret.returnId.toString(),
+      returnCode: ret.returnCode,
+      buttonId: ret.buttonId.toString(),
+      status: ret.status,
+      requestedAt: ret.createdAt,
+      receivedAt: ret.receivedAt || null,
+      inspectedAt: ret.inspectedAt || null,
+      inspectionNote: ret.inspectionNote || null,
+    }));
+
+    const refunds: DepositRefundSummaryDto[] = (r.refunds || []).map((ref: any) => ({
+      refundId: ref.refundId.toString(),
+      refundCode: ref.refundCode,
+      returnId: ref.returnId ? ref.returnId.toString() : null,
+      amount: Number(ref.amount || 0),
+      status: ref.status,
+      recipientBankBin: ref.recipientBin || ref.bankAccount?.bankBin || null,
+      recipientBankCode: ref.bankAccount?.bankCode || null,
+      recipientBankName: ref.bankAccount?.bankName || null,
+      recipientAccountNumberMasked: ref.recipientAccountNumberMasked || ref.bankAccount?.accountNumberMasked || null,
+      recipientAccountHolderName: ref.recipientAccountHolderName || ref.bankAccount?.accountName || null,
+      refundedAt: ref.refundedAt || null,
+      failureReason: ref.rejectionReason || ref.payoutError || null,
+      createdAt: ref.createdAt,
+    }));
+
+    // 1. Tiến độ yêu cầu (Request Progress): tách bạch chờ duyệt, chờ chi, đã hoàn
+    const pendingApprovalAmount = refunds
+      .filter((ref) => ref.status === 'PENDING_APPROVAL')
+      .reduce((sum, ref) => sum + ref.amount, 0);
+    const pendingPayoutAmount = refunds
+      .filter((ref) => ['PENDING_PAYOUT', 'APPROVED', 'PROCESSING'].includes(ref.status))
+      .reduce((sum, ref) => sum + ref.amount, 0);
+    const refundedProgressAmount = refunds
+      .filter((ref) => ['REFUNDED', 'COMPLETED', 'PAID'].includes(ref.status))
+      .reduce((sum, ref) => sum + ref.amount, 0);
+    const totalPendingAmount = pendingApprovalAmount + pendingPayoutAmount;
+
+    // 2. Số dư kế toán sổ cái (Accounting Ledger Balances): held / reserved / refunded
+    const ledgerCollected = Number(r.deposit?.collectedAmount ?? r.depositAmount ?? 0);
+    const ledgerHeld = Number(r.deposit?.heldAmount ?? (r.status === 'ACTIVE' ? Math.max(0, ledgerCollected - totalPendingAmount - refundedProgressAmount) : 0));
+    const ledgerReserved = Number(r.deposit?.refundReservedAmount ?? pendingPayoutAmount);
+    const ledgerRefunded = Number(r.deposit?.refundedAmount ?? refundedProgressAmount);
+
+    const depositBreakdown: DepositBreakdownDto = {
+      depositAmount: ledgerCollected,
+      holdingAmount: ledgerHeld,
+      pendingRefundAmount: totalPendingAmount, // Hiển thị đầy đủ cho client (chờ duyệt + chờ chi)
+      refundedAmount: ledgerRefunded,
+      ledgerBalances: {
+        collectedAmount: ledgerCollected,
+        heldAmount: ledgerHeld,
+        reservedAmount: ledgerReserved, // Không cộng pending approval vào reserved, giữ nguyên ý nghĩa sổ cái
+        refundedAmount: ledgerRefunded,
+      },
+      refundProgress: {
+        pendingApprovalAmount,
+        pendingPayoutAmount,
+        refundedAmount: refundedProgressAmount,
+        totalPendingAmount,
+      },
+    };
 
     return {
       rentalId: r.rentalId.toString(),
@@ -90,6 +211,8 @@ export class RentalResponseDto {
       paidThrough: handedOver ? (r.paidThrough || null) : null,
       monthlyRentPerButtonSnapshot: r.monthlyRentPerButtonSnapshot == null ? null : Number(r.monthlyRentPerButtonSnapshot),
       pricingReviewRequired: r.pricingReviewRequired ?? r.monthlyRentPerButtonSnapshot == null,
+      billingPolicyReviewRequired: Boolean(r.billingPolicyReviewRequired),
+      billingPolicy: r.billingPolicy || 'STORE_RENT_CUSTOMER_DEPOSIT',
       remainingSeconds,
       canOrder,
       serverNow: now.toISOString(),
@@ -106,9 +229,14 @@ export class RentalResponseDto {
       buttons: (r.buttons || []).map((b: any) => ({
         buttonId: b.buttonId.toString(),
         buttonCode: b.buttonCode,
-        name: b.name,
+        name: b.buttonName || b.name || 'Smart Order Button',
         status: b.status,
+        inventoryState: b.inventoryState || 'IN_PLATFORM_WAREHOUSE',
+        canOrder: Boolean(b.canOrder ?? (b.status === 'ACTIVE' && b.inventoryState !== 'RETURN_IN_TRANSIT')),
       })),
+      returns,
+      refunds,
+      depositBreakdown,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     };

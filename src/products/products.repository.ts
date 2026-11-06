@@ -14,15 +14,34 @@ export interface ProductImageInput {
 export class ProductsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async findMany(storeId?: bigint, pagination?: { page?: number; pageSize?: number }) {
+  async findMany(
+    storeId?: bigint,
+    options?: { page?: number; pageSize?: number; search?: string; category?: string },
+  ) {
     const whereClause: any = {};
     if (storeId) {
       whereClause.storeId = storeId;
     }
-    const page = pagination?.page && pagination.page > 0 ? Number(pagination.page) : 1;
-    const pageSize = pagination?.pageSize && pagination.pageSize > 0 ? Number(pagination.pageSize) : undefined;
-    const skip = pageSize ? (page - 1) * pageSize : undefined;
-    const take = pageSize ? pageSize : undefined;
+    if (options?.category?.trim()) {
+      whereClause.category = {
+        categoryName: { contains: options.category.trim(), mode: 'insensitive' },
+      };
+    }
+    if (options?.search?.trim()) {
+      const s = options.search.trim();
+      whereClause.OR = [
+        { productName: { contains: s, mode: 'insensitive' } },
+        { productCode: { contains: s, mode: 'insensitive' } },
+        { description: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+
+    const rawPage = Number(options?.page);
+    const rawPageSize = Number(options?.pageSize);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
 
     const [items, total] = await Promise.all([
       this.prisma.product.findMany({
@@ -34,14 +53,14 @@ export class ProductsRepository {
             orderBy: { displayOrder: 'asc' },
           },
         },
-        orderBy: { createdAt: 'desc' },
-        ...(skip !== undefined ? { skip } : {}),
-        ...(take !== undefined ? { take } : {}),
+        orderBy: [{ createdAt: 'desc' }, { productId: 'desc' }],
+        skip,
+        take,
       }),
       this.prisma.product.count({ where: whereClause }),
     ]);
 
-    return { items, total, page, pageSize: pageSize || total };
+    return { items, total, page, pageSize };
   }
 
   async findById(productId: bigint) {

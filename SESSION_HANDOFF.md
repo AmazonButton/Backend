@@ -1,5 +1,291 @@
 # Project Handoff & Session Context
 
+### [2026-11-06] Closed Acceptance Review: Zero-Typecheck Errors, Elimination of Access Fail-Open, Handover paidThrough Unification & Rental-Level Migration Conflict Guard
+- **Point 1: Full Project Typecheck Resolution (TS2554)**:
+  * Resolved constructor argument overflow in `tests/rental-renewal-receipt.spec.ts`: Removed extraneous 3rd argument passed to `new BillingChargesService(mockBillingRepo, {} as any)`.
+  * Verified with `npx tsc --noEmit --incremental false`: Exited with code 0 (zero TypeScript errors project-wide).
+- **Point 2: Eliminated Store Access Fail-Open on Missing Bindings (P1)**:
+  * Hardened `BillingChargesService.getChargeById()`:
+    - Under Store-paid charges (`isStorePayer`), enforced mandatory non-null bindings:
+      `charge.payerStoreId != null`
+      `rental.fulfillmentStoreId != null`
+      `userStoreId === payerStoreId === fulfillmentStoreId`
+    - Any missing binding (`payerStoreId = null` or `fulfillmentStoreId = null`) or mismatch now deterministically throws `403 Forbidden` before returning the charge or generating payment links.
+- **Point 3: Handover & Renewal paidThrough Policy Unification (P1)**:
+  * Aligned `handoverRentalButtonsInTx()` in `src/rentals/rental-handover.transaction.ts` with the renewal settlement rule:
+    - If `rental.billing_policy === 'STORE_RENT_CUSTOMER_DEPOSIT'`, `paidThrough` strictly remains `null` (since customer never pays monetary rent; early renewal paid by store grants usage via `effectiveExpiresAt` / `endDate` only).
+    - If `rental.billing_policy === 'LEGACY_CUSTOMER_RENT'`, `paidThrough` is updated to cover customer-paid rent months.
+    - Updated `scratch/test_backend_requirements.ts` assertion verifying `paidThrough === null` under `STORE_RENT_CUSTOMER_DEPOSIT`.
+- **Point 4: Rental-Level Initial Charge Conflict & LEFT JOIN Empty Charge Detection in Migration (P1)**:
+  * Overhauled backfill logic in `prisma/migrations/20261106213000_rental_billing_policy_snapshot/migration.sql`:
+    - Converted join to `LEFT JOIN billing_charge_lines bcl ON bc.charge_id = bcl.charge_id`:
+      * Ensures initial charges with zero lines (empty charges) are preserved in the relational join and counted by `COUNT(DISTINCT bc.charge_id)`.
+      * Prevents `INNER JOIN` from silently dropping empty charges, which would have falsely produced `COUNT(DISTINCT bc.charge_id) = 1` for rentals having 1 valid charge + 1 empty charge.
+    - Grouped strictly at the rental level (`GROUP BY bc.target_id`):
+      * Step 0: Sets all rentals to `billing_policy_review_required = true` by default.
+      * Step 1: CLEAR LEGACY strictly requires `COUNT(DISTINCT bc.charge_id) = 1` and lines matching legacy rent + deposit.
+      * Step 2: CLEAR DEPOSIT ONLY strictly requires `COUNT(DISTINCT bc.charge_id) = 1` and line matching deposit only.
+    - Conflicting initial charges (e.g. rental having both a legacy charge and a deposit-only charge, or 1 valid charge + 1 empty charge) fail the `COUNT(DISTINCT bc.charge_id) = 1` condition, safely remaining `billing_policy_review_required = true` for manual audit.
+    - Added relational algebra regression test in `tests/rental-renewal-receipt.spec.ts` asserting conflicting charges and 1 valid charge + 1 empty charge remain flagged for review.
+- **Verification Evidence**:
+  * `npx tsc --noEmit --incremental false`: Exited with code 0 (zero errors).
+  * `npm run build`: Exited with code 0 (clean production build).
+  * `npx tsx tests/rental-renewal-receipt.spec.ts`: PASSED all acceptance tests (including missing payer/fulfillment 403 blocks and conflicting charge migration simulation).
+  * `npx tsx scratch/test_backend_requirements.ts`: PASSED (all 28 assertions verified).
+  * `npx tsx tests/store-cash-settlement.spec.ts`: PASSED.
+  * `git diff --check`: Clean (zero trailing whitespace).
+
+### [2026-11-06] Closed Acceptance Review: Store Renewal Settlement Pipeline, Actor-Based Authorization & Strict Migration Partitioning
+- **P1: Store Extension Charge & Settlement Pipeline Resolution**:
+  * Decoupled target from payer: `createStoreRentalExtensionObligation()` now provisions `targetType: 'RENTAL'`, `targetId: rentalId`, `payerStoreId: actorStoreId`, and line `STORE_RENT`. This preserves the persistent FK relationship to the rental while satisfying `recordRentalPayosReceiptInTx` (`target_type === 'RENTAL'`).
+  * `settleRentalRenewalInTx()` in `src/rentals/rental-renewal.transaction.ts`:
+    - Checks `line.lineType === 'STORE_RENT' || charge.payer_store_id != null`.
+    - Verifies `charge.payer_store_id === rental.fulfillment_store_id` under `STORE_RENT_CUSTOMER_DEPOSIT`.
+    - Synchronizes `paidThrough`: Only increments `paidThrough` for `LEGACY_CUSTOMER_RENT`; preserves `paidThrough = null` for `STORE_RENT_CUSTOMER_DEPOSIT` so customer financial accounting is not distorted.
+    - Atomically extends `effectiveExpiresAt` and `endDate`, updates button `canOrder: true`, records outbox event `BILLING_CHARGE_SETTLED`, and writes audit log with `payer: 'STORE'`.
+    - Idempotency & Replay Protection: Prevents duplicate term increments on replayed receipts; safely diverts money arriving for terminal/cancelled contracts into `billingOverpaymentObligation` (`status: 'PENDING_RECONCILIATION'`).
+- **P1: Actor-Based Rental Access Authorization**:
+  * Implemented `authorizeRentalAccess(rentalId, user)` in `src/rentals/rentals.service.ts`:
+    - Customer: Validates ownership; strictly blocks RENT charge creation under `STORE_RENT_CUSTOMER_DEPOSIT` (400 Bad Request).
+    - Store Owner / Manager / Staff: Verifies user's store exists and is `status = 'ACTIVE'` from DB; verifies `rental.fulfillmentStoreId === user.storeId` (403 Forbidden on wrong store or inactive store).
+    - Admin: Grants platform administration access.
+    - Repository invariant: Blocks Store obligation creation if `fulfillment_store_id` is missing.
+    - Added service-level regression tests asserting Store Owner authorization, wrong store rejection, inactive store rejection, and customer extension block.
+- **P1: Migration Backfill Partitioning & Ambiguity Containment**:
+  * Updated `prisma/migrations/20261106213000_rental_billing_policy_snapshot/migration.sql`:
+    - Added column `payer_store_id BIGINT` with FK to `store(store_id)` on `billing_charges`.
+    - Step 1: CLEAR_LEGACY (Charge `RENTAL_INITIAL` with 1 RENT line > 0 and 1 DEPOSIT line >= 0) -> `billing_policy = 'LEGACY_CUSTOMER_RENT'`, `pricing_review_required = false`.
+    - Step 2: CLEAR_DEPOSIT_ONLY (Charge `RENTAL_INITIAL` with 1 DEPOSIT line > 0 and 0 RENT lines) -> `billing_policy = 'STORE_RENT_CUSTOMER_DEPOSIT'`, `pricing_review_required = false`.
+    - Step 3: AMBIGUOUS (Charges without lines, conflicting line amounts, missing initial charges) -> `pricing_review_required = true`.
+    - Handover and renewal pipelines strictly reject un-reconciled contracts (`if (rental.pricing_review_required) throw BadRequestException('RECONCILIATION_REQUIRED')`).
+- **Verification Evidence**:
+  * Backend Compilation: `npm run build` executed and exited with code 0 (zero errors).
+  * Automated Test Suites:
+    - `tests/rental-renewal-receipt.spec.ts` -> PASSED (Tests Store obligation creation, PayOS receipt settlement, replay protection, terminal overpayment, and service-level authorization).
+    - `scratch/test_backend_requirements.ts` -> PASSED (28/28 assertions verified).
+    - `tests/store-cash-settlement.spec.ts` -> PASSED.
+  * Git Formatting: `git diff --check` exited with code 0 (zero trailing whitespace).
+- **P1: Persistent Billing Policy Snapshot & Database Immutability**:
+  * Migration `prisma/migrations/20261106213000_rental_billing_policy_snapshot/migration.sql`: Added `billing_policy` column with default `'STORE_RENT_CUSTOMER_DEPOSIT'` to `button_rentals`, check constraint `chk_button_rentals_billing_policy`, index `idx_button_rentals_billing_policy`, backfill based on charge lines (charges with RENT line -> `LEGACY_CUSTOMER_RENT`; deposit-only -> `STORE_RENT_CUSTOMER_DEPOSIT`), and PostgreSQL immutable trigger `trg_button_rental_policy_immutable` preventing post-creation policy mutations.
+  * Schema & DTO Alignment: Synchronized `prisma/schema.prisma` and `BRD/supabase_schema_ready.sql`. `RentalResponseDto` now exposes `billingPolicy`.
+  * `src/rentals/rentals.repository.ts:createRental`: Persists snapshot `billingPolicy` directly into `button_rentals` row upon contract creation.
+- **P1: Extension Policy Branching & Store Fee Obligation**:
+  * `src/rentals/rentals.repository.ts:createRentalExtensionCharge`: Strictly enforces policy branching. Throws `BadRequestException('NON_BILLABLE_TO_CUSTOMER')` if rental is `STORE_RENT_CUSTOMER_DEPOSIT`, preventing customer from being charged RENT.
+  * `createStoreRentalExtensionObligation`: Implemented store obligation creation (`targetType: 'STORE'`, `targetId: storeId`, `purpose: 'RENTAL_EXTENSION'`, `lineType: 'STORE_SUBSCRIPTION'`) bound to `rental.fulfillment_store_id`.
+  * `src/rentals/rentals.service.ts:extendRentalContract`: Dispatches based on snapshot `rental.billingPolicy`:
+    - `STORE_RENT_CUSTOMER_DEPOSIT`: Rejects customer billing requests with descriptive guidance; dispatches store obligation if called by store manager/admin.
+    - `LEGACY_CUSTOMER_RENT`: Preserves legacy customer PayOS billing quote flow.
+- **P2: Live Helper Regression Testing (Handover 3 + 1 Months)**:
+  * `scratch/test_backend_requirements.ts`: Replaced copied formula `mockHandoverContext()` with direct invocation of `handoverRentalButtonsInTx()` using a mock TransactionClient.
+  * Validated real values passed to `tx.buttonRental.update` (`status: 'ACTIVE'`, `monthsRented: 4`, `effectiveExpiresAt: 120 days`, `paidThrough: 30 days` under new policy vs `120 days` under legacy), `tx.ioTButton.update` (`inventoryState: 'IN_CUSTOMER_CUSTODY'`, `canOrder: true`), and `tx.rentalAuditLog.create` (`paidMonths: 4`, `initialGrantedMonths: 3`, `extensionMonths: 1`).
+- **Verification Evidence**:
+  * Backend Compilation: `npm run build` executed and exited with code 0 (zero errors).
+  * Invariant Verification:
+    - `scratch/test_backend_requirements.ts` -> PASSED (All assertions passed).
+    - `tests/rental-renewal-receipt.spec.ts` -> PASSED (Tests customer quote rejection under new policy and store obligation creation).
+    - `tests/store-cash-settlement.spec.ts` -> PASSED.
+  * Git Hygiene: `git diff --check` executed with code 0 (zero whitespace violations).
+
+### [2026-11-06] Resolved 5 Critical Code Review Points: Handover Term Isolation, Deposit/Ledger Separation, Policy Snapshots & UI Scalability
+- **P1: Handover Non-Overlapping Term Calculation**:
+  * `src/rentals/rental-handover.transaction.ts`: Disentangled `initialGrantedMonths` from `extensionMonths`.
+  * Initial granted term is accurately calculated via `initialPaidRentMonths > 0 ? initialPaidRentMonths : Math.max(1, Number(rental.months_rented) - extensionMonths)`.
+  * Handover total entitlement: `totalEntitlementMonths = initialGrantedMonths + extensionMonths` (e.g., initial 3 months deposit + 1 month early renewal grants 4 months total, preventing term loss).
+  * `paidThrough`: Strictly maintained as `null` when customer only closed deposit (`(initialPaidRentMonths + extensionMonths) === 0`); only set if customer/store actually settled monetary rent.
+- **P1: Store Rental Fee Model & Contract Policy Snapshot**:
+  * `src/rentals/rentals.repository.ts`: Supported explicit snapshot `policy: 'LEGACY_CUSTOMER_RENT' | 'STORE_RENT_CUSTOMER_DEPOSIT'`.
+  * Legacy policy creates bundled charge (2 lines: RENT + DEPOSIT, e.g. 870k), while new policy creates deposit-only charge (1 line: DEPOSIT, e.g. 600k).
+  * `tests/rental-renewal-receipt.spec.ts`: Split test verification into Group 1 (Legacy bundled contract) and Group 2 (New deposit-only contract).
+- **P2: Deposit Breakdown DTO (Ledger Balances vs Request Progress Separation)**:
+  * `src/rentals/dto/rental-response.dto.ts`: Disentangled accounting ledger balances (`collectedAmount`, `heldAmount`, `reservedAmount`, `refundedAmount`) from operational request progress (`pendingApprovalAmount`, `pendingPayoutAmount`, `refundedAmount`, `totalPendingAmount`).
+  * Ledger `reservedAmount` is strictly bound to `r.deposit.refundReservedAmount` and is NOT prematurely inflated by unapproved requests (`PENDING_APPROVAL`).
+  * User-facing `pendingRefundAmount` aggregates `pendingApprovalAmount + pendingPayoutAmount` so customers clearly see pending funds (e.g. 200k/400k) without reporting 0đ.
+- **P2: Notification Bell Cooldown Robustness**:
+  * `Frontend/src/components/common/NotificationBellPopover.tsx`: Replaced blanket `.catch(() => empty)` error swallowing with `Promise.allSettled`.
+  * Cooldown timestamps are recorded strictly per source (`${identityKey}:${source}`) only upon fulfilled requests, enabling instant retries for failed endpoints without locking the UI.
+- **P2: Product Assignment Modal Scalability**:
+  * `Frontend/src/pages/store/StoreDevicesPage.tsx`: Replaced static 100-item dropdown with server-side searchable and paginated modal selection ("Tải thêm sản phẩm (Trang tiếp theo)"), querying `/products?page=...&search=...` with default `pageSize: 20`.
+- **Formatting & Whitespace Hygiene**:
+  * Removed trailing whitespace in `BRD/supabase_schema_ready.sql:1991`.
+  * Verified `git diff --check` exited with code 0 (zero whitespace or diff formatting violations).
+- **Verification Evidence**:
+  * Frontend TSX Syntax: Parsed `StoreProductsPage.tsx`, `StoreDevicesPage.tsx`, and `NotificationBellPopover.tsx` with TypeScript AST parser -> 0 syntax errors.
+  * Backend Compilation: `npm run build` executed and exited with code 0 (zero errors).
+  * Unit & Invariant Tests:
+    - `scratch/test_backend_requirements.ts` -> 28/28 assertions PASSED (100%).
+    - `tests/rental-renewal-receipt.spec.ts` -> PASSED.
+    - `tests/store-cash-settlement.spec.ts` -> PASSED.
+
+
+### [2026-11-06] Implementation of Mobile Backend Requirements (6-11-2026 Update)
+- **P1: Customer Deposit Separation from Store Rent**:
+  * `src/rentals/rentals.repository.ts`: Initial rental billing charge created upon rental contract creation now contains strictly `totalAmount: computedPricing.depositTotal` with a single line of type `DEPOSIT`. The customer is no longer charged store rent.
+  * `src/billing-charges/billing-charges.service.ts`: `createInitialRentalCharge` now provisions `totalAmount: pricing.depositTotal.toNumber()` and maps only the `DEPOSIT` line.
+  * `src/rentals/rentals.service.ts`: `createRentalPaymentRequest` fallback now requests `rental.depositAmount` instead of total rent amount.
+  * `src/store-cash/store-cash-settlement.transaction.ts`: Updated `settleInitialRentalInTx` to accept both deposit-only charges (new requirement) and legacy combined charges without throwing `INVALID_INITIAL_CHARGE_LINES`.
+  * `src/rentals/rental-handover.transaction.ts`: Allowed handover to activate when deposit is paid (`PENDING_HANDOVER`), calculating `paidMonths` from `rental.months_rented` when rent is separate.
+- **P1: Customer Return & Deposit Refund Tracking Telemetry**:
+  * Extended `RentalResponseDto` in `src/rentals/dto/rental-response.dto.ts` with:
+    - `returns`: Array of `{ returnId, returnCode, buttonId, status, requestedAt, receivedAt, inspectedAt, inspectionNote }`.
+    - `refunds`: Array of `{ refundId, refundCode, returnId, amount, status, recipientBankBin, recipientBankCode, recipientBankName, recipientAccountNumberMasked, recipientAccountHolderName, refundedAt, failureReason, createdAt }`.
+    - `depositBreakdown`: `{ depositAmount, holdingAmount, pendingRefundAmount, refundedAmount }`.
+    - Privacy & Security Invariant: Zero leakage of raw or encrypted bank credentials (`recipientAccountNumberMasked` only; `accountNumberEncrypted` and `accountNumberHash` strictly omitted).
+    - Multi-Button Rental Invariant: `RentalResponseDto.buttons` now includes `inventoryState` and `canOrder` for each button individually.
+  * `src/rentals/rentals.repository.ts`: Added `deposit: true`, `returns: { orderBy: { createdAt: 'desc' } }`, and `refunds: { include: { bankAccount: true }, orderBy: { createdAt: 'desc' } }` across `findRentalById`, `listCustomerRentals`, `listAllRentalsAdmin`, and `updateRentalStatus`.
+- **P2: Device State & Permission Telemetry**:
+  * `src/devices/devices.service.ts`: `formatButton()` now evaluates and outputs `canOrder`, `canOrderReason` (e.g. `'Thiết bị đang trong quá trình trả hàng'`, `'Hợp đồng thuê đã hết hạn sử dụng'`), `inventoryState`, `rentalId`, `rentalStatus`, and `rental` telemetry (effective expiry and remainingSeconds).
+  * `src/devices/devices.repository.ts`: Added `rental` selection across `findMany`, `findById`, `findByDeviceId`, `findByIdentifier`, `create`, and `update`.
+- **P2: Product Filtering & Pagination Standardization**:
+  * Verified server-side `search` and `category` filtering in `src/products/products.repository.ts` and `products.controller.ts`.
+  * Verified canonical pagination metadata `{ page, pageSize, totalItems, totalPages, hasNextPage, hasPrevPage }` with defensive `Number.isSafeInteger`.
+- **Verification Evidence**:
+  * TypeScript Build: `npm run build` executed and exited with code 0 (zero errors).
+  * Suite Verification: `scratch/test_backend_requirements.ts` executed via `npx tsx` and verified 100% pass across all 4 test categories (Pricing calculation, Rental return & refund telemetry, Device permission & canOrder formatting, Canonical pagination envelope).
+
+### [2026-11-06] Resolved 4 Code Review Invariants: Safe Admin Pagination, Server Filtering & Notification Identity Scope
+- **P1: Admin Full Pagination & Stable Sorting Implemented**:
+  * Created src/admin/dto/admin-list-query.dto.ts (AdminStoresQueryDto, AdminUsersQueryDto, AdminWithdrawalQueryDto).
+  * Implemented end-to-end pagination (DTO -> Controller -> Service -> Repository) for /admin/stores, /admin/stores/pending, /admin/users, and /admin/withdrawals.
+  * Enforced server-side status/date/search filtering before pagination with exact where-clause COUNT(*).
+  * Added stable secondary sorting criteria ([{ createdAt: desc }, { id: desc }]) preventing pagination drift.
+- **P1: Frontend Server-Side Pagination & Inventory Analytics Decoupling**:
+  * StoreDevicesPage.tsx: Added Previous/Next navigation controls, page indicators, and item count display; shifted search and status filters to server-side query params.
+  * StoreProductsPage.tsx: Added Previous/Next navigation controls; decoupled inventory metrics (totalOnStock, totalReserved, lowStockSkus) to fetch from /analytics/inventory server summary rather than summing single-page slices.
+- **P1: Strict Boundary Validation & Offset Defense (/devices & /products)**:
+  * Created DeviceQueryDto with class-validator (@IsInt, @Min(1), @Max(100) pageSize, @Max(500) page).
+  * Bound ValidationPipe({ transform: true, whitelist: true }) at HTTP boundaries in devices.controller.ts, products.controller.ts, and admin.controller.ts (rejects page=Infinity, pageSize=1.5 with 400 Bad Request).
+  * Added defensive Number.isSafeInteger validation in devices.repository.ts, products.repository.ts, and pagination.helper.ts.
+- **P2: Notification Bell Identity-Scoped Cooldown**:
+  * NotificationBellPopover.tsx: Isolated cache cooldown map and in-flight tracking per identityKey (userId_role_storeId).
+  * Timestamp is recorded strictly on HTTP success for the active identity, never on errors or component unmount.
+- **Verification**:
+  * Backend build: npm run build exited with code 0 (0 compilation errors).
+  * Defensive pagination unit tests passed cleanly across all edge cases (null, Infinity, float, negative numbers).
+
+### [2026-11-06] Comprehensive API Pagination & Anti-Lag Optimization (Backend & Frontend)
+- **Architectural Root Cause Resolved**:
+  * Identified that GET /products and GET /devices were executing unbounded database queries without take/skip limits, while Admin endpoints (users, stores, withdrawals) returned entire tables into memory.
+  * NotificationBellPopover on Frontend was firing 4 parallel unbounded GET requests on every route transition.
+  * Prisma ORM on orders was pulling redundant store, user, and device attributes, adding serialization and network latency.
+- **Backend Implementation Verified**:
+  * Products: Enforced default page=1, pageSize=20 (capped at 100) in ProductQueryDto, products.repository.ts, and products.service.ts.
+  * Devices: Added pagination (skip/take) to devices.repository.ts and devices.service.ts, returning uniform data array with pagination metadata in devices.controller.ts; capped getUnassignedDevices() at 50.
+  * Admin Endpoints: Capped findUsers() at 100, findAllStores() at 50, findPendingStores() at 50, and findWithdrawals() at 50 in admin.repository.ts.
+  * Orders Repository: Trimmed Prisma include trees in findPaginatedOrders to select only required scalar columns for store, button, customer, and customer user, drastically reducing payload size and network round-trips.
+  * Build Verification: Verified npm run build compiled with 0 errors.
+- **Frontend Implementation Verified**:
+  * NotificationBellPopover: Enforced pageSize=15 for /orders, /devices, /admin/stores/pending, and /admin/withdrawals; added 60-second in-memory timestamp debounce to prevent duplicate queries on route switches.
+  * StoreProductsPage & StoreDevicesPage: Passed explicit pageSize=50 and page=1 parameters.
+
+### [2026-11-06] Supabase Index Tuning, Zero-Cost Backup Workflow & Multi-Cloud Latency Optimization
+- **Production Supabase Index Tuning (213 Indexes Total)**:
+  * Deployed BRD/optimize_database_performance_indexes.sql directly onto Supabase Production (aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres).
+  * Added 18 targeted composite indexes covering hot paths (orders, order_item, product, payment_transaction, iot_button, users, driver_shifts, inventory).
+  * Ran ANALYZE across all core tables; verified total active index count increased from ~190 to 213 indexes.
+  * Scrubbed all temporary runner scripts immediately (run_indexes_temp.js, scratch/run_indexes.js) - zero credentials retained.
+- **Latency Diagnosis & Multi-Cloud Routing Re-Weighting**:
+  * Root Cause of Latency: Deep network benchmark revealed that Cloudflare Worker previously dispatched 70% of API traffic to AWS EC2 in Sydney (ap-southeast-2), forcing an extra 320ms TCP RTT and a ~550ms cross-ocean database query loop between Sydney and Supabase Tokyo (aws-0-ap-northeast-1).
+  * Warm Query Benchmarks: Render Node 1 post-optimization warm response times confirmed at ~589ms - 614ms (compared to 1.2s - 1.5s on AWS EC2).
+  * Cloudflare Worker Optimization (cloudflare-worker/worker.js):
+    - Adjusted origin dispatch weights: 50% Node 1 (Render Primary), 35% Node 2 (Render Secondary), 15% Node 3 (AWS EC2 failover/backup).
+    - 85% of live traffic now hits low-latency Render nodes close to Supabase Tokyo.
+    - Automated keep-alive in worker (ctx.waitUntil) and cron trigger (wrangler.toml, every 5 min) prevents Render instances from sleeping.
+- **Zero-Cost Automated Database Backup Workflow**:
+  * Created .github/workflows/database-backup.yml: Runs daily at 02:00 UTC via GitHub Actions, dumps database using pg_dump | gzip -9, uploads encrypted backup to GitHub Artifacts with 90-day retention for 0đ cost.
+  * Verified anti-corruption safeguards: documented SELECT ... FOR UPDATE row locking, soft deletes, and ON DELETE RESTRICT constraints.
+- **IoT Button Hardware (ESP32-S3)**:
+  * Successfully resolved COM3 serial port lock caused by background serial-monitor.exe.
+  * Uploaded and verified optimized firmware v4.5 onto device BTN-8829-WTR with 2.8s total click-to-dashboard cycle.
+
+### [2026-11-05] Enhanced Column Descriptions for All 64 Tables in BRD/MO_TA_64_BANG_DATABASE.md
+- Scope: Fully enriched `BRD/MO_TA_64_BANG_DATABASE.md` with detailed, per-column descriptions across all 64 tables.
+- Detail Level: Every table now features an itemized list of critical columns (PK, FK, business statuses, cryptographic hashes, security flags, encrypted fields) with plain Vietnamese explanations of their exact storage and business purpose.
+
+### [2026-11-05] Created Comprehensive Markdown Documentation for 64 Tables & All Diagrams
+- Scope: Drafted 4 clean, human-readable Vietnamese Markdown specification documents in `BRD/`:
+  1. `BRD/MO_TA_64_BANG_DATABASE.md`: Plain Vietnamese description of all 64 tables across 10 functional domains, listing core role, business purpose, and key columns (PK, FK, business status).
+  2. `BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md`: Plain Vietnamese description of 9 State Machine diagrams (Order, IoT Device, Store Withdrawal, Button Rental, eKYC, Driver Shift, Customer Bank 2k, Store Subscription, Payment Transaction) with status sequences and real-world meanings.
+  3. `BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md`: Plain Vietnamese description of 13 Activity diagrams (ACT 1 to ACT 13) detailing swimlanes, step-by-step golden paths, and decision/exception handlings.
+  4. `BRD/MO_TA_SO_DO_USECASE.md`: Plain Vietnamese description of the Use Case diagram (System boundary, 6 Actors, 30 Use Cases organized by role).
+
+### [2026-11-05] Added [UC] Core System Use Case Diagram (24 Pages Total)
+- Scope: Added Page 24 (`[UC] Core System Use Case Diagram`, id `page_uc_system_overview`) to [BRD/ERD_Level_3_Editable.drawio].
+- Diagram Architecture & Verification:
+  * Draw.io Page Count: 24 pages total verified via Draw.io MCP `list_pages`.
+  * Total Vertices: 40 vertices (6 Actors, 30 Core Use Cases, 1 System Boundary, 3 Domain Section Headers).
+  * Associations & Relationships: 35 clean association edges, 0 detached edges.
+  * System Boundary: `IOT CLICK-TO-ORDER PLATFORM (BACKEND ARCHITECTURE)` encapsulating all 30 use cases divided into 3 visual clusters:
+    1. Customer & IoT Device Use Cases (Auth, eKYC, Bank 2k, Zero-Touch Pairing, Button Click Order, App Order, Remote Config, Store Migration, Tracking, Deposit Refund, Battery Telemetry).
+    2. Payment, Reconciliation & Logistics (PayOS VietQR, Store Cash Collection, Order Preparation & Dispatch, Driver Shift, Delivery Duty & Photo Proof, Overpayment Settlement).
+    3. Store Operations & Admin Governance (Merchant Onboarding, Products/Pricing/Discounts, Inventory, Rentals, Store Wallet & PayOS Payout, Monthly Billing Charges, Admin Approvals, RBAC, Central Stock, Platform Analytics).
+  * Actors: Customer, IoT Physical Button (ESP32-S3), Didit AI Engine, Store Owner / Staff, Driver / Shipper, System Admin.
+
+### [2026-11-05] Added [ACT 12] Store Onboarding & [ACT 13] Store Migration Activity Diagrams (23 Pages Total)
+- Scope: Added Page 22 (`[ACT 12] Store Merchant Onboarding & Admin Approval Flow`, id `page_act_store_onboarding`) and Page 23 (`[ACT 13] Customer Store Migration & Button Reassignment Flow`, id `page_act_store_migration`) to [BRD/ERD_Level_3_Editable.drawio].
+- Verification Evidence:
+  * Draw.io Page Count: 23 pages total verified via Draw.io MCP `list_pages`.
+  * Page 22 (`page_act_store_onboarding`): 4 swimlanes (`Store Applicant / Merchant Portal`, `Backend API & Provisioning Service`, `Admin / Compliance Reviewer`, `PostgreSQL Database`), 23 vertices, 17 edges, 0 detached edges.
+  * Page 23 (`page_act_store_migration`): 4 swimlanes (`Customer / Mobile App`, `Backend API & Migration Engine`, `Old Store & New Target Store`, `PostgreSQL Database`), 21 vertices, 16 edges, 0 detached edges.
+  * Draggable Hierarchy: Preserved container-parent structure (`pool_a12` -> `lane_a12_*`, `pool_a13` -> `lane_a13_*`) with relative coordinates and professional UML 2.x styling.
+
+### [2026-11-05] Full Foreign Key Relationships Linked for All 64 Tables in ERD (99 Edges)
+- Scope: Added 18 missing foreign key relationship edges to Page 1 ([BRD/ERD_Level_3_Editable.drawio]) for all newly added tables.
+- Verification Evidence:
+  * Total edges on Page 1: 99 edges.
+  * Detached edges: 0 detached edges verified via automated node check.
+  * Added Relationships:
+    1. Billing Cluster: `tbl_billing_charges` -> `tbl_billing_charge_lines` (charge_id), `CUSTOMER_PROFILE` -> `tbl_billing_charges` (customer_id), `STORE` -> `tbl_billing_charges` (store_id).
+    2. Cash Collection: `CUSTOMER_PROFILE` -> `tbl_store_cash_vouchers` (customer_id), `USERS` -> `tbl_store_cash_receipts` (collected_by_user_id).
+    3. Device Movements: `IOT_BUTTON` -> `tbl_device_movements` (button_id), `STORE` -> `tbl_device_movements` (source_store_id), `BUTTON_RENTALS` -> `tbl_device_movements` (rental_id), `USERS` -> `tbl_device_movements` (actor_user_id).
+    4. Deposit Refunds: `tbl_customer_bank_accounts` -> `tbl_deposit_refunds` (bank_account_id), `CUSTOMER_PROFILE` -> `tbl_deposit_refunds` (customer_id), `USERS` -> `tbl_deposit_refunds` (approved_by_user_id).
+    5. Bottom Row (Bank 2k Penny Flow): `tbl_customer_bank_accounts` -> `tbl_customer_bank_verification_proofs` (account_id), `CUSTOMER_PROFILE` -> `tbl_customer_bank_verification_proofs` (customer_id), `tbl_customer_bank_verification_proofs` -> `tbl_customer_bank_inbound_transactions` (proof_id), `tbl_customer_bank_inbound_transactions` -> `tbl_customer_bank_refund_obligations` (inbound_tx_id, 1:1), `tbl_customer_bank_accounts` -> `tbl_customer_bank_refund_obligations` (account_id), `tbl_customer_bank_refund_obligations` -> `tbl_customer_bank_refund_payout_attempts` (obligation_id).
+
+### [2026-11-05] Peer-Review Verification & Ultimate Supabase Sync Script
+- Peer-Review Cross-Check: Verified all 10 areas (Columns 1-9 & Bottom Row) checked by peer against Draw.io Page 1 ([BRD/ERD_Level_3_Editable.drawio]) and Supabase SQL.
+- Findings & Full Resolution:
+  * Column 2 (deposit_refunds): Added 5 recipient snapshot columns (`recipient_bin`, `recipient_account_number_encrypted`, `recipient_account_number_hash`, `recipient_account_holder_name`, `recipient_account_number_masked`) to both ERD and SQL.
+  * Column 6 (device_movements): Fully aligned column names (`movement_id`, `source_type`, `source_store_id`, `dest_type`, `dest_store_id`) and inventory state columns (`from_inventory_state`, `to_inventory_state`).
+  * Column 7 (Cash Collection): Included full 9-column `store_cash_receipts` and 13-column `store_cash_vouchers` in both ERD and SQL patch.
+  * Column 9 (Billing Cluster): Added `store_id`, `customer_id`, `paid_amount`, `due_date` alongside polymorphic target columns to `billing_charges`; fully included 10-column `billing_payment_receipts` and 6-column `billing_overpayment_obligations`.
+  * Bottom Row (Bank 2k Penny Flow): Full 4 tables (21-col proofs, 20-col inbound_tx, 16-col refund_obligations, 13-col payout_attempts) verified and synchronized in [BRD/supabase_schema_sync_patch.sql].
+
+### [2026-11-05] 100% ERD & Supabase Database Full Synchronization
+- Scope: Fully synchronized Draw.io Page 1 ([BRD/ERD_Level_3_Editable.drawio]) and generated Supabase database sync patches against `prisma/schema.prisma` (64 models).
+- Draw.io Page 1 Alignment:
+  * Exhaustive diff verified: 0 missing columns across all 64 tables.
+  * Synchronized `billing_charges` (added `charge_code`, `target_type`, `target_id`, `provider_transaction_code`, `qr_code`, etc.).
+  * Synchronized `button_rentals` (added `monthly_rent_per_button_snapshot`, `pricing_review_required`).
+  * Synchronized `billing_charge_lines` (added `duration_unit`, `duration_count`, aligned `line_id` & `amount`).
+  * Synchronized `device_movements` (aligned `movement_id`, `source_type`, `dest_type`, `actor_user_id`).
+  * Synchronized `customer_bank_verification_proofs` and `customer_bank_refund_payout_attempts`.
+  * Verified Draw.io MCP `list_pages`: 21/21 pages intact, 0 detached edges.
+- Supabase Synchronization Artifacts:
+  * Created [BRD/supabase_schema_sync_patch.sql]: Idempotent SQL script with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and `CREATE TABLE IF NOT EXISTS` for seamless execution in Supabase SQL Editor without data loss.
+  * Updated [BRD/supabase_schema_ready.sql]: Complete clean DDL for all 64 tables + latest `sp_create_order_from_button` stored procedure.
+
+### [2026-11-04] Added [ACT 11] Didit eKYC Verification Flow to BRD Diagrams
+- Scope: Added, Simplified & English-Localized Page 21 (`[ACT 11] Didit eKYC Verification Flow`, id `page_act_didit_ekyc`) to `BRD/ERD_Level_3_Editable.drawio`.
+- Layout & Localization: 100% translated into standard UML/English labels matching other diagram pages. Preserved exact container-parent hierarchy (`pool_a11` -> `lane_a11_*`) with relative geometries, enabling full interactive dragging, resizing, and alignment in the Draw.io editor.
+- Diagram Optimization: Streamlined from complex multi-branch layout to a clean, elegant waterfall pipeline (~14.8 KB, matching standard Activity diagrams like ACT 3). Removed noisy edge-case timeout trees while preserving the core Golden Path: Session Init -> 2-side CCCD & 3D Liveness -> Didit AI OCR/Biometric -> Timing-safe Webhook HMAC & payload_hash audit -> Final Approval / Decline rami.
+- Architecture & Swimlanes:
+  * 4 vertical swimlanes:
+    1. `User / Mobile App (Khách hàng & Camera SDK)`
+    2. `Backend API & Webhook Service (NestJS / Node.js)`
+    3. `Didit Cloud AI Engine (OCR & Biometric Matching)`
+    4. `PostgreSQL Database & Storage`
+  * Complete lifecycle aligned with `STATE 5` (`identity_verification_sessions`):
+    - Session initialization (`POST /api/v1/auth/ekyc/session` -> creates session `PENDING` with 15-min TTL, returns Didit SDK token).
+    - Biometric & Document Capture (Front/Back CCCD with anti-glare check, 3D Face Liveness detection).
+    - AI OCR & Biometric Matching (Extraction of Full Name, DOB, National ID, Address; Liveness 3D check; 1:1 facial likeness verification).
+    - Timing-safe HMAC webhook processing (`POST /api/v1/webhooks/didit`, anti-replay payload hash check, atomic `APPROVED` / `REJECTED` state transition).
+    - Approval path: Updates `identity_verification_sessions.status = "APPROVED"`, syncs `users.kyc_status = "APPROVED"`, and invalidates customer auth cache.
+    - Rejection / Retry path: Logs failure reason, increments `retry_count`, if `< MAX_ATTEMPTS (3)` allows user retry, otherwise marks `SUSPENDED` and flags for manual compliance review.
+- Verification Evidence:
+  * Draw.io MCP `list_pages` verified all 21 pages (indexes 0-20) loaded cleanly with zero XML corruption:
+    - Index 20: `page_act_didit_ekyc`, `[ACT 11] Didit eKYC Verification Flow` (~23,472 bytes).
+  * Total pages in `BRD/ERD_Level_3_Editable.drawio`: 21 pages (1 ERD + 9 State Diagrams + 11 Activity Diagrams).
+  * 0 broken / dangling edges.
+
 ### [2026-11-03] Rental closeout implementation — Isolated PostgreSQL Acceptance Verified (Suite 71 PASS)
 - Status: ISOLATED DB ACCEPTANCE VERIFIED (Suite 71 PASS). Production deploy / live PayOS gateway approval remains separate.
 - Implemented: additive immutable monthly price snapshot and evidence-only backfill (`20261103120000_rental_monthly_price_snapshot`); pricing-review flag/filter; snapshot-based renewal quote and settlement; durable receipts/liabilities for initial/extension money independent of cash intake; expiry/manual-lock separation; safe DTO entitlement and financial response mapping; exact customer cache invalidation; reserved-device preview/count/pagination and paid handover access when intake disabled.

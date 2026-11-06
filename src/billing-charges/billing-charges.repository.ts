@@ -7,6 +7,7 @@ export interface CreateChargeInput {
   rentalId?: bigint;
   storeId?: bigint;
   customerId?: bigint;
+  payerStoreId?: bigint;
   purpose: 'RENTAL_INITIAL' | 'RENTAL_EXTENSION' | 'STORE_SUBSCRIPTION';
   targetType: 'RENTAL' | 'STORE';
   targetId: bigint;
@@ -50,6 +51,7 @@ export class BillingChargesRepository {
         purpose: data.purpose,
         targetType: data.targetType,
         targetId: data.targetId,
+        payerStoreId: data.payerStoreId,
         currency: 'VND',
         totalAmount: data.totalAmount,
         status: 'PENDING',
@@ -79,6 +81,15 @@ export class BillingChargesRepository {
     return this.prisma.billingCharge.findUnique({
       where: { chargeId },
       include: { lines: true },
+    });
+  }
+
+  async findActiveStoreById(storeId: bigint) {
+    return this.prisma.store.findFirst({
+      where: {
+        storeId,
+        status: 'ACTIVE',
+      },
     });
   }
 

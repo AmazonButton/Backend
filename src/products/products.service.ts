@@ -116,20 +116,25 @@ export class ProductsService {
     };
   }
 
-  async list(storeId?: string | number | bigint, pagination?: { page?: number; pageSize?: number }) {
+  async list(
+    storeId?: string | number | bigint,
+    options?: { page?: number; pageSize?: number; search?: string; category?: string },
+  ) {
     const targetStoreId = storeId ? BigInt(storeId) : undefined;
-    const { items, total, page, pageSize } = await this.productsRepo.findMany(targetStoreId, pagination);
+    const { items, total, page, pageSize } = await this.productsRepo.findMany(targetStoreId, options);
     const data = items.map((p: any) => this.formatProduct(p));
+    const totalPages = Math.ceil(total / (pageSize || 20));
     return {
       data,
-      pagination: pagination?.pageSize
-        ? {
-            page: page || 1,
-            pageSize: pageSize || total,
-            total,
-            totalPages: Math.ceil(total / (pageSize || 1)),
-          }
-        : undefined,
+      pagination: {
+        page: page || 1,
+        pageSize: pageSize || 20,
+        totalItems: total,
+        total,
+        totalPages,
+        hasNextPage: (page || 1) < totalPages,
+        hasPrevPage: (page || 1) > 1,
+      },
     };
   }
 

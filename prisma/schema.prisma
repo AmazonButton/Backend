@@ -95,6 +95,7 @@ model Store {
   custodyButtons              IoTButton[]                   @relation("StoreCustodyButtons")
   fulfillmentRentals          ButtonRental[]                @relation("StoreFulfillmentRentals")
   cashVouchers                StoreCashVoucher[]
+  payerBillingCharges         BillingCharge[]               @relation("StoreBillingCharges")
 
   @@map("store")
 }
@@ -553,6 +554,8 @@ model ButtonRental {
   depositPerButton    Decimal         @default(0) @map("deposit_per_button") @db.Decimal(15, 2)
   rentPerButton       Decimal         @default(0) @map("rent_per_button") @db.Decimal(15, 2)
   monthlyRentPerButtonSnapshot Decimal? @map("monthly_rent_per_button_snapshot") @db.Decimal(15, 2)
+  billingPolicy       String          @default("STORE_RENT_CUSTOMER_DEPOSIT") @map("billing_policy") @db.VarChar(50)
+  billingPolicyReviewRequired Boolean @default(false) @map("billing_policy_review_required")
   pricingReviewRequired Boolean       @default(true) @map("pricing_review_required")
   monthsRented        Int             @default(1) @map("months_rented")
   totalRentAmount     Decimal         @map("total_rent_amount") @db.Decimal(15, 2)
@@ -577,6 +580,8 @@ model ButtonRental {
   @@index([customerId, status], map: "idx_button_rentals_customer_status")
   @@index([packageId, status], map: "idx_button_rentals_package_status")
   @@index([fulfillmentStoreId, status], map: "idx_button_rentals_fulfillment_status")
+  @@index([billingPolicy], map: "idx_button_rentals_billing_policy")
+  @@index([billingPolicyReviewRequired], map: "idx_button_rentals_policy_review")
   @@map("button_rentals")
 }
 
@@ -1018,6 +1023,8 @@ model BillingCharge {
   purpose                 String               @map("purpose") @db.VarChar(32)
   targetType              String               @map("target_type") @db.VarChar(32)
   targetId                BigInt               @map("target_id")
+  payerStoreId            BigInt?              @map("payer_store_id")
+  payerStore              Store?               @relation("StoreBillingCharges", fields: [payerStoreId], references: [storeId], onDelete: Restrict)
   currency                String               @default("VND") @db.VarChar(10)
   totalAmount             Decimal              @map("total_amount") @db.Decimal(15, 2)
   status                  String               @default("PENDING") @db.VarChar(20)
@@ -1037,6 +1044,7 @@ model BillingCharge {
   @@unique([chargeId, targetType, targetId, totalAmount], map: "uq_charge_cash_binding")
   @@index([targetType, targetId, status], map: "idx_billing_charges_target")
   @@index([status, createdAt(sort: Desc)], map: "idx_billing_charges_status_created")
+  @@index([payerStoreId], map: "idx_billing_charges_payer_store")
   @@map("billing_charges")
 }
 

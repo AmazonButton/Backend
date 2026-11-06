@@ -25,7 +25,7 @@ export class RentalsRepository {
   }
 
   async createRental(data: any) {
-    const { pricing, ...rentalData } = data;
+    const { pricing, policy, ...rentalData } = data;
     const computedPricing = pricing || calculateRentalPricing({
       buttonQuantity: rentalData.buttonQuantity ?? 1,
       months: rentalData.monthsRented ?? 1,
@@ -39,6 +39,15 @@ export class RentalsRepository {
     rentalData.depositAmount = computedPricing.depositTotal;
     rentalData.depositPerButton = computedPricing.depositPerButton;
     rentalData.rentPerButton = computedPricing.rentPerButton;
+
+    const isLegacyPolicy = policy === 'LEGACY_CUSTOMER_RENT';
+    const billingPolicy: 'LEGACY_CUSTOMER_RENT' | 'STORE_RENT_CUSTOMER_DEPOSIT' =
+      policy === 'LEGACY_CUSTOMER_RENT' ? 'LEGACY_CUSTOMER_RENT' : 'STORE_RENT_CUSTOMER_DEPOSIT';
+    if (policy && policy !== 'LEGACY_CUSTOMER_RENT' && policy !== 'STORE_RENT_CUSTOMER_DEPOSIT') {
+      throw new BadRequestException('Chính sách hợp đồng thuê không hợp lệ');
+    }
+    rentalData.billingPolicy = billingPolicy;
+    rentalData.billingPolicyReviewRequired = false;
 
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.buttonRental.create({
@@ -56,38 +65,66 @@ export class RentalsRepository {
 
       const chargeCode = `CHG-RENTAL_INITIAL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-      await tx.billingCharge.create({
-        data: {
-          chargeCode,
-          purpose: 'RENTAL_INITIAL',
-          targetType: 'RENTAL',
-          targetId: created.rentalId,
-          currency: 'VND',
-          totalAmount: computedPricing.totalAmount,
-          status: 'PENDING',
-          paymentMethod: 'PAYOS',
-          lines: {
-            create: [
-              {
-                lineType: 'RENT',
-                amount: computedPricing.lines.rent.amount,
-                description: computedPricing.lines.rent.description,
-                durationUnit: 'MONTH',
-                durationCount: computedPricing.lines.rent.durationCount,
-                quantity: computedPricing.lines.rent.quantity,
-                unitPrice: computedPricing.lines.rent.unitPrice,
-              },
-              {
-                lineType: 'DEPOSIT',
-                amount: computedPricing.lines.deposit.amount,
-                description: computedPricing.lines.deposit.description,
-                quantity: computedPricing.lines.deposit.quantity,
-                unitPrice: computedPricing.lines.deposit.unitPrice,
-              },
-            ],
+      if (isLegacyPolicy) {
+        // Hợp đồng cũ theo mô hình thu gộp: Khách đóng cả RENT + DEPOSIT
+        await tx.billingCharge.create({
+          data: {
+            chargeCode,
+            purpose: 'RENTAL_INITIAL',
+            targetType: 'RENTAL',
+            targetId: created.rentalId,
+            currency: 'VND',
+            totalAmount: computedPricing.totalAmount,
+            status: 'PENDING',
+            paymentMethod: 'PAYOS',
+            lines: {
+              create: [
+                {
+                  lineType: 'RENT',
+                  amount: computedPricing.lines.rent.amount,
+                  description: computedPricing.lines.rent.description,
+                  durationUnit: 'MONTH',
+                  durationCount: computedPricing.lines.rent.durationCount,
+                  quantity: computedPricing.lines.rent.quantity,
+                  unitPrice: computedPricing.lines.rent.unitPrice,
+                },
+                {
+                  lineType: 'DEPOSIT',
+                  amount: computedPricing.lines.deposit.amount,
+                  description: computedPricing.lines.deposit.description,
+                  quantity: computedPricing.lines.deposit.quantity,
+                  unitPrice: computedPricing.lines.deposit.unitPrice,
+                },
+              ],
+            },
           },
-        },
-      });
+        });
+      } else {
+        // Hợp đồng mới: CUSTOMER chỉ đóng cọc DEPOSIT; phí thuê RENT thuộc Store/Hệ thống
+        await tx.billingCharge.create({
+          data: {
+            chargeCode,
+            purpose: 'RENTAL_INITIAL',
+            targetType: 'RENTAL',
+            targetId: created.rentalId,
+            currency: 'VND',
+            totalAmount: computedPricing.depositTotal,
+            status: 'PENDING',
+            paymentMethod: 'PAYOS',
+            lines: {
+              create: [
+                {
+                  lineType: 'DEPOSIT',
+                  amount: computedPricing.lines.deposit.amount,
+                  description: computedPricing.lines.deposit.description,
+                  quantity: computedPricing.lines.deposit.quantity,
+                  unitPrice: computedPricing.lines.deposit.unitPrice,
+                },
+              ],
+            },
+          },
+        });
+      }
 
       return created;
     });
@@ -99,7 +136,16 @@ export class RentalsRepository {
       include: {
         package: true,
         buttons: true,
+        customer: {
+          include: { user: true },
+        },
         payments: { orderBy: { createdAt: 'desc' } },
+        deposit: true,
+        returns: { orderBy: { createdAt: 'desc' } },
+        refunds: {
+          include: { bankAccount: true },
+          orderBy: { createdAt: 'desc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -115,6 +161,12 @@ export class RentalsRepository {
           include: { user: true },
         },
         payments: { orderBy: { createdAt: 'desc' } },
+        deposit: true,
+        returns: { orderBy: { createdAt: 'desc' } },
+        refunds: {
+          include: { bankAccount: true },
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
   }
@@ -130,6 +182,12 @@ export class RentalsRepository {
           include: { user: true },
         },
         payments: { orderBy: { createdAt: 'desc' } },
+        deposit: true,
+        returns: { orderBy: { createdAt: 'desc' } },
+        refunds: {
+          include: { bankAccount: true },
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
   }
@@ -213,6 +271,12 @@ export class RentalsRepository {
             include: { user: true },
           },
           payments: { orderBy: { createdAt: 'desc' } },
+          deposit: true,
+          returns: { orderBy: { createdAt: 'desc' } },
+          refunds: {
+            include: { bankAccount: true },
+            orderBy: { createdAt: 'desc' },
+          },
         },
       });
 
@@ -285,6 +349,12 @@ export class RentalsRepository {
             include: { user: true },
           },
           payments: { orderBy: { createdAt: 'desc' } },
+          deposit: true,
+          returns: { orderBy: { createdAt: 'desc' } },
+          refunds: {
+            include: { bankAccount: true },
+            orderBy: { createdAt: 'desc' },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -906,7 +976,13 @@ export class RentalsRepository {
     return runWithTransactionRetry(() => this.prisma.$transaction(async tx => {
       const { rental, quantity } = await lockRentalRenewalContext(tx, rentalId, actorUserId);
       if (!RENEWABLE_RENTAL_STATES.includes(rental.status)) throw new BadRequestException('Rental cannot be renewed in this state');
-      if (rental.pricing_review_required) throw new BadRequestException('RECONCILIATION_REQUIRED: rental price is not verified');
+      if (rental.pricing_review_required || rental.billing_policy_review_required) throw new BadRequestException('RECONCILIATION_REQUIRED: rental price or billing policy is not verified');
+
+      // P1: Phân nhánh chính sách: Không tạo charge RENT thu từ khách hàng cho STORE_RENT_CUSTOMER_DEPOSIT
+      if (rental.billing_policy === 'STORE_RENT_CUSTOMER_DEPOSIT') {
+        throw new BadRequestException('NON_BILLABLE_TO_CUSTOMER: Hợp đồng thuộc chính sách Store chịu phí thuê. Khách hàng không trả phí gia hạn RENT.');
+      }
+
       const pricing = priceRentalRenewal(rental.monthly_rent_per_button_snapshot, quantity, months);
       return tx.billingCharge.create({ data: {
         chargeCode: 'CHG-RENEW-' + randomUUID(), purpose: 'RENTAL_EXTENSION', targetType: 'RENTAL',
@@ -915,6 +991,70 @@ export class RentalsRepository {
           durationCount: months, quantity, unitPrice: pricing.periodPricePerButton }] },
       }, include: { lines: true } });
     }), { operationName: 'CreateRentalRenewalQuote' });
+  }
+
+  async findActiveStoreById(storeId: bigint) {
+    return this.prisma.store.findUnique({
+      where: { storeId },
+      select: { storeId: true, status: true },
+    });
+  }
+
+  async createStoreRentalExtensionObligation(rentalId: bigint, months: number, actorStoreId: bigint, actorUserId?: bigint) {
+    return runWithTransactionRetry(() => this.prisma.$transaction(async tx => {
+      await tx.$queryRawUnsafe('SELECT button_id FROM iot_button WHERE rental_id = $1 ORDER BY button_id ASC FOR UPDATE', rentalId);
+      const lockedRentals = await tx.$queryRawUnsafe<any[]>(
+        'SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE', rentalId,
+      );
+      const rental = lockedRentals[0];
+      if (!rental) throw new NotFoundException('Hợp đồng thuê không tồn tại');
+      if (rental.billing_policy !== 'STORE_RENT_CUSTOMER_DEPOSIT') {
+        throw new BadRequestException('INVALID_POLICY_FOR_STORE_OBLIGATION: Hợp đồng không thuộc chính sách Store chịu phí thuê');
+      }
+      if (rental.fulfillment_store_id && BigInt(rental.fulfillment_store_id) !== actorStoreId) {
+        throw new ForbiddenException('Hợp đồng thuê không thuộc quyền quản lý của Cửa hàng này');
+      }
+      if (!RENEWABLE_RENTAL_STATES.includes(rental.status)) throw new BadRequestException('Rental cannot be renewed in this state');
+      if (rental.pricing_review_required || rental.billing_policy_review_required) throw new BadRequestException('RECONCILIATION_REQUIRED: rental price or billing policy is not verified');
+
+      const returns = await tx.rentalReturn.findMany({
+        where: { rentalId, status: { in: ['PENDING_RECEIPT', 'RECEIVED'] } }, select: { buttonId: true },
+      });
+      const returning = new Set(returns.map(r => String(r.buttonId)));
+      const buttons = await tx.ioTButton.findMany({ where: { rentalId } });
+      const eligibleButtons = buttons.filter(b => b.customerId === rental.customer_id &&
+        b.inventoryState === 'IN_CUSTOMER_CUSTODY' && !returning.has(String(b.buttonId)));
+      const quantity = rental.status === 'PENDING_HANDOVER' ? rental.button_quantity : eligibleButtons.length;
+
+      const pricing = priceRentalRenewal(rental.monthly_rent_per_button_snapshot, quantity, months);
+
+      // P1: Lưu riêng đối tượng được gia hạn (targetType=RENTAL, targetId=rentalId) và bên trả tiền (payerStoreId)
+      return tx.billingCharge.create({
+        data: {
+          chargeCode: 'CHG-STORE-RENEW-' + randomUUID(),
+          purpose: 'RENTAL_EXTENSION',
+          targetType: 'RENTAL',
+          targetId: rentalId,
+          payerStoreId: actorStoreId,
+          currency: 'VND',
+          totalAmount: pricing.amount,
+          status: 'PENDING',
+          paymentMethod: 'PAYOS',
+          lines: {
+            create: [{
+              lineType: 'STORE_RENT',
+              amount: pricing.amount,
+              durationUnit: 'MONTH',
+              durationCount: months,
+              quantity,
+              unitPrice: pricing.periodPricePerButton,
+              description: `Phí thuê thiết bị IoT do Store #${actorStoreId} chi trả cho hợp đồng ${rental.rental_code} (${months} tháng, ${quantity} nút)`,
+            }],
+          },
+        },
+        include: { lines: true },
+      });
+    }), { operationName: 'CreateStoreRentalRenewalObligation' });
   }
 
   async adjustRentalDurationAdminTx(

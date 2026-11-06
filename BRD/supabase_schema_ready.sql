@@ -1,681 +1,1909 @@
--- =====================================================================
--- SUPABASE POSTGRESQL PRODUCTION SCHEMA SCRIPT
--- Project: Multi-Store IoT Button Ordering Platform
--- Version: 2.1 (Fixed Store per Button - Ready for Supabase SQL Editor)
--- Compatibility: Supabase / PostgreSQL 15+
--- =====================================================================
+-- ==============================================================================
+-- SMART ORDER BACKEND: SUPABASE FULL DATABASE SCHEMA (64 TABLES)
+-- Generated automatically from Prisma schema & production migrations
+-- ==============================================================================
 
--- 0. TIỆN ÍCH MỞ RỘNG & CẤU HÌNH MÚI GIỜ (EXTENSIONS & CONFIG)
+-- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Thiết lập múi giờ mặc định toàn Database sang Việt Nam (UTC+7)
-ALTER DATABASE postgres SET timezone TO 'Asia/Ho_Chi_Minh';
-SET timezone TO 'Asia/Ho_Chi_Minh';
+﻿-- CreateTable
+CREATE TABLE "roles" (
+    "role_id" BIGSERIAL NOT NULL,
+    "role_code" TEXT NOT NULL,
+    "role_name" TEXT NOT NULL,
+    "description" TEXT,
 
--- =====================================================================
--- 1. IDENTITY & ACCESS MANAGEMENT (IAM)
--- =====================================================================
-
-CREATE TABLE IF NOT EXISTS roles (
-    role_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    role_code VARCHAR(50) UNIQUE NOT NULL,
-    role_name VARCHAR(100) NOT NULL,
-    description TEXT
+    CONSTRAINT "roles_pkey" PRIMARY KEY ("role_id")
 );
 
-CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    auth_id UUID UNIQUE,  -- Ánh xạ tới auth.users.id của Supabase (NULL nếu tạo bởi admin/seed)
-    username VARCHAR(100) UNIQUE NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL 
-        CONSTRAINT chk_user_email CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
-    password_hash VARCHAR(255) NOT NULL 
-        CONSTRAINT chk_user_password_hash CHECK (length(password_hash) >= 60),
-    full_name VARCHAR(255) NOT NULL,
-    phone VARCHAR(20) 
-        CONSTRAINT chk_user_phone CHECK (phone IS NULL OR phone ~ '^[0-9+]{9,15}$'),
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'BLOCKED')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- CreateTable
+CREATE TABLE "users" (
+    "user_id" BIGSERIAL NOT NULL,
+    "auth_id" UUID,
+    "username" TEXT NOT NULL,
+    "email" TEXT,
+    "password_hash" TEXT,
+    "full_name" TEXT NOT NULL,
+    "phone" TEXT,
+    "phone_verified_at" TIMESTAMPTZ(6),
+    "firebase_uid" VARCHAR(128),
+    "auth_provider" VARCHAR(32) DEFAULT 'LOCAL',
+    "provider_subject" VARCHAR(255),
+    "avatar_url" VARCHAR(512),
+    "kyc_status" VARCHAR(32) NOT NULL DEFAULT 'UNVERIFIED',
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "password_reset_token" TEXT,
+    "password_reset_expires_at" TIMESTAMP(3),
+    "email_verification_token" TEXT,
+    "email_verification_expires_at" TIMESTAMP(3),
+    "password_changed_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "users_pkey" PRIMARY KEY ("user_id")
 );
 
--- Khởi tạo các vai trò chuẩn của hệ thống
-INSERT INTO roles (role_code, role_name, description)
-VALUES 
-    ('SYSTEM_ADMIN', 'System Administrator', 'Quản trị viên toàn hệ thống'),
-    ('STORE_OWNER', 'Store Owner', 'Chủ cửa hàng, toàn quyền trên Store'),
-    ('STAFF_ORDER', 'Order Management Staff', 'Nhân viên xử lý và giao đơn hàng'),
-    ('STAFF_INVENTORY', 'Inventory Staff', 'Nhân viên quản lý kho và kiểm kê'),
-    ('STAFF_BUTTON', 'Button Tech Staff', 'Nhân viên kỹ thuật phần cứng nút bấm'),
-    ('CUSTOMER', 'Customer', 'Khách hàng toàn cầu')
-ON CONFLICT (role_code) DO NOTHING;
+-- CreateTable
+CREATE TABLE "store" (
+    "store_id" BIGSERIAL NOT NULL,
+    "owner_user_id" BIGINT NOT NULL,
+    "name" VARCHAR(255) NOT NULL,
+    "code" VARCHAR(50) NOT NULL,
+    "email" VARCHAR(255),
+    "phone" VARCHAR(20) NOT NULL,
+    "address" TEXT NOT NULL,
+    "commission_rate" DECIMAL(5,2) DEFAULT 8.0,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
--- =====================================================================
--- 2. CỬA HÀNG & PHÂN QUYỀN NHÂN VIÊN (STORE & STAFF)
--- =====================================================================
-
-CREATE TABLE IF NOT EXISTS store (
-    store_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    owner_user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
-    name VARCHAR(255) NOT NULL,
-    code VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(255) CONSTRAINT chk_store_email CHECK (email IS NULL OR email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
-    phone VARCHAR(20) NOT NULL CONSTRAINT chk_store_phone CHECK (phone ~ '^[0-9+]{9,15}$'),
-    address TEXT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    CONSTRAINT "store_pkey" PRIMARY KEY ("store_id")
 );
 
-CREATE TABLE IF NOT EXISTS store_staff (
-    store_staff_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
-    role_id BIGINT NOT NULL REFERENCES roles(role_id) ON DELETE RESTRICT,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'ON_LEAVE', 'TERMINATED')),
-    joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    left_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Ràng buộc: 1 user chỉ giữ 1 vai trò duy nhất trong 1 store
-    -- (Lưu ý: ERD Mermaid không thể hiện composite unique trực quan do giới hạn cú pháp)
-    CONSTRAINT uq_store_staff_store_user UNIQUE (store_id, user_id)
+-- CreateTable
+CREATE TABLE "store_staff" (
+    "store_staff_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "user_id" BIGINT NOT NULL,
+    "role_id" BIGINT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "joined_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "left_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "store_staff_pkey" PRIMARY KEY ("store_staff_id")
 );
 
--- =====================================================================
--- 3. KHÁCH HÀNG TOÀN CẦU & SỔ ĐỊA CHỈ (CUSTOMER)
--- =====================================================================
+-- CreateTable
+CREATE TABLE "customer_profile" (
+    "customer_id" BIGSERIAL NOT NULL,
+    "user_id" BIGINT NOT NULL,
+    "phone" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CREATE TABLE IF NOT EXISTS customer_profile (
-    customer_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
-    phone VARCHAR(20) CONSTRAINT chk_customer_phone CHECK (phone IS NULL OR phone ~ '^[0-9+]{9,15}$'),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    CONSTRAINT "customer_profile_pkey" PRIMARY KEY ("customer_id")
 );
 
-CREATE TABLE IF NOT EXISTS customer_address (
-    address_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    customer_id BIGINT NOT NULL REFERENCES customer_profile(customer_id) ON DELETE CASCADE,
-    recipient_name VARCHAR(255) NOT NULL,
-    phone VARCHAR(20) NOT NULL CONSTRAINT chk_addr_phone CHECK (phone ~ '^[0-9+]{9,15}$'),
-    address_detail VARCHAR(500) NOT NULL,
-    ward VARCHAR(100),
-    district VARCHAR(100),
-    province VARCHAR(100),
-    is_default BOOLEAN NOT NULL DEFAULT false,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Đảm bảo cặp (customer_id, address_id) là duy nhất để bảo vệ Khóa ngoại cho Nút bấm
-    CONSTRAINT uq_customer_address_pair UNIQUE (customer_id, address_id)
+-- CreateTable
+CREATE TABLE "customer_address" (
+    "address_id" BIGSERIAL NOT NULL,
+    "customer_id" BIGINT NOT NULL,
+    "recipient_name" TEXT NOT NULL,
+    "phone" TEXT NOT NULL,
+    "address_detail" TEXT NOT NULL,
+    "ward" TEXT,
+    "district" TEXT,
+    "province" TEXT,
+    "latitude" DECIMAL(10,7),
+    "longitude" DECIMAL(10,7),
+    "is_default" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_address_pkey" PRIMARY KEY ("address_id")
 );
 
--- Partial Unique Index: Mỗi khách hàng chỉ có duy nhất 1 địa chỉ mặc định
-CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_default_address 
-ON customer_address(customer_id) 
-WHERE is_default = true;
+-- CreateTable
+CREATE TABLE "store_customer" (
+    "store_customer_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "customer_id" BIGINT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "joined_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
--- [FIX LỖ HỔNG 6] Tự động hạ cờ địa chỉ mặc định cũ trước khi set mặc định mới
-CREATE OR REPLACE FUNCTION fn_handle_customer_default_address()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.is_default = true THEN
-        UPDATE customer_address 
-        SET is_default = false 
-        WHERE customer_id = NEW.customer_id 
-          AND address_id <> COALESCE(NEW.address_id, -1)
-          AND is_default = true;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_handle_customer_default_address ON customer_address;
-CREATE TRIGGER trg_handle_customer_default_address
-BEFORE INSERT OR UPDATE OF is_default ON customer_address
-FOR EACH ROW EXECUTE FUNCTION fn_handle_customer_default_address();
-
-CREATE TABLE IF NOT EXISTS store_customer (
-    store_customer_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
-    customer_id BIGINT NOT NULL REFERENCES customer_profile(customer_id) ON DELETE RESTRICT,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'BLOCKED')),
-    joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_store_customer UNIQUE (store_id, customer_id)
+    CONSTRAINT "store_customer_pkey" PRIMARY KEY ("store_customer_id")
 );
 
--- =====================================================================
--- 4. DANH MỤC, SẢN PHẨM, GIẢM GIÁ & TỒN KHO
--- =====================================================================
+-- CreateTable
+CREATE TABLE "category" (
+    "category_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "parent_category_id" BIGINT,
+    "category_name" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CREATE TABLE IF NOT EXISTS category (
-    category_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
-    parent_category_id BIGINT,
-    category_name VARCHAR(255) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Ràng buộc tự tham chiếu: Đảm bảo danh mục cha và con cùng thuộc 1 Store
-    CONSTRAINT uq_category_store_pair UNIQUE (store_id, category_id),
-    CONSTRAINT fk_category_parent_same_store FOREIGN KEY (store_id, parent_category_id) 
-        REFERENCES category(store_id, category_id) ON DELETE SET NULL
+    CONSTRAINT "category_pkey" PRIMARY KEY ("category_id")
 );
 
-CREATE TABLE IF NOT EXISTS product (
-    product_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
-    category_id BIGINT,
-    product_code VARCHAR(50) NOT NULL,
-    product_name VARCHAR(255) NOT NULL,
-    brand VARCHAR(100),
-    description TEXT,
-    base_price DECIMAL(15,2) NOT NULL CHECK (base_price >= 0),
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('DRAFT', 'ACTIVE', 'INACTIVE', 'ARCHIVED')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_product_store_code UNIQUE (store_id, product_code),
-    CONSTRAINT uq_product_store_pair UNIQUE (store_id, product_id),
-    -- Đảm bảo Category được gán bắt buộc phải thuộc cùng Store với Product
-    CONSTRAINT fk_product_category_same_store FOREIGN KEY (store_id, category_id) 
-        REFERENCES category(store_id, category_id) ON DELETE SET NULL
+-- CreateTable
+CREATE TABLE "product" (
+    "product_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "category_id" BIGINT,
+    "product_code" VARCHAR(50) NOT NULL,
+    "product_name" VARCHAR(255) NOT NULL,
+    "brand" VARCHAR(100),
+    "description" TEXT,
+    "base_price" DECIMAL(15,2) NOT NULL,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "product_pkey" PRIMARY KEY ("product_id")
 );
 
--- Bảng lưu vết lịch sử thay đổi giá bán sản phẩm
-CREATE TABLE IF NOT EXISTS product_price_history (
-    history_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    product_id BIGINT NOT NULL REFERENCES product(product_id) ON DELETE CASCADE,
-    old_price DECIMAL(15,2) NOT NULL,
-    new_price DECIMAL(15,2) NOT NULL,
-    changed_by_user_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
-    changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- CreateTable
+CREATE TABLE "product_price_history" (
+    "history_id" BIGSERIAL NOT NULL,
+    "product_id" BIGINT NOT NULL,
+    "old_price" DECIMAL(15,2) NOT NULL,
+    "new_price" DECIMAL(15,2) NOT NULL,
+    "changed_by_user_id" BIGINT,
+    "changed_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "product_price_history_pkey" PRIMARY KEY ("history_id")
 );
 
--- Bảng lưu trữ đa hình ảnh sản phẩm qua Cloudinary (Option 2 - Gallery & Thumbnail)
-CREATE TABLE IF NOT EXISTS product_image (
-    image_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    product_id BIGINT NOT NULL REFERENCES product(product_id) ON DELETE CASCADE,
-    image_url TEXT NOT NULL,
-    is_thumbnail BOOLEAN NOT NULL DEFAULT FALSE,
-    display_order INT NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- CreateTable
+CREATE TABLE "product_discount" (
+    "discount_id" BIGSERIAL NOT NULL,
+    "product_id" BIGINT NOT NULL,
+    "discount_percent" DECIMAL(5,2),
+    "discount_amount" DECIMAL(15,2),
+    "start_at" TIMESTAMPTZ(6) NOT NULL,
+    "end_at" TIMESTAMPTZ(6) NOT NULL,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "product_discount_pkey" PRIMARY KEY ("discount_id")
 );
 
-CREATE INDEX IF NOT EXISTS idx_product_image_product_id ON product_image(product_id);
-CREATE INDEX IF NOT EXISTS idx_product_image_is_thumbnail ON product_image(is_thumbnail);
+-- CreateTable
+CREATE TABLE "inventory" (
+    "inventory_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "product_id" BIGINT NOT NULL,
+    "quantity_on_hand" INTEGER NOT NULL DEFAULT 0,
+    "reserved_quantity" INTEGER NOT NULL DEFAULT 0,
+    "min_stock_alert" INTEGER NOT NULL DEFAULT 5,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CREATE TABLE IF NOT EXISTS product_discount (
-    discount_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    product_id BIGINT NOT NULL REFERENCES product(product_id) ON DELETE RESTRICT,
-    discount_percent DECIMAL(5,2) CHECK (discount_percent > 0 AND discount_percent <= 100),
-    discount_amount DECIMAL(15,2) CHECK (discount_amount > 0),
-    start_at TIMESTAMPTZ NOT NULL,
-    end_at TIMESTAMPTZ NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'EXPIRED', 'DISABLED')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT chk_discount_time CHECK (end_at > start_at),
-    -- Ràng buộc loại trừ: Chỉ được chọn 1 trong 2 hình thức giảm giá (% hoặc số tiền)
-    CONSTRAINT chk_discount_type_exclusive CHECK (
-        (discount_percent IS NOT NULL AND discount_amount IS NULL) OR 
-        (discount_percent IS NULL AND discount_amount IS NOT NULL)
-    )
+    CONSTRAINT "inventory_pkey" PRIMARY KEY ("inventory_id")
 );
 
-CREATE TABLE IF NOT EXISTS inventory (
-    inventory_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT NOT NULL,
-    product_id BIGINT UNIQUE NOT NULL,
-    quantity_on_hand INT NOT NULL DEFAULT 0 CHECK (quantity_on_hand >= 0),
-    reserved_quantity INT NOT NULL DEFAULT 0 CHECK (reserved_quantity >= 0),
-    min_stock_alert INT NOT NULL DEFAULT 5 CHECK (min_stock_alert >= 0),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Đảm bảo store_id của Inventory khớp tuyệt đối với product.store_id
-    CONSTRAINT fk_inventory_product_store FOREIGN KEY (store_id, product_id) 
-        REFERENCES product(store_id, product_id) ON DELETE RESTRICT,
-    CONSTRAINT chk_inventory_reserved_le_onhand CHECK (reserved_quantity <= quantity_on_hand)
+-- CreateTable
+CREATE TABLE "iot_button" (
+    "button_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "customer_id" BIGINT,
+    "address_id" BIGINT,
+    "device_id" TEXT NOT NULL,
+    "button_code" TEXT NOT NULL,
+    "button_name" TEXT,
+    "hmac_secret" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "battery_level" INTEGER DEFAULT 100,
+    "warranty_until" TIMESTAMP(3),
+    "click_behavior" TEXT DEFAULT 'SINGLE',
+    "double_click_window_ms" INTEGER DEFAULT 300,
+    "hold_duration_ms" INTEGER DEFAULT 1500,
+    "single_press_action" VARCHAR(50) DEFAULT 'CREATE_ORDER',
+    "double_press_action" VARCHAR(50) DEFAULT 'CANCEL_ORDER',
+    "long_press_action" VARCHAR(50) DEFAULT 'WIFI_CONFIGURATION',
+    "cancel_window_seconds" INTEGER DEFAULT 60,
+    "deployed_template_id" BIGINT,
+    "installed_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "rental_id" BIGINT,
+    "from_inventory_state" VARCHAR(50),
+    "to_inventory_state" VARCHAR(50),
+    "custody_store_id" BIGINT,
+    "inventory_state" VARCHAR(30) NOT NULL DEFAULT 'IN_PLATFORM_WAREHOUSE',
+    "can_order" BOOLEAN NOT NULL DEFAULT true,
+
+    CONSTRAINT "iot_button_pkey" PRIMARY KEY ("button_id")
 );
 
--- =====================================================================
--- 5. NÚT BẤM IOT (GẮN CỐ ĐỊNH VỚI STORE)
--- =====================================================================
+-- CreateTable
+CREATE TABLE "button_product" (
+    "button_product_id" BIGSERIAL NOT NULL,
+    "button_id" BIGINT NOT NULL,
+    "product_id" BIGINT NOT NULL,
+    "quantity" INTEGER NOT NULL DEFAULT 1,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CREATE TABLE IF NOT EXISTS iot_button (
-    button_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
-    customer_id BIGINT NOT NULL REFERENCES customer_profile(customer_id) ON DELETE RESTRICT,
-    address_id BIGINT NOT NULL,
-    device_id VARCHAR(100) UNIQUE NOT NULL,
-    button_code VARCHAR(50) UNIQUE NOT NULL,
-    button_name VARCHAR(255) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'LOCKED')),
-    installed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Ràng buộc địa chỉ nhận hàng bắt buộc phải thuộc sở hữu của chính khách hàng sở hữu nút
-    CONSTRAINT fk_button_customer_address FOREIGN KEY (customer_id, address_id) 
-        REFERENCES customer_address(customer_id, address_id) ON DELETE RESTRICT,
-    CONSTRAINT uq_button_cust_store_triplet UNIQUE (button_id, customer_id, store_id)
+    CONSTRAINT "button_product_pkey" PRIMARY KEY ("button_product_id")
 );
 
-CREATE TABLE IF NOT EXISTS button_product (
-    button_product_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    button_id BIGINT NOT NULL REFERENCES iot_button(button_id) ON DELETE CASCADE,
-    product_id BIGINT NOT NULL REFERENCES product(product_id) ON DELETE RESTRICT,
-    quantity INT NOT NULL DEFAULT 1 CHECK (quantity > 0),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_button_product UNIQUE (button_id, product_id)
+-- CreateTable
+CREATE TABLE "orders" (
+    "order_id" BIGSERIAL NOT NULL,
+    "order_code" VARCHAR(50) NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "customer_id" BIGINT,
+    "button_id" BIGINT,
+    "order_status" VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+    "payment_status" VARCHAR(30) NOT NULL DEFAULT 'UNPAID',
+    "payment_method" VARCHAR(30) NOT NULL,
+    "subtotal_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "discount_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "shipping_fee" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "total_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "commission_rate" DECIMAL(5,2) DEFAULT 8.0,
+    "commission_amount" DECIMAL(15,2) DEFAULT 0,
+    "net_amount" DECIMAL(15,2) DEFAULT 0,
+    "shipping_recipient_name" VARCHAR(255) NOT NULL,
+    "shipping_phone" VARCHAR(20) NOT NULL,
+    "shipping_address" VARCHAR(500) NOT NULL,
+    "order_note" TEXT,
+    "order_date" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "completed_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "iot_request_id" VARCHAR(128),
+    "assigned_driver_id" BIGINT,
+    "pod_image_url" VARCHAR(1000),
+    "delivered_at" TIMESTAMPTZ(6),
+    "failure_reason_code" VARCHAR(50),
+    "failure_note" TEXT,
+    "evidence_image_url" VARCHAR(1000),
+    "shipping_latitude" DECIMAL(10,7),
+    "shipping_longitude" DECIMAL(10,7),
+
+    CONSTRAINT "orders_pkey" PRIMARY KEY ("order_id")
 );
 
--- =====================================================================
--- 6. ĐƠN HÀNG, CHI TIẾT SNAPSHOT & THANH TOÁN
--- =====================================================================
+-- CreateTable
+CREATE TABLE "order_item" (
+    "order_item_id" BIGSERIAL NOT NULL,
+    "order_id" BIGINT NOT NULL,
+    "product_id" BIGINT NOT NULL,
+    "product_name_snapshot" TEXT NOT NULL,
+    "unit_price_snapshot" DECIMAL(15,2) NOT NULL,
+    "discount_percent_snapshot" DECIMAL(5,2) DEFAULT 0,
+    "discount_amount_snapshot" DECIMAL(15,2) DEFAULT 0,
+    "final_unit_price" DECIMAL(15,2) NOT NULL,
+    "quantity" INTEGER NOT NULL,
+    "item_subtotal" DECIMAL(15,2) NOT NULL,
 
-CREATE TABLE IF NOT EXISTS orders (
-    order_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    order_code VARCHAR(50) UNIQUE NOT NULL,
-    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
-    customer_id BIGINT NOT NULL REFERENCES customer_profile(customer_id) ON DELETE RESTRICT,
-    button_id BIGINT NOT NULL REFERENCES iot_button(button_id) ON DELETE RESTRICT,
-    order_status VARCHAR(30) NOT NULL DEFAULT 'PENDING' 
-        CHECK (order_status IN ('PENDING', 'CONFIRMED', 'PREPARING', 'READY_FOR_DELIVERY', 'SHIPPING', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED', 'DELIVERY_FAILED')),
-    payment_status VARCHAR(30) NOT NULL DEFAULT 'UNPAID' 
-        CHECK (payment_status IN ('UNPAID', 'PAID', 'REFUNDED')),
-    payment_method VARCHAR(30) NOT NULL 
-        CHECK (payment_method IN ('COD', 'PAYOS')),
-    subtotal_amount DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (subtotal_amount >= 0),
-    discount_amount DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
-    shipping_fee DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (shipping_fee >= 0),
-    total_amount DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
-    shipping_recipient_name VARCHAR(255) NOT NULL,
-    shipping_phone VARCHAR(20) NOT NULL,
-    shipping_address VARCHAR(500) NOT NULL,
-    order_note TEXT,
-    order_date TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Khóa ngoại đảm bảo Button, Customer, Store khớp nhau tại thời điểm tạo đơn
-    CONSTRAINT fk_orders_button_context FOREIGN KEY (button_id, customer_id, store_id)
-        REFERENCES iot_button(button_id, customer_id, store_id) ON DELETE RESTRICT,
-    -- Ràng buộc toàn vẹn toán học của đơn hàng
-    CONSTRAINT chk_orders_total_math CHECK (total_amount = (subtotal_amount - discount_amount + shipping_fee)),
-    CONSTRAINT chk_orders_discount_limit CHECK (discount_amount <= subtotal_amount)
+    CONSTRAINT "order_item_pkey" PRIMARY KEY ("order_item_id")
 );
 
-CREATE TABLE IF NOT EXISTS order_item (
-    order_item_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    order_id BIGINT NOT NULL REFERENCES orders(order_id) ON DELETE CASCADE,
-    product_id BIGINT NOT NULL REFERENCES product(product_id) ON DELETE RESTRICT,
-    product_name_snapshot VARCHAR(255) NOT NULL,
-    unit_price_snapshot DECIMAL(15,2) NOT NULL CHECK (unit_price_snapshot >= 0),
-    discount_percent_snapshot DECIMAL(5,2) DEFAULT 0 CHECK (discount_percent_snapshot >= 0 AND discount_percent_snapshot <= 100),
-    discount_amount_snapshot DECIMAL(15,2) DEFAULT 0 CHECK (discount_amount_snapshot >= 0),
-    final_unit_price DECIMAL(15,2) NOT NULL CHECK (final_unit_price >= 0),
-    quantity INT NOT NULL CHECK (quantity > 0),
-    item_subtotal DECIMAL(15,2) NOT NULL CHECK (item_subtotal >= 0)
+-- CreateTable
+CREATE TABLE "order_status_history" (
+    "history_id" BIGSERIAL NOT NULL,
+    "order_id" BIGINT NOT NULL,
+    "changed_by_user_id" BIGINT,
+    "old_status" TEXT,
+    "new_status" TEXT NOT NULL,
+    "reason" TEXT,
+    "changed_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "order_status_history_pkey" PRIMARY KEY ("history_id")
 );
 
-CREATE TABLE IF NOT EXISTS order_status_history (
-    history_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    order_id BIGINT NOT NULL REFERENCES orders(order_id) ON DELETE CASCADE,
-    changed_by_user_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
-    old_status VARCHAR(30),
-    new_status VARCHAR(30) NOT NULL,
-    reason TEXT,
-    changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- CreateTable
+CREATE TABLE "payment_transaction" (
+    "payment_transaction_id" BIGSERIAL NOT NULL,
+    "order_id" BIGINT,
+    "rental_id" BIGINT,
+    "provider" TEXT NOT NULL,
+    "transaction_code" TEXT,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "payment_method" TEXT NOT NULL,
+    "payment_link_id" TEXT,
+    "checkout_url" TEXT,
+    "due_date" TIMESTAMPTZ(6),
+    "qr_code" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "paid_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "payment_transaction_pkey" PRIMARY KEY ("payment_transaction_id")
 );
 
-CREATE TABLE IF NOT EXISTS payment_transaction (
-    payment_transaction_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    order_id BIGINT NOT NULL REFERENCES orders(order_id) ON DELETE RESTRICT,
-    provider VARCHAR(50) NOT NULL CHECK (provider IN ('COD', 'PAYOS')),
-    transaction_code VARCHAR(100),
-    amount DECIMAL(15,2) NOT NULL CHECK (amount >= 0),
-    payment_method VARCHAR(30) NOT NULL CHECK (payment_method IN ('COD', 'PAYOS', 'QR', 'BANK_TRANSFER')),
-    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SUCCESS', 'PAID', 'FAILED', 'CANCELLED', 'EXPIRED')),
-    paid_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- CreateTable
+CREATE TABLE "refresh_tokens" (
+    "id" BIGSERIAL NOT NULL,
+    "user_id" BIGINT NOT NULL,
+    "token_hash" TEXT NOT NULL,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "is_revoked" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "refresh_tokens_pkey" PRIMARY KEY ("id")
 );
 
--- =====================================================================
--- 7. TỐI ƯU HÓA TRUY VẤN (INDEXES)
--- =====================================================================
+-- CreateTable
+CREATE TABLE "user_fcm_tokens" (
+    "id" BIGSERIAL NOT NULL,
+    "user_id" BIGINT NOT NULL,
+    "token" VARCHAR(500) NOT NULL,
+    "device_type" VARCHAR(50),
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CREATE INDEX IF NOT EXISTS idx_store_staff_lookup ON store_staff(store_id, user_id, status);
-CREATE INDEX IF NOT EXISTS idx_store_customer_lookup ON store_customer(store_id, customer_id);
-CREATE INDEX IF NOT EXISTS idx_product_store ON product(store_id, status);
-CREATE INDEX IF NOT EXISTS idx_product_code_global ON product(product_code);
-CREATE INDEX IF NOT EXISTS idx_product_discount_active_period ON product_discount(product_id, status, start_at, end_at);
-CREATE INDEX IF NOT EXISTS idx_inventory_lookup ON inventory(store_id, product_id);
-CREATE INDEX IF NOT EXISTS idx_iot_button_device ON iot_button(device_id);
-CREATE INDEX IF NOT EXISTS idx_iot_button_customer ON iot_button(customer_id);
-CREATE INDEX IF NOT EXISTS idx_iot_button_store ON iot_button(store_id);
-CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, order_date DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_store_status ON orders(store_id, order_status, order_date DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_button_id ON orders(button_id, order_date DESC);
-CREATE INDEX IF NOT EXISTS idx_order_item_order ON order_item(order_id);
+    CONSTRAINT "user_fcm_tokens_pkey" PRIMARY KEY ("id")
+);
 
--- =====================================================================
--- 8. TRIGGERS & PROCEDURES (THỰC THI TOÀN VẸN NGHIỆP VỤ)
--- =====================================================================
+-- CreateTable
+CREATE TABLE "device_templates" (
+    "template_id" BIGSERIAL NOT NULL,
+    "code" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "category" TEXT,
+    "store_id" BIGINT,
+    "default_product_id" BIGINT,
+    "single_press_action" TEXT DEFAULT 'CREATE_ORDER',
+    "double_press_action" TEXT DEFAULT 'CANCEL_ORDER',
+    "long_press_action" TEXT DEFAULT 'WIFI_CONFIGURATION',
+    "default_quantity" INTEGER DEFAULT 1,
+    "cancel_window_seconds" INTEGER DEFAULT 60,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
--- 8.1 Đồng nhất Store giữa Nút và Sản phẩm
-CREATE OR REPLACE FUNCTION fn_validate_button_product_store()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_button_store_id BIGINT;
-    v_product_store_id BIGINT;
-BEGIN
-    SELECT store_id INTO v_button_store_id FROM iot_button WHERE button_id = NEW.button_id;
-    SELECT store_id INTO v_product_store_id FROM product WHERE product_id = NEW.product_id;
+    CONSTRAINT "device_templates_pkey" PRIMARY KEY ("template_id")
+);
 
-    IF v_button_store_id IS NULL THEN
-        RAISE EXCEPTION 'IoT Button ID % không tồn tại.', NEW.button_id;
-    END IF;
+-- CreateTable
+CREATE TABLE "subscription_plans" (
+    "plan_id" BIGSERIAL NOT NULL,
+    "plan_code" TEXT NOT NULL,
+    "plan_name" TEXT NOT NULL,
+    "description" TEXT,
+    "price" DECIMAL(15,2) NOT NULL,
+    "duration_days" INTEGER NOT NULL,
+    "max_products" INTEGER NOT NULL DEFAULT 50,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    IF v_product_store_id IS NULL THEN
-        RAISE EXCEPTION 'Sản phẩm ID % không tồn tại.', NEW.product_id;
-    END IF;
+    CONSTRAINT "subscription_plans_pkey" PRIMARY KEY ("plan_id")
+);
 
-    IF v_button_store_id <> v_product_store_id THEN
-        RAISE EXCEPTION 'Vi phạm Store: Sản phẩm (Store %) không thuộc Store của Nút bấm (Store %).', 
-            v_product_store_id, v_button_store_id;
-    END IF;
+-- CreateTable
+CREATE TABLE "store_subscriptions" (
+    "subscription_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "plan_id" BIGINT NOT NULL,
+    "start_date" TIMESTAMP(3) NOT NULL,
+    "end_date" TIMESTAMP(3) NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "payment_method" TEXT NOT NULL DEFAULT 'PAYOS',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+    CONSTRAINT "store_subscriptions_pkey" PRIMARY KEY ("subscription_id")
+);
 
-DROP TRIGGER IF EXISTS trg_validate_button_product_store ON button_product;
-CREATE TRIGGER trg_validate_button_product_store
-BEFORE INSERT OR UPDATE ON button_product
-FOR EACH ROW EXECUTE FUNCTION fn_validate_button_product_store();
+-- CreateTable
+CREATE TABLE "rental_packages" (
+    "package_id" BIGSERIAL NOT NULL,
+    "package_code" TEXT NOT NULL,
+    "package_name" TEXT NOT NULL,
+    "description" TEXT,
+    "button_quantity" INTEGER NOT NULL DEFAULT 1,
+    "monthly_price" DECIMAL(15,2) NOT NULL,
+    "deposit_fee" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "rental_packages_pkey" PRIMARY KEY ("package_id")
+);
+
+-- CreateTable
+CREATE TABLE "button_rentals" (
+    "rental_id" BIGSERIAL NOT NULL,
+    "rental_code" TEXT NOT NULL,
+    "customer_id" BIGINT NOT NULL,
+    "package_id" BIGINT NOT NULL,
+    "fulfillment_store_id" BIGINT,
+    "button_quantity" INTEGER NOT NULL DEFAULT 1,
+    "deposit_per_button" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "rent_per_button" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "monthly_rent_per_button_snapshot" DECIMAL(15,2),
+    "billing_policy" VARCHAR(50) NOT NULL DEFAULT 'STORE_RENT_CUSTOMER_DEPOSIT',
+    "billing_policy_review_required" BOOLEAN NOT NULL DEFAULT false,
+    "pricing_review_required" BOOLEAN NOT NULL DEFAULT true,
+    "months_rented" INTEGER NOT NULL DEFAULT 1,
+    "total_rent_amount" DECIMAL(15,2) NOT NULL,
+    "deposit_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "start_date" TIMESTAMP(3) NOT NULL,
+    "end_date" TIMESTAMP(3) NOT NULL,
+    "paid_through" TIMESTAMP(3),
+    "effective_expires_at" TIMESTAMP(3),
+    "returned_at" TIMESTAMP(3),
+    "status" TEXT NOT NULL DEFAULT 'PENDING_PAYMENT',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "button_rentals_pkey" PRIMARY KEY ("rental_id"),
+    CONSTRAINT "chk_button_rentals_billing_policy" CHECK ("billing_policy" IN ('LEGACY_CUSTOMER_RENT', 'STORE_RENT_CUSTOMER_DEPOSIT'))
+);
+
+-- CreateTable
+CREATE TABLE "store_wallets" (
+    "wallet_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "balance" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "frozen_balance" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "bank_name" TEXT,
+    "bank_account_number" TEXT,
+    "bank_account_holder" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "store_wallets_pkey" PRIMARY KEY ("wallet_id")
+);
+
+-- CreateTable
+CREATE TABLE "wallet_transactions" (
+    "transaction_id" BIGSERIAL NOT NULL,
+    "wallet_id" BIGINT NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "type" TEXT NOT NULL,
+    "balance_before" DECIMAL(15,2) NOT NULL,
+    "balance_after" DECIMAL(15,2) NOT NULL,
+    "reference_id" TEXT,
+    "description" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "wallet_transactions_pkey" PRIMARY KEY ("transaction_id")
+);
+
+-- CreateTable
+CREATE TABLE "store_withdrawals" (
+    "withdrawal_id" BIGSERIAL NOT NULL,
+    "withdrawal_code" TEXT NOT NULL,
+    "wallet_id" BIGINT NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "fee" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "net_amount" DECIMAL(15,2),
+    "bank_code" TEXT,
+    "bank_name" TEXT NOT NULL,
+    "bank_account_number" TEXT,
+    "bank_account_holder" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "provider" TEXT NOT NULL DEFAULT 'PAYOS',
+    "provider_payout_id" TEXT,
+    "provider_reference_id" TEXT,
+    "failure_reason" TEXT,
+    "approved_by_user_id" BIGINT,
+    "rejection_reason" TEXT,
+    "transfer_evidence_url" TEXT,
+    "requested_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processed_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "store_id" BIGINT,
+    "idempotency_key" VARCHAR(255),
+    "bank_account_id" BIGINT,
+    "bank_account_encrypted" TEXT,
+    "bank_account_hash" VARCHAR(64),
+    "bank_account_masked" VARCHAR(32),
+    "bank_account_name_snapshot" VARCHAR(255),
+    "bank_bin_snapshot" VARCHAR(10),
+    "bank_name_snapshot" VARCHAR(100),
+
+    CONSTRAINT "store_withdrawals_pkey" PRIMARY KEY ("withdrawal_id")
+);
+
+-- CreateTable
+CREATE TABLE "product_image" (
+    "image_id" BIGSERIAL NOT NULL,
+    "product_id" BIGINT NOT NULL,
+    "image_url" TEXT NOT NULL,
+    "cloudinary_public_id" TEXT,
+    "is_thumbnail" BOOLEAN NOT NULL DEFAULT false,
+    "display_order" INTEGER NOT NULL DEFAULT 0,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "product_image_pkey" PRIMARY KEY ("image_id")
+);
+
+-- CreateTable
+CREATE TABLE "pairing_tokens" (
+    "id" BIGSERIAL NOT NULL,
+    "device_id" TEXT NOT NULL,
+    "token_hash" TEXT NOT NULL,
+    "expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "pairing_tokens_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "revoked_tokens" (
+    "id" BIGSERIAL NOT NULL,
+    "token_hash" TEXT NOT NULL,
+    "user_id" BIGINT,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "revoked_tokens_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "auth_otps" (
+    "id" BIGSERIAL NOT NULL,
+    "user_id" BIGINT,
+    "email" TEXT NOT NULL,
+    "purpose" TEXT NOT NULL,
+    "token_hash" TEXT NOT NULL,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "max_attempts" INTEGER NOT NULL DEFAULT 5,
+    "expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "consumed_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "auth_otps_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "iot_idempotency_keys" (
+    "id" BIGSERIAL NOT NULL,
+    "device_id" BIGINT NOT NULL,
+    "request_id" VARCHAR(128) NOT NULL,
+    "order_id" BIGINT,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'PROCESSING',
+    "lease_token" VARCHAR(64),
+    "locked_until" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "iot_idempotency_keys_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "device_nonces" (
+    "device_id" VARCHAR(64) NOT NULL,
+    "nonce" VARCHAR(128) NOT NULL,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "device_nonces_pkey" PRIMARY KEY ("device_id","nonce")
+);
+
+-- CreateTable
+CREATE TABLE "provisioning_sessions" (
+    "id" BIGSERIAL NOT NULL,
+    "session_id" VARCHAR(64) NOT NULL,
+    "session_hash" VARCHAR(128) NOT NULL,
+    "device_id" BIGINT NOT NULL,
+    "session_data" JSONB,
+    "token_hash" VARCHAR(128),
+    "status" VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    "claimed_by" BIGINT,
+    "expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "provisioning_sessions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "subscription_idempotency_keys" (
+    "id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "idempotency_key" VARCHAR(128) NOT NULL,
+    "request_hash" VARCHAR(64) NOT NULL,
+    "subscription_id" BIGINT NOT NULL,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'COMPLETED',
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "subscription_idempotency_keys_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "driver_duties" (
+    "driver_duty_id" BIGSERIAL NOT NULL,
+    "driver_id" BIGINT NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'OFFLINE',
+    "last_seen_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "driver_duties_pkey" PRIMARY KEY ("driver_duty_id")
+);
+
+-- CreateTable
+CREATE TABLE "driver_shifts" (
+    "shift_id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "driver_id" BIGINT NOT NULL,
+    "status" VARCHAR(30) NOT NULL DEFAULT 'OPEN',
+    "started_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "ended_at" TIMESTAMPTZ(6),
+    "handed_over_at" TIMESTAMPTZ(6),
+    "confirmed_by_user_id" BIGINT,
+    "handover_code" VARCHAR(50),
+    "total_orders_delivered" INTEGER NOT NULL DEFAULT 0,
+    "total_orders_failed" INTEGER NOT NULL DEFAULT 0,
+    "total_cod_collected" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "total_vietqr_collected" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "handover_note" TEXT,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "driver_shifts_pkey" PRIMARY KEY ("shift_id")
+);
+
+-- CreateTable
+CREATE TABLE "identity_verification_sessions" (
+    "id" BIGSERIAL NOT NULL,
+    "user_id" BIGINT NOT NULL,
+    "didit_session_id" VARCHAR(128) NOT NULL,
+    "workflow_id" VARCHAR(128) NOT NULL,
+    "vendor_data" VARCHAR(128) NOT NULL,
+    "status" VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    "verification_url" VARCHAR(1024) NOT NULL,
+    "metadata" JSONB,
+    "expires_at" TIMESTAMPTZ(6),
+    "completed_at" TIMESTAMPTZ(6),
+    "deleted_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "identity_verification_sessions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "didit_webhook_events" (
+    "id" BIGSERIAL NOT NULL,
+    "event_id" VARCHAR(128),
+    "didit_session_id" VARCHAR(128),
+    "event_type" VARCHAR(64) NOT NULL,
+    "status" VARCHAR(32) NOT NULL,
+    "payload_hash" VARCHAR(64) NOT NULL,
+    "received_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processed_at" TIMESTAMPTZ(6),
+
+    CONSTRAINT "didit_webhook_events_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "store_bank_accounts" (
+    "id" BIGSERIAL NOT NULL,
+    "store_id" BIGINT NOT NULL,
+    "bank_bin" VARCHAR(10) NOT NULL,
+    "bank_code" VARCHAR(20),
+    "bank_name" VARCHAR(100) NOT NULL,
+    "account_number_encrypted" TEXT NOT NULL,
+    "account_number_hash" VARCHAR(64) NOT NULL,
+    "account_name" VARCHAR(255) NOT NULL,
+    "verification_status" VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    "is_default" BOOLEAN NOT NULL DEFAULT true,
+    "verified_at" TIMESTAMPTZ(6),
+    "last_verified_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "store_bank_accounts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "bank_account_verification_transactions" (
+    "id" BIGSERIAL NOT NULL,
+    "bank_account_id" BIGINT NOT NULL,
+    "reference_code" VARCHAR(64) NOT NULL,
+    "expected_amount" DECIMAL(15,2) NOT NULL DEFAULT 2000,
+    "received_amount" DECIMAL(15,2),
+    "provider_transaction_id" VARCHAR(128),
+    "status" VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    "failure_reason" VARCHAR(64),
+    "expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "verified_at" TIMESTAMPTZ(6),
+    "refund_status" VARCHAR(32),
+    "refund_transaction_id" VARCHAR(128),
+    "refunded_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "bank_account_verification_transactions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "notifications" (
+    "notification_id" BIGSERIAL NOT NULL,
+    "user_id" BIGINT NOT NULL,
+    "type" VARCHAR(50) NOT NULL,
+    "title" VARCHAR(255) NOT NULL,
+    "body" TEXT NOT NULL,
+    "data" JSONB,
+    "idempotency_key" VARCHAR(128) NOT NULL,
+    "read_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "notifications_pkey" PRIMARY KEY ("notification_id")
+);
+
+-- CreateTable
+CREATE TABLE "api_idempotency_keys" (
+    "id" BIGSERIAL NOT NULL,
+    "idempotency_key" VARCHAR(128) NOT NULL,
+    "method" VARCHAR(10) NOT NULL DEFAULT 'POST',
+    "actual_path" VARCHAR(255) NOT NULL DEFAULT '/',
+    "actor_scope" VARCHAR(128) NOT NULL DEFAULT 'public',
+    "route" VARCHAR(255) NOT NULL,
+    "user_id" BIGINT,
+    "request_hash" CHAR(64) NOT NULL,
+    "status_code" INTEGER,
+    "response_body" JSONB,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'PROCESSING',
+    "lock_token" VARCHAR(64),
+    "locked_until" TIMESTAMPTZ(6) NOT NULL,
+    "expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "api_idempotency_keys_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "dead_letter_jobs" (
+    "id" VARCHAR(64) NOT NULL,
+    "queue_name" VARCHAR(64) NOT NULL,
+    "job_name" VARCHAR(128) NOT NULL,
+    "payload" JSONB NOT NULL,
+    "attempts_made" INTEGER NOT NULL DEFAULT 0,
+    "max_attempts" INTEGER NOT NULL DEFAULT 3,
+    "failed_reason" TEXT,
+    "stacktrace" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "status" VARCHAR(32) NOT NULL DEFAULT 'DEAD',
+    "replay_job_id" VARCHAR(128),
+    "failed_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "dead_letter_jobs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "user_auth_identities" (
+    "id" UUID NOT NULL,
+    "user_id" BIGINT NOT NULL,
+    "provider" VARCHAR(32) NOT NULL,
+    "provider_subject" VARCHAR(255) NOT NULL,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "user_auth_identities_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "device_movements" (
+    "movement_id" BIGSERIAL NOT NULL,
+    "button_id" BIGINT NOT NULL,
+    "source_type" VARCHAR(30) NOT NULL,
+    "source_store_id" BIGINT,
+    "dest_type" VARCHAR(30) NOT NULL,
+    "dest_store_id" BIGINT,
+    "rental_id" BIGINT,
+    "actor_user_id" BIGINT,
+    "reason" VARCHAR(255),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "device_movements_pkey" PRIMARY KEY ("movement_id")
+);
+
+-- CreateTable
+CREATE TABLE "billing_charges" (
+    "charge_id" BIGSERIAL NOT NULL,
+    "charge_code" VARCHAR(64) NOT NULL,
+    "purpose" VARCHAR(32) NOT NULL,
+    "target_type" VARCHAR(32) NOT NULL,
+    "target_id" BIGINT NOT NULL,
+    "payer_store_id" BIGINT,
+    "currency" VARCHAR(10) NOT NULL DEFAULT 'VND',
+    "total_amount" DECIMAL(15,2) NOT NULL,
+    "paid_amount" DECIMAL(15,2) DEFAULT 0.00,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    "paid_at" TIMESTAMPTZ(6),
+    "payment_method" VARCHAR(32),
+    "qr_code" TEXT,
+    "payment_link_id" VARCHAR(128),
+    "checkout_url" VARCHAR(1024),
+    "provider_transaction_code" VARCHAR(128),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "billing_charges_pkey" PRIMARY KEY ("charge_id")
+);
+
+-- CreateTable
+CREATE TABLE "store_cash_vouchers" (
+    "id" BIGSERIAL NOT NULL,
+    "token_hash" VARCHAR(64) NOT NULL,
+    "customer_id" BIGINT NOT NULL,
+    "rental_id" BIGINT NOT NULL,
+    "charge_id" BIGINT NOT NULL,
+    "target_type" VARCHAR(32) NOT NULL DEFAULT 'RENTAL',
+    "collecting_store_id" BIGINT NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "status" VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    "expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "consumed_at" TIMESTAMPTZ(6),
+    "revoked_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "store_cash_vouchers_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "store_cash_receipts" (
+    "id" BIGSERIAL NOT NULL,
+    "charge_id" BIGINT NOT NULL,
+    "voucher_id" BIGINT NOT NULL,
+    "collecting_store_id" BIGINT NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "wallet_transaction_id" BIGINT NOT NULL,
+    "request_hash" VARCHAR(64),
+    "collected_by_user_id" BIGINT NOT NULL,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "store_cash_receipts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "billing_payment_receipts" (
+    "id" BIGSERIAL NOT NULL,
+    "charge_id" BIGINT NOT NULL,
+    "provider" VARCHAR(32) NOT NULL,
+    "channel" VARCHAR(64) NOT NULL,
+    "provider_transaction_ref" VARCHAR(128) NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "currency" VARCHAR(10) NOT NULL DEFAULT 'VND',
+    "classification" VARCHAR(32) NOT NULL,
+    "received_at" TIMESTAMPTZ(6) NOT NULL,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "billing_payment_receipts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "billing_overpayment_obligations" (
+    "id" BIGSERIAL NOT NULL,
+    "receipt_id" BIGINT NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "receipt_classification" VARCHAR(32) NOT NULL DEFAULT 'OVERPAYMENT_RECEIPT',
+    "status" VARCHAR(32) NOT NULL DEFAULT 'PENDING_RECONCILIATION',
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "billing_overpayment_obligations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "billing_charge_lines" (
+    "line_id" BIGSERIAL NOT NULL,
+    "charge_id" BIGINT NOT NULL,
+    "line_type" VARCHAR(32) NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "duration_unit" VARCHAR(10) DEFAULT 'MONTH',
+    "duration_count" INTEGER DEFAULT 1,
+    "quantity" INTEGER DEFAULT 1,
+    "unit_price" DECIMAL(15,2),
+    "description" VARCHAR(255),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "billing_charge_lines_pkey" PRIMARY KEY ("line_id")
+);
+
+-- CreateTable
+CREATE TABLE "rental_deposits" (
+    "deposit_id" BIGSERIAL NOT NULL,
+    "rental_id" BIGINT NOT NULL,
+    "collected_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "held_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "refund_reserved_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "refunded_amount" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "rental_deposits_pkey" PRIMARY KEY ("deposit_id")
+);
+
+-- CreateTable
+CREATE TABLE "rental_returns" (
+    "return_id" BIGSERIAL NOT NULL,
+    "return_code" VARCHAR(64) NOT NULL,
+    "rental_id" BIGINT NOT NULL,
+    "button_id" BIGINT NOT NULL,
+    "status" VARCHAR(30) NOT NULL DEFAULT 'PENDING_RECEIPT',
+    "received_by_user_id" BIGINT,
+    "inspected_by_user_id" BIGINT,
+    "inspection_note" TEXT,
+    "received_at" TIMESTAMPTZ(6),
+    "inspected_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "rental_returns_pkey" PRIMARY KEY ("return_id")
+);
+
+-- CreateTable
+CREATE TABLE "deposit_refunds" (
+    "refund_id" BIGSERIAL NOT NULL,
+    "refund_code" VARCHAR(64) NOT NULL,
+    "return_id" BIGINT,
+    "rental_id" BIGINT NOT NULL,
+    "customer_id" BIGINT NOT NULL,
+    "bank_account_id" BIGINT,
+    "recipient_bin" VARCHAR(10),
+    "recipient_account_number_encrypted" TEXT,
+    "recipient_account_number_hash" VARCHAR(64),
+    "recipient_account_holder_name" VARCHAR(255),
+    "recipient_account_number_masked" VARCHAR(32),
+    "amount" DECIMAL(15,2) NOT NULL,
+    "status" VARCHAR(30) NOT NULL DEFAULT 'PENDING_APPROVAL',
+    "approved_by_user_id" BIGINT,
+    "rejection_reason" VARCHAR(255),
+    "provider_reference_id" VARCHAR(128),
+    "payout_error" TEXT,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "refunded_at" TIMESTAMPTZ(6),
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "deposit_refunds_pkey" PRIMARY KEY ("refund_id")
+);
+
+-- CreateTable
+CREATE TABLE "customer_bank_accounts" (
+    "id" BIGSERIAL NOT NULL,
+    "customer_id" BIGINT NOT NULL,
+    "bank_bin" VARCHAR(10) NOT NULL,
+    "bank_code" VARCHAR(20),
+    "bank_name" VARCHAR(100) NOT NULL,
+    "account_number_encrypted" TEXT NOT NULL,
+    "account_number_hash" VARCHAR(64) NOT NULL,
+    "account_number_masked" VARCHAR(32) NOT NULL,
+    "account_name" VARCHAR(255) NOT NULL,
+    "verification_status" VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    "is_default" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_bank_accounts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "customer_bank_verification_proofs" (
+    "id" BIGSERIAL NOT NULL,
+    "proof_reference" VARCHAR(128) NOT NULL,
+    "customer_id" BIGINT NOT NULL,
+    "account_id" BIGINT NOT NULL,
+    "bank_bin" VARCHAR(10) NOT NULL,
+    "account_number_hash" VARCHAR(64) NOT NULL,
+    "status" VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    "session_status" VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+    "provider" VARCHAR(32) NOT NULL DEFAULT 'PAYOS',
+    "expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "used_at" TIMESTAMPTZ(6),
+    "payment_order_code" BIGINT,
+    "payment_link_id" VARCHAR(128),
+    "payment_checkout_url" TEXT,
+    "verification_status" VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    "verified_at" TIMESTAMPTZ(6),
+    "verified_by_transaction_id" BIGINT,
+    "rejection_reason" VARCHAR(255),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_bank_verification_proofs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "customer_bank_inbound_transactions" (
+    "id" BIGSERIAL NOT NULL,
+    "proof_id" BIGINT,
+    "provider" VARCHAR(32) NOT NULL DEFAULT 'PAYOS',
+    "channel" VARCHAR(64) NOT NULL DEFAULT 'DEFAULT',
+    "provider_transaction_ref" VARCHAR(128) NOT NULL,
+    "amount" DECIMAL(15,2) NOT NULL,
+    "received_at" TIMESTAMPTZ(6) NOT NULL,
+    "is_late_payment" BOOLEAN NOT NULL DEFAULT false,
+    "source_bank_bin" VARCHAR(10),
+    "source_account_masked" VARCHAR(32),
+    "source_account_hash" VARCHAR(64),
+    "source_account_encrypted" TEXT,
+    "source_account_name" VARCHAR(255),
+    "has_sufficient_evidence" BOOLEAN NOT NULL DEFAULT false,
+    "session_match_status" VARCHAR(32) NOT NULL DEFAULT 'MATCHED_SESSION',
+    "match_decision" VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    "raw_payload_checksum" VARCHAR(64),
+    "reconciliation_flag" VARCHAR(64),
+    "merged_into_inbound_id" BIGINT,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_bank_inbound_transactions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "customer_bank_refund_obligations" (
+    "id" BIGSERIAL NOT NULL,
+    "inbound_transaction_id" BIGINT NOT NULL,
+    "refund_amount" DECIMAL(15,2) NOT NULL,
+    "refund_status" VARCHAR(32) NOT NULL DEFAULT 'PENDING_REFUND',
+    "target_bank_bin" VARCHAR(10),
+    "target_account_masked" VARCHAR(32),
+    "target_account_hash" VARCHAR(64),
+    "target_account_encrypted" TEXT,
+    "target_account_name" VARCHAR(255),
+    "refund_payout_reference" VARCHAR(128) NOT NULL,
+    "active_payout_attempt_id" BIGINT,
+    "refunded_at" TIMESTAMPTZ(6),
+    "failure_reason" VARCHAR(255),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_bank_refund_obligations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "customer_bank_refund_payout_attempts" (
+    "id" BIGSERIAL NOT NULL,
+    "obligation_id" BIGINT NOT NULL,
+    "attempt_number" INTEGER NOT NULL,
+    "payout_provider" VARCHAR(32) NOT NULL DEFAULT 'PAYOS',
+    "payout_reference" VARCHAR(128) NOT NULL,
+    "provider_payout_id" VARCHAR(128),
+    "status" VARCHAR(32) NOT NULL DEFAULT 'PREPARING',
+    "dispatched_at" TIMESTAMPTZ(6),
+    "reconciled_at" TIMESTAMPTZ(6),
+    "response_code" VARCHAR(32),
+    "failure_reason" TEXT,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_bank_refund_payout_attempts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "access_adjustments" (
+    "id" BIGSERIAL NOT NULL,
+    "target_type" VARCHAR(32) NOT NULL,
+    "target_id" BIGINT NOT NULL,
+    "operation" VARCHAR(32) NOT NULL,
+    "additional_days" INTEGER,
+    "previous_expires_at" TIMESTAMPTZ(6),
+    "new_expires_at" TIMESTAMPTZ(6) NOT NULL,
+    "reason" VARCHAR(255) NOT NULL,
+    "actor_user_id" BIGINT NOT NULL,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "access_adjustments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "outbox_events" (
+    "id" BIGSERIAL NOT NULL,
+    "event_type" VARCHAR(64) NOT NULL,
+    "payload" JSONB NOT NULL,
+    "status" VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    "claim_token" VARCHAR(64),
+    "locked_until" TIMESTAMPTZ(6),
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "next_attempt_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processed_at" TIMESTAMPTZ(6),
+    "error" TEXT,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "outbox_events_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "rental_audit_logs" (
+    "audit_id" BIGSERIAL NOT NULL,
+    "actor_type" VARCHAR(32) NOT NULL,
+    "actor_user_id" BIGINT,
+    "action" VARCHAR(64) NOT NULL,
+    "target_type" VARCHAR(32) NOT NULL,
+    "target_id" BIGINT NOT NULL,
+    "before_state" VARCHAR(64),
+    "after_state" VARCHAR(64),
+    "amount" DECIMAL(15,2),
+    "correlation_id" VARCHAR(128),
+    "idempotency_key" VARCHAR(128),
+    "reason" VARCHAR(255),
+    "metadata" JSONB,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "rental_audit_logs_pkey" PRIMARY KEY ("audit_id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "roles_role_code_key" ON "roles"("role_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_auth_id_key" ON "users"("auth_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_username_key" ON "users"("username");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_users_phone" ON "users"("phone");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_firebase_uid_key" ON "users"("firebase_uid");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_users_auth_provider_subject" ON "users"("auth_provider", "provider_subject");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "store_code_key" ON "store"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "store_staff_store_id_user_id_key" ON "store_staff"("store_id", "user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "customer_profile_user_id_key" ON "customer_profile"("user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "customer_address_customer_id_address_id_key" ON "customer_address"("customer_id", "address_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "store_customer_store_id_customer_id_key" ON "store_customer"("store_id", "customer_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "category_store_id_category_id_key" ON "category"("store_id", "category_id");
+
+-- CreateIndex
+CREATE INDEX "idx_product_store_status_price" ON "product"("store_id", "status", "base_price");
+
+-- CreateIndex
+CREATE INDEX "idx_product_store_cat_status" ON "product"("store_id", "category_id", "status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "product_store_id_product_code_key" ON "product"("store_id", "product_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "product_store_id_product_id_key" ON "product"("store_id", "product_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "inventory_product_id_key" ON "inventory"("product_id");
+
+-- CreateIndex
+CREATE INDEX "idx_inventory_store_stock_alert" ON "inventory"("store_id", "quantity_on_hand", "min_stock_alert");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "iot_button_device_id_key" ON "iot_button"("device_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "iot_button_button_code_key" ON "iot_button"("button_code");
+
+-- CreateIndex
+CREATE INDEX "idx_iot_button_store_status_battery" ON "iot_button"("store_id", "status", "battery_level");
+
+-- CreateIndex
+CREATE INDEX "idx_iot_button_custody_inventory" ON "iot_button"("custody_store_id", "inventory_state");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "iot_button_button_id_customer_id_store_id_key" ON "iot_button"("button_id", "customer_id", "store_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "button_product_button_id_product_id_key" ON "button_product"("button_id", "product_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "orders_order_code_key" ON "orders"("order_code");
+
+-- CreateIndex
+CREATE INDEX "idx_orders_store_status_created" ON "orders"("store_id", "order_status", "created_at" DESC);
+
+-- CreateIndex
+CREATE INDEX "idx_orders_customer_status_created" ON "orders"("customer_id", "order_status", "created_at" DESC);
+
+-- CreateIndex
+CREATE INDEX "idx_orders_driver_status" ON "orders"("assigned_driver_id", "order_status");
+
+-- CreateIndex
+CREATE INDEX "idx_orders_order_date" ON "orders"("order_date" DESC);
+
+-- CreateIndex
+CREATE INDEX "idx_orders_store_date_status" ON "orders"("store_id", "order_date" DESC, "order_status");
+
+-- CreateIndex
+CREATE INDEX "idx_orders_customer_date_status" ON "orders"("customer_id", "order_date" DESC, "order_status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_orders_button_request" ON "orders"("button_id", "iot_request_id");
+
+-- CreateIndex
+CREATE INDEX "idx_payment_tx_order_status" ON "payment_transaction"("order_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_payment_tx_rental_status" ON "payment_transaction"("rental_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_payment_tx_created_at" ON "payment_transaction"("created_at" DESC);
+
+-- CreateIndex
+CREATE INDEX "idx_payment_tx_status_order_created" ON "payment_transaction"("status", "order_id", "created_at" DESC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "refresh_tokens_token_hash_key" ON "refresh_tokens"("token_hash");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "user_fcm_tokens_token_key" ON "user_fcm_tokens"("token");
+
+-- CreateIndex
+CREATE INDEX "user_fcm_tokens_user_id_is_active_idx" ON "user_fcm_tokens"("user_id", "is_active");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "device_templates_code_key" ON "device_templates"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "subscription_plans_plan_code_key" ON "subscription_plans"("plan_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "rental_packages_package_code_key" ON "rental_packages"("package_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "button_rentals_rental_code_key" ON "button_rentals"("rental_code");
+
+-- CreateIndex
+CREATE INDEX "idx_button_rentals_customer_status" ON "button_rentals"("customer_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_button_rentals_package_status" ON "button_rentals"("package_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_button_rentals_fulfillment_status" ON "button_rentals"("fulfillment_store_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_button_rentals_billing_policy" ON "button_rentals"("billing_policy");
+
+-- CreateIndex
+CREATE INDEX "idx_button_rentals_policy_review" ON "button_rentals"("billing_policy_review_required");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_rental_customer_cash_binding" ON "button_rentals"("rental_id", "customer_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "store_wallets_store_id_key" ON "store_wallets"("store_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "wallet_transactions_wallet_id_type_reference_id_key" ON "wallet_transactions"("wallet_id", "type", "reference_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "store_withdrawals_withdrawal_code_key" ON "store_withdrawals"("withdrawal_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "store_withdrawals_provider_reference_id_key" ON "store_withdrawals"("provider_reference_id");
+
+-- CreateIndex
+CREATE INDEX "idx_store_withdrawals_acc_hash" ON "store_withdrawals"("bank_account_hash");
+
+-- CreateIndex
+CREATE INDEX "idx_store_withdrawals_provider_ref" ON "store_withdrawals"("provider_reference_id");
+
+-- CreateIndex
+CREATE INDEX "idx_store_withdrawals_store_status_created" ON "store_withdrawals"("store_id", "status", "created_at" DESC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_store_withdrawals_store_idempotency" ON "store_withdrawals"("store_id", "idempotency_key");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "pairing_tokens_token_hash_key" ON "pairing_tokens"("token_hash");
+
+-- CreateIndex
+CREATE INDEX "pairing_tokens_device_id_status_idx" ON "pairing_tokens"("device_id", "status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "revoked_tokens_token_hash_key" ON "revoked_tokens"("token_hash");
+
+-- CreateIndex
+CREATE INDEX "revoked_tokens_token_hash_idx" ON "revoked_tokens"("token_hash");
+
+-- CreateIndex
+CREATE INDEX "auth_otps_token_hash_purpose_idx" ON "auth_otps"("token_hash", "purpose");
+
+-- CreateIndex
+CREATE INDEX "auth_otps_email_purpose_idx" ON "auth_otps"("email", "purpose");
+
+-- CreateIndex
+CREATE INDEX "auth_otps_user_id_purpose_idx" ON "auth_otps"("user_id", "purpose");
+
+-- CreateIndex
+CREATE INDEX "idx_iot_idempotency_request_id" ON "iot_idempotency_keys"("request_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_iot_idempotency_device_request" ON "iot_idempotency_keys"("device_id", "request_id");
+
+-- CreateIndex
+CREATE INDEX "device_nonces_expires_at_idx" ON "device_nonces"("expires_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "provisioning_sessions_session_id_key" ON "provisioning_sessions"("session_id");
+
+-- CreateIndex
+CREATE INDEX "provisioning_sessions_session_id_idx" ON "provisioning_sessions"("session_id");
+
+-- CreateIndex
+CREATE INDEX "idx_sub_idemp_store" ON "subscription_idempotency_keys"("store_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_sub_idemp_store_key" ON "subscription_idempotency_keys"("store_id", "idempotency_key");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "driver_duties_driver_id_key" ON "driver_duties"("driver_id");
+
+-- CreateIndex
+CREATE INDEX "idx_driver_shifts_store_status_started" ON "driver_shifts"("store_id", "status", "started_at" DESC);
+
+-- CreateIndex
+CREATE INDEX "idx_driver_shifts_driver_status" ON "driver_shifts"("driver_id", "status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "identity_verification_sessions_didit_session_id_key" ON "identity_verification_sessions"("didit_session_id");
+
+-- CreateIndex
+CREATE INDEX "identity_verification_sessions_user_id_idx" ON "identity_verification_sessions"("user_id");
+
+-- CreateIndex
+CREATE INDEX "identity_verification_sessions_status_idx" ON "identity_verification_sessions"("status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "didit_webhook_events_event_id_key" ON "didit_webhook_events"("event_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "didit_webhook_events_payload_hash_key" ON "didit_webhook_events"("payload_hash");
+
+-- CreateIndex
+CREATE INDEX "didit_webhook_events_didit_session_id_idx" ON "didit_webhook_events"("didit_session_id");
+
+-- CreateIndex
+CREATE INDEX "idx_store_bank_accounts_acc_hash" ON "store_bank_accounts"("account_number_hash");
+
+-- CreateIndex
+CREATE INDEX "idx_store_bank_accounts_status" ON "store_bank_accounts"("store_id", "verification_status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "store_bank_accounts_store_id_account_number_hash_key" ON "store_bank_accounts"("store_id", "account_number_hash");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_bank_verify_tx_provider_tx_id" ON "bank_account_verification_transactions"("provider_transaction_id");
+
+-- CreateIndex
+CREATE INDEX "idx_bank_verify_tx_ref_code" ON "bank_account_verification_transactions"("reference_code");
+
+-- CreateIndex
+CREATE INDEX "idx_bank_verify_tx_status" ON "bank_account_verification_transactions"("status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "bank_account_verification_transactions_bank_account_id_refe_key" ON "bank_account_verification_transactions"("bank_account_id", "reference_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "notifications_idempotency_key_key" ON "notifications"("idempotency_key");
+
+-- CreateIndex
+CREATE INDEX "idx_notifications_user_read" ON "notifications"("user_id", "read_at");
+
+-- CreateIndex
+CREATE INDEX "idx_notifications_user_created" ON "notifications"("user_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "idx_api_idempotency_expires_at" ON "api_idempotency_keys"("expires_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "api_idempotency_keys_actor_scope_idempotency_key_method_act_key" ON "api_idempotency_keys"("actor_scope", "idempotency_key", "method", "actual_path");
+
+-- CreateIndex
+CREATE INDEX "idx_dead_letter_queue_name" ON "dead_letter_jobs"("queue_name");
+
+-- CreateIndex
+CREATE INDEX "idx_dead_letter_status" ON "dead_letter_jobs"("status");
+
+-- CreateIndex
+CREATE INDEX "idx_dead_letter_replay_job_id" ON "dead_letter_jobs"("replay_job_id");
+
+-- CreateIndex
+CREATE INDEX "idx_user_auth_identities_user_id" ON "user_auth_identities"("user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_user_auth_identities_provider_subject" ON "user_auth_identities"("provider", "provider_subject");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_user_auth_identities_user_provider" ON "user_auth_identities"("user_id", "provider");
+
+-- CreateIndex
+CREATE INDEX "idx_device_movements_button" ON "device_movements"("button_id", "created_at" DESC);
+
+-- CreateIndex
+CREATE INDEX "idx_device_movements_source_store" ON "device_movements"("source_store_id");
+
+-- CreateIndex
+CREATE INDEX "idx_device_movements_dest_store" ON "device_movements"("dest_store_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "billing_charges_charge_code_key" ON "billing_charges"("charge_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_billing_charges_provider_tx" ON "billing_charges"("provider_transaction_code");
+
+-- CreateIndex
+CREATE INDEX "idx_billing_charges_target" ON "billing_charges"("target_type", "target_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_billing_charges_status_created" ON "billing_charges"("status", "created_at" DESC);
+
+-- CreateIndex
+CREATE INDEX "idx_billing_charges_payer_store" ON "billing_charges"("payer_store_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_charge_cash_binding" ON "billing_charges"("charge_id", "target_type", "target_id", "total_amount");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cash_voucher_token_hash" ON "store_cash_vouchers"("token_hash");
+
+-- CreateIndex
+CREATE INDEX "idx_cash_voucher_store_expiry" ON "store_cash_vouchers"("collecting_store_id", "status", "expires_at");
+
+-- CreateIndex
+CREATE INDEX "idx_cash_voucher_charge" ON "store_cash_vouchers"("charge_id");
+
+-- CreateIndex
+CREATE INDEX "idx_cash_voucher_rental_customer" ON "store_cash_vouchers"("rental_id", "customer_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cash_voucher_receipt_binding" ON "store_cash_vouchers"("id", "charge_id", "collecting_store_id", "amount");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cash_receipt_charge" ON "store_cash_receipts"("charge_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cash_receipt_voucher" ON "store_cash_receipts"("voucher_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cash_receipt_wallet_tx" ON "store_cash_receipts"("wallet_transaction_id");
+
+-- CreateIndex
+CREATE INDEX "idx_cash_receipt_store_created" ON "store_cash_receipts"("collecting_store_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "idx_cash_receipt_actor" ON "store_cash_receipts"("collected_by_user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cash_receipt_voucher_binding" ON "store_cash_receipts"("voucher_id", "charge_id", "collecting_store_id", "amount");
+
+-- CreateIndex
+CREATE INDEX "idx_billing_receipt_charge_received" ON "billing_payment_receipts"("charge_id", "received_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_billing_receipt_provider_channel_ref" ON "billing_payment_receipts"("provider", "channel", "provider_transaction_ref");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_billing_receipt_obligation_binding" ON "billing_payment_receipts"("id", "amount", "classification");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_billing_overpayment_receipt" ON "billing_overpayment_obligations"("receipt_id");
+
+-- CreateIndex
+CREATE INDEX "idx_billing_overpayment_queue" ON "billing_overpayment_obligations"("status", "created_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_billing_overpayment_binding" ON "billing_overpayment_obligations"("receipt_id", "amount", "receipt_classification");
+
+-- CreateIndex
+CREATE INDEX "idx_billing_charge_lines_charge" ON "billing_charge_lines"("charge_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "rental_deposits_rental_id_key" ON "rental_deposits"("rental_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "rental_returns_return_code_key" ON "rental_returns"("return_code");
+
+-- CreateIndex
+CREATE INDEX "idx_rental_returns_rental_status" ON "rental_returns"("rental_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_rental_returns_button" ON "rental_returns"("button_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "deposit_refunds_refund_code_key" ON "deposit_refunds"("refund_code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_deposit_refunds_return_id" ON "deposit_refunds"("return_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "deposit_refunds_provider_reference_id_key" ON "deposit_refunds"("provider_reference_id");
+
+-- CreateIndex
+CREATE INDEX "idx_deposit_refunds_customer_status" ON "deposit_refunds"("customer_id", "status");
+
+-- CreateIndex
+CREATE INDEX "idx_deposit_refunds_rental" ON "deposit_refunds"("rental_id");
+
+-- CreateIndex
+CREATE INDEX "idx_customer_bank_default" ON "customer_bank_accounts"("customer_id", "is_default");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "customer_bank_accounts_customer_id_account_number_hash_key" ON "customer_bank_accounts"("customer_id", "account_number_hash");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cust_bank_proof_ref" ON "customer_bank_verification_proofs"("proof_reference");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cust_bank_payment_order_code" ON "customer_bank_verification_proofs"("payment_order_code");
+
+-- CreateIndex
+CREATE INDEX "idx_cust_bank_proof_cust_acc" ON "customer_bank_verification_proofs"("customer_id", "account_id");
+
+-- CreateIndex
+CREATE INDEX "idx_cust_bank_inbound_proof_id" ON "customer_bank_inbound_transactions"("proof_id");
+
+-- CreateIndex
+CREATE INDEX "idx_cust_bank_inbound_match_status" ON "customer_bank_inbound_transactions"("session_match_status");
+
+-- CreateIndex
+CREATE INDEX "idx_cust_bank_inbound_merged_into" ON "customer_bank_inbound_transactions"("merged_into_inbound_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cust_bank_inbound_provider_channel_ref" ON "customer_bank_inbound_transactions"("provider", "channel", "provider_transaction_ref");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cust_bank_refund_inbound_tx" ON "customer_bank_refund_obligations"("inbound_transaction_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cust_bank_refund_payout_ref" ON "customer_bank_refund_obligations"("refund_payout_reference");
+
+-- CreateIndex
+CREATE INDEX "idx_cust_bank_refund_status" ON "customer_bank_refund_obligations"("refund_status");
+
+-- CreateIndex
+CREATE INDEX "idx_cust_bank_attempt_obligation_id" ON "customer_bank_refund_payout_attempts"("obligation_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cust_bank_attempt_obligation_number" ON "customer_bank_refund_payout_attempts"("obligation_id", "attempt_number");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "uq_cust_bank_attempt_provider_ref" ON "customer_bank_refund_payout_attempts"("payout_provider", "payout_reference");
+
+-- CreateIndex
+CREATE INDEX "idx_access_adjustments_target" ON "access_adjustments"("target_type", "target_id");
+
+-- CreateIndex
+CREATE INDEX "idx_outbox_events_status_next" ON "outbox_events"("status", "next_attempt_at");
+
+-- CreateIndex
+CREATE INDEX "idx_rental_audit_target" ON "rental_audit_logs"("target_type", "target_id");
+
+-- CreateIndex
+CREATE INDEX "idx_rental_audit_action_created" ON "rental_audit_logs"("action", "created_at");
+
+-- AddForeignKey
+ALTER TABLE "store" ADD CONSTRAINT "store_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "users"("user_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_staff" ADD CONSTRAINT "store_staff_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_staff" ADD CONSTRAINT "store_staff_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_staff" ADD CONSTRAINT "store_staff_role_id_fkey" FOREIGN KEY ("role_id") REFERENCES "roles"("role_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_profile" ADD CONSTRAINT "customer_profile_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_address" ADD CONSTRAINT "customer_address_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_customer" ADD CONSTRAINT "store_customer_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_customer" ADD CONSTRAINT "store_customer_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "category" ADD CONSTRAINT "category_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "category" ADD CONSTRAINT "category_store_id_parent_category_id_fkey" FOREIGN KEY ("store_id", "parent_category_id") REFERENCES "category"("store_id", "category_id") ON DELETE NO ACTION ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product" ADD CONSTRAINT "product_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product" ADD CONSTRAINT "product_store_id_category_id_fkey" FOREIGN KEY ("store_id", "category_id") REFERENCES "category"("store_id", "category_id") ON DELETE NO ACTION ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product_price_history" ADD CONSTRAINT "product_price_history_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "product"("product_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product_price_history" ADD CONSTRAINT "product_price_history_changed_by_user_id_fkey" FOREIGN KEY ("changed_by_user_id") REFERENCES "users"("user_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product_discount" ADD CONSTRAINT "product_discount_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "product"("product_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "inventory" ADD CONSTRAINT "inventory_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "inventory" ADD CONSTRAINT "inventory_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "product"("product_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_button" ADD CONSTRAINT "iot_button_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_button" ADD CONSTRAINT "iot_button_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_button" ADD CONSTRAINT "iot_button_customer_id_address_id_fkey" FOREIGN KEY ("customer_id", "address_id") REFERENCES "customer_address"("customer_id", "address_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_button" ADD CONSTRAINT "iot_button_deployed_template_id_fkey" FOREIGN KEY ("deployed_template_id") REFERENCES "device_templates"("template_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_button" ADD CONSTRAINT "iot_button_rental_id_fkey" FOREIGN KEY ("rental_id") REFERENCES "button_rentals"("rental_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_button" ADD CONSTRAINT "iot_button_custody_store_id_fkey" FOREIGN KEY ("custody_store_id") REFERENCES "store"("store_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "button_product" ADD CONSTRAINT "button_product_button_id_fkey" FOREIGN KEY ("button_id") REFERENCES "iot_button"("button_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "button_product" ADD CONSTRAINT "button_product_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "product"("product_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_button_id_fkey" FOREIGN KEY ("button_id") REFERENCES "iot_button"("button_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_assigned_driver_id_fkey" FOREIGN KEY ("assigned_driver_id") REFERENCES "users"("user_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "order_item" ADD CONSTRAINT "order_item_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "orders"("order_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "order_item" ADD CONSTRAINT "order_item_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "product"("product_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "order_status_history" ADD CONSTRAINT "order_status_history_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "orders"("order_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "order_status_history" ADD CONSTRAINT "order_status_history_changed_by_user_id_fkey" FOREIGN KEY ("changed_by_user_id") REFERENCES "users"("user_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "payment_transaction" ADD CONSTRAINT "payment_transaction_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "orders"("order_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "payment_transaction" ADD CONSTRAINT "payment_transaction_rental_id_fkey" FOREIGN KEY ("rental_id") REFERENCES "button_rentals"("rental_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "user_fcm_tokens" ADD CONSTRAINT "user_fcm_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "device_templates" ADD CONSTRAINT "device_templates_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "device_templates" ADD CONSTRAINT "device_templates_default_product_id_fkey" FOREIGN KEY ("default_product_id") REFERENCES "product"("product_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_subscriptions" ADD CONSTRAINT "store_subscriptions_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_subscriptions" ADD CONSTRAINT "store_subscriptions_plan_id_fkey" FOREIGN KEY ("plan_id") REFERENCES "subscription_plans"("plan_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "button_rentals" ADD CONSTRAINT "button_rentals_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "button_rentals" ADD CONSTRAINT "button_rentals_package_id_fkey" FOREIGN KEY ("package_id") REFERENCES "rental_packages"("package_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "button_rentals" ADD CONSTRAINT "button_rentals_fulfillment_store_id_fkey" FOREIGN KEY ("fulfillment_store_id") REFERENCES "store"("store_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_wallets" ADD CONSTRAINT "store_wallets_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "wallet_transactions" ADD CONSTRAINT "wallet_transactions_wallet_id_fkey" FOREIGN KEY ("wallet_id") REFERENCES "store_wallets"("wallet_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_withdrawals" ADD CONSTRAINT "store_withdrawals_wallet_id_fkey" FOREIGN KEY ("wallet_id") REFERENCES "store_wallets"("wallet_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_withdrawals" ADD CONSTRAINT "store_withdrawals_approved_by_user_id_fkey" FOREIGN KEY ("approved_by_user_id") REFERENCES "users"("user_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_withdrawals" ADD CONSTRAINT "store_withdrawals_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_withdrawals" ADD CONSTRAINT "store_withdrawals_bank_account_id_fkey" FOREIGN KEY ("bank_account_id") REFERENCES "store_bank_accounts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "product_image" ADD CONSTRAINT "product_image_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "product"("product_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "auth_otps" ADD CONSTRAINT "auth_otps_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_idempotency_keys" ADD CONSTRAINT "iot_idempotency_keys_device_id_fkey" FOREIGN KEY ("device_id") REFERENCES "iot_button"("button_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "iot_idempotency_keys" ADD CONSTRAINT "iot_idempotency_keys_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "orders"("order_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "subscription_idempotency_keys" ADD CONSTRAINT "subscription_idempotency_keys_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "subscription_idempotency_keys" ADD CONSTRAINT "subscription_idempotency_keys_subscription_id_fkey" FOREIGN KEY ("subscription_id") REFERENCES "store_subscriptions"("subscription_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "driver_duties" ADD CONSTRAINT "driver_duties_driver_id_fkey" FOREIGN KEY ("driver_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "driver_duties" ADD CONSTRAINT "driver_duties_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "driver_shifts" ADD CONSTRAINT "driver_shifts_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "driver_shifts" ADD CONSTRAINT "driver_shifts_driver_id_fkey" FOREIGN KEY ("driver_id") REFERENCES "users"("user_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "driver_shifts" ADD CONSTRAINT "driver_shifts_confirmed_by_user_id_fkey" FOREIGN KEY ("confirmed_by_user_id") REFERENCES "users"("user_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "identity_verification_sessions" ADD CONSTRAINT "identity_verification_sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "didit_webhook_events" ADD CONSTRAINT "didit_webhook_events_didit_session_id_fkey" FOREIGN KEY ("didit_session_id") REFERENCES "identity_verification_sessions"("didit_session_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_bank_accounts" ADD CONSTRAINT "store_bank_accounts_store_id_fkey" FOREIGN KEY ("store_id") REFERENCES "store"("store_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "bank_account_verification_transactions" ADD CONSTRAINT "bank_account_verification_transactions_bank_account_id_fkey" FOREIGN KEY ("bank_account_id") REFERENCES "store_bank_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "api_idempotency_keys" ADD CONSTRAINT "api_idempotency_keys_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "user_auth_identities" ADD CONSTRAINT "user_auth_identities_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("user_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "device_movements" ADD CONSTRAINT "device_movements_button_id_fkey" FOREIGN KEY ("button_id") REFERENCES "iot_button"("button_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "store_cash_vouchers" ADD CONSTRAINT "store_cash_vouchers_rental_id_customer_id_fkey" FOREIGN KEY ("rental_id", "customer_id") REFERENCES "button_rentals"("rental_id", "customer_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "store_cash_vouchers" ADD CONSTRAINT "store_cash_vouchers_charge_id_target_type_rental_id_amount_fkey" FOREIGN KEY ("charge_id", "target_type", "rental_id", "amount") REFERENCES "billing_charges"("charge_id", "target_type", "target_id", "total_amount") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "store_cash_vouchers" ADD CONSTRAINT "store_cash_vouchers_collecting_store_id_fkey" FOREIGN KEY ("collecting_store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "store_cash_receipts" ADD CONSTRAINT "store_cash_receipts_voucher_binding_fkey" FOREIGN KEY ("voucher_id", "charge_id", "collecting_store_id", "amount") REFERENCES "store_cash_vouchers"("id", "charge_id", "collecting_store_id", "amount") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "store_cash_receipts" ADD CONSTRAINT "store_cash_receipts_wallet_transaction_id_fkey" FOREIGN KEY ("wallet_transaction_id") REFERENCES "wallet_transactions"("transaction_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "store_cash_receipts" ADD CONSTRAINT "store_cash_receipts_collected_by_user_id_fkey" FOREIGN KEY ("collected_by_user_id") REFERENCES "users"("user_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "billing_charges" ADD CONSTRAINT "billing_charges_payer_store_id_fkey" FOREIGN KEY ("payer_store_id") REFERENCES "store"("store_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "billing_payment_receipts" ADD CONSTRAINT "billing_payment_receipts_charge_id_fkey" FOREIGN KEY ("charge_id") REFERENCES "billing_charges"("charge_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "billing_overpayment_obligations" ADD CONSTRAINT "billing_overpayment_obligations_receipt_binding_fkey" FOREIGN KEY ("receipt_id", "amount", "receipt_classification") REFERENCES "billing_payment_receipts"("id", "amount", "classification") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "billing_charge_lines" ADD CONSTRAINT "billing_charge_lines_charge_id_fkey" FOREIGN KEY ("charge_id") REFERENCES "billing_charges"("charge_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rental_deposits" ADD CONSTRAINT "rental_deposits_rental_id_fkey" FOREIGN KEY ("rental_id") REFERENCES "button_rentals"("rental_id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rental_returns" ADD CONSTRAINT "rental_returns_rental_id_fkey" FOREIGN KEY ("rental_id") REFERENCES "button_rentals"("rental_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rental_returns" ADD CONSTRAINT "rental_returns_button_id_fkey" FOREIGN KEY ("button_id") REFERENCES "iot_button"("button_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "deposit_refunds" ADD CONSTRAINT "deposit_refunds_return_id_fkey" FOREIGN KEY ("return_id") REFERENCES "rental_returns"("return_id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "deposit_refunds" ADD CONSTRAINT "deposit_refunds_rental_id_fkey" FOREIGN KEY ("rental_id") REFERENCES "button_rentals"("rental_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "deposit_refunds" ADD CONSTRAINT "deposit_refunds_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "deposit_refunds" ADD CONSTRAINT "deposit_refunds_bank_account_id_fkey" FOREIGN KEY ("bank_account_id") REFERENCES "customer_bank_accounts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_accounts" ADD CONSTRAINT "customer_bank_accounts_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_verification_proofs" ADD CONSTRAINT "customer_bank_verification_proofs_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_verification_proofs" ADD CONSTRAINT "customer_bank_verification_proofs_account_id_fkey" FOREIGN KEY ("account_id") REFERENCES "customer_bank_accounts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_verification_proofs" ADD CONSTRAINT "customer_bank_verification_proofs_verified_by_transaction__fkey" FOREIGN KEY ("verified_by_transaction_id") REFERENCES "customer_bank_inbound_transactions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_inbound_transactions" ADD CONSTRAINT "customer_bank_inbound_transactions_proof_id_fkey" FOREIGN KEY ("proof_id") REFERENCES "customer_bank_verification_proofs"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_inbound_transactions" ADD CONSTRAINT "customer_bank_inbound_transactions_merged_into_inbound_id_fkey" FOREIGN KEY ("merged_into_inbound_id") REFERENCES "customer_bank_inbound_transactions"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_refund_obligations" ADD CONSTRAINT "customer_bank_refund_obligations_inbound_transaction_id_fkey" FOREIGN KEY ("inbound_transaction_id") REFERENCES "customer_bank_inbound_transactions"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_refund_obligations" ADD CONSTRAINT "customer_bank_refund_obligations_active_payout_attempt_id_fkey" FOREIGN KEY ("active_payout_attempt_id") REFERENCES "customer_bank_refund_payout_attempts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "customer_bank_refund_payout_attempts" ADD CONSTRAINT "customer_bank_refund_payout_attempts_obligation_id_fkey" FOREIGN KEY ("obligation_id") REFERENCES "customer_bank_refund_obligations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 
--- 8.2 Chống đổi Cửa hàng của Nút bấm (store_id là bất biến)
-CREATE OR REPLACE FUNCTION fn_prevent_button_store_update()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF OLD.store_id <> NEW.store_id THEN
-        RAISE EXCEPTION 'Nút bấm gắn liền cố định với Cửa hàng, không được phép chuyển đổi Cửa hàng (store_id bất biến).';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_prevent_button_store_update ON iot_button;
-CREATE TRIGGER trg_prevent_button_store_update
-BEFORE UPDATE OF store_id ON iot_button
-FOR EACH ROW EXECUTE FUNCTION fn_prevent_button_store_update();
-
-
--- 8.3 Tự động liên kết STORE_CUSTOMER khi kích hoạt Nút bấm mới
-CREATE OR REPLACE FUNCTION fn_auto_link_store_customer_on_button_insert()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO store_customer (store_id, customer_id, status, joined_at)
-    VALUES (NEW.store_id, NEW.customer_id, 'ACTIVE', now())
-    ON CONFLICT (store_id, customer_id) 
-    DO UPDATE SET status = 'ACTIVE', updated_at = now();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_auto_link_store_customer_on_button_insert ON iot_button;
-CREATE TRIGGER trg_auto_link_store_customer_on_button_insert
-AFTER INSERT ON iot_button
-FOR EACH ROW EXECUTE FUNCTION fn_auto_link_store_customer_on_button_insert();
-
-
--- 8.4 Chống chồng lấn Giảm giá (Chỉ check khi NEW.status = ACTIVE)
-CREATE OR REPLACE FUNCTION fn_validate_product_discount_no_overlap()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_overlap_count INT;
-BEGIN
-    IF NEW.status = 'ACTIVE' THEN
-        SELECT COUNT(*) INTO v_overlap_count
-        FROM product_discount
-        WHERE product_id = NEW.product_id
-          AND discount_id <> COALESCE(NEW.discount_id, -1)
-          AND status = 'ACTIVE'
-          AND (NEW.start_at, NEW.end_at) OVERLAPS (start_at, end_at);
-
-        IF v_overlap_count > 0 THEN
-            RAISE EXCEPTION 'Xung đột giảm giá: Sản phẩm ID % đã có giảm giá ACTIVE khác trong khoảng (% - %).', 
-                NEW.product_id, NEW.start_at, NEW.end_at;
-        END IF;
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_validate_product_discount_no_overlap ON product_discount;
-CREATE TRIGGER trg_validate_product_discount_no_overlap
-BEFORE INSERT OR UPDATE ON product_discount
-FOR EACH ROW EXECUTE FUNCTION fn_validate_product_discount_no_overlap();
-
-
--- 8.5 Validate chuyển trạng thái đơn hàng (State Machine) + Auto-set completed_at
--- BEFORE UPDATE: Chạy trước trigger inventory để đảm bảo transition hợp lệ
-CREATE OR REPLACE FUNCTION fn_validate_order_status_transition()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_valid_transitions JSONB := '{
-        "PENDING": ["CANCELLED", "REJECTED", "CONFIRMED"],
-        "CONFIRMED": ["CANCELLED", "PREPARING"],
-        "PREPARING": ["CANCELLED", "READY_FOR_DELIVERY"],
-        "READY_FOR_DELIVERY": ["CANCELLED", "SHIPPING"],
-        "SHIPPING": ["DELIVERED", "DELIVERY_FAILED"],
-        "DELIVERED": ["COMPLETED"],
-        "DELIVERY_FAILED": ["CANCELLED"],
-        "COMPLETED": [],
-        "CANCELLED": [],
-        "REJECTED": []
-    }'::JSONB;
-    v_allowed JSONB;
-BEGIN
-    -- Bỏ qua nếu trạng thái không thay đổi
-    IF OLD.order_status = NEW.order_status THEN
-        RETURN NEW;
-    END IF;
-
-    v_allowed := v_valid_transitions -> OLD.order_status;
-
-    IF v_allowed IS NULL OR NOT v_allowed ? NEW.order_status THEN
-        RAISE EXCEPTION 'Chuyển trạng thái không hợp lệ: % → %. Các trạng thái hợp lệ từ %: %',
-            OLD.order_status, NEW.order_status, OLD.order_status, v_allowed;
-    END IF;
-
-    -- Auto-set completed_at khi đơn hàng hoàn tất
-    IF NEW.order_status = 'COMPLETED' THEN
-        NEW.completed_at := now();
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_validate_order_status_transition ON orders;
-CREATE TRIGGER trg_validate_order_status_transition
-BEFORE UPDATE OF order_status ON orders
-FOR EACH ROW EXECUTE FUNCTION fn_validate_order_status_transition();
-
-
--- Helper function CỐT LÕI: Ánh xạ Supabase Auth UUID → user_id BIGINT
--- Dùng cho cả Triggers (audit/history) lẫn Row Level Security (RLS)
-CREATE OR REPLACE FUNCTION fn_current_user_id()
-RETURNS BIGINT AS $$
-    SELECT user_id FROM users WHERE auth_id = auth.uid() LIMIT 1;
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-
-
--- 8.5 Đồng bộ Tồn kho tự động theo Vòng đời Đơn hàng (Two-Phase Inventory Protection)
--- LƯU Ý: Trigger này CHỈ xử lý inventory + ghi history kèm changed_by_user_id.
---         App layer cần SET current_setting('app.current_user_id') TRƯỚC KHI UPDATE order_status.
---         Fallback thông minh: Tự động lấy user_id qua fn_current_user_id() từ JWT Supabase nếu chưa SET context.
---         App layer KHÔNG TỰ INSERT vào order_status_history để tránh duplicate.
-CREATE OR REPLACE FUNCTION fn_sync_inventory_on_order_status_change()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_item RECORD;
-    v_changed_by BIGINT;
-BEGIN
-    -- Lấy user_id từ application context (fallback về fn_current_user_id() từ JWT Supabase)
-    v_changed_by := COALESCE(
-        NULLIF(current_setting('app.current_user_id', true), '')::BIGINT,
-        fn_current_user_id()
-    );
-
-    IF NEW.order_status IN ('CANCELLED', 'REJECTED') AND OLD.order_status NOT IN ('CANCELLED', 'REJECTED', 'COMPLETED') THEN
-        FOR v_item IN SELECT product_id, quantity FROM order_item WHERE order_id = NEW.order_id LOOP
-            UPDATE inventory 
-            SET reserved_quantity = GREATEST(0, reserved_quantity - v_item.quantity),
-                updated_at = now()
-            WHERE product_id = v_item.product_id;
-        END LOOP;
-
-    ELSIF NEW.order_status = 'COMPLETED' AND OLD.order_status <> 'COMPLETED' THEN
-        FOR v_item IN SELECT product_id, quantity FROM order_item WHERE order_id = NEW.order_id LOOP
-            UPDATE inventory 
-            SET quantity_on_hand = GREATEST(0, quantity_on_hand - v_item.quantity),
-                reserved_quantity = GREATEST(0, reserved_quantity - v_item.quantity),
-                updated_at = now()
-            WHERE product_id = v_item.product_id;
-        END LOOP;
-    END IF;
-
-    -- Ghi lịch sử trạng thái kèm người thực hiện (tránh duplicate: app layer KHÔNG tự insert)
-    IF OLD.order_status <> NEW.order_status THEN
-        INSERT INTO order_status_history (order_id, changed_by_user_id, old_status, new_status, reason, changed_at)
-        VALUES (NEW.order_id, v_changed_by, OLD.order_status, NEW.order_status, 'Cập nhật trạng thái đơn hàng', now());
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_sync_inventory_on_order_status_change ON orders;
-CREATE TRIGGER trg_sync_inventory_on_order_status_change
-AFTER UPDATE OF order_status ON orders
-FOR EACH ROW EXECUTE FUNCTION fn_sync_inventory_on_order_status_change();
-
-
--- 8.6 Kiểm toán lịch sử thay đổi giá sản phẩm (Product Price Audit)
--- LƯU Ý: App layer cần SET current_setting('app.current_user_id') TRƯỚC KHI UPDATE base_price.
---         Fallback thông minh: Tự động lấy user_id qua fn_current_user_id() từ JWT Supabase nếu chưa SET context.
-CREATE OR REPLACE FUNCTION fn_audit_product_price_change()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_changed_by BIGINT;
-BEGIN
-    IF OLD.base_price <> NEW.base_price THEN
-        -- Lấy user_id từ application context (fallback về fn_current_user_id() từ JWT Supabase)
-        v_changed_by := COALESCE(
-            NULLIF(current_setting('app.current_user_id', true), '')::BIGINT,
-            fn_current_user_id()
-        );
-
-        INSERT INTO product_price_history (product_id, old_price, new_price, changed_by_user_id, changed_at)
-        VALUES (NEW.product_id, OLD.base_price, NEW.base_price, v_changed_by, now());
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_audit_product_price_change ON product;
-CREATE TRIGGER trg_audit_product_price_change
-AFTER UPDATE OF base_price ON product
-FOR EACH ROW EXECUTE FUNCTION fn_audit_product_price_change();
-
-
--- [FIX LỖ HỔNG 3] Tự động khởi tạo bản ghi Inventory khi tạo Sản phẩm mới
--- Đảm bảo quan hệ 1-1 PRODUCT <-> INVENTORY luôn được duy trì
-CREATE OR REPLACE FUNCTION fn_auto_create_inventory_for_new_product()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO inventory (store_id, product_id, quantity_on_hand, reserved_quantity, min_stock_alert, updated_at)
-    VALUES (NEW.store_id, NEW.product_id, 0, 0, 5, now())
-    ON CONFLICT (product_id) DO NOTHING;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_auto_create_inventory_for_new_product ON product;
-CREATE TRIGGER trg_auto_create_inventory_for_new_product
-AFTER INSERT ON product
-FOR EACH ROW EXECUTE FUNCTION fn_auto_create_inventory_for_new_product();
-
-
--- 8.7 Giới hạn Role hợp lệ cho Store_Staff
-CREATE OR REPLACE FUNCTION fn_validate_store_staff_role()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_role_code VARCHAR(50);
-BEGIN
-    SELECT role_code INTO v_role_code FROM roles WHERE role_id = NEW.role_id;
-    IF v_role_code NOT LIKE 'STAFF_%' AND v_role_code <> 'STORE_OWNER' THEN
-        RAISE EXCEPTION 'Gán vai trò sai: Chỉ được gán vai trò nhân viên (STAFF_*) hoặc STORE_OWNER cho nhân sự cửa hàng.';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_validate_store_staff_role ON store_staff;
-CREATE TRIGGER trg_validate_store_staff_role
-BEFORE INSERT OR UPDATE OF role_id ON store_staff
-FOR EACH ROW EXECUTE FUNCTION fn_validate_store_staff_role();
-
-
--- 8.8 Tự động cập nhật updated_at cho 14 bảng
-CREATE OR REPLACE FUNCTION fn_auto_update_timestamp()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DO $$
-DECLARE
-    target_table text;
-    target_tables text[] := ARRAY[
-        'users', 'store', 'store_staff', 'customer_profile', 'customer_address', 
-        'store_customer', 'category', 'product', 'product_discount', 'inventory', 
-        'iot_button', 'button_product', 'orders', 'payment_transaction'
-    ];
-BEGIN
-    FOREACH target_table IN ARRAY target_tables LOOP
-        EXECUTE format('DROP TRIGGER IF EXISTS trg_auto_update_timestamp_%I ON %I;', target_table, target_table);
-        EXECUTE format('CREATE TRIGGER trg_auto_update_timestamp_%I BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION fn_auto_update_timestamp();', target_table, target_table);
-    END LOOP;
-END;
-$$;
-
--- =====================================================================
--- 9. STORED PROCEDURE TẠO ĐƠN HÀNG AN TOÀN (ANTI RACE-CONDITION)
--- =====================================================================
-
-CREATE OR REPLACE FUNCTION sp_create_order_from_button(
-    p_button_id BIGINT,
-    p_payment_method VARCHAR(30) DEFAULT 'COD',
-    p_shipping_fee DECIMAL(15,2) DEFAULT 0,
-    p_order_note TEXT DEFAULT NULL
+-- ==============================================================================
+-- STORED PROCEDURE: sp_create_order_from_button
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.sp_create_order_from_button(
+    p_button_id bigint,
+    p_payment_method character varying DEFAULT 'COD'::character varying,
+    p_shipping_fee numeric DEFAULT 0,
+    p_order_note text DEFAULT NULL::text,
+    p_iot_request_id character varying DEFAULT NULL::character varying
 )
-RETURNS BIGINT 
+RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
-AS $$
+SET search_path TO 'public'
+AS $function$
 DECLARE
     v_btn RECORD;
+    v_rental RECORD;
     v_order_id BIGINT;
     v_order_code VARCHAR(50);
     v_subtotal DECIMAL(15,2) := 0;
@@ -685,8 +1913,24 @@ DECLARE
     v_unit_discount DECIMAL(15,2);
     v_final_price DECIMAL(15,2);
     v_line_subtotal DECIMAL(15,2);
+    v_comm_rate DECIMAL(5,2) := 8.00;
+    v_tot_amt DECIMAL(15,2);
+    v_comm_amt DECIMAL(15,2);
+    v_net_amt DECIMAL(15,2);
+    v_existing_order_id BIGINT;
 BEGIN
-    -- Validate payment_method
+    -- 0. Idempotency Check (Safe Hit)
+    IF p_iot_request_id IS NOT NULL THEN
+        SELECT o.order_id INTO v_existing_order_id
+        FROM orders o
+        WHERE o.button_id = p_button_id AND o.iot_request_id = p_iot_request_id
+        LIMIT 1;
+
+        IF v_existing_order_id IS NOT NULL THEN
+            RETURN v_existing_order_id;
+        END IF;
+    END IF;
+
     IF p_payment_method NOT IN ('COD', 'PAYOS') THEN
         RAISE EXCEPTION 'Phương thức thanh toán không hợp lệ: %. Chỉ chấp nhận COD hoặc PAYOS.', p_payment_method;
     END IF;
@@ -694,7 +1938,8 @@ BEGIN
     IF p_shipping_fee < 0 THEN
         RAISE EXCEPTION 'Phí vận chuyển không được âm.';
     END IF;
-    -- 1. Khóa bi quan và kiểm tra Nút bấm
+
+    -- Pessimistic Lock on IoT Button (Locking Order: IoT Button first, then Rental)
     SELECT b.*, ca.recipient_name, ca.phone AS recipient_phone, ca.address_detail, ca.ward, ca.district, ca.province
     INTO v_btn
     FROM iot_button b
@@ -703,40 +1948,51 @@ BEGIN
     FOR UPDATE OF b;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Nút bấm ID % không tồn tại.', p_button_id;
+        RAISE EXCEPTION 'Nút bấm ID % không tồn tại.', p_button_id USING ERRCODE = 'P0002';
     END IF;
 
     IF v_btn.status <> 'ACTIVE' THEN
-        RAISE EXCEPTION 'Nút bấm ID % đang không ở trạng thái ACTIVE.', p_button_id;
+        RAISE EXCEPTION 'Nút bấm ID % đang không ở trạng thái ACTIVE.', p_button_id USING ERRCODE = 'P0003';
     END IF;
 
-    -- Kiểm tra Cửa hàng có đang hoạt động không
+    -- Entitlement and custody check
+    IF v_btn.can_order = false OR v_btn.inventory_state IN ('RETURN_IN_TRANSIT', 'ALLOCATED_TO_STORE', 'IN_PLATFORM_WAREHOUSE') THEN
+        RAISE EXCEPTION 'Nút bấm ID % không được phép đặt hàng (can_order=false hoặc đang trong kho/hoàn trả).', p_button_id USING ERRCODE = 'P0008';
+    END IF;
+
+    -- If button belongs to a rental contract, lock and verify rental state
+    IF v_btn.rental_id IS NOT NULL THEN
+        SELECT * INTO v_rental FROM button_rentals WHERE rental_id = v_btn.rental_id FOR UPDATE;
+        IF NOT FOUND OR v_rental.status <> 'ACTIVE' THEN
+            RAISE EXCEPTION 'Hợp đồng thuê của nút ID % chưa ở trạng thái ACTIVE (hiện tại: %). Không thể đặt hàng trước khi hoàn tất bàn giao.', p_button_id, COALESCE(v_rental.status, 'NOT_FOUND') USING ERRCODE = 'P0009';
+        END IF;
+        IF v_rental.effective_expires_at IS NULL OR v_rental.effective_expires_at <= NOW() THEN
+            RAISE EXCEPTION 'Hợp đồng thuê của nút ID % đã hết hạn.', p_button_id USING ERRCODE = 'P0011';
+        END IF;
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM store WHERE store_id = v_btn.store_id AND status = 'ACTIVE') THEN
-        RAISE EXCEPTION 'Store ID % hiện không hoạt động.', v_btn.store_id;
+        RAISE EXCEPTION 'Store ID % hiện không hoạt động.', v_btn.store_id USING ERRCODE = 'P0004';
     END IF;
 
-    -- 1b. Kiểm tra nút phải có ít nhất 1 sản phẩm cấu hình
     IF NOT EXISTS (SELECT 1 FROM button_product WHERE button_id = p_button_id) THEN
-        RAISE EXCEPTION 'Nút bấm ID % chưa cấu hình sản phẩm nào. Không thể tạo đơn hàng rỗng.', p_button_id;
+        RAISE EXCEPTION 'Nút bấm ID % chưa cấu hình sản phẩm nào. Không thể tạo đơn hàng rỗng.', p_button_id USING ERRCODE = 'P0005';
     END IF;
 
-    -- 1c. Kiểm tra tất cả sản phẩm trên nút phải đang ACTIVE
     IF EXISTS (
         SELECT 1 FROM button_product bp
         JOIN product p ON bp.product_id = p.product_id
         WHERE bp.button_id = p_button_id AND p.status <> 'ACTIVE'
     ) THEN
-        RAISE EXCEPTION 'Một hoặc nhiều sản phẩm trên nút bấm ID % không ở trạng thái ACTIVE. Vui lòng cập nhật cấu hình nút.', p_button_id;
+        RAISE EXCEPTION 'Một hoặc nhiều sản phẩm trên nút bấm ID % không ở trạng thái ACTIVE. Vui lòng cập nhật cấu hình nút.', p_button_id USING ERRCODE = 'P0006';
     END IF;
 
-    -- 2. Khóa tất cả các dòng Tồn kho của các sản phẩm có trong nút
-    PERFORM 1 
+    PERFORM 1
     FROM inventory inv
     JOIN button_product bp ON inv.product_id = bp.product_id
     WHERE bp.button_id = p_button_id
     FOR UPDATE OF inv;
 
-    -- 3. Kiểm tra All-or-Nothing: Đảm bảo TẤT CẢ các sản phẩm đều đủ tồn khả dụng
     IF EXISTS (
         SELECT 1
         FROM button_product bp
@@ -744,33 +2000,76 @@ BEGIN
         WHERE bp.button_id = p_button_id
           AND (inv.quantity_on_hand - inv.reserved_quantity) < bp.quantity
     ) THEN
-        RAISE EXCEPTION 'Không đủ tồn kho khả dụng cho một hoặc nhiều sản phẩm trong nút bấm.';
+        RAISE EXCEPTION 'Không đủ tồn kho khả dụng cho một hoặc nhiều sản phẩm trong nút bấm.' USING ERRCODE = 'P0007';
     END IF;
 
-    -- 4. Tạo mã đơn hàng duy nhất
-    v_order_code := 'ORD-' || to_char(now(), 'YYYYMMDD') || '-' || substr(md5(random()::text), 1, 6);
-
-    -- 5. Tạo bản ghi Orders tạm thời
-    INSERT INTO orders (
-        order_code, store_id, customer_id, button_id, order_status, payment_status, payment_method,
-        subtotal_amount, discount_amount, shipping_fee, total_amount,
-        shipping_recipient_name, shipping_phone, shipping_address, order_note, order_date
-    ) VALUES (
-        v_order_code, v_btn.store_id, v_btn.customer_id, v_btn.button_id,
-        'PENDING', 'UNPAID', p_payment_method, 0, 0, p_shipping_fee, p_shipping_fee, -- total = shipping_fee thỏa CHECK (0 - 0 + fee = fee)
-        v_btn.recipient_name, v_btn.recipient_phone, 
-        concat_ws(', ', v_btn.address_detail, v_btn.ward, v_btn.district, v_btn.province),
-        p_order_note, now()
-    ) RETURNING order_id INTO v_order_id;
-
-    -- 6. Duyệt qua từng sản phẩm để Snapshot và Giữ kho (Reserved)
-    FOR v_item IN 
+    -- 1. Pre-calculate subtotal and discounts before inserting order
+    FOR v_item IN
         SELECT bp.product_id, bp.quantity, p.product_name, p.base_price
         FROM button_product bp
         JOIN product p ON bp.product_id = p.product_id
         WHERE bp.button_id = p_button_id
     LOOP
-        -- Tìm giảm giá ACTIVE hiện hành
+        SELECT * INTO v_discount
+        FROM product_discount
+        WHERE product_id = v_item.product_id
+          AND status = 'ACTIVE'
+          AND now() BETWEEN start_at AND end_at
+        LIMIT 1;
+
+        IF FOUND THEN
+            IF v_discount.discount_percent IS NOT NULL THEN
+                v_unit_discount := ROUND((v_item.base_price * v_discount.discount_percent / 100.0), 2);
+            ELSE
+                v_unit_discount := LEAST(v_item.base_price, v_discount.discount_amount);
+            END IF;
+        ELSE
+            v_unit_discount := 0;
+        END IF;
+
+        v_subtotal := v_subtotal + (v_item.base_price * v_item.quantity);
+        v_total_discount := v_total_discount + (v_unit_discount * v_item.quantity);
+    END LOOP;
+
+    v_tot_amt := (v_subtotal - v_total_discount + p_shipping_fee);
+
+    -- 2. Enforce minimum order total (totalAmount >= 2.000 VND)
+    IF v_tot_amt < 2000 THEN
+        RAISE EXCEPTION 'Giá trị đơn hàng tối thiểu là 2.000 VND'
+          USING ERRCODE = 'P0010';
+    END IF;
+
+    -- 3. Calculate store commission & net amount
+    SELECT COALESCE(commission_rate, 8.00) INTO v_comm_rate FROM store WHERE store_id = v_btn.store_id;
+    IF v_comm_rate IS NULL THEN v_comm_rate := 8.00; END IF;
+    v_comm_amt := ROUND(v_tot_amt * v_comm_rate / 100.0, 2);
+    v_net_amt := v_tot_amt - v_comm_amt;
+
+    v_order_code := 'ORD-' || to_char(now(), 'YYYYMMDD') || '-' || substr(md5(random()::text), 1, 6);
+
+    -- 4. Insert order directly with full final amounts
+    INSERT INTO orders (
+        order_code, store_id, customer_id, button_id, order_status, payment_status, payment_method,
+        subtotal_amount, discount_amount, shipping_fee, total_amount,
+        commission_rate, commission_amount, net_amount,
+        shipping_recipient_name, shipping_phone, shipping_address, order_note, order_date, iot_request_id
+    ) VALUES (
+        v_order_code, v_btn.store_id, v_btn.customer_id, v_btn.button_id,
+        'PENDING', 'UNPAID', p_payment_method,
+        v_subtotal, v_total_discount, p_shipping_fee, v_tot_amt,
+        v_comm_rate, v_comm_amt, v_net_amt,
+        v_btn.recipient_name, v_btn.recipient_phone,
+        concat_ws(', ', v_btn.address_detail, v_btn.ward, v_btn.district, v_btn.province),
+        p_order_note, now(), p_iot_request_id
+    ) RETURNING order_id INTO v_order_id;
+
+    -- 5. Insert order items & reserve inventory
+    FOR v_item IN
+        SELECT bp.product_id, bp.quantity, p.product_name, p.base_price
+        FROM button_product bp
+        JOIN product p ON bp.product_id = p.product_id
+        WHERE bp.button_id = p_button_id
+    LOOP
         SELECT * INTO v_discount
         FROM product_discount
         WHERE product_id = v_item.product_id
@@ -791,10 +2090,6 @@ BEGIN
         v_final_price := v_item.base_price - v_unit_discount;
         v_line_subtotal := v_final_price * v_item.quantity;
 
-        v_subtotal := v_subtotal + (v_item.base_price * v_item.quantity);
-        v_total_discount := v_total_discount + (v_unit_discount * v_item.quantity);
-
-        -- Thêm Order Item
         INSERT INTO order_item (
             order_id, product_id, product_name_snapshot, unit_price_snapshot,
             discount_percent_snapshot, discount_amount_snapshot, final_unit_price, quantity, item_subtotal
@@ -803,342 +2098,15 @@ BEGIN
             COALESCE(v_discount.discount_percent, 0), v_unit_discount, v_final_price, v_item.quantity, v_line_subtotal
         );
 
-        -- Tăng tồn giữ chỗ (Reserved Quantity)
-        UPDATE inventory 
+        UPDATE inventory
         SET reserved_quantity = reserved_quantity + v_item.quantity,
             updated_at = now()
         WHERE product_id = v_item.product_id;
     END LOOP;
 
-    -- 7. Cập nhật lại tổng tiền chính xác và snapshot tài chính (commissionRate, commissionAmount, netAmount)
-    DECLARE
-        v_comm_rate DECIMAL(5,2) := 8.00;
-        v_tot_amt DECIMAL(15,2);
-        v_comm_amt DECIMAL(15,2);
-        v_net_amt DECIMAL(15,2);
-    BEGIN
-        SELECT COALESCE(commission_rate, 8.00) INTO v_comm_rate FROM store WHERE store_id = v_btn.store_id;
-        IF v_comm_rate IS NULL THEN v_comm_rate := 8.00; END IF;
-        v_tot_amt := (v_subtotal - v_total_discount + p_shipping_fee);
-        v_comm_amt := ROUND(v_tot_amt * v_comm_rate / 100.0, 2);
-        v_net_amt := v_tot_amt - v_comm_amt;
-
-        UPDATE orders
-        SET subtotal_amount = v_subtotal,
-            discount_amount = v_total_discount,
-            total_amount = v_tot_amt,
-            commission_rate = v_comm_rate,
-            commission_amount = v_comm_amt,
-            net_amount = v_net_amt
-        WHERE order_id = v_order_id;
-    END;
-
-    -- 8. Ghi nhận lịch sử trạng thái ban đầu
     INSERT INTO order_status_history (order_id, old_status, new_status, reason, changed_at)
     VALUES (v_order_id, NULL, 'PENDING', 'Khách hàng nhấn nút tạo đơn thành công', now());
 
     RETURN v_order_id;
 END;
-$$;
-
--- =====================================================================
--- 10. ROW LEVEL SECURITY (RLS) POLICIES CHO SUPABASE
--- =====================================================================
--- [FIX LỖI 2] Sử dụng auth_id UUID thay vì auth.uid()::bigint
--- Supabase auth.uid() trả về UUID, KHÔNG THỂ ép kiểu trực tiếp sang BIGINT.
--- Giải pháp: Helper function fn_current_user_id() ánh xạ UUID -> BIGINT qua cột users.auth_id.
--- =====================================================================
-
--- Helper function CỐT LÕI: Ánh xạ Supabase Auth UUID → user_id BIGINT
-CREATE OR REPLACE FUNCTION fn_current_user_id()
-RETURNS BIGINT AS $$
-    SELECT user_id FROM users WHERE auth_id = auth.uid() LIMIT 1;
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-
--- Helper function: Lấy customer_id của user hiện tại
-CREATE OR REPLACE FUNCTION fn_current_customer_id()
-RETURNS BIGINT AS $$
-    SELECT customer_id FROM customer_profile WHERE user_id = fn_current_user_id() LIMIT 1;
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-
--- Helper function: Kiểm tra user có phải Store Owner hoặc Staff ACTIVE của store_id không
-CREATE OR REPLACE FUNCTION fn_user_has_store_access(p_store_id BIGINT)
-RETURNS BOOLEAN AS $$
-    SELECT EXISTS (
-        SELECT 1 FROM store WHERE store_id = p_store_id AND owner_user_id = fn_current_user_id()
-        UNION ALL
-        SELECT 1 FROM store_staff WHERE store_id = p_store_id AND user_id = fn_current_user_id() AND status = 'ACTIVE'
-    );
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-
--- Bật RLS cho tất cả các bảng
-ALTER TABLE roles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE store ENABLE ROW LEVEL SECURITY;
-ALTER TABLE store_staff ENABLE ROW LEVEL SECURITY;
-ALTER TABLE customer_profile ENABLE ROW LEVEL SECURITY;
-ALTER TABLE customer_address ENABLE ROW LEVEL SECURITY;
-ALTER TABLE store_customer ENABLE ROW LEVEL SECURITY;
-ALTER TABLE category ENABLE ROW LEVEL SECURITY;
-ALTER TABLE product ENABLE ROW LEVEL SECURITY;
-ALTER TABLE product_price_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE product_discount ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inventory ENABLE ROW LEVEL SECURITY;
-ALTER TABLE iot_button ENABLE ROW LEVEL SECURITY;
-ALTER TABLE button_product ENABLE ROW LEVEL SECURITY;
-ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE order_item ENABLE ROW LEVEL SECURITY;
-ALTER TABLE order_status_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE payment_transaction ENABLE ROW LEVEL SECURITY;
-
--- =====================================================================
--- POLICIES: DỮ LIỆU CÔNG KHAI
--- =====================================================================
-CREATE POLICY "Public read roles" ON roles FOR SELECT USING (true);
-CREATE POLICY "Public read active stores" ON store FOR SELECT USING (status = 'ACTIVE');
-CREATE POLICY "Public read categories" ON category FOR SELECT USING (status = 'ACTIVE');
-CREATE POLICY "Public read products" ON product FOR SELECT USING (status = 'ACTIVE');
-CREATE POLICY "Public read active discounts" ON product_discount FOR SELECT USING (status = 'ACTIVE');
-
--- =====================================================================
--- POLICIES: USERS
--- =====================================================================
-CREATE POLICY "Users read own profile" ON users
-FOR SELECT USING (user_id = fn_current_user_id());
-
-CREATE POLICY "Users update own profile" ON users
-FOR UPDATE USING (user_id = fn_current_user_id());
-
--- =====================================================================
--- POLICIES: STORE & STAFF
--- =====================================================================
-CREATE POLICY "Owner manage own store" ON store
-FOR ALL USING (owner_user_id = fn_current_user_id());
-
-CREATE POLICY "Store access staff list" ON store_staff
-FOR SELECT USING (fn_user_has_store_access(store_id));
-
-CREATE POLICY "Owner manage store staff" ON store_staff
-FOR ALL USING (
-    store_id IN (SELECT store_id FROM store WHERE owner_user_id = fn_current_user_id())
-);
-
--- =====================================================================
--- POLICIES: CUSTOMER & ADDRESS
--- =====================================================================
-CREATE POLICY "Customers manage own profile" ON customer_profile
-FOR ALL USING (user_id = fn_current_user_id());
-
-CREATE POLICY "Store staff read linked customers" ON customer_profile
-FOR SELECT USING (
-    customer_id IN (
-        SELECT sc.customer_id FROM store_customer sc
-        WHERE fn_user_has_store_access(sc.store_id)
-    )
-);
-
-CREATE POLICY "Customers manage own address" ON customer_address
-FOR ALL USING (customer_id = fn_current_customer_id());
-
-CREATE POLICY "Customers view own store links" ON store_customer
-FOR SELECT USING (customer_id = fn_current_customer_id());
-
-CREATE POLICY "Store staff manage store customers" ON store_customer
-FOR ALL USING (fn_user_has_store_access(store_id));
-
--- =====================================================================
--- POLICIES: PRODUCT & INVENTORY
--- =====================================================================
-CREATE POLICY "Store staff view price history" ON product_price_history
-FOR SELECT USING (
-    product_id IN (
-        SELECT product_id FROM product WHERE fn_user_has_store_access(store_id)
-    )
-);
-
-CREATE POLICY "Store staff manage inventory" ON inventory
-FOR ALL USING (fn_user_has_store_access(store_id));
-
--- =====================================================================
--- POLICIES: IOT BUTTON & CONFIG
--- =====================================================================
-CREATE POLICY "Customers view own buttons" ON iot_button
-FOR SELECT USING (customer_id = fn_current_customer_id());
-
-CREATE POLICY "Customers update own buttons" ON iot_button
-FOR UPDATE USING (customer_id = fn_current_customer_id());
-
-CREATE POLICY "Store staff manage store buttons" ON iot_button
-FOR ALL USING (fn_user_has_store_access(store_id));
-
-CREATE POLICY "Customers manage own button products" ON button_product
-FOR ALL USING (
-    button_id IN (SELECT button_id FROM iot_button WHERE customer_id = fn_current_customer_id())
-);
-
-CREATE POLICY "Store staff view button products" ON button_product
-FOR SELECT USING (
-    button_id IN (SELECT button_id FROM iot_button WHERE fn_user_has_store_access(store_id))
-);
-
--- =====================================================================
--- POLICIES: ORDERS & PAYMENT
--- =====================================================================
-CREATE POLICY "Customers view own orders" ON orders
-FOR SELECT USING (customer_id = fn_current_customer_id());
-
-CREATE POLICY "Store staff manage store orders" ON orders
-FOR ALL USING (fn_user_has_store_access(store_id));
-
-CREATE POLICY "Customers view own order items" ON order_item
-FOR SELECT USING (
-    order_id IN (SELECT order_id FROM orders WHERE customer_id = fn_current_customer_id())
-);
-
-CREATE POLICY "Store staff view store order items" ON order_item
-FOR SELECT USING (
-    order_id IN (SELECT order_id FROM orders WHERE fn_user_has_store_access(store_id))
-);
-
-CREATE POLICY "Customers view own order history" ON order_status_history
-FOR SELECT USING (
-    order_id IN (SELECT order_id FROM orders WHERE customer_id = fn_current_customer_id())
-);
-
-CREATE POLICY "Store staff view store order history" ON order_status_history
-FOR SELECT USING (
-    order_id IN (SELECT order_id FROM orders WHERE fn_user_has_store_access(store_id))
-);
-
-CREATE POLICY "Customers view own payments" ON payment_transaction
-FOR SELECT USING (
-    order_id IN (SELECT order_id FROM orders WHERE customer_id = fn_current_customer_id())
-);
-
-CREATE POLICY "Store staff manage store payments" ON payment_transaction
-FOR ALL USING (
-    order_id IN (SELECT order_id FROM orders WHERE fn_user_has_store_access(store_id))
-);
-
--- =====================================================================
--- 9. MARKETPLACE ESCROW, BUTTON RENTALS & STORE WALLETS (BRD V2.2)
--- =====================================================================
-
-CREATE TABLE IF NOT EXISTS subscription_plans (
-    plan_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    plan_code VARCHAR(50) UNIQUE NOT NULL,
-    plan_name VARCHAR(150) NOT NULL,
-    description TEXT,
-    price DECIMAL(15, 2) NOT NULL,
-    duration_days INT NOT NULL,
-    max_products INT NOT NULL DEFAULT 50,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS store_subscriptions (
-    subscription_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT NOT NULL REFERENCES store(store_id) ON DELETE RESTRICT,
-    plan_id BIGINT NOT NULL REFERENCES subscription_plans(plan_id) ON DELETE RESTRICT,
-    start_date TIMESTAMPTZ NOT NULL,
-    end_date TIMESTAMPTZ NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    payment_method VARCHAR(20) NOT NULL DEFAULT 'PAYOS',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS rental_packages (
-    package_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    package_code VARCHAR(50) UNIQUE NOT NULL,
-    package_name VARCHAR(150) NOT NULL,
-    description TEXT,
-    button_quantity INT NOT NULL DEFAULT 1,
-    monthly_price DECIMAL(15, 2) NOT NULL,
-    deposit_fee DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS button_rentals (
-    rental_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    rental_code VARCHAR(50) UNIQUE NOT NULL,
-    customer_id BIGINT NOT NULL REFERENCES customer_profile(customer_id) ON DELETE RESTRICT,
-    package_id BIGINT NOT NULL REFERENCES rental_packages(package_id) ON DELETE RESTRICT,
-    months_rented INT NOT NULL DEFAULT 1,
-    total_rent_amount DECIMAL(15, 2) NOT NULL,
-    deposit_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    start_date TIMESTAMPTZ NOT NULL,
-    end_date TIMESTAMPTZ NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING_PAYMENT',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Liên kết thiết bị nút vật lý vào hợp đồng thuê
-ALTER TABLE iot_button ADD COLUMN IF NOT EXISTS rental_id BIGINT REFERENCES button_rentals(rental_id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_iot_button_rental_id ON iot_button(rental_id);
-
-CREATE TABLE IF NOT EXISTS store_wallets (
-    wallet_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id BIGINT UNIQUE NOT NULL REFERENCES store(store_id) ON DELETE CASCADE,
-    balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    frozen_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    bank_name VARCHAR(100),
-    bank_account_number VARCHAR(50),
-    bank_account_holder VARCHAR(150),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS wallet_transactions (
-    transaction_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    wallet_id BIGINT NOT NULL REFERENCES store_wallets(wallet_id) ON DELETE CASCADE,
-    amount DECIMAL(15, 2) NOT NULL,
-    type VARCHAR(30) NOT NULL,
-    balance_before DECIMAL(15, 2) NOT NULL,
-    balance_after DECIMAL(15, 2) NOT NULL,
-    reference_id VARCHAR(100),
-    description TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS store_withdrawals (
-    withdrawal_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    withdrawal_code VARCHAR(50) UNIQUE NOT NULL,
-    wallet_id BIGINT NOT NULL REFERENCES store_wallets(wallet_id) ON DELETE CASCADE,
-    amount DECIMAL(15, 2) NOT NULL,
-    fee DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    net_amount DECIMAL(15, 2),
-    bank_code VARCHAR(20),
-    bank_name VARCHAR(100) NOT NULL,
-    bank_account_number VARCHAR(50) NOT NULL,
-    bank_account_holder VARCHAR(150) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    provider VARCHAR(50) NOT NULL DEFAULT 'PAYOS',
-    provider_payout_id VARCHAR(100),
-    provider_reference_id VARCHAR(100),
-    failure_reason TEXT,
-    approved_by_user_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
-    rejection_reason TEXT,
-    transfer_evidence_url TEXT,
-    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    processed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_store_withdrawals_provider_ref ON store_withdrawals(provider_reference_id) WHERE provider_reference_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_store_withdrawals_provider_payout_id ON store_withdrawals(provider_payout_id) WHERE provider_payout_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_store_subscriptions_store_id ON store_subscriptions(store_id);
-CREATE INDEX IF NOT EXISTS idx_button_rentals_customer_id ON button_rentals(customer_id);
-CREATE INDEX IF NOT EXISTS idx_store_wallets_store_id ON store_wallets(store_id);
-CREATE INDEX IF NOT EXISTS idx_wallet_transactions_wallet_id ON wallet_transactions(wallet_id);
-CREATE INDEX IF NOT EXISTS idx_store_withdrawals_wallet_id ON store_withdrawals(wallet_id);
-
-
--- Unique constraint on payment_transaction transaction_code
-CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_tx_code ON payment_transaction(transaction_code) WHERE transaction_code IS NOT NULL;
+$function$;

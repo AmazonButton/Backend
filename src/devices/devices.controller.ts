@@ -11,12 +11,15 @@ import {
   UseGuards,
   Request,
   Inject,
+  ValidationPipe,
 } from '@nestjs/common';
 import { DevicesService } from './devices.service';
 import { OrdersService } from '../orders/orders.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { DeviceQueryDto } from './dto/device-query.dto';
+import { buildPaginatedResponse } from '../common/utils/pagination.helper';
 import {
   RegisterDeviceDto,
   BulkImportDevicesDto,
@@ -53,9 +56,18 @@ export class DevicesController {
   }
 
   @Get()
-  async list(@Request() req: any, @Query() query: any) {
-    const data = await this.devicesService.list(req.user, query);
-    return { success: true, data };
+  async list(
+    @Request() req: any,
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: DeviceQueryDto,
+  ) {
+    const result = await this.devicesService.list(req.user, query);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách thiết bị thành công',
+    );
   }
 
   @Post()
