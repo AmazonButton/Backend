@@ -271,6 +271,13 @@ async function runDeepFixesTestSuite() {
               refundedAmount: 0,
             }),
           },
+          ioTButton: {
+            update: async (data: any) => data.data,
+            updateMany: async () => ({ count: 1 }),
+          },
+          rentalAuditLog: {
+            create: async () => ({}),
+          },
           outboxEvent: { create: async () => ({}) },
         };
         return cb(tx);
@@ -363,24 +370,45 @@ async function runDeepFixesTestSuite() {
                 currency: 'VND',
                 purpose: 'RENTAL_INITIAL',
                 target_id: BigInt(10),
+                target_type: 'RENTAL',
                 status: 'PENDING',
+                payment_link_id: 'plink_test_10',
+              }];
+            }
+            if (sql.includes('FROM button_rentals WHERE rental_id = $1 FOR UPDATE')) {
+              return [{
+                rental_id: BigInt(10),
+                status: 'PENDING_PAYMENT',
+                deposit_amount: new Decimal(200000),
               }];
             }
             return [];
           },
+          billingPaymentReceipt: {
+            findUnique: async () => null,
+            create: async (data: any) => ({ id: BigInt(1), ...data.data }),
+          },
+          rentalAuditLog: {
+            create: async () => ({}),
+          },
           billingChargeLine: {
             findMany: async () => [
-              { lineType: 'RENT', amount: new Decimal(30000) },
+              { lineType: 'RENT', amount: new Decimal(30000), durationCount: 1, durationUnit: 'MONTH' },
               { lineType: 'DEPOSIT', amount: new Decimal(200000) },
             ],
           },
           billingCharge: {
+            findUnique: async () => ({ chargeId: BigInt(10), status: 'PAID', lines: [] }),
             update: async (data: any) => ({ ...data.data, chargeId: BigInt(10) }),
+            updateMany: async () => ({ count: 1 }),
           },
           rentalDeposit: {
+            findUnique: async () => null,
+            create: async () => ({ collectedAmount: 200000, heldAmount: 200000 }),
             upsert: async () => ({ collectedAmount: 200000, heldAmount: 200000 }),
           },
           buttonRental: {
+            findUnique: async () => ({ rentalId: BigInt(10), status: 'PENDING_HANDOVER' }),
             update: async (data: any) => data.data,
           },
           outboxEvent: {
@@ -450,6 +478,7 @@ async function runDeepFixesTestSuite() {
       amount: 230000,
       currency: 'VND',
       verified: true,
+      paymentLinkId: 'plink_test_10',
     };
     const settled = await repo.settleChargeAtomicTx(BigInt(10), validReceipt);
     assert(
@@ -465,6 +494,8 @@ async function runDeepFixesTestSuite() {
 
   // Test 4.1: Bàn giao chậm không mất ngày (Thuê mới chưa đếm lùi ngày dùng trước khi bàn giao)
   {
+    let rentalStatus = 'PENDING_PAYMENT';
+
     const mockPrismaInitialHandover: any = {
       $transaction: async (cb: any) => {
         const tx: any = {
@@ -480,7 +511,9 @@ async function runDeepFixesTestSuite() {
                 currency: 'VND',
                 purpose: 'RENTAL_INITIAL',
                 target_id: BigInt(11),
+                target_type: 'RENTAL',
                 status: 'PENDING',
+                payment_link_id: 'plink_test_11',
               }];
             }
             if (sql.includes('FROM iot_button WHERE rental_id = $1')) {
@@ -494,25 +527,61 @@ async function runDeepFixesTestSuite() {
             if (sql.includes('FROM button_rentals WHERE rental_id = $1 FOR UPDATE')) {
               return [{
                 rental_id: BigInt(11),
-                status: 'PENDING_HANDOVER',
+                status: rentalStatus,
+                deposit_amount: new Decimal(200000),
                 months_rented: 1,
                 fulfillment_store_id: BigInt(99),
               }];
             }
+            if (sql.includes('initial_rent_months')) {
+              return [{ initial_rent_months: 1 }];
+            }
+            if (sql.includes('extension_months')) {
+              return [{ extension_months: 0 }];
+            }
+            if (sql.includes('bcl.line_type = \'DEPOSIT\'')) {
+              return [{ count: 1 }];
+            }
             if (sql.includes('billing_charge_lines bcl')) {
-              return [{ paid_months: 1 }];
+              return [{ paid_months: 1, initial_rent_months: 1, count: 1, extension_months: 0 }];
             }
             return [];
           },
+          billingPaymentReceipt: {
+            findUnique: async () => null,
+            create: async (data: any) => ({ id: BigInt(1), ...data.data }),
+          },
+          rentalAuditLog: {
+            create: async () => ({}),
+          },
           billingChargeLine: {
             findMany: async () => [
-              { lineType: 'RENT', amount: new Decimal(30000) },
+              { lineType: 'RENT', amount: new Decimal(30000), durationCount: 1, durationUnit: 'MONTH' },
               { lineType: 'DEPOSIT', amount: new Decimal(200000) },
             ],
           },
-          billingCharge: { update: async (data: any) => data.data },
-          rentalDeposit: { upsert: async () => ({}) },
-          buttonRental: { update: async (data: any) => data.data },
+          billingCharge: {
+            findUnique: async () => ({ chargeId: BigInt(11), status: 'PAID', lines: [] }),
+            update: async (data: any) => data.data,
+            updateMany: async () => ({ count: 1 }),
+          },
+          rentalDeposit: {
+            findUnique: async () => null,
+            create: async () => ({ collectedAmount: 200000, heldAmount: 200000 }),
+            upsert: async () => ({}),
+          },
+          buttonRental: {
+            findUnique: async () => ({
+              rentalId: BigInt(11),
+              status: rentalStatus,
+              effectiveExpiresAt: null,
+              paidThrough: null,
+            }),
+            update: async (data: any) => {
+              if (data.data?.status) rentalStatus = data.data.status;
+              return data.data;
+            },
+          },
           ioTButton: {
             update: async (data: any) => data.data,
             updateMany: async () => ({ count: 1 }),
@@ -534,6 +603,7 @@ async function runDeepFixesTestSuite() {
       amount: 230000,
       currency: 'VND',
       verified: true,
+      paymentLinkId: 'plink_test_11',
     });
 
     assert(
@@ -575,7 +645,17 @@ async function runDeepFixesTestSuite() {
                 currency: 'VND',
                 purpose: 'RENTAL_EXTENSION',
                 target_id: BigInt(12),
+                target_type: 'RENTAL',
                 status: 'PENDING',
+                payment_link_id: `plink_ext_${args[0]}`,
+              }];
+            }
+            if (sql.includes('FROM iot_button WHERE rental_id = $1')) {
+              return [{
+                button_id: BigInt(101),
+                rental_id: BigInt(12),
+                customer_id: BigInt(1),
+                inventory_state: 'IN_CUSTOMER_CUSTODY',
               }];
             }
             if (sql.includes('FROM button_rentals WHERE rental_id = $1 FOR UPDATE')) {
@@ -584,22 +664,64 @@ async function runDeepFixesTestSuite() {
                 status: 'ACTIVE',
                 effective_expires_at: currentExpiry,
                 months_rented: monthsRented,
+                billing_policy: 'LEGACY_CUSTOMER_RENT',
+                monthly_rent_per_button_snapshot: new Decimal(30000),
+                customer_id: BigInt(1),
+                button_quantity: 1,
               }];
             }
             return [];
           },
+          rentalReturn: {
+            findMany: async () => [],
+          },
+          billingPaymentReceipt: {
+            findUnique: async () => null,
+            create: async (data: any) => ({ id: BigInt(1), ...data.data }),
+          },
           billingChargeLine: {
             findMany: async () => [
-              { lineType: 'RENT', amount: new Decimal(30000), description: 'Gia hạn thuê nút thông minh (1 tháng) [months: 1]' },
+              {
+                lineType: 'RENT',
+                amount: new Decimal(30000),
+                unitPrice: new Decimal(30000),
+                quantity: 1,
+                durationCount: 1,
+                durationUnit: 'MONTH',
+                description: 'Gia hạn thuê nút thông minh (1 tháng) [months: 1]',
+              },
             ],
           },
-          billingCharge: { update: async (data: any) => data.data },
+          billingCharge: {
+            findUnique: async () => ({
+              chargeId: BigInt(101),
+              status: 'PAID',
+              lines: [],
+            }),
+            update: async (data: any) => data.data,
+            updateMany: async () => ({ count: 1 }),
+          },
           buttonRental: {
+            findUnique: async () => ({
+              rentalId: BigInt(12),
+              effectiveExpiresAt: currentExpiry,
+              monthsRented,
+              status: 'ACTIVE',
+            }),
             update: async (data: any) => {
               currentExpiry = data.data.effectiveExpiresAt;
-              monthsRented = data.data.monthsRented;
+              monthsRented = data.data.monthsRented?.increment
+                ? monthsRented + data.data.monthsRented.increment
+                : data.data.monthsRented ?? monthsRented;
               return { effectiveExpiresAt: currentExpiry, monthsRented };
             },
+          },
+          ioTButton: {
+            update: async (data: any) => data.data,
+            updateMany: async () => ({ count: 1 }),
+          },
+          rentalAuditLog: {
+            create: async () => ({}),
           },
           outboxEvent: { create: async () => ({}) },
         };
@@ -616,6 +738,7 @@ async function runDeepFixesTestSuite() {
       amount: 30000,
       currency: 'VND',
       verified: true,
+      paymentLinkId: 'plink_ext_101',
     });
 
     // Kỳ 2: Gia hạn thêm 1 tháng nối tiếp
@@ -625,6 +748,7 @@ async function runDeepFixesTestSuite() {
       amount: 30000,
       currency: 'VND',
       verified: true,
+      paymentLinkId: 'plink_ext_102',
     });
 
     const diffDays = Math.round((ext2.rentalUpdated.effectiveExpiresAt.getTime() - new Date('2026-11-30T00:00:00Z').getTime()) / (24 * 3600 * 1000));
@@ -911,7 +1035,12 @@ async function runDeepFixesTestSuite() {
           refundCode: 'REF-201',
           amount: new Decimal(200000),
           customerId: BigInt(10),
-          bankAccountId: null,
+          bankAccountId: BigInt(888),
+          recipientBin: '970422',
+          recipientAccountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber('9876543210'),
+          recipientAccountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash('9876543210'),
+          recipientAccountHolderName: 'TEST HOLDER',
+          recipientAccountNumberMasked: '******3210',
           customer: {
             userId: BigInt(5),
             customerBankAccounts: [{
@@ -1219,8 +1348,17 @@ async function runDeepFixesTestSuite() {
                 fulfillment_store_id: BigInt(1),
               }];
             }
+            if (sql.includes('initial_rent_months')) {
+              return [{ initial_rent_months: 1 }];
+            }
+            if (sql.includes('extension_months')) {
+              return [{ extension_months: 0 }];
+            }
+            if (sql.includes('bcl.line_type = \'DEPOSIT\'')) {
+              return [{ count: 1 }];
+            }
             if (sql.includes('billing_charges')) {
-              return [{ paid_months: 1 }];
+              return [{ paid_months: 1, initial_rent_months: 1, count: 1, extension_months: 0 }];
             }
             return [];
           },
@@ -1542,19 +1680,21 @@ async function runDeepFixesTestSuite() {
   {
     const mockPrismaR03_3: any = {
       $transaction: async (cb: any) => {
-        let updatedStatus = '';
-        let updatedPaidThrough: any = 'NOT_TOUCHED';
+        let updatedStatus = 'PENDING_HANDOVER';
+        let updatedPaidThrough: any = undefined;
         const tx: any = {
           $queryRawUnsafe: async (sql: string) => {
-            if (sql.includes('FROM billing_charges WHERE charge_id = $1')) {
+            if (sql.includes('FROM billing_charges WHERE charge_id = $1') || sql.includes('charge_id = $1 FOR UPDATE')) {
               return [{
                 charge_id: BigInt(303),
+                charge_code: 'CHG-303',
                 purpose: 'RENTAL_EXTENSION',
                 target_type: 'RENTAL',
                 target_id: BigInt(303),
                 total_amount: new Decimal(60000),
                 currency: 'VND',
                 status: 'PENDING',
+                payment_link_id: 'plink_303',
               }];
             }
             if (sql.includes('FROM button_rentals WHERE rental_id = $1 FOR UPDATE')) {
@@ -1563,23 +1703,67 @@ async function runDeepFixesTestSuite() {
                 status: 'PENDING_HANDOVER', // Chưa bàn giao
                 months_rented: 1,
                 effective_expires_at: null,
+                billing_policy: 'LEGACY_CUSTOMER_RENT',
+                monthly_rent_per_button_snapshot: new Decimal(30000),
+                customer_id: BigInt(1),
+                button_quantity: 1,
+              }];
+            }
+            if (sql.includes('FROM iot_button WHERE rental_id = $1')) {
+              return [{
+                button_id: BigInt(101),
+                rental_id: BigInt(303),
+                customer_id: BigInt(1),
+                inventory_state: 'IN_CUSTOMER_CUSTODY',
               }];
             }
             return [];
           },
           $executeRawUnsafe: async () => 1,
+          rentalReturn: {
+            findMany: async () => [],
+          },
+          billingPaymentReceipt: {
+            findUnique: async () => null,
+            create: async (data: any) => ({ id: BigInt(1), ...data.data }),
+          },
+          billingChargeLine: {
+            findMany: async () => [
+              {
+                lineType: 'RENT',
+                amount: new Decimal(60000),
+                unitPrice: new Decimal(60000),
+                quantity: 1,
+                durationCount: 2,
+                durationUnit: 'MONTH',
+              },
+            ],
+          },
           billingCharge: {
+            findUnique: async () => ({
+              chargeId: BigInt(303),
+              status: 'PAID',
+              lines: [],
+            }),
             update: async () => ({}),
+            updateMany: async () => ({ count: 1 }),
           },
           buttonRental: {
+            findUnique: async () => ({
+              rentalId: BigInt(303),
+              status: updatedStatus,
+              effectiveExpiresAt: null,
+              paidThrough: updatedPaidThrough,
+            }),
             update: async (data: any) => {
-              updatedStatus = data.data.status;
-              updatedPaidThrough = data.data.paidThrough;
+              if (data.data.status) updatedStatus = data.data.status;
+              if (data.data.paidThrough !== undefined) updatedPaidThrough = data.data.paidThrough;
               return data.data;
             },
           },
-          billingChargeLine: {
-            findMany: async () => [{ lineType: 'RENT', durationCount: 2 }],
+          ioTButton: {
+            update: async (data: any) => data.data,
+            updateMany: async () => ({ count: 1 }),
           },
           paymentTransaction: { create: async () => ({}) },
           rentalAuditLog: { create: async () => ({}) },
@@ -1597,6 +1781,7 @@ async function runDeepFixesTestSuite() {
       currency: 'VND',
       paidAt: new Date(),
       verified: true,
+      paymentLinkId: 'plink_303',
     };
     const result: any = await repo.settleChargeAtomicTx(BigInt(303), receipt, { userId: BigInt(1) });
     const { updatedStatus, updatedPaidThrough } = result;

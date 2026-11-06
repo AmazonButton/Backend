@@ -99,7 +99,7 @@ export async function handoverRentalButtonsInTx(
         rentalId,
     );
     const hasPaidDeposit = Number(depositPaid?.[0]?.count || 0) > 0;
-    if (!hasPaidDeposit && initialPaidRentMonths <= 0 && extensionMonths <= 0 && rental.status !== 'PENDING_HANDOVER') {
+    if (!hasPaidDeposit && initialPaidRentMonths <= 0 && extensionMonths <= 0) {
         throw new BadRequestException('Hợp đồng thuê chưa có khoản thanh toán nào hợp lệ để bàn giao');
     }
 

@@ -142,7 +142,17 @@ export class BillingChargesRepository {
       if (['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(rawCharge.purpose)) {
         const result = await recordRentalPayosReceiptInTx(tx, rawCharge, receipt, actor);
         const charge = await tx.billingCharge.findUnique({ where: { chargeId }, include: { lines: true } });
-        return { ...result, charge, status: result.overpayment ? 'PENDING_RECONCILIATION' : charge!.status };
+        const rentalUpdated = (rawCharge.target_type === 'RENTAL' && rawCharge.target_id)
+          ? await tx.buttonRental.findUnique({ where: { rentalId: BigInt(rawCharge.target_id) } })
+          : null;
+        return {
+          ...result,
+          charge,
+          status: result.overpayment ? 'PENDING_RECONCILIATION' : charge!.status,
+          rentalUpdated,
+          updatedStatus: rentalUpdated?.status,
+          updatedPaidThrough: rentalUpdated?.paidThrough ?? undefined,
+        };
       }
 
       if (rawCharge.status === 'PAID') {
