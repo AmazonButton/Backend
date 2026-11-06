@@ -1,5 +1,25 @@
 # Project Handoff & Session Context
 
+### [2026-11-07] Draw.io XML Entity Parsing Fix & Multi-Instance API Speed Benchmarking
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Draw.io XML Validation & Entity Parsing Fix**:
+    - Resolved error `xmlParseEntityRef: no name` at line 17662 reported when opening [BRD/ERD_Level_3_Editable.drawio](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio).
+    - Replaced all 45 bare ampersands (`&`) in attribute values (`value="Register & Authenticate"`, `value="Manage Products & Catalogs"`, etc.) with properly escaped XML entity references (`&amp;`).
+    - Verified complete XML well-formedness using Python `xml.etree.ElementTree`: all 25 diagrams (1 ERD, 1 CDM, 9 State Machines, 13 Activity Diagrams, 1 Use Case) parse without errors.
+  * **API Speed & Latency Benchmarks**:
+    - Created [scripts/benchmark_apis.js](file:///f:/Learning/SEM9-FPTu/backend/scripts/benchmark_apis.js) to evaluate response times, status codes, and payload integrity across all 3 nodes:
+      * **Render Node-1 (Primary)**: `/healthz` 150ms (min 59ms), `/readyz` 505ms, `/api/v1/banks` 95ms (min 71ms), `/api/v1/subscription-plans` 425ms, `/api/v1/rentals/packages` 427ms, `/api/v1/stores` 423ms, `/api/v1/products/storefront/catalog` 863ms, `/api/v1/auth/login` 434ms (401 guard).
+      * **Render Node-2 (Secondary)**: `/healthz` 127ms (min 70ms), `/readyz` 429ms, `/api/v1/banks` 71ms (min 65ms), `/api/v1/subscription-plans` 427ms, `/api/v1/rentals/packages` 454ms, `/api/v1/stores` 429ms, `/api/v1/products/storefront/catalog` 853ms, `/api/v1/auth/login` 434ms.
+      * **AWS EC2 Node-3**: Internal direct execution `/healthz` 1.5ms, `/readyz` 522ms, `/api/v1/banks` 5ms, `/api/v1/subscription-plans` 527ms, `/api/v1/rentals/packages` 520ms, `/api/v1/stores` 690ms.
+- **Files Modified**:
+  * `BRD/ERD_Level_3_Editable.drawio`
+  * `scripts/benchmark_apis.js`
+  * `SESSION_HANDOFF.md`
+- **Verification Evidence**:
+  * Python `xml.etree.ElementTree.parse('BRD/ERD_Level_3_Editable.drawio')`: 25/25 diagrams parsed cleanly.
+  * Multi-instance API benchmark test suite executed cleanly with zero network dropouts or unhandled errors.
+
 ### [2026-11-07] CI/CD Pipeline 100% Green, Conceptual Architecture Diagram & 3-Instance Cluster Deployment
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:
