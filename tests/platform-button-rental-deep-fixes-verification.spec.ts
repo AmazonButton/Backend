@@ -97,6 +97,7 @@ async function runDeepFixesTestSuite() {
               rentalId: BigInt(10),
               depositAmount: 400000,
               customerId: BigInt(88),
+              fulfillmentStoreId: BigInt(5),
               package: { buttonQuantity: 2 }, // Hợp đồng 2 nút gốc
             }),
             update: async () => ({ status: 'RETURNED' }),

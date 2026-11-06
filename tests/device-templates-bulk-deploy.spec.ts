@@ -700,8 +700,6 @@ async function runDeviceTemplateAndBulkDeployTests() {
         hmacSecret: 'test_secret_key_allocated_32bytes',
         status: 'UNASSIGNED',
         storeId: BigInt(store1Id),
-        customerId: seedCustomerId,
-        addressId: seedAddressId,
       },
     });
 

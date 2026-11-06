@@ -559,9 +559,13 @@ async function runAnalyticsDashboardE2ESuite() {
         customerId: 7n,
         customer: { customerId: 7n, userId: 99n },
         package: { packageId: 1n, monthlyPrice: 50000 },
+        billingPolicy: 'LEGACY_CUSTOMER_RENT',
         status: 'ACTIVE',
         endDate: new Date(Date.now() + 30 * 86400000),
       }),
+      createRentalExtensionCharge: async () => ({ chargeId: 201n, totalAmount: 50000 }),
+      createReturnRequestTx: async () => ({ returnId: 1n }),
+      handoverRentalButtonsTx: async () => ({ rentalId: 101n, status: 'ACTIVE' }),
       extendRental: async (_id: any, newEnd: any, months: any, amount: any) => ({
         rentalId: 101n,
         rentalCode: 'RNT-101',
@@ -621,7 +625,7 @@ async function runAnalyticsDashboardE2ESuite() {
     // 5) updateRentalStatusAdmin
     await cacheService.set('customer:dashboard:99', { marker: 'old' }, 30);
     await cacheService.set('customer:rentals:99', { marker: 'old' }, 30);
-    await rentalsService.updateRentalStatusAdmin('101', 'COMPLETED');
+    await rentalsService.updateRentalStatusAdmin('101', 'TERMINATED');
     check((await cacheService.get('customer:dashboard:99')) === null, 'Rental admin update: customer 99 dashboard cache cleared');
     check((await cacheService.get('customer:rentals:99')) === null, 'Rental admin update: customer 99 rentals cache cleared');
   }

@@ -81,6 +81,10 @@ async function runPhase1PayosIntegrationSuite() {
         userId: BigInt(500),
       },
     }),
+    findActiveStoreById: async (storeId: bigint) => ({
+      storeId,
+      status: 'ACTIVE',
+    }),
   };
 
   const billingChargesService = new BillingChargesService(mockBillingChargesRepo);

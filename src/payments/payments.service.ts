@@ -197,7 +197,7 @@ export class PaymentsService {
     );
 
         // Support local test mock
-    if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id') {
+    if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || clientId?.startsWith('ci_test_')) {
       const mockPaymentLinkId = `mock_link_${orderCode}`;
       const mockCheckoutUrl = `https://pay.payos.vn/web/mock-${orderCode}`;
       const mockQrCode = `00020101021238540010A000000727012600069704220112${orderCode}`;
@@ -672,7 +672,7 @@ export class PaymentsService {
       throw new InternalServerErrorException('PAYOS_CLIENT_ID or PAYOS_API_KEY missing');
     }
 
-    if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id') {
+    if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || clientId?.startsWith('ci_test_')) {
       return {
         code: '00',
         desc: 'success',
@@ -714,7 +714,7 @@ export class PaymentsService {
       throw new InternalServerErrorException('PAYOS_CLIENT_ID or PAYOS_API_KEY missing');
     }
 
-    if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id') {
+    if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || clientId?.startsWith('ci_test_')) {
       return {
         code: '00',
         desc: 'success',

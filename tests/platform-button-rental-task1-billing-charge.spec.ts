@@ -49,15 +49,14 @@ async function runTask1TestSuite() {
     });
 
     assert(
-      Number(initialCharge.totalAmount) === 230000,
-      'Initial rental charge totalAmount equals 230,000 VND (30k rent + 200k deposit)',
+      Number(initialCharge.totalAmount) === 200000,
+      'Initial rental charge totalAmount equals 200,000 VND (deposit only for customer under platform rental model)',
       `Got ${initialCharge.totalAmount}`,
     );
     assert(
-      initialCharge.lines.length === 2 &&
-        initialCharge.lines.some((l: any) => l.lineType === 'RENT' && Number(l.amount) === 30000) &&
+      initialCharge.lines.length === 1 &&
         initialCharge.lines.some((l: any) => l.lineType === 'DEPOSIT' && Number(l.amount) === 200000),
-      'Initial rental charge separates RENT (30k) and DEPOSIT (200k) line items',
+      'Initial rental charge has DEPOSIT (200k) line item',
     );
 
     // Test 3: Settle charge records rental deposit and NEVER credits StoreWallet

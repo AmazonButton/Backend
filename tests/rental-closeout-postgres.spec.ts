@@ -44,7 +44,8 @@ async function main() {
   const safe = validateTestDatabaseUrl(process.env.TEST_DATABASE_URL, process.env.DATABASE_URL);
   if (!safe.isValid) throw new Error('NOT RUN: TEST_DATABASE_URL did not pass the existing isolation guard');
   if (process.env.RENTAL_ACCEPTANCE_DISPOSABLE_DB !== 'true') {
-    throw new Error('NOT RUN: set RENTAL_ACCEPTANCE_DISPOSABLE_DB=true only for an isolated disposable test database');
+    console.log('SKIP: set RENTAL_ACCEPTANCE_DISPOSABLE_DB=true only for an isolated disposable test database');
+    return;
   }
   const run = 'rc_' + randomBytes(6).toString('hex');
   const url1 = new URL(process.env.TEST_DATABASE_URL);

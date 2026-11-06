@@ -315,6 +315,7 @@ async function main() {
       addressId: customerAddress.addressId,
       buttonName: 'Nút Nước Lavie Bếp',
       status: 'ACTIVE',
+      inventoryState: 'IN_CUSTOMER_CUSTODY',
     },
     create: {
       storeId: store1.storeId,
@@ -324,6 +325,7 @@ async function main() {
       buttonCode: 'BTN-8829-WTR',
       buttonName: 'Nút Nước Lavie Bếp',
       status: 'ACTIVE',
+      inventoryState: 'IN_CUSTOMER_CUSTODY',
       hmacSecret: 'sec_btn8829_f79c428784e5e14ddf0cb866fc07ca7f5c68a5a295b27ede',
       installedAt: new Date(),
     },
@@ -349,6 +351,7 @@ async function main() {
       addressId: customerAddress.addressId,
       buttonName: 'Nút Đổi Bình Gas Nhà Bếp',
       status: 'ACTIVE',
+      inventoryState: 'IN_CUSTOMER_CUSTODY',
     },
     create: {
       storeId: store1.storeId,
@@ -358,6 +361,7 @@ async function main() {
       buttonCode: 'BTN-7711-GAS',
       buttonName: 'Nút Đổi Bình Gas Nhà Bếp',
       status: 'ACTIVE',
+      inventoryState: 'IN_CUSTOMER_CUSTODY',
       hmacSecret: 'sec_btn7711_e82b7c93847291a82f30b91c8472a19b',
       installedAt: new Date(),
     },

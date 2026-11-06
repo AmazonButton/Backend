@@ -266,6 +266,8 @@ export class RentalsService {
         BigInt(user.userId || user.id || user.sub),
       );
 
+      await this.invalidateRentalCaches(rental.customer?.userId, targetStoreId);
+
       return {
         rentalId: rentalId.toString(),
         rentalCode: rental.rentalCode,
@@ -288,6 +290,8 @@ export class RentalsService {
       months,
       BigInt(user.userId || user.id || user.sub),
     );
+
+    await this.invalidateRentalCaches(rental.customer?.userId, rental.fulfillmentStoreId);
 
     return {
       rentalId: rentalId.toString(),
@@ -369,6 +373,8 @@ export class RentalsService {
     if (rental.status !== 'PENDING_HANDOVER' && rental.status !== 'ACTIVE') {
       throw new BadRequestException('Hợp đồng phải ở trạng thái PENDING_HANDOVER và được gán thiết bị trước khi kích hoạt');
     }
+
+    await this.invalidateRentalCaches(rental.customer?.userId, rental.fulfillmentStoreId);
 
     if (rental.status === 'ACTIVE') {
       return RentalResponseDto.fromEntity(rental);

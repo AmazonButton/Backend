@@ -85,6 +85,10 @@ async function runPhase3StoreSubscriptionSuite() {
         subscription: updatedSub,
       };
     },
+    findActiveStoreById: async (storeId: bigint) => ({
+      storeId,
+      status: 'ACTIVE',
+    }),
   };
 
   const billingChargesService = new BillingChargesService(mockBillingChargesRepo);

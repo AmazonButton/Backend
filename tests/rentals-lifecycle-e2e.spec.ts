@@ -259,6 +259,52 @@ async function runRentalsLifecycleSuite() {
 
       // Test 5: POST /rentals/:id/extensions extends contract endDate
       try {
+        // Attach a test button to rentalA and mark ACTIVE to test extensions and return requests
+        let testStore = await prisma.store.findFirst({ select: { storeId: true } });
+        if (!testStore) {
+          const storeOwner = await prisma.user.create({
+            data: {
+              username: `rnt_store_owner_${Date.now()}`,
+              email: `rnt_store_owner_${Date.now()}@test.com`,
+              phone: `0984${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`,
+              fullName: 'Rental Store Owner',
+              status: 'ACTIVE',
+            },
+          });
+          testStore = await prisma.store.create({
+            data: {
+              ownerUserId: storeOwner.userId,
+              name: `Rental Test Store ${Date.now()}`,
+              code: `RNT_STORE_${Date.now()}`,
+              phone: storeOwner.phone,
+              address: '123 Rental Test Road',
+              status: 'ACTIVE',
+            },
+            select: { storeId: true },
+          });
+        }
+
+        await prisma.ioTButton.create({
+          data: {
+            deviceId: `BTN_RENT_${Date.now()}`,
+            buttonCode: `BTN_RENT_${Date.now()}`,
+            hmacSecret: 'test-secret-32-chars-long-for-rent!',
+            storeId: testStore.storeId,
+            customerId: profileA.customerId,
+            rentalId: BigInt(rentalA.rentalId),
+            status: 'ACTIVE',
+            inventoryState: 'IN_CUSTOMER_CUSTODY',
+          },
+        });
+        await prisma.buttonRental.update({
+          where: { rentalId: BigInt(rentalA.rentalId) },
+          data: {
+            status: 'ACTIVE',
+            billingPolicy: 'LEGACY_CUSTOMER_RENT',
+            fulfillmentStoreId: testStore.storeId,
+          },
+        });
+
         const res = await fetch(`${BASE_URL}/rentals/${rentalA.rentalId}/extensions`, {
           method: 'POST',
           headers: {
@@ -336,7 +382,7 @@ async function runRentalsLifecycleSuite() {
         failed++;
       }
 
-      // Test 8: PATCH /admin/rentals/:id/status updates status to RETURNED
+      // Test 8: PATCH /admin/rentals/:id/status updates status to TERMINATED
       try {
         const res = await fetch(`${BASE_URL}/admin/rentals/${rentalA.rentalId}/status`, {
           method: 'PATCH',
@@ -344,23 +390,23 @@ async function runRentalsLifecycleSuite() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${adminToken}`,
           },
-          body: JSON.stringify({ status: 'RETURNED' }),
+          body: JSON.stringify({ status: 'TERMINATED' }),
         });
         const body = await res.json();
 
         if (
           res.status === 200 &&
           body.success === true &&
-          body.data.status === 'RETURNED'
+          body.data.status === 'TERMINATED'
         ) {
-          logTest('PATCH /admin/rentals/:id/status updates rental status to RETURNED', true);
+          logTest('PATCH /admin/rentals/:id/status updates rental status to TERMINATED', true);
           passed++;
         } else {
-          logTest('PATCH /admin/rentals/:id/status updates rental status to RETURNED', false, JSON.stringify(body));
+          logTest('PATCH /admin/rentals/:id/status updates rental status to TERMINATED', false, JSON.stringify(body));
           failed++;
         }
       } catch (err: any) {
-        logTest('PATCH /admin/rentals/:id/status updates rental status to RETURNED', false, err.message);
+        logTest('PATCH /admin/rentals/:id/status updates rental status to TERMINATED', false, err.message);
         failed++;
       }
 

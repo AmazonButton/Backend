@@ -241,6 +241,7 @@ async function runOrderMinimumValueTestSuite() {
         customerId: testCustomerProfile.customerId,
         addressId: testAddress.addressId,
         status: 'ACTIVE',
+        inventoryState: 'IN_CUSTOMER_CUSTODY',
       },
     });
     await prisma.buttonProduct.create({
@@ -261,6 +262,7 @@ async function runOrderMinimumValueTestSuite() {
         customerId: testCustomerProfile.customerId,
         addressId: testAddress.addressId,
         status: 'ACTIVE',
+        inventoryState: 'IN_CUSTOMER_CUSTODY',
       },
     });
     await prisma.buttonProduct.create({
@@ -281,6 +283,7 @@ async function runOrderMinimumValueTestSuite() {
         customerId: testCustomerProfile.customerId,
         addressId: testAddress.addressId,
         status: 'ACTIVE',
+        inventoryState: 'IN_CUSTOMER_CUSTODY',
       },
     });
     await prisma.buttonProduct.create({
@@ -301,6 +304,7 @@ async function runOrderMinimumValueTestSuite() {
         customerId: testCustomerProfile.customerId,
         addressId: testAddress.addressId,
         status: 'ACTIVE',
+        inventoryState: 'IN_CUSTOMER_CUSTODY',
       },
     });
     await prisma.buttonProduct.create({
@@ -321,6 +325,7 @@ async function runOrderMinimumValueTestSuite() {
         customerId: testCustomerProfile.customerId,
         addressId: testAddress.addressId,
         status: 'ACTIVE',
+        inventoryState: 'IN_CUSTOMER_CUSTODY',
       },
     });
     await prisma.buttonProduct.create({

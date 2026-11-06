@@ -46,6 +46,24 @@ async function runTask5TestSuite() {
           return { notificationId: BigInt(sentNotifications.length), ...data.data };
         },
       },
+      $queryRaw: async (query: any, ...args: any[]) => {
+        const values = Array.isArray(query?.values) ? query.values : args;
+        const [userId, type, title, body, data, idempotencyKey] = values;
+        const notif = {
+          notificationId: BigInt(sentNotifications.length + 1),
+          userId: userId || BigInt(100),
+          type: type || 'RENTAL_EXPIRED',
+          title: title || 'Thông báo',
+          body: body || '',
+          idempotencyKey: idempotencyKey || `NOTIF-${Date.now()}`,
+          data: null,
+          isRead: false,
+          readAt: null,
+          createdAt: new Date(),
+        };
+        sentNotifications.push(notif);
+        return [notif];
+      },
     };
     const mockFirebase: any = {
       sendMulticast: async () => ({ successTokens: ['token-1'], invalidTokens: [], failureCount: 0 }),

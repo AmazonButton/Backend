@@ -332,6 +332,9 @@ export class ProvisioningRepository {
              address_id = $2,
              button_name = $3,
              status = 'ACTIVE',
+             inventory_state = 'IN_CUSTOMER_CUSTODY',
+             can_order = true,
+             custody_store_id = NULL,
              installed_at = NOW(),
              updated_at = NOW()
          WHERE button_id = $4;`,

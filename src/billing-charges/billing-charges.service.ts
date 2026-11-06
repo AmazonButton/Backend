@@ -126,7 +126,7 @@ export class BillingChargesService {
 
     // Verify against provider or sandbox/mock
     const clientId = process.env.PAYOS_CLIENT_ID?.trim();
-    const isMock = process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id';
+    const isMock = process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || clientId?.startsWith('ci_test_');
     const isAllowedMockEnv = ['test', 'development', 'local'].includes(process.env.NODE_ENV || '');
 
     if (isMock && !isAllowedMockEnv) {
@@ -346,7 +346,7 @@ export class BillingChargesService {
     const clientId = process.env.PAYOS_CLIENT_ID?.trim();
     const apiKey = process.env.PAYOS_API_KEY?.trim();
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim() || 'mock_checksum_key_dev';
-    const isMock = process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || !clientId;
+    const isMock = process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || clientId?.startsWith('ci_test_') || !clientId;
     const isAllowedMockEnv = ['test', 'development', 'local'].includes(process.env.NODE_ENV || '');
 
     if (isMock && !isAllowedMockEnv) {
