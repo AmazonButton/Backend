@@ -173,7 +173,7 @@ BEGIN
     END IF;
 END $$;
 
--- Enforce ON DELETE RESTRICT from customer_bank_accounts to customer_profiles (Zero Financial Cascade)
+-- Enforce ON DELETE RESTRICT from customer_bank_accounts to customer_profile (Zero Financial Cascade)
 DO $$
 BEGIN
     IF EXISTS (
@@ -183,7 +183,7 @@ BEGIN
             DROP CONSTRAINT "customer_bank_accounts_customer_id_fkey";
         ALTER TABLE "customer_bank_accounts"
             ADD CONSTRAINT "customer_bank_accounts_customer_id_fkey"
-            FOREIGN KEY ("customer_id") REFERENCES "customer_profiles"("customer_id") ON DELETE RESTRICT;
+            FOREIGN KEY ("customer_id") REFERENCES "customer_profile"("customer_id") ON DELETE RESTRICT;
     END IF;
 END $$;
 

@@ -1,5 +1,23 @@
 # Project Handoff & Session Context
 
+### [2026-11-06] Resolved GitHub Actions CI/CD Migration Deployment Failure (Run 42254548546)
+- **Root Cause & Investigation**:
+  * GitHub Actions CI run `42254548546` failed during step `Apply Database Migrations (Isolated CI DB)` with error:
+    `ERROR: relation "customer_profiles" does not exist (SQL code 42P01)` at migration `20261101130000_customer_bank_penny_deposit_four_entities/migration.sql:186`.
+  * The migration script defined:
+    `FOREIGN KEY ("customer_id") REFERENCES "customer_profiles"("customer_id") ON DELETE RESTRICT;`
+    using the plural `"customer_profiles"`, whereas the database table defined in `prisma/schema.prisma` and created in migration `20261012000000_init_baseline` is strictly singular `"customer_profile"`.
+- **Resolution**:
+  * Corrected `"customer_profiles"` to `"customer_profile"` in `prisma/migrations/20261101130000_customer_bank_penny_deposit_four_entities/migration.sql` (lines 176 and 186).
+  * Audited all other migration files across `prisma/migrations/**/*.sql` via `git grep` and confirmed zero other occurrences of `customer_profiles`.
+- **Verification Evidence**:
+  * `npx tsc --noEmit --incremental false`: Exited with code 0 (zero errors).
+  * `npm run build`: Exited with code 0 (production build clean).
+  * `npx tsx tests/rental-renewal-receipt.spec.ts`: PASSED all acceptance tests.
+  * `npx tsx scratch/test_backend_requirements.ts`: PASSED (all 28 assertions verified).
+  * `npx tsx tests/store-cash-settlement.spec.ts`: PASSED.
+  * `git diff --check`: Clean (zero trailing whitespace).
+
 ### [2026-11-06] Closed Acceptance Review: Zero-Typecheck Errors, Elimination of Access Fail-Open, Handover paidThrough Unification & Rental-Level Migration Conflict Guard
 - **Point 1: Full Project Typecheck Resolution (TS2554)**:
   * Resolved constructor argument overflow in `tests/rental-renewal-receipt.spec.ts`: Removed extraneous 3rd argument passed to `new BillingChargesService(mockBillingRepo, {} as any)`.
