@@ -14316,7 +14316,7 @@
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <!-- DIAGRAM HEADER TITLE & LEGEND BANNER -->
+        <!-- DIAGRAM HEADER TITLE &amp; LEGEND BANNER -->
         <mxCell id="cdm_title_banner" parent="1" style="swimlane;startSize=45;horizontal=1;fillColor=#0F172A;strokeColor=#1E293B;strokeWidth=2;fontColor=#F8FAFC;fontStyle=1;fontSize=18;rounded=1;arcSize=4;collapsible=0;" value="SƠ ĐỒ THỰC THỂ KHÁI NIỆM &amp; KIẾN TRÚC HỆ SINH THÁI NÚT BẤM IOT (CONCEPTUAL ARCHITECTURE &amp; DOMAIN MODEL)" vertex="1">
           <mxGeometry x="80" y="40" width="3440" height="90" as="geometry" />
         </mxCell>
@@ -14328,7 +14328,7 @@
         </mxCell>
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 1: IAM & MULTI-ROLE IDENTITY (ĐỊNH DANH & PHÂN QUYỀN) -->
+        <!-- DOMAIN 1: IAM &amp; MULTI-ROLE IDENTITY (ĐỊNH DANH &amp; PHÂN QUYỀN) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_iam" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F8FAFC;strokeColor=#475569;strokeWidth=2;fontColor=#0F172A;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 1: ĐỊNH DANH, NGƯỜI DÙNG &amp; PHÂN QUYỀN (IAM &amp; SECURITY)" vertex="1">
           <mxGeometry x="80" y="160" width="620" height="700" as="geometry" />
@@ -14366,7 +14366,7 @@
           <mxGeometry y="28" width="250" height="142" as="geometry" />
         </mxCell>
 
-        <!-- Entity: Refresh Token Rotation & Session -->
+        <!-- Entity: Refresh Token Rotation &amp; Session -->
         <mxCell id="ent_session" parent="dom_iam" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#F1F5F9;strokeColor=#94A3B8;fontColor=#334155;rounded=1;" value="AUTH_SESSION &amp; SECURITY" vertex="1">
           <mxGeometry x="30" y="260" width="250" height="150" as="geometry" />
         </mxCell>
@@ -14398,7 +14398,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 2: MERCHANT, STORE & CATALOG (GIAN HÀNG & SẢN PHẨM) -->
+        <!-- DOMAIN 2: MERCHANT, STORE &amp; CATALOG (GIAN HÀNG &amp; SẢN PHẨM) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_store" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F0FDF4;strokeColor=#059669;strokeWidth=2;fontColor=#065F46;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 2: CỬA HÀNG, NHÂN SỰ &amp; DANH MỤC HÀNG HÓA (STORE &amp; CATALOG)" vertex="1">
           <mxGeometry x="740" y="160" width="760" height="700" as="geometry" />
@@ -14444,7 +14444,7 @@
           <mxGeometry y="28" width="320" height="112" as="geometry" />
         </mxCell>
 
-        <!-- Entity: Store Customer Relationship & Container Debt -->
+        <!-- Entity: Store Customer Relationship &amp; Container Debt -->
         <mxCell id="ent_store_cust" parent="dom_store" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#14532D;rounded=1;" value="STORE_CUSTOMER (Thân thiết &amp; Vỏ bình)" vertex="1">
           <mxGeometry x="30" y="470" width="310" height="170" as="geometry" />
         </mxCell>
@@ -14483,7 +14483,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 3: SMART IOT ECOSYSTEM & DEVICE LIFECYCLE (PHẦN CỨNG NÚT BẤM) -->
+        <!-- DOMAIN 3: SMART IOT ECOSYSTEM &amp; DEVICE LIFECYCLE (PHẦN CỨNG NÚT BẤM) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_iot" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F0F9FF;strokeColor=#0284C7;strokeWidth=2;fontColor=#075985;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 3: HỆ SINH THÁI THIẾT BỊ NÚT BẤM THÔNG MINH (IOT ECOSYSTEM)" vertex="1">
           <mxGeometry x="1540" y="160" width="860" height="700" as="geometry" />
@@ -14521,7 +14521,7 @@
           <mxGeometry y="28" width="370" height="132" as="geometry" />
         </mxCell>
 
-        <!-- Entity: Zero-Touch Provisioning & Pairing Token -->
+        <!-- Entity: Zero-Touch Provisioning &amp; Pairing Token -->
         <mxCell id="ent_provision" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E0F2FE;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="ZERO_TOUCH_PROVISIONING &amp; PAIRING" vertex="1">
           <mxGeometry x="30" y="510" width="370" height="150" as="geometry" />
         </mxCell>
@@ -14529,7 +14529,7 @@
           <mxGeometry y="28" width="370" height="122" as="geometry" />
         </mxCell>
 
-        <!-- Entity: Idempotency & Debounce Nonce -->
+        <!-- Entity: Idempotency &amp; Debounce Nonce -->
         <mxCell id="ent_iot_sec" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#BAE6FD;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="IOT_IDEMPOTENCY_KEY &amp; NONCE VAULT" vertex="1">
           <mxGeometry x="460" y="440" width="360" height="150" as="geometry" />
         </mxCell>
@@ -14554,7 +14554,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 4: HARDWARE RENTAL & DEPOSIT ESCROW (THUÊ NÚT & KÝ QUỸ CỌC) -->
+        <!-- DOMAIN 4: HARDWARE RENTAL &amp; DEPOSIT ESCROW (THUÊ NÚT &amp; KÝ QUỸ CỌC) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_rental" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#FFFBEB;strokeColor=#D97706;strokeWidth=2;fontColor=#92400E;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 4: HỢP ĐỒNG THUÊ NÚT &amp; KÝ QUỸ ĐẶT CỌC (RENTAL &amp; DEPOSIT ESCROW)" vertex="1">
           <mxGeometry x="80" y="890" width="700" height="740" as="geometry" />
@@ -14632,7 +14632,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 5: ORDER DISPATCH & FULFILLMENT (ĐƠN HÀNG & GIAO VẬN SHIPPER) -->
+        <!-- DOMAIN 5: ORDER DISPATCH &amp; FULFILLMENT (ĐƠN HÀNG &amp; GIAO VẬN SHIPPER) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_order" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E40AF;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 5: ĐƠN HÀNG, ĐIỀU PHỐI &amp; GIAO VẬN SHIPPER (ORDERS &amp; FULFILLMENT)" vertex="1">
           <mxGeometry x="810" y="890" width="760" height="740" as="geometry" />
@@ -14702,7 +14702,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 6: FINANCIAL LEDGER & PAYOS PAYOUT (TÀI CHÍNH, VÍ & CỔNG THANH TOÁN) -->
+        <!-- DOMAIN 6: FINANCIAL LEDGER &amp; PAYOS PAYOUT (TÀI CHÍNH, VÍ &amp; CỔNG THANH TOÁN) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_fin" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#FAF5FF;strokeColor=#9333EA;strokeWidth=2;fontColor=#6B21A8;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 6: SỔ CÁI TÀI CHÍNH, VÍ CỬA HÀNG &amp; PAYOS PAYOUT (FINANCIAL LEDGER)" vertex="1">
           <mxGeometry x="1600" y="890" width="800" height="740" as="geometry" />
@@ -14740,7 +14740,7 @@
           <mxGeometry y="28" width="350" height="182" as="geometry" />
         </mxCell>
 
-        <!-- Entity: Billing Charges & Invoicing Engine -->
+        <!-- Entity: Billing Charges &amp; Invoicing Engine -->
         <mxCell id="ent_billing_charge" parent="dom_fin" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#F3E8FF;strokeColor=#A855F7;fontColor=#581C87;rounded=1;" value="BILLING_CHARGES (Hóa đơn thu phí sàn)" vertex="1">
           <mxGeometry x="30" y="270" width="340" height="210" as="geometry" />
         </mxCell>
@@ -14765,7 +14765,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 7: SECURITY VAULT, BANK VERIFICATION & EKYC (BẢO MẬT & EKYC) -->
+        <!-- DOMAIN 7: SECURITY VAULT, BANK VERIFICATION &amp; EKYC (BẢO MẬT &amp; EKYC) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_bank" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#FFF1F2;strokeColor=#E11D48;strokeWidth=2;fontColor=#9F1239;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 7: KHO THẺ BẢO MẬT PCI-DSS, XÁC MINH 2.000Đ &amp; EKYC (SECURITY VAULT &amp; COMPLIANCE)" vertex="1">
           <mxGeometry x="80" y="1660" width="1150" height="680" as="geometry" />
@@ -14828,7 +14828,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- DOMAIN 8: RELIABILITY, RESILIENCE & OUTBOX (HẠ TẦNG & CHỐNG LẶP SỰ KIỆN) -->
+        <!-- DOMAIN 8: RELIABILITY, RESILIENCE &amp; OUTBOX (HẠ TẦNG &amp; CHỐNG LẶP SỰ KIỆN) -->
         <!-- ==================================================================== -->
         <mxCell id="dom_rel" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F8FAFC;strokeColor=#334155;strokeWidth=2;fontColor=#0F172A;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 8: HẠ TẦNG TIN CẬY, TRANSACTIONAL OUTBOX &amp; CHỐNG TẤN CÔNG (RELIABILITY &amp; RESILIENCE)" vertex="1">
           <mxGeometry x="1270" y="1660" width="1130" height="680" as="geometry" />
@@ -14858,7 +14858,7 @@
           <mxGeometry y="28" width="330" height="142" as="geometry" />
         </mxCell>
 
-        <!-- Entity: Notifications & FCM Tokens -->
+        <!-- Entity: Notifications &amp; FCM Tokens -->
         <mxCell id="ent_notif" parent="dom_rel" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E2E8F0;strokeColor=#475569;fontColor=#0F172A;rounded=1;" value="NOTIFICATIONS &amp; FIREBASE CLOUD MESSAGING" vertex="1">
           <mxGeometry x="30" y="280" width="340" height="170" as="geometry" />
         </mxCell>
@@ -14884,7 +14884,7 @@
 
 
         <!-- ==================================================================== -->
-        <!-- CROSS-DOMAIN CONCEPTUAL RELATIONSHIPS & DATA FLOW (LIÊN MIỀN) -->
+        <!-- CROSS-DOMAIN CONCEPTUAL RELATIONSHIPS &amp; DATA FLOW (LIÊN MIỀN) -->
         <!-- ==================================================================== -->
 
         <!-- 1. Customer leases Button Rental -->
@@ -17659,13 +17659,13 @@
           <mxGeometry height="120" width="70" x="1760" y="1180" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_auth_cust -->
-        <mxCell id="uc_auth_cust" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Register & Authenticate
+        <mxCell id="uc_auth_cust" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Register &amp; Authenticate
 (Phone OTP / Social)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="60" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_ekyc_cust -->
         <mxCell id="uc_ekyc_cust" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Perform eKYC Verification
-(CCCD & 3D Liveness)" vertex="1">
+(CCCD &amp; 3D Liveness)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="140" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_bank_verify -->
@@ -17674,7 +17674,7 @@
           <mxGeometry height="55" width="220" x="50" y="220" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_pair_btn -->
-        <mxCell id="uc_pair_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Pair & Activate IoT Button
+        <mxCell id="uc_pair_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Pair &amp; Activate IoT Button
 (Zero-Touch Provisioning)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="300" as="geometry" />
         </mxCell>
@@ -17690,7 +17690,7 @@
         </mxCell>
         <!-- UseCase: uc_config_btn -->
         <mxCell id="uc_config_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Remote Button Configuration
-& Child-Lock Safety" vertex="1">
+&amp; Child-Lock Safety" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="540" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_migrate_store -->
@@ -17699,48 +17699,48 @@
           <mxGeometry height="55" width="220" x="50" y="620" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_track_order -->
-        <mxCell id="uc_track_order" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Track Order & Shipper Route
+        <mxCell id="uc_track_order" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Track Order &amp; Shipper Route
 (Real-time Updates)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="700" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_return_btn -->
-        <mxCell id="uc_return_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Return Button & Refund Deposit
+        <mxCell id="uc_return_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Return Button &amp; Refund Deposit
 (Rental Termination)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="780" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_telemetry_btn -->
         <mxCell id="uc_telemetry_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Transmit Battery Telemetry
-& Low-Power Heartbeat" vertex="1">
+&amp; Low-Power Heartbeat" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="860" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_pay_vietqr -->
         <mxCell id="uc_pay_vietqr" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Process VietQR Payment
-& Auto Webhook Reconciliation" vertex="1">
+&amp; Auto Webhook Reconciliation" vertex="1">
           <mxGeometry height="60" width="230" x="470" y="90" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_cash_collection -->
-        <mxCell id="uc_cash_collection" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Collect & Reconcile Cash Payments
-(Store Cash Vouchers & Receipts)" vertex="1">
+        <mxCell id="uc_cash_collection" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Collect &amp; Reconcile Cash Payments
+(Store Cash Vouchers &amp; Receipts)" vertex="1">
           <mxGeometry height="60" width="230" x="470" y="180" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_order_fulfillment -->
-        <mxCell id="uc_order_fulfillment" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Prepare Orders & Dispatch
+        <mxCell id="uc_order_fulfillment" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Prepare Orders &amp; Dispatch
 (Accept, Pack, Ready for Delivery)" vertex="1">
           <mxGeometry height="60" width="230" x="470" y="270" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_driver_shift -->
         <mxCell id="uc_driver_shift" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Check-in / Check-out Driver Shift
-(Roster & Attendance)" vertex="1">
+(Roster &amp; Attendance)" vertex="1">
           <mxGeometry height="55" width="230" x="470" y="490" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_delivery_duty -->
         <mxCell id="uc_delivery_duty" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Accept Delivery Tasks
-& Optimize Route" vertex="1">
+&amp; Optimize Route" vertex="1">
           <mxGeometry height="55" width="230" x="470" y="570" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_confirm_delivery -->
         <mxCell id="uc_confirm_delivery" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Confirm Delivery Success
-& Upload Photo Proof" vertex="1">
+&amp; Upload Photo Proof" vertex="1">
           <mxGeometry height="55" width="230" x="470" y="650" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_settle_overpayment -->
@@ -17750,62 +17750,62 @@
         </mxCell>
         <!-- UseCase: uc_store_apply -->
         <mxCell id="uc_store_apply" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Submit Store Application
-(Merchant Onboarding & GPKD)" vertex="1">
+(Merchant Onboarding &amp; GPKD)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="60" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_manage_products -->
-        <mxCell id="uc_manage_products" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Products & Catalogs
-(Pricing & Discount Campaigns)" vertex="1">
+        <mxCell id="uc_manage_products" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Products &amp; Catalogs
+(Pricing &amp; Discount Campaigns)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="140" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_manage_inventory -->
-        <mxCell id="uc_manage_inventory" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Inventory & Stock
+        <mxCell id="uc_manage_inventory" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Inventory &amp; Stock
 (Pessimistic Reservation)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="220" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_store_rentals -->
         <mxCell id="uc_store_rentals" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Button Rental Leases
-& Hardware Custody" vertex="1">
+&amp; Hardware Custody" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="300" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_store_payout -->
-        <mxCell id="uc_store_payout" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Store Wallet & Payout
+        <mxCell id="uc_store_payout" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Store Wallet &amp; Payout
 (Automated PayOS Disbursement)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="380" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_pay_subscription -->
         <mxCell id="uc_pay_subscription" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Pay Monthly Rental Charges
-(Billing Invoices & Receipts)" vertex="1">
+(Billing Invoices &amp; Receipts)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="460" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_admin_approval -->
-        <mxCell id="uc_admin_approval" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Review & Approve Store Applications
-(Compliance & KYC Verification)" vertex="1">
+        <mxCell id="uc_admin_approval" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Review &amp; Approve Store Applications
+(Compliance &amp; KYC Verification)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="860" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_admin_users -->
-        <mxCell id="uc_admin_users" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Users, Roles & Access
-(RBAC & Account Suspensions)" vertex="1">
+        <mxCell id="uc_admin_users" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Users, Roles &amp; Access
+(RBAC &amp; Account Suspensions)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="940" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_admin_hardware -->
         <mxCell id="uc_admin_hardware" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Central Button Stock
-& Warehouse Allocation" vertex="1">
+&amp; Warehouse Allocation" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1020" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_admin_plans -->
         <mxCell id="uc_admin_plans" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Configure Rental Packages
-& Subscription Plans" vertex="1">
+&amp; Subscription Plans" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1100" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_admin_billing -->
-        <mxCell id="uc_admin_billing" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Generate & Monitor Monthly Billing
+        <mxCell id="uc_admin_billing" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Generate &amp; Monitor Monthly Billing
 (Automated Cron Charges)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1180" as="geometry" />
         </mxCell>
         <!-- UseCase: uc_admin_audit -->
         <mxCell id="uc_admin_audit" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Audit Financial Transactions
-& Platform Analytics Dashboard" vertex="1">
+&amp; Platform Analytics Dashboard" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1260" as="geometry" />
         </mxCell>
         <mxCell id="uc_edge_1" edge="1" parent="1" source="act_customer" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#475569;strokeWidth=1.3;" target="uc_auth_cust">
