@@ -1,3 +1,4 @@
+<?xml version='1.0' encoding='utf-8'?>
 <mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.3.0 Chrome/140.0.7339.249 Electron/38.7.2 Safari/537.36" version="29.3.0" pages="25">
   <diagram id="ERD_Level_3_Optimized" name="[ERD] 64 Tables Schema">
     <mxGraphModel dx="1358" dy="809" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="7500" pageHeight="5000" math="0" shadow="0">
@@ -14311,774 +14312,562 @@
     </mxGraphModel>
   </diagram>
   <diagram id="page_conceptual_diagram" name="[CDM] Conceptual Architecture &amp; Domain Model">
-    <mxGraphModel dx="2400" dy="1600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3600" pageHeight="2400" math="0" shadow="0">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="3400" pageHeight="2200" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-
-        <!-- DIAGRAM HEADER TITLE &amp; LEGEND BANNER -->
-        <mxCell id="cdm_title_banner" parent="1" style="swimlane;startSize=45;horizontal=1;fillColor=#0F172A;strokeColor=#1E293B;strokeWidth=2;fontColor=#F8FAFC;fontStyle=1;fontSize=18;rounded=1;arcSize=4;collapsible=0;" value="SƠ ĐỒ THỰC THỂ KHÁI NIỆM &amp; KIẾN TRÚC HỆ SINH THÁI NÚT BẤM IOT (CONCEPTUAL ARCHITECTURE &amp; DOMAIN MODEL)" vertex="1">
-          <mxGeometry x="80" y="40" width="3440" height="90" as="geometry" />
-        </mxCell>
-        <mxCell id="cdm_subtitle" parent="cdm_title_banner" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontStyle=0;fontSize=12;fontColor=#94A3B8;" value="Nền tảng Thương mại Điện tử Đa Cửa hàng (Multi-Store Marketplace) &amp; Đặt hàng Nước/Gas Siêu tốc qua Nút bấm ESP32-S3 | Security-by-Design | Zero Plaintext Financials | PayOS VietQR &amp; Payout" vertex="1">
-          <mxGeometry x="20" y="48" width="1800" height="30" as="geometry" />
-        </mxCell>
-        <mxCell id="cdm_legend" parent="cdm_title_banner" style="text;html=1;strokeColor=none;fillColor=#1E293B;rounded=1;align=center;verticalAlign=middle;fontStyle=1;fontSize=11;fontColor=#E2E8F0;" value="KÝ HIỆU LIÊN KẾT: ─── (1..1 Một-Một) | ───&lt; (1..* Một-Nhiều) | ... (0..* Tùy chọn) | ──► (Luồng dữ liệu / Sự kiện nghiệp vụ)" vertex="1">
-          <mxGeometry x="2500" y="48" width="900" height="30" as="geometry" />
-        </mxCell>
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 1: IAM &amp; MULTI-ROLE IDENTITY (ĐỊNH DANH &amp; PHÂN QUYỀN) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_iam" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F8FAFC;strokeColor=#475569;strokeWidth=2;fontColor=#0F172A;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 1: ĐỊNH DANH, NGƯỜI DÙNG &amp; PHÂN QUYỀN (IAM &amp; SECURITY)" vertex="1">
-          <mxGeometry x="80" y="160" width="620" height="700" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Role -->
-        <mxCell id="ent_role" parent="dom_iam" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E2E8F0;strokeColor=#64748B;fontColor=#0F172A;rounded=1;" value="ROLE (Vai trò RBAC)" vertex="1">
-          <mxGeometry x="30" y="50" width="250" height="130" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_role_attrs" parent="ent_role" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#334155;html=1;" value="+ role_name: VarChar (PK)&#xa;  * SUPER_ADMIN&#xa;  * STORE_OWNER&#xa;  * STORE_STAFF&#xa;  * CUSTOMER&#xa;  * DRIVER" vertex="1">
-          <mxGeometry y="28" width="250" height="102" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: User -->
-        <mxCell id="ent_user" parent="dom_iam" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E2E8F0;strokeColor=#64748B;fontColor=#0F172A;rounded=1;" value="USER (Tài khoản gốc)" vertex="1">
-          <mxGeometry x="340" y="50" width="250" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_user_attrs" parent="ent_user" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#334155;html=1;" value="+ user_id: BigInt (PK)&#xa;+ phone_number: VarChar (UK)&#xa;+ email: VarChar (UK)&#xa;+ password_hash: Argon2&#xa;+ role_id: FK -&gt; ROLE&#xa;+ status: ACTIVE | BLOCKED&#xa;+ last_login_at: Timestamp" vertex="1">
-          <mxGeometry y="28" width="250" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Customer Profile -->
-        <mxCell id="ent_cust_profile" parent="dom_iam" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E0E7FF;strokeColor=#6366F1;fontColor=#312E81;rounded=1;" value="CUSTOMER_PROFILE (Khách hàng)" vertex="1">
-          <mxGeometry x="340" y="260" width="250" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_cust_profile_attrs" parent="ent_cust_profile" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#3730A3;html=1;" value="+ customer_id: BigInt (PK/FK-&gt;User)&#xa;+ full_name: VarChar&#xa;+ avatar_url: Text&#xa;+ loyalty_points: Integer&#xa;+ ekyc_status: UNVERIFIED |&#xa;  PENDING | VERIFIED | REJECTED&#xa;+ created_at: Timestamp" vertex="1">
-          <mxGeometry y="28" width="250" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Customer Address -->
-        <mxCell id="ent_cust_addr" parent="dom_iam" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E0E7FF;strokeColor=#6366F1;fontColor=#312E81;rounded=1;" value="CUSTOMER_ADDRESS (Địa chỉ giao)" vertex="1">
-          <mxGeometry x="340" y="470" width="250" height="170" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_cust_addr_attrs" parent="ent_cust_addr" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#3730A3;html=1;" value="+ address_id: BigInt (PK)&#xa;+ customer_id: FK -&gt; CUSTOMER&#xa;+ recipient_name: VarChar&#xa;+ phone: VarChar&#xa;+ address_detail: VarChar&#xa;+ ward, district, province&#xa;+ latitude, longitude: GPS Decimal&#xa;+ is_default: Boolean (Nút IoT dùng)" vertex="1">
-          <mxGeometry y="28" width="250" height="142" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Refresh Token Rotation &amp; Session -->
-        <mxCell id="ent_session" parent="dom_iam" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#F1F5F9;strokeColor=#94A3B8;fontColor=#334155;rounded=1;" value="AUTH_SESSION &amp; SECURITY" vertex="1">
-          <mxGeometry x="30" y="260" width="250" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_session_attrs" parent="ent_session" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#475569;html=1;" value="+ refresh_token_hash: SHA-256&#xa;+ revoked_tokens (Blacklist JTI)&#xa;+ auth_otps (SMS Phone OTP)&#xa;+ access_adjustments (Audit Log)&#xa;+ single_use_rotation: True&#xa;+ auto_revoke_on_reuse: True" vertex="1">
-          <mxGeometry y="28" width="250" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Internal IAM Connectors -->
-        <mxCell id="rel_role_user" edge="1" parent="dom_iam" source="ent_role" target="ent_user" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#64748B;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_role_user" parent="rel_role_user" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#475569;" value="1..* phân quyền" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_user_cust" edge="1" parent="dom_iam" source="ent_user" target="ent_cust_profile" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6366F1;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_user_cust" parent="rel_user_cust" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#4338CA;" value="1..1 hồ sơ KH" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_cust_addr" edge="1" parent="dom_iam" source="ent_cust_profile" target="ent_cust_addr" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6366F1;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_cust_addr" parent="rel_cust_addr" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#4338CA;" value="1..* sổ địa chỉ" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 2: MERCHANT, STORE &amp; CATALOG (GIAN HÀNG &amp; SẢN PHẨM) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_store" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F0FDF4;strokeColor=#059669;strokeWidth=2;fontColor=#065F46;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 2: CỬA HÀNG, NHÂN SỰ &amp; DANH MỤC HÀNG HÓA (STORE &amp; CATALOG)" vertex="1">
-          <mxGeometry x="740" y="160" width="760" height="700" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Store -->
-        <mxCell id="ent_store" parent="dom_store" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#14532D;rounded=1;" value="STORE (Cửa hàng / Đại lý Gas-Nước)" vertex="1">
-          <mxGeometry x="30" y="50" width="310" height="190" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_store_attrs" parent="ent_store" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#166534;html=1;" value="+ store_id: BigInt (PK)&#xa;+ store_code: VarChar (UK)&#xa;+ store_name: VarChar&#xa;+ phone_number: VarChar&#xa;+ address: VarChar&#xa;+ latitude, longitude: GPS Decimal&#xa;+ status: PENDING | ACTIVE | SUSPENDED&#xa;+ business_license_url: Text&#xa;+ operating_radius_km: Decimal (5.0 km)" vertex="1">
-          <mxGeometry y="28" width="310" height="162" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Store Staff -->
-        <mxCell id="ent_store_staff" parent="dom_store" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#14532D;rounded=1;" value="STORE_STAFF (Nhân sự đại lý)" vertex="1">
-          <mxGeometry x="400" y="50" width="320" height="140" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_store_staff_attrs" parent="ent_store_staff" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#166534;html=1;" value="+ staff_id: BigInt (PK)&#xa;+ store_id: FK -&gt; STORE&#xa;+ user_id: FK -&gt; USER&#xa;+ staff_role: STORE_OWNER | STORE_MANAGER |&#xa;  STORE_CASHIER | STORE_STAFF&#xa;+ status: ACTIVE | INACTIVE" vertex="1">
-          <mxGeometry y="28" width="320" height="112" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Category -->
-        <mxCell id="ent_category" parent="dom_store" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#D1FAE5;strokeColor=#10B981;fontColor=#064E3B;rounded=1;" value="CATEGORY (Danh mục phân loại)" vertex="1">
-          <mxGeometry x="30" y="300" width="310" height="120" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_category_attrs" parent="ent_category" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#065F46;html=1;" value="+ category_id: BigInt (PK)&#xa;+ store_id: FK -&gt; STORE (hoặc NULL nếu dùng chung)&#xa;+ category_name: Bình Nước 19L | Bình Gas 12kg...&#xa;+ parent_id: FK -&gt; CATEGORY (Đa cấp)&#xa;+ status: ACTIVE | INACTIVE" vertex="1">
-          <mxGeometry y="28" width="310" height="92" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Product -->
-        <mxCell id="ent_product" parent="dom_store" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#D1FAE5;strokeColor=#10B981;fontColor=#064E3B;rounded=1;" value="PRODUCT (Sản phẩm kinh doanh)" vertex="1">
-          <mxGeometry x="400" y="270" width="320" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_product_attrs" parent="ent_product" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#065F46;html=1;" value="+ product_id: BigInt (PK)&#xa;+ store_id: FK -&gt; STORE&#xa;+ category_id: FK -&gt; CATEGORY&#xa;+ product_code: SKU VarChar&#xa;+ product_name: Nước LaVie 19L / Gas Petrolimex&#xa;+ base_price: Decimal (VNĐ)&#xa;+ status: ACTIVE | INACTIVE&#xa;+ images: Cloudinary Multi-Image (Gallery/Primary)" vertex="1">
-          <mxGeometry y="28" width="320" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Inventory -->
-        <mxCell id="ent_inventory" parent="dom_store" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#BBF7D0;strokeColor=#22C55E;fontColor=#14532D;rounded=1;" value="INVENTORY (Tồn kho &amp; Tạm giữ)" vertex="1">
-          <mxGeometry x="400" y="500" width="320" height="140" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_inventory_attrs" parent="ent_inventory" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#166534;html=1;" value="+ inventory_id: BigInt (PK)&#xa;+ product_id: FK -&gt; PRODUCT (UK)&#xa;+ quantity_on_hand: Thực tế có sẵn trong kho&#xa;+ reserved_quantity: Đang tạm giữ khi có đơn mới&#xa;+ available_quantity = on_hand - reserved&#xa;+ reorder_threshold: Ngưỡng cảnh báo hết hàng" vertex="1">
-          <mxGeometry y="28" width="320" height="112" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Store Customer Relationship &amp; Container Debt -->
-        <mxCell id="ent_store_cust" parent="dom_store" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#14532D;rounded=1;" value="STORE_CUSTOMER (Thân thiết &amp; Vỏ bình)" vertex="1">
-          <mxGeometry x="30" y="470" width="310" height="170" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_store_cust_attrs" parent="ent_store_cust" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#166534;html=1;" value="+ store_id: BigInt (PK/FK)&#xa;+ customer_id: BigInt (PK/FK)&#xa;+ container_debt_count: Số vỏ bình 19L/Gas đang nợ&#xa;+ loyalty_tier: STANDARD | VIP | PLATINUM&#xa;+ total_orders_completed: Integer&#xa;+ last_ordered_at: Timestamp" vertex="1">
-          <mxGeometry y="28" width="310" height="142" as="geometry" />
-        </mxCell>
-
-        <!-- Internal Store Connectors -->
-        <mxCell id="rel_store_staff" edge="1" parent="dom_store" source="ent_store" target="ent_store_staff" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16A34A;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_store_staff" parent="rel_store_staff" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#15803D;" value="1..* nhân sự" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_store_prod" edge="1" parent="dom_store" source="ent_store" target="ent_product" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16A34A;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_store_prod" parent="rel_store_prod" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#15803D;" value="1..* kinh doanh" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_cat_prod" edge="1" parent="dom_store" source="ent_category" target="ent_product" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#10B981;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_cat_prod" parent="rel_cat_prod" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#047857;" value="1..* phân loại" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_prod_inv" edge="1" parent="dom_store" source="ent_product" target="ent_inventory" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#10B981;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_prod_inv" parent="rel_prod_inv" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#047857;" value="1..1 tồn kho" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 3: SMART IOT ECOSYSTEM &amp; DEVICE LIFECYCLE (PHẦN CỨNG NÚT BẤM) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_iot" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F0F9FF;strokeColor=#0284C7;strokeWidth=2;fontColor=#075985;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 3: HỆ SINH THÁI THIẾT BỊ NÚT BẤM THÔNG MINH (IOT ECOSYSTEM)" vertex="1">
-          <mxGeometry x="1540" y="160" width="860" height="700" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: IoT Button -->
-        <mxCell id="ent_iot_button" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E0F2FE;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="IOT_BUTTON (Nút bấm thông minh ESP32-S3)" vertex="1">
-          <mxGeometry x="30" y="50" width="370" height="230" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_iot_button_attrs" parent="ent_iot_button" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#075985;html=1;" value="+ button_id: BigInt (PK)&#xa;+ button_code: VarChar (UK, in vỏ nút: BTN-8829-WTR)&#xa;+ mac_address: VarChar (UK)&#xa;+ secret_key_hash: Chuỗi băm HMAC-SHA256&#xa;+ customer_id: FK -&gt; CUSTOMER (Sở hữu hiện tại)&#xa;+ store_id: FK -&gt; STORE (Gốc xuất nút)&#xa;+ custody_store_id: FK -&gt; STORE (Lưu ký &amp; nhận đơn)&#xa;+ address_id: FK -&gt; CUSTOMER_ADDRESS (Địa chỉ mặc định)&#xa;+ inventory_state: PLATFORM_WH | STORE | CUSTODY&#xa;+ battery_voltage: ADC mV (Cảnh báo pin yếu &lt; 3300mV)&#xa;+ can_order: Boolean (Khóa trẻ em / Khóa an toàn)&#xa;+ status: ACTIVE | SUSPENDED | MAINTENANCE" vertex="1">
-          <mxGeometry y="28" width="370" height="202" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Button Product Mapping -->
-        <mxCell id="ent_btn_product" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#BAE6FD;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="BUTTON_PRODUCT (Cài đặt sản phẩm gán nút)" vertex="1">
-          <mxGeometry x="460" y="50" width="360" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_btn_product_attrs" parent="ent_btn_product" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#075985;html=1;" value="+ button_product_id: BigInt (PK)&#xa;+ button_id: FK -&gt; IOT_BUTTON (UK)&#xa;+ product_id: FK -&gt; PRODUCT (Sản phẩm gắn nút)&#xa;+ quantity: Số lượng mặc định mua mỗi lần bấm (ví dụ: 2 bình)&#xa;+ Dynamic Store Re-mapping: Khách đổi quán trên app -&gt;&#xa;  Tự động đổi product_id sang món tương đương của quán mới" vertex="1">
-          <mxGeometry y="28" width="360" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Device Template -->
-        <mxCell id="ent_dev_template" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#BAE6FD;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="DEVICE_TEMPLATE (Bản mẫu cấu hình vi điều khiển)" vertex="1">
-          <mxGeometry x="460" y="240" width="360" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_dev_template_attrs" parent="ent_dev_template" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#075985;html=1;" value="+ template_id: BigInt (PK)&#xa;+ template_name: Mẫu Chuẩn Gas / Nước&#xa;+ single_click_action: CREATE_ORDER (Đặt hàng)&#xa;+ double_click_action: CANCEL_RECENT_ORDER (Hủy trong 5p)&#xa;+ long_press_action: SOS_ALERT / RE-PROVISION&#xa;+ debounce_window_ms: 3000ms (Chống bấm dính)" vertex="1">
-          <mxGeometry y="28" width="360" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Device Movements (Lịch sử luân chuyển vật lý) -->
-        <mxCell id="ent_dev_movement" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E0F2FE;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="DEVICE_MOVEMENTS (Nhật ký luân chuyển chuỗi lưu ký)" vertex="1">
-          <mxGeometry x="30" y="320" width="370" height="160" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_dev_movement_attrs" parent="ent_dev_movement" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#075985;html=1;" value="+ movement_id: BigInt (PK)&#xa;+ button_id: FK -&gt; IOT_BUTTON&#xa;+ source_type, dest_type: WAREHOUSE | STORE | CUSTOMER&#xa;+ source_store_id, dest_store_id: BigInt&#xa;+ from_inventory_state, to_inventory_state: VarChar&#xa;+ actor_user_id: FK -&gt; USER (Người bàn giao/tiếp nhận)&#xa;+ created_at: Timestamp (Bất biến)" vertex="1">
-          <mxGeometry y="28" width="370" height="132" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Zero-Touch Provisioning &amp; Pairing Token -->
-        <mxCell id="ent_provision" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E0F2FE;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="ZERO_TOUCH_PROVISIONING &amp; PAIRING" vertex="1">
-          <mxGeometry x="30" y="510" width="370" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_provision_attrs" parent="ent_provision" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#075985;html=1;" value="+ provisioning_sessions: Nạp khóa tại xưởng (Factory Key Burn)&#xa;+ pairing_tokens: Mã QR dán trên lưng nút để khách quét nhận&#xa;+ token_hash: SHA-256 dùng 1 lần (Single-use)&#xa;+ is_used: Đánh dấu đã nhận nút vào tài khoản&#xa;+ hardware_uuid: Định danh phần cứng chip ESP32-S3" vertex="1">
-          <mxGeometry y="28" width="370" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Idempotency &amp; Debounce Nonce -->
-        <mxCell id="ent_iot_sec" parent="dom_iot" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#BAE6FD;strokeColor=#0284C7;fontColor=#0369A1;rounded=1;" value="IOT_IDEMPOTENCY_KEY &amp; NONCE VAULT" vertex="1">
-          <mxGeometry x="460" y="440" width="360" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_iot_sec_attrs" parent="ent_iot_sec" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#075985;html=1;" value="+ request_hash: SHA-256 (button_id + nonce + timestamp)&#xa;+ device_nonces: Nonce ngẫu nhiên dùng 1 lần chống replay&#xa;+ order_id: Trả lại đơn cũ ngay nếu bắt gặp gói tin phát lặp&#xa;+ anti_replay_window: Hết hạn sau 60 giây&#xa;+ hmac_sha256_verification: Xác thực chữ ký phần cứng" vertex="1">
-          <mxGeometry y="28" width="360" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Internal IoT Connectors -->
-        <mxCell id="rel_btn_prod" edge="1" parent="dom_iot" source="ent_iot_button" target="ent_btn_product" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284C7;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_btn_prod" parent="rel_btn_prod" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#0369A1;" value="1..1 cấu hình món" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_btn_move" edge="1" parent="dom_iot" source="ent_iot_button" target="ent_dev_movement" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284C7;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_btn_move" parent="rel_btn_move" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#0369A1;" value="1..* luân chuyển kho" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 4: HARDWARE RENTAL &amp; DEPOSIT ESCROW (THUÊ NÚT &amp; KÝ QUỸ CỌC) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_rental" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#FFFBEB;strokeColor=#D97706;strokeWidth=2;fontColor=#92400E;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 4: HỢP ĐỒNG THUÊ NÚT &amp; KÝ QUỸ ĐẶT CỌC (RENTAL &amp; DEPOSIT ESCROW)" vertex="1">
-          <mxGeometry x="80" y="890" width="700" height="740" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Rental Package -->
-        <mxCell id="ent_rental_pkg" parent="dom_rental" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FEF3C7;strokeColor=#F59E0B;fontColor=#78350F;rounded=1;" value="RENTAL_PACKAGES (Gói thuê phần cứng)" vertex="1">
-          <mxGeometry x="30" y="50" width="300" height="130" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_rental_pkg_attrs" parent="ent_rental_pkg" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#92400E;html=1;" value="+ package_id: BigInt (PK)&#xa;+ package_name: Gói 1 Nút Nước / Gói Combo&#xa;+ button_quantity: Số lượng nút trong gói (ví dụ: 1 nút)&#xa;+ deposit_per_button: Tiền cọc/nút (200.000đ)&#xa;+ rental_fee_per_month: Phí thuê/tháng (30.000đ)" vertex="1">
-          <mxGeometry y="28" width="300" height="102" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Store Subscription Plan (Dual Fee) -->
-        <mxCell id="ent_sub_plan" parent="dom_rental" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FEF3C7;strokeColor=#F59E0B;fontColor=#78350F;rounded=1;" value="SUBSCRIPTION_PLANS &amp; STORE_SUB" vertex="1">
-          <mxGeometry x="370" y="50" width="300" height="140" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_sub_plan_attrs" parent="ent_sub_plan" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#92400E;html=1;" value="+ plan_id: BigInt (PK)&#xa;+ plan_name: Gói Duy Trì Kệ Gian Hàng (Store Shelf)&#xa;+ monthly_fee: 60.000đ/tháng&#xa;+ store_subscriptions: Hợp đồng quán đăng ký sàn&#xa;+ status: ACTIVE | PAST_DUE | EXPIRED&#xa;+ Quán không đóng cước -&gt; Khóa đăng bán sản phẩm" vertex="1">
-          <mxGeometry y="28" width="300" height="112" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Button Rental -->
-        <mxCell id="ent_button_rental" parent="dom_rental" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FDE68A;strokeColor=#D97706;fontColor=#78350F;rounded=1;" value="BUTTON_RENTALS (Hợp đồng thuê nút)" vertex="1">
-          <mxGeometry x="30" y="220" width="320" height="230" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_button_rental_attrs" parent="ent_button_rental" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#78350F;html=1;" value="+ rental_id: BigInt (PK)&#xa;+ rental_code: RNT-202611-001&#xa;+ customer_id: FK -&gt; CUSTOMER&#xa;+ fulfillment_store_id: FK -&gt; STORE phụ trách&#xa;+ billing_policy: STORE_RENT_CUSTOMER_DEPOSIT (Bất biến)&#xa;+ deposit_per_button_snapshot: 200.000đ&#xa;+ monthly_rent_per_button_snapshot: 30.000đ&#xa;+ button_quantity: Số lượng nút bàn giao&#xa;+ months_rented: Số tháng thuê lũy kế&#xa;+ effective_expires_at: Hạn quyền sử dụng&#xa;+ paid_through: NULL (Store-paid) / Date (Legacy)&#xa;+ status: PENDING_PAYMENT | PENDING_HANDOVER |&#xa;  ACTIVE | EXPIRED | TERMINATED" vertex="1">
-          <mxGeometry y="28" width="320" height="202" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Rental Deposit Ledger -->
-        <mxCell id="ent_rental_deposit" parent="dom_rental" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FDE68A;strokeColor=#D97706;fontColor=#78350F;rounded=1;" value="RENTAL_DEPOSITS (Sổ ký quỹ tiền cọc)" vertex="1">
-          <mxGeometry x="380" y="220" width="290" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_rental_deposit_attrs" parent="ent_rental_deposit" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#78350F;html=1;" value="+ deposit_id: BigInt (PK)&#xa;+ rental_id: FK -&gt; BUTTON_RENTALS (UK)&#xa;+ collected_amount: Tổng tiền cọc thực thu ban đầu&#xa;+ held_amount: Tiền cọc đang giữ bảo đảm&#xa;+ refund_reserved_amount: Tiền đã khóa chờ chuyển khoản&#xa;+ refunded_amount: Tiền cọc đã hoàn về ngân hàng&#xa;+ Invariant Bảo Toàn: collected = held + reserved + refunded&#xa;+ Không bao giờ để lẫn tiền cọc vào doanh thu ví Store!" vertex="1">
-          <mxGeometry y="28" width="290" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Rental Return -->
-        <mxCell id="ent_rental_return" parent="dom_rental" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FEF3C7;strokeColor=#F59E0B;fontColor=#78350F;rounded=1;" value="RENTAL_RETURNS (Biên bản trả nút)" vertex="1">
-          <mxGeometry x="30" y="490" width="320" height="190" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_rental_return_attrs" parent="ent_rental_return" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#78350F;html=1;" value="+ return_id: BigInt (PK)&#xa;+ rental_id: FK -&gt; BUTTON_RENTALS&#xa;+ button_id: FK -&gt; IOT_BUTTON (Nút đem trả)&#xa;+ hardware_condition: GOOD | DAMAGED | LOST&#xa;+ refund_eligible_amount: Tiền cọc đủ điều kiện hoàn&#xa;+ damage_fee: Phí phạt hỏng vỏ (khấu trừ cọc)&#xa;+ returned_store_id: Quán nhận lại nút vật lý&#xa;+ status: PENDING_RECEIPT | RECEIVED | INSPECTED&#xa;+ returned_at: Timestamp" vertex="1">
-          <mxGeometry y="28" width="320" height="162" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Rental Audit Logs (Append-Only) -->
-        <mxCell id="ent_rental_audit" parent="dom_rental" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#F1F5F9;strokeColor=#94A3B8;fontColor=#334155;rounded=1;" value="RENTAL_AUDIT_LOGS (Kiểm toán hợp đồng)" vertex="1">
-          <mxGeometry x="380" y="490" width="290" height="170" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_rental_audit_attrs" parent="ent_rental_audit" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#475569;html=1;" value="+ log_id: BigInt (PK)&#xa;+ rental_id: FK -&gt; BUTTON_RENTALS&#xa;+ actor_type: STAFF | ADMIN | SYSTEM&#xa;+ actor_user_id: BigInt&#xa;+ action: HANDOVER | EXTEND | RETURN | SETTLE&#xa;+ before_state, after_state: VarChar&#xa;+ Append-Only Engine Invariant:&#xa;  Trigger PostgreSQL cấm tuyệt đối UPDATE &amp; DELETE!" vertex="1">
-          <mxGeometry y="28" width="290" height="142" as="geometry" />
-        </mxCell>
-
-        <!-- Internal Rental Connectors -->
-        <mxCell id="rel_pkg_rental" edge="1" parent="dom_rental" source="ent_rental_pkg" target="ent_button_rental" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#D97706;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_pkg_rental" parent="rel_pkg_rental" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#B45309;" value="1..* áp dụng gói" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_rental_dep" edge="1" parent="dom_rental" source="ent_button_rental" target="ent_rental_deposit" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#D97706;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_rental_dep" parent="rel_rental_dep" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#B45309;" value="1..1 ký quỹ cọc" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_rental_ret" edge="1" parent="dom_rental" source="ent_button_rental" target="ent_rental_return" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#D97706;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_rental_ret" parent="rel_rental_ret" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#B45309;" value="1..* trả nút" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 5: ORDER DISPATCH &amp; FULFILLMENT (ĐƠN HÀNG &amp; GIAO VẬN SHIPPER) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_order" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E40AF;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 5: ĐƠN HÀNG, ĐIỀU PHỐI &amp; GIAO VẬN SHIPPER (ORDERS &amp; FULFILLMENT)" vertex="1">
-          <mxGeometry x="810" y="890" width="760" height="740" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Orders -->
-        <mxCell id="ent_order" parent="dom_order" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#DBEAFE;strokeColor=#3B82F6;fontColor=#1E3A8A;rounded=1;" value="ORDERS (Đơn đặt hàng trung tâm)" vertex="1">
-          <mxGeometry x="30" y="50" width="340" height="240" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_order_attrs" parent="ent_order" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#1E40AF;html=1;" value="+ order_id: BigInt (PK)&#xa;+ order_code: ORD-20261105-289464 (UK)&#xa;+ button_id: FK -&gt; IOT_BUTTON (Nút đã nhấn)&#xa;+ customer_id: FK -&gt; CUSTOMER&#xa;+ store_id: FK -&gt; STORE tiếp nhận&#xa;+ address_id: FK -&gt; CUSTOMER_ADDRESS (Điểm giao)&#xa;+ driver_id: FK -&gt; USER (Shipper được phân công)&#xa;+ iot_request_id: VarChar (UK, Idempotency chống đơn trùng)&#xa;+ total_amount, subtotal_amount, discount_amount&#xa;+ commission_rate: Tỷ lệ hoa hồng sàn (ví dụ: 5.0%)&#xa;+ commission_amount: Tiền phí sàn khấu trừ&#xa;+ order_status: PENDING | CONFIRMED | PREPARING |&#xa;  SHIPPING | DELIVERED | COMPLETED | CANCELLED&#xa;+ payment_method: COD (Tiền mặt) | PAYOS (VietQR)&#xa;+ payment_status: PENDING | PAID" vertex="1">
-          <mxGeometry y="28" width="340" height="212" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Order Item -->
-        <mxCell id="ent_order_item" parent="dom_order" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#DBEAFE;strokeColor=#3B82F6;fontColor=#1E3A8A;rounded=1;" value="ORDER_ITEM (Chi tiết món hàng trong đơn)" vertex="1">
-          <mxGeometry x="410" y="50" width="320" height="160" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_order_item_attrs" parent="ent_order_item" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#1E40AF;html=1;" value="+ order_item_id: BigInt (PK)&#xa;+ order_id: FK -&gt; ORDERS&#xa;+ product_id: FK -&gt; PRODUCT&#xa;+ quantity: Số lượng mua (2 bình)&#xa;+ unit_price: Đơn giá snapshot tại thời điểm bấm&#xa;+ discount_amount: Giảm giá khuyến mãi áp dụng&#xa;+ line_total = (quantity * unit_price) - discount" vertex="1">
-          <mxGeometry y="28" width="320" height="132" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Driver Shift -->
-        <mxCell id="ent_driver_shift" parent="dom_order" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#BFDBFE;strokeColor=#2563EB;fontColor=#1E3A8A;rounded=1;" value="DRIVER_SHIFTS (Ca trực tài xế)" vertex="1">
-          <mxGeometry x="410" y="260" width="320" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_driver_shift_attrs" parent="ent_driver_shift" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#1E40AF;html=1;" value="+ shift_id: BigInt (PK)&#xa;+ driver_user_id: FK -&gt; USER&#xa;+ store_id: FK -&gt; STORE trực thuộc&#xa;+ shift_status: OPEN | ON_DUTY | CLOSING | CLOSED&#xa;+ current_lat, current_lng: Tọa độ GPS tài xế&#xa;+ started_at, ended_at: Timestamp" vertex="1">
-          <mxGeometry y="28" width="320" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Driver Duty -->
-        <mxCell id="ent_driver_duty" parent="dom_order" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#BFDBFE;strokeColor=#2563EB;fontColor=#1E3A8A;rounded=1;" value="DRIVER_DUTIES (Lượt giao hàng &amp; Bằng chứng)" vertex="1">
-          <mxGeometry x="410" y="460" width="320" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_driver_duty_attrs" parent="ent_driver_duty" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#1E40AF;html=1;" value="+ duty_id: BigInt (PK)&#xa;+ shift_id: FK -&gt; DRIVER_SHIFTS&#xa;+ order_id: FK -&gt; ORDERS&#xa;+ duty_status: ASSIGNED | IN_TRANSIT |&#xa;  COMPLETED | FAILED&#xa;+ delivery_proof_url: Ảnh chụp bình nước tại nhà khách&#xa;+ recipient_signature_url: Chữ ký điện tử nhận hàng&#xa;+ empty_containers_collected: Số vỏ bình thu về" vertex="1">
-          <mxGeometry y="28" width="320" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Order Status History -->
-        <mxCell id="ent_order_history" parent="dom_order" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#DBEAFE;strokeColor=#3B82F6;fontColor=#1E3A8A;rounded=1;" value="ORDER_STATUS_HISTORY (Dòng thời gian đơn)" vertex="1">
-          <mxGeometry x="30" y="340" width="340" height="150" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_order_history_attrs" parent="ent_order_history" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#1E40AF;html=1;" value="+ history_id: BigInt (PK)&#xa;+ order_id: FK -&gt; ORDERS&#xa;+ from_status, to_status: VarChar&#xa;+ changed_by_user_id: FK -&gt; USER&#xa;+ note: Ghi chú lý do thay đổi tiến độ&#xa;+ created_at: Timestamp (Bất biến)" vertex="1">
-          <mxGeometry y="28" width="340" height="122" as="geometry" />
-        </mxCell>
-
-        <!-- Internal Order Connectors -->
-        <mxCell id="rel_ord_item" edge="1" parent="dom_order" source="ent_order" target="ent_order_item" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3B82F6;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_ord_item" parent="rel_ord_item" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#1D4ED8;" value="1..* chi tiết món" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_shift_duty" edge="1" parent="dom_order" source="ent_driver_shift" target="ent_driver_duty" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2563EB;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_shift_duty" parent="rel_shift_duty" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#1D4ED8;" value="1..* nhiệm vụ" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_ord_duty" edge="1" parent="dom_order" source="ent_order" target="ent_driver_duty" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3B82F6;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_ord_duty" parent="rel_ord_duty" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#1D4ED8;" value="1..1 phân công shipper" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 6: FINANCIAL LEDGER &amp; PAYOS PAYOUT (TÀI CHÍNH, VÍ &amp; CỔNG THANH TOÁN) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_fin" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#FAF5FF;strokeColor=#9333EA;strokeWidth=2;fontColor=#6B21A8;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 6: SỔ CÁI TÀI CHÍNH, VÍ CỬA HÀNG &amp; PAYOS PAYOUT (FINANCIAL LEDGER)" vertex="1">
-          <mxGeometry x="1600" y="890" width="800" height="740" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Payment Transaction -->
-        <mxCell id="ent_payment_tx" parent="dom_fin" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#F3E8FF;strokeColor=#A855F7;fontColor=#581C87;rounded=1;" value="PAYMENT_TRANSACTION (Thanh toán đơn VietQR)" vertex="1">
-          <mxGeometry x="30" y="50" width="340" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_payment_tx_attrs" parent="ent_payment_tx" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#6B21A8;html=1;" value="+ transaction_id: BigInt (PK)&#xa;+ order_id: FK -&gt; ORDERS&#xa;+ provider: PAYOS (VietQR)&#xa;+ provider_transaction_code: Mã PayOS (UK)&#xa;+ payment_link_id: ID liên kết thanh toán&#xa;+ amount: Decimal (Khớp chính xác số tiền)&#xa;+ status: PENDING | SUCCESS | FAILED | EXPIRED&#xa;+ Webhook HMAC: Timing-safe HMAC-SHA256 signature" vertex="1">
-          <mxGeometry y="28" width="340" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Store Wallet -->
-        <mxCell id="ent_store_wallet" parent="dom_fin" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E9D5FF;strokeColor=#9333EA;fontColor=#581C87;rounded=1;" value="STORE_WALLETS (Ví doanh thu Cửa hàng)" vertex="1">
-          <mxGeometry x="410" y="50" width="350" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_store_wallet_attrs" parent="ent_store_wallet" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#581C87;html=1;" value="+ wallet_id: BigInt (PK)&#xa;+ store_id: FK -&gt; STORE (UK 1-1)&#xa;+ available_balance: Số dư khả dụng (Rút tiền được)&#xa;+ locked_balance: Số dư phong tỏa (Đang trong lệnh rút)&#xa;+ total_withdrawn: Lũy kế tiền đã rút thành công&#xa;+ Realized Revenue Rule: Chỉ đơn DELIVERED/COMPLETED&#xa;  mới được kết chuyển doanh thu (Net Amount) vào ví!" vertex="1">
-          <mxGeometry y="28" width="350" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Wallet Transactions -->
-        <mxCell id="ent_wallet_tx" parent="dom_fin" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E9D5FF;strokeColor=#9333EA;fontColor=#581C87;rounded=1;" value="WALLET_TRANSACTIONS (Sổ cái biến động kép)" vertex="1">
-          <mxGeometry x="410" y="270" width="350" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_wallet_tx_attrs" parent="ent_wallet_tx" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#581C87;html=1;" value="+ transaction_id: BigInt (PK)&#xa;+ wallet_id: FK -&gt; STORE_WALLETS&#xa;+ amount: Số tiền (+ hoặc -)&#xa;+ type: ORDER_REVENUE (+ Tiền bán trừ phí sàn)&#xa;  | WITHDRAWAL (- Tiền rút về ngân hàng)&#xa;  | PLATFORM_FEE (- Phí hoa hồng sàn)&#xa;  | STORE_CASH_OFFSET (+ Đối soát tiền mặt thu tại chỗ)&#xa;+ balance_after: Số dư ví ngay sau biến động" vertex="1">
-          <mxGeometry y="28" width="350" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Store Withdrawals -->
-        <mxCell id="ent_store_withdrawal" parent="dom_fin" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#F3E8FF;strokeColor=#A855F7;fontColor=#581C87;rounded=1;" value="STORE_WITHDRAWALS (Lệnh rút tiền ngân hàng)" vertex="1">
-          <mxGeometry x="410" y="490" width="350" height="210" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_store_withdrawal_attrs" parent="ent_store_withdrawal" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#6B21A8;html=1;" value="+ id: BigInt (PK)&#xa;+ store_id: FK -&gt; STORE&#xa;+ bank_account_id: FK -&gt; STORE_BANK_ACCOUNTS&#xa;+ amount: Số tiền yêu cầu rút (VND)&#xa;+ idempotency_key: UK Chống tạo lệnh rút trùng&#xa;+ payout_ref: Mã đối soát PayOS Payout&#xa;+ status: PENDING | APPROVED | PROCESSING |&#xa;  COMPLETED | FAILED | REJECTED&#xa;+ Two-Phase Commit Lock: Chuyển available -&gt; locked.&#xa;  Thất bại -&gt; Auto-Refund trả lại available_balance!" vertex="1">
-          <mxGeometry y="28" width="350" height="182" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Billing Charges &amp; Invoicing Engine -->
-        <mxCell id="ent_billing_charge" parent="dom_fin" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#F3E8FF;strokeColor=#A855F7;fontColor=#581C87;rounded=1;" value="BILLING_CHARGES (Hóa đơn thu phí sàn)" vertex="1">
-          <mxGeometry x="30" y="270" width="340" height="210" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_billing_charge_attrs" parent="ent_billing_charge" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#6B21A8;html=1;" value="+ charge_id: BigInt (PK)&#xa;+ charge_code: CHG-202611-001 (UK)&#xa;+ purpose: STORE_SUBSCRIPTION (Phí duy trì 60k/tháng)&#xa;  | RENTAL_INITIAL (Cọc + thuê ban đầu)&#xa;  | RENTAL_EXTENSION (Gia hạn thuê nút 30k/tháng)&#xa;+ target_type: STORE | RENTAL&#xa;+ payer_store_id: Cửa hàng chịu nghĩa vụ đóng tiền&#xa;+ customer_id: Khách hàng (nếu gói khách trả)&#xa;+ total_amount, paid_amount: Decimal (VND)&#xa;+ status: PENDING | PAID | OVERDUE" vertex="1">
-          <mxGeometry y="28" width="340" height="182" as="geometry" />
-        </mxCell>
-
-        <!-- Internal Finance Connectors -->
-        <mxCell id="rel_wall_tx" edge="1" parent="dom_fin" source="ent_store_wallet" target="ent_wallet_tx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9333EA;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_wall_tx" parent="rel_wall_tx" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#7E22CE;" value="1..* ghi sổ cái" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_wall_with" edge="1" parent="dom_fin" source="ent_store_wallet" target="ent_store_withdrawal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9333EA;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_wall_with" parent="rel_wall_with" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#7E22CE;" value="1..* yêu cầu rút tiền" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 7: SECURITY VAULT, BANK VERIFICATION &amp; EKYC (BẢO MẬT &amp; EKYC) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_bank" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#FFF1F2;strokeColor=#E11D48;strokeWidth=2;fontColor=#9F1239;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 7: KHO THẺ BẢO MẬT PCI-DSS, XÁC MINH 2.000Đ &amp; EKYC (SECURITY VAULT &amp; COMPLIANCE)" vertex="1">
-          <mxGeometry x="80" y="1660" width="1150" height="680" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Customer Bank Account -->
-        <mxCell id="ent_cust_bank" parent="dom_bank" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FFE4E6;strokeColor=#F43F5E;fontColor=#881337;rounded=1;" value="CUSTOMER_BANK_ACCOUNTS (Kho thẻ Khách)" vertex="1">
-          <mxGeometry x="30" y="50" width="340" height="210" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_cust_bank_attrs" parent="ent_cust_bank" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#9F1239;html=1;" value="+ id: BigInt (PK)&#xa;+ customer_id: FK -&gt; CUSTOMER&#xa;+ bank_bin: Mã VietQR ngân hàng (970422 MBBank)&#xa;+ account_number_encrypted: AES-256-GCM (Chống lộ)&#xa;+ account_number_hash: SHA-256 (Lookup không giải mã)&#xa;+ account_number_masked: ******1234 (Hiển thị an toàn)&#xa;+ account_holder_name: Tên chủ tài khoản viết hoa&#xa;+ is_verified: True (Bắt buộc trước khi nhận hoàn cọc)&#xa;+ Zero Plaintext Financial Storage: Tuyệt đối không lưu&#xa;  số thẻ/tài khoản dạng rõ trong database/log/error!" vertex="1">
-          <mxGeometry y="28" width="340" height="182" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Penny Verification 2,000 VND -->
-        <mxCell id="ent_penny_verif" parent="dom_bank" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FECDD3;strokeColor=#E11D48;fontColor=#881337;rounded=1;" value="PENNY_VERIFICATION (Xác thực tài khoản 2.000đ)" vertex="1">
-          <mxGeometry x="400" y="50" width="350" height="210" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_penny_verif_attrs" parent="ent_penny_verif" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#881337;html=1;" value="+ customer_bank_verification_proofs: Phiên xác thực 2k&#xa;+ verification_code: V2K-88294 (Mã nội dung ngẫu nhiên)&#xa;+ expected_amount: Đúng 2.000 VNĐ&#xa;+ qr_data_url: Mã VietQR động cho khách quét chuyển tiền&#xa;+ customer_bank_inbound_transactions: Khớp tiền đổ về&#xa;+ customer_bank_refund_obligations: Tự động hoàn lại 2k&#xa;+ customer_bank_refund_payout_attempts: Lịch sử bắn trả 2k&#xa;+ Cam kết Sàn: Sau khi xác thực đúng chính chủ,&#xa;  hệ thống bắn trả lại ngay đúng 2.000đ vào tài khoản!" vertex="1">
-          <mxGeometry y="28" width="350" height="182" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Store Bank Accounts -->
-        <mxCell id="ent_store_bank" parent="dom_bank" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FFE4E6;strokeColor=#F43F5E;fontColor=#881337;rounded=1;" value="STORE_BANK_ACCOUNTS (Tài khoản thụ hưởng quán)" vertex="1">
-          <mxGeometry x="780" y="50" width="340" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_store_bank_attrs" parent="ent_store_bank" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#9F1239;html=1;" value="+ id: BigInt (PK)&#xa;+ store_id: FK -&gt; STORE&#xa;+ bank_bin: Mã VietQR ngân hàng&#xa;+ account_number_encrypted: AES-256-GCM&#xa;+ account_number_masked: ******5678&#xa;+ account_holder_name: Tên chủ hộ kinh doanh/công ty&#xa;+ is_verified: True (Admin phê duyệt trước khi cho rút tiền)&#xa;+ bank_account_verification_transactions: Nhật ký kiểm tra" vertex="1">
-          <mxGeometry y="28" width="340" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Deposit Refunds (Hoàn cọc) -->
-        <mxCell id="ent_deposit_refund" parent="dom_bank" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FECDD3;strokeColor=#E11D48;fontColor=#881337;rounded=1;" value="DEPOSIT_REFUNDS (Lệnh hoàn cọc nút bấm)" vertex="1">
-          <mxGeometry x="30" y="300" width="340" height="200" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_deposit_refund_attrs" parent="ent_deposit_refund" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#881337;html=1;" value="+ refund_id: BigInt (PK)&#xa;+ rental_id: FK -&gt; BUTTON_RENTALS&#xa;+ customer_id: FK -&gt; CUSTOMER&#xa;+ bank_account_id: FK -&gt; CUSTOMER_BANK_ACCOUNTS&#xa;+ amount: Số tiền hoàn cọc thực tế (sau khấu trừ hỏng hóc)&#xa;+ recipient_bin, recipient_account_number_masked&#xa;+ recipient_account_number_encrypted: AES-256&#xa;+ recipient_account_number_hash: SHA-256&#xa;+ status: PENDING_APPROVAL | PENDING_PAYOUT |&#xa;  TRANSFERRED | FAILED&#xa;+ payout_ref: Mã giao dịch chi trả PayOS Payout" vertex="1">
-          <mxGeometry y="28" width="340" height="172" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Didit eKYC Verification -->
-        <mxCell id="ent_didit_ekyc" parent="dom_bank" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#FECDD3;strokeColor=#E11D48;fontColor=#881337;rounded=1;" value="DIDIT_EKYC (Định danh sinh trắc học CCCD)" vertex="1">
-          <mxGeometry x="400" y="300" width="350" height="180" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_didit_ekyc_attrs" parent="ent_didit_ekyc" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#881337;html=1;" value="+ identity_verification_sessions: Phiên quét CCCD &amp; khuôn mặt&#xa;+ customer_id: FK -&gt; CUSTOMER&#xa;+ vendor: DIDIT AI Biometrics Cloud&#xa;+ vendor_session_id: Mã phiên Didit&#xa;+ status: PENDING | APPROVED | DECLINED&#xa;+ didit_webhook_events: Lưu vết kết quả chấm điểm sinh trắc&#xa;+ payload_hash: Chống giả mạo gói tin định danh&#xa;+ verified_at: Timestamp hoàn tất thẩm định" vertex="1">
-          <mxGeometry y="28" width="350" height="152" as="geometry" />
-        </mxCell>
-
-        <!-- Internal Bank Connectors -->
-        <mxCell id="rel_bank_penny" edge="1" parent="dom_bank" source="ent_cust_bank" target="ent_penny_verif" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E11D48;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_bank_penny" parent="rel_bank_penny" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#BE123C;" value="1..1 phiên 2k" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="rel_bank_refund" edge="1" parent="dom_bank" source="ent_cust_bank" target="ent_deposit_refund" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E11D48;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_bank_refund" parent="rel_bank_refund" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#BE123C;" value="1..* nhận tiền hoàn" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- DOMAIN 8: RELIABILITY, RESILIENCE &amp; OUTBOX (HẠ TẦNG &amp; CHỐNG LẶP SỰ KIỆN) -->
-        <!-- ==================================================================== -->
-        <mxCell id="dom_rel" parent="1" style="swimlane;startSize=34;horizontal=1;fillColor=#F8FAFC;strokeColor=#334155;strokeWidth=2;fontColor=#0F172A;fontStyle=1;fontSize=14;rounded=1;arcSize=4;collapsible=0;" value="MIỀN 8: HẠ TẦNG TIN CẬY, TRANSACTIONAL OUTBOX &amp; CHỐNG TẤN CÔNG (RELIABILITY &amp; RESILIENCE)" vertex="1">
-          <mxGeometry x="1270" y="1660" width="1130" height="680" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Transactional Outbox Engine -->
-        <mxCell id="ent_outbox" parent="dom_rel" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E2E8F0;strokeColor=#475569;fontColor=#0F172A;rounded=1;" value="TRANSACTIONAL_OUTBOX (Đồng bộ bất đồng bộ)" vertex="1">
-          <mxGeometry x="30" y="50" width="340" height="200" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_outbox_attrs" parent="ent_outbox" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#334155;html=1;" value="+ outbox_events: Sự kiện nghiệp vụ lưu cùng DB transaction&#xa;+ aggregate_type: ORDER | BUTTON | WITHDRAWAL | RENTAL&#xa;+ event_type: ORDER_CREATED | DEPOSIT_REFUND_APPROVED...&#xa;+ payload: JSON snapshot chi tiết&#xa;+ status: PENDING | PROCESSING | COMPLETED | FAILED&#xa;+ claim_token: UUID khóa lạc quan chống 2 worker tranh chấp&#xa;+ locked_until: Hạn lease (tự động thu hồi nếu worker chết)&#xa;+ Chống Dual-Write Race: Không bao giờ mất tin khi server crash!" vertex="1">
-          <mxGeometry y="28" width="340" height="172" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Dead Letter Queue (DLQ) -->
-        <mxCell id="ent_dlq" parent="dom_rel" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#CBD5E1;strokeColor=#475569;fontColor=#0F172A;rounded=1;" value="DEAD_LETTER_JOBS (Hàng đợi tin lỗi DLQ)" vertex="1">
-          <mxGeometry x="400" y="50" width="340" height="190" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_dlq_attrs" parent="ent_dlq" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#1E293B;html=1;" value="+ job_id: BigInt (PK)&#xa;+ queue_name: PAYMENT_WEBHOOK | EMAIL | NOTIFICATION&#xa;+ job_name: Tác vụ cụ thể bị lỗi&#xa;+ payload: Toàn bộ dữ liệu gốc để Admin bấm chạy lại (Retry)&#xa;+ error_message: Chi tiết stack trace và mã lỗi HTTP&#xa;+ failed_at: Timestamp chính thức cô lập vào DLQ&#xa;+ Cơ chế: Thất bại &gt;= 3 lần tự động cô lập, không nuốt lỗi" vertex="1">
-          <mxGeometry y="28" width="340" height="162" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: API Idempotency Keys -->
-        <mxCell id="ent_api_idemp" parent="dom_rel" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E2E8F0;strokeColor=#475569;fontColor=#0F172A;rounded=1;" value="API_IDEMPOTENCY_KEYS (Chống bấm lặp API)" vertex="1">
-          <mxGeometry x="770" y="50" width="330" height="170" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_api_idemp_attrs" parent="ent_api_idemp" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#334155;html=1;" value="+ key: VarChar (PK từ Header Idempotency-Key)&#xa;+ actual_path: /api/v1/store-withdrawals...&#xa;+ method: POST | PUT&#xa;+ lock_token: Khóa đồng thời chống 2 request song song&#xa;+ response_status, response_body: Lưu kết quả trả về ngay&#xa;+ Bảo vệ giao dịch nhạy cảm: Tuyệt đối không trừ tiền 2 lần!" vertex="1">
-          <mxGeometry y="28" width="330" height="142" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Notifications &amp; FCM Tokens -->
-        <mxCell id="ent_notif" parent="dom_rel" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E2E8F0;strokeColor=#475569;fontColor=#0F172A;rounded=1;" value="NOTIFICATIONS &amp; FIREBASE CLOUD MESSAGING" vertex="1">
-          <mxGeometry x="30" y="280" width="340" height="170" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_notif_attrs" parent="ent_notif" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#334155;html=1;" value="+ notifications: Tin nhắn thông báo chuông trên App&#xa;+ user_id: Người nhận (Khách, Chủ quán, Shipper)&#xa;+ title, content, type: ORDER | BATTERY | WALLET | LEASE&#xa;+ user_fcm_tokens: Token Google Firebase Cloud Messaging&#xa;+ device_type: IOS | ANDROID&#xa;+ Bắn thông báo đẩy ra màn hình khóa điện thoại" vertex="1">
-          <mxGeometry y="28" width="340" height="142" as="geometry" />
-        </mxCell>
-
-        <!-- Entity: Cache-Aside Redis Subsystem -->
-        <mxCell id="ent_redis" parent="dom_rel" style="shape=swimlane;startSize=28;fontStyle=1;align=center;fontSize=12;fillColor=#E2E8F0;strokeColor=#475569;fontColor=#0F172A;rounded=1;" value="REDIS CACHE-ASIDE (Tăng tốc &amp; Giảm tải DB)" vertex="1">
-          <mxGeometry x="400" y="280" width="340" height="170" as="geometry" />
-        </mxCell>
-        <mxCell id="ent_redis_attrs" parent="ent_redis" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=8;fontSize=11;fontColor=#334155;html=1;" value="+ Dashboard Cache: 30s TTL kèm in-memory fallback&#xa;+ Store Catalog Cache: Làm mới ngay khi quán sửa giá&#xa;+ Device Lookup Cache: Phục vụ hàng triệu click nút/giây&#xa;+ Token Blacklist: Tra cứu thu hồi JWT &lt; 1ms&#xa;+ Graceful Degradation: Redis sập tự fallback về PostgreSQL" vertex="1">
-          <mxGeometry y="28" width="340" height="142" as="geometry" />
-        </mxCell>
-
-        <!-- Internal Reliability Connectors -->
-        <mxCell id="rel_outbox_dlq" edge="1" parent="dom_rel" source="ent_outbox" target="ent_dlq" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#475569;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl_outbox_dlq" parent="rel_outbox_dlq" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#334155;" value="retry &gt;= 3 -&gt; DLQ" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-
-        <!-- ==================================================================== -->
-        <!-- CROSS-DOMAIN CONCEPTUAL RELATIONSHIPS &amp; DATA FLOW (LIÊN MIỀN) -->
-        <!-- ==================================================================== -->
-
-        <!-- 1. Customer leases Button Rental -->
-        <mxCell id="rel_cust_rental" edge="1" parent="1" source="ent_cust_profile" target="ent_button_rental" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#D97706;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="465" y="450" />
-              <mxPoint x="465" y="870" />
-              <mxPoint x="190" y="870" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_cust_rental" parent="rel_cust_rental" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#B45309;backgroundColor=#FFFFFF;rounded=1;" value="1..* Khách ký hợp đồng thuê nút" vertex="1" connectable="0">
-          <mxGeometry x="-0.2" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 2. Button Rental allocates IoT Button -->
-        <mxCell id="rel_rental_btn" edge="1" parent="1" source="ent_button_rental" target="ent_iot_button" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284C7;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="240" y="880" />
-              <mxPoint x="1600" y="880" />
-              <mxPoint x="1600" y="275" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_rental_btn" parent="rel_rental_btn" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#0369A1;backgroundColor=#FFFFFF;rounded=1;" value="1..* Cấp phát phần cứng nút" vertex="1" connectable="0">
-          <mxGeometry x="0.3" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 3. Store fulfills Button Rental -->
-        <mxCell id="rel_store_rental" edge="1" parent="1" source="ent_store" target="ent_button_rental" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#059669;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="925" y="870" />
-              <mxPoint x="300" y="870" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_store_rental" parent="rel_store_rental" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#047857;backgroundColor=#FFFFFF;rounded=1;" value="1..* Cửa hàng phụ trách bàn giao &amp; thu cọc" vertex="1" connectable="0">
-          <mxGeometry x="-0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 4. IoT Button Click Triggers Order -->
-        <mxCell id="rel_btn_order" edge="1" parent="1" source="ent_iot_button" target="ent_order" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2563EB;strokeWidth=2.5;endArrow=block;endSize=10;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="1725" y="400" />
-              <mxPoint x="1725" y="870" />
-              <mxPoint x="1010" y="870" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_btn_order" parent="rel_btn_order" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#1D4ED8;backgroundColor=#FFFFFF;rounded=1;" value="⚡ BẤM NÚT TẠO ĐƠN SIÊU TỐC (Click-to-Order)" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 5. Button Product maps to Store Product -->
-        <mxCell id="rel_btn_prod_cat" edge="1" parent="1" source="ent_btn_product" target="ent_product" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#10B981;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="2000" y="220" />
-              <mxPoint x="1300" y="220" />
-              <mxPoint x="1300" y="440" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_btn_prod_cat" parent="rel_prod_inv" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#047857;" value="n..1 gắn món bán" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 6. Order delivers to Store -->
-        <mxCell id="rel_order_store" edge="1" parent="1" source="ent_order" target="ent_store" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#059669;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="900" y="930" />
-              <mxPoint x="900" y="360" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_order_store" parent="rel_order_store" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#047857;backgroundColor=#FFFFFF;rounded=1;" value="n..1 Tiếp nhận xử lý đơn" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 7. Order ships to Customer Address -->
-        <mxCell id="rel_order_addr" edge="1" parent="1" source="ent_order" target="ent_cust_addr" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6366F1;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="830" y="1000" />
-              <mxPoint x="600" y="1000" />
-              <mxPoint x="600" y="700" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_order_addr" parent="rel_order_addr" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#4338CA;backgroundColor=#FFFFFF;rounded=1;" value="Giao tới địa chỉ mặc định" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 8. Order Payment via PayOS VietQR -->
-        <mxCell id="rel_order_pay" edge="1" parent="1" source="ent_order" target="ent_payment_tx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9333EA;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="1150" y="1000" />
-              <mxPoint x="1620" y="1000" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_order_pay" parent="rel_order_pay" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#6B21A8;backgroundColor=#FFFFFF;rounded=1;" value="1..1 Thanh toán VietQR" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 9. Completed Order credits Store Wallet -->
-        <mxCell id="rel_order_wallet" edge="1" parent="1" source="ent_order" target="ent_store_wallet" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16A34A;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="1100" y="1050" />
-              <mxPoint x="2050" y="1050" />
-              <mxPoint x="2050" y="1000" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_order_wallet" parent="rel_order_wallet" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#15803D;backgroundColor=#FFFFFF;rounded=1;" value="COMPLETED: Kết chuyển Net Amount vào ví quán" vertex="1" connectable="0">
-          <mxGeometry x="0.2" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 10. Store Withdrawal to Store Bank Account -->
-        <mxCell id="rel_with_bank" edge="1" parent="1" source="ent_store_withdrawal" target="ent_store_bank" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E11D48;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="2200" y="1640" />
-              <mxPoint x="1030" y="1640" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_with_bank" parent="rel_with_bank" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#BE123C;backgroundColor=#FFFFFF;rounded=1;" value="Giải ngân tự động qua PayOS Payout API" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 11. Rental Return triggers Deposit Refund -->
-        <mxCell id="rel_ret_refund" edge="1" parent="1" source="ent_rental_return" target="ent_deposit_refund" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E11D48;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="250" y="1640" />
-              <mxPoint x="250" y="1950" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_ret_refund" parent="rel_ret_refund" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#BE123C;backgroundColor=#FFFFFF;rounded=1;" value="1..1 Tạo lệnh hoàn cọc an toàn" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 12. Deposit Refund transfers to Customer Bank Account -->
-        <mxCell id="rel_refund_cust_bank" edge="1" parent="1" source="ent_deposit_refund" target="ent_cust_bank" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E11D48;strokeWidth=2;endArrow=block;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="200" y="1960" />
-              <mxPoint x="200" y="1900" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_refund_cust_bank" parent="rel_refund_cust_bank" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#BE123C;backgroundColor=#FFFFFF;rounded=1;" value="Bắn tiền về tài khoản VERIFIED" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 13. Customer Bank Account validated by Didit eKYC -->
-        <mxCell id="rel_bank_ekyc" edge="1" parent="1" source="ent_cust_bank" target="ent_didit_ekyc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#881337;strokeWidth=1.5;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="360" y="1930" />
-              <mxPoint x="490" y="1930" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_bank_ekyc" parent="rel_bank_ekyc" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#881337;" value="Đối chiếu tên chủ thẻ với eKYC" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
-        <!-- 14. Domain Mutations produce Outbox Events -->
-        <mxCell id="rel_order_outbox" edge="1" parent="1" source="ent_order" target="ent_outbox" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#475569;strokeWidth=1.5;strokeFactor=2;dashed=1;endArrow=open;endSize=8;">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="1100" y="1640" />
-              <mxPoint x="1450" y="1640" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="lbl_order_outbox" parent="rel_order_outbox" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#334155;backgroundColor=#FFFFFF;rounded=1;" value="Ghi sự kiện Outbox (Atomic Tx)" vertex="1" connectable="0">
-          <mxGeometry x="0.1" relative="1" as="geometry" />
-        </mxCell>
-
+<mxCell id="chen_101" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;align=center;verticalAlign=middle;" value="&lt;b style=&quot;font-size: 18px;&quot;&gt;PETER CHEN CONCEPTUAL DATA MODEL (CDM) - CLICK-TO-ORDER PLATFORM&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;font-size: 11px;&quot;&gt;Black &amp;amp; White Academic ERD Notation: [Rectangle: Entity] — [Rhombus: Relationship] — [Ellipse: Attribute with PK underlined]&lt;/span&gt;" vertex="1">
+      <mxGeometry height="60" width="1600" x="800" y="40" as="geometry" />
+    </mxCell>
+<mxCell id="chen_102" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CUSTOMER" vertex="1">
+      <mxGeometry height="65" width="160" x="600" y="380" as="geometry" />
+    </mxCell>
+<mxCell id="chen_103" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;customer_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="480.0" y="332.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_104" edge="1" parent="1" source="chen_102" target="chen_103" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_105" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="phone_number" vertex="1">
+      <mxGeometry height="38" width="125" x="470.0" y="402.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_106" edge="1" parent="1" source="chen_102" target="chen_105" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_107" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="full_name" vertex="1">
+      <mxGeometry height="38" width="125" x="480.0" y="472.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_108" edge="1" parent="1" source="chen_102" target="chen_107" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_109" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="email" vertex="1">
+      <mxGeometry height="38" width="125" x="620.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_110" edge="1" parent="1" source="chen_102" target="chen_109" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_111" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="status" vertex="1">
+      <mxGeometry height="38" width="125" x="760.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_112" edge="1" parent="1" source="chen_102" target="chen_111" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_113" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="STORE" vertex="1">
+      <mxGeometry height="65" width="160" x="1600" y="380" as="geometry" />
+    </mxCell>
+<mxCell id="chen_114" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;store_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="1520.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_115" edge="1" parent="1" source="chen_113" target="chen_114" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_116" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="store_name" vertex="1">
+      <mxGeometry height="38" width="125" x="1680.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_117" edge="1" parent="1" source="chen_113" target="chen_116" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_118" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="address" vertex="1">
+      <mxGeometry height="38" width="125" x="1780.0" y="342.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_119" edge="1" parent="1" source="chen_113" target="chen_118" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_120" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="operating_status" vertex="1">
+      <mxGeometry height="38" width="125" x="1780.0" y="412.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_121" edge="1" parent="1" source="chen_113" target="chen_120" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_122" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="contact_phone" vertex="1">
+      <mxGeometry height="38" width="125" x="1770.0" y="482.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_123" edge="1" parent="1" source="chen_113" target="chen_122" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_124" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="PRODUCT" vertex="1">
+      <mxGeometry height="65" width="160" x="2400" y="380" as="geometry" />
+    </mxCell>
+<mxCell id="chen_125" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;product_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="2340.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_126" edge="1" parent="1" source="chen_124" target="chen_125" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_127" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="product_name" vertex="1">
+      <mxGeometry height="38" width="125" x="2490.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_128" edge="1" parent="1" source="chen_124" target="chen_127" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_129" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="base_price" vertex="1">
+      <mxGeometry height="38" width="125" x="2580.0" y="342.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_130" edge="1" parent="1" source="chen_124" target="chen_129" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_131" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="sku" vertex="1">
+      <mxGeometry height="38" width="125" x="2580.0" y="412.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_132" edge="1" parent="1" source="chen_124" target="chen_131" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_133" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="is_active" vertex="1">
+      <mxGeometry height="38" width="125" x="2570.0" y="482.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_134" edge="1" parent="1" source="chen_124" target="chen_133" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_135" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CATEGORY" vertex="1">
+      <mxGeometry height="65" width="160" x="3000" y="380" as="geometry" />
+    </mxCell>
+<mxCell id="chen_136" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;category_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="2970.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_137" edge="1" parent="1" source="chen_135" target="chen_136" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_138" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="category_name" vertex="1">
+      <mxGeometry height="38" width="125" x="3100.0" y="312.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_139" edge="1" parent="1" source="chen_135" target="chen_138" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_140" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="display_order" vertex="1">
+      <mxGeometry height="38" width="125" x="3170.0" y="392.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_141" edge="1" parent="1" source="chen_135" target="chen_140" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_142" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="is_active" vertex="1">
+      <mxGeometry height="38" width="125" x="3160.0" y="462.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_143" edge="1" parent="1" source="chen_135" target="chen_142" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_144" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="BUTTON_RENTAL" vertex="1">
+      <mxGeometry height="65" width="170" x="600" y="950" as="geometry" />
+    </mxCell>
+<mxCell id="chen_145" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;rental_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="475.0" y="902.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_146" edge="1" parent="1" source="chen_144" target="chen_145" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_147" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="rental_code" vertex="1">
+      <mxGeometry height="38" width="125" x="465.0" y="972.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_148" edge="1" parent="1" source="chen_144" target="chen_147" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_149" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="button_quantity" vertex="1">
+      <mxGeometry height="38" width="125" x="475.0" y="1042.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_150" edge="1" parent="1" source="chen_144" target="chen_149" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_151" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="deposit_amount" vertex="1">
+      <mxGeometry height="38" width="125" x="485.0" y="1102.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_152" edge="1" parent="1" source="chen_144" target="chen_151" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_153" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="start_date" vertex="1">
+      <mxGeometry height="38" width="125" x="625.0" y="1062.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_154" edge="1" parent="1" source="chen_144" target="chen_153" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_155" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="expiry_date" vertex="1">
+      <mxGeometry height="38" width="125" x="745.0" y="1062.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_156" edge="1" parent="1" source="chen_144" target="chen_155" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_157" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="IOT_BUTTON" vertex="1">
+      <mxGeometry height="65" width="160" x="1250" y="950" as="geometry" />
+    </mxCell>
+<mxCell id="chen_158" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;button_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="1170.0" y="882.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_159" edge="1" parent="1" source="chen_157" target="chen_158" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_160" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="device_serial_no" vertex="1">
+      <mxGeometry height="38" width="125" x="1320.0" y="882.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_161" edge="1" parent="1" source="chen_157" target="chen_160" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_162" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="mac_address" vertex="1">
+      <mxGeometry height="38" width="125" x="1150.0" y="1052.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_163" edge="1" parent="1" source="chen_157" target="chen_162" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_164" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="battery_level" vertex="1">
+      <mxGeometry height="38" width="125" x="1290.0" y="1052.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_165" edge="1" parent="1" source="chen_157" target="chen_164" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_166" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="inventory_state" vertex="1">
+      <mxGeometry height="38" width="125" x="1420.0" y="1042.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_167" edge="1" parent="1" source="chen_157" target="chen_166" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_168" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="ORDER" vertex="1">
+      <mxGeometry height="65" width="160" x="1900" y="950" as="geometry" />
+    </mxCell>
+<mxCell id="chen_169" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;order_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="1810.0" y="882.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_170" edge="1" parent="1" source="chen_168" target="chen_169" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_171" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="order_code" vertex="1">
+      <mxGeometry height="38" width="125" x="1960.0" y="882.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_172" edge="1" parent="1" source="chen_168" target="chen_171" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_173" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="total_amount" vertex="1">
+      <mxGeometry height="38" width="125" x="2080.0" y="902.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_174" edge="1" parent="1" source="chen_168" target="chen_173" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_175" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="order_status" vertex="1">
+      <mxGeometry height="38" width="125" x="1790.0" y="1052.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_176" edge="1" parent="1" source="chen_168" target="chen_175" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_177" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="created_at" vertex="1">
+      <mxGeometry height="38" width="125" x="1920.0" y="1062.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_178" edge="1" parent="1" source="chen_168" target="chen_177" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_179" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="delivery_address" vertex="1">
+      <mxGeometry height="38" width="125" x="2060.0" y="1052.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_180" edge="1" parent="1" source="chen_168" target="chen_179" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_181" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="ORDER_ITEM" vertex="1">
+      <mxGeometry height="65" width="160" x="2600" y="950" as="geometry" />
+    </mxCell>
+<mxCell id="chen_182" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;order_item_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="2620.0" y="882.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_183" edge="1" parent="1" source="chen_181" target="chen_182" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_184" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="quantity" vertex="1">
+      <mxGeometry height="38" width="125" x="2770.0" y="902.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_185" edge="1" parent="1" source="chen_181" target="chen_184" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_186" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="unit_price" vertex="1">
+      <mxGeometry height="38" width="125" x="2780.0" y="972.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_187" edge="1" parent="1" source="chen_181" target="chen_186" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_188" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="total_price" vertex="1">
+      <mxGeometry height="38" width="125" x="2770.0" y="1042.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_189" edge="1" parent="1" source="chen_181" target="chen_188" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_190" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CUSTOMER_BANK_ACCOUNT" vertex="1">
+      <mxGeometry height="65" width="200" x="150" y="660" as="geometry" />
+    </mxCell>
+<mxCell id="chen_191" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;bank_account_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="110.0" y="597.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_192" edge="1" parent="1" source="chen_190" target="chen_191" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_193" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="bank_bin" vertex="1">
+      <mxGeometry height="38" width="125" x="270.0" y="597.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_194" edge="1" parent="1" source="chen_190" target="chen_193" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_195" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="account_number_masked" vertex="1">
+      <mxGeometry height="38" width="125" x="80.0" y="752.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_196" edge="1" parent="1" source="chen_190" target="chen_195" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_197" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="account_holder_name" vertex="1">
+      <mxGeometry height="38" width="125" x="230.0" y="752.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_198" edge="1" parent="1" source="chen_190" target="chen_197" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_199" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="verification_status" vertex="1">
+      <mxGeometry height="38" width="125" x="350.0" y="732.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_200" edge="1" parent="1" source="chen_190" target="chen_199" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_201" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="STORE_WALLET" vertex="1">
+      <mxGeometry height="65" width="160" x="1600" y="180" as="geometry" />
+    </mxCell>
+<mxCell id="chen_202" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;wallet_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="1490.0" y="152.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_203" edge="1" parent="1" source="chen_201" target="chen_202" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_204" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="balance" vertex="1">
+      <mxGeometry height="38" width="125" x="1510.0" y="242.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_205" edge="1" parent="1" source="chen_201" target="chen_204" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_206" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="frozen_balance" vertex="1">
+      <mxGeometry height="38" width="125" x="1760.0" y="152.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_207" edge="1" parent="1" source="chen_201" target="chen_206" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_208" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="updated_at" vertex="1">
+      <mxGeometry height="38" width="125" x="1760.0" y="242.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_209" edge="1" parent="1" source="chen_201" target="chen_208" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_210" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="PAYMENT_TRANSACTION" vertex="1">
+      <mxGeometry height="65" width="190" x="1400" y="1500" as="geometry" />
+    </mxCell>
+<mxCell id="chen_211" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;transaction_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="1305.0" y="1462.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_212" edge="1" parent="1" source="chen_210" target="chen_211" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_213" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="amount" vertex="1">
+      <mxGeometry height="38" width="125" x="1295.0" y="1542.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_214" edge="1" parent="1" source="chen_210" target="chen_213" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_215" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="payment_method" vertex="1">
+      <mxGeometry height="38" width="125" x="1315.0" y="1612.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_216" edge="1" parent="1" source="chen_210" target="chen_215" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_217" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="payment_status" vertex="1">
+      <mxGeometry height="38" width="125" x="1475.0" y="1612.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_218" edge="1" parent="1" source="chen_210" target="chen_217" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_219" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="provider_ref" vertex="1">
+      <mxGeometry height="38" width="125" x="1595.0" y="1592.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_220" edge="1" parent="1" source="chen_210" target="chen_219" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_221" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="DRIVER_DUTY" vertex="1">
+      <mxGeometry height="65" width="160" x="2300" y="1500" as="geometry" />
+    </mxCell>
+<mxCell id="chen_222" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;duty_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="2190.0" y="1532.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_223" edge="1" parent="1" source="chen_221" target="chen_222" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_224" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="driver_user_id" vertex="1">
+      <mxGeometry height="38" width="125" x="2210.0" y="1602.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_225" edge="1" parent="1" source="chen_221" target="chen_224" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_226" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="shift_status" vertex="1">
+      <mxGeometry height="38" width="125" x="2340.0" y="1612.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_227" edge="1" parent="1" source="chen_221" target="chen_226" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_228" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="duty_date" vertex="1">
+      <mxGeometry height="38" width="125" x="2460.0" y="1592.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_229" edge="1" parent="1" source="chen_221" target="chen_228" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_230" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="DEPOSIT_REFUND" vertex="1">
+      <mxGeometry height="65" width="170" x="400" y="1500" as="geometry" />
+    </mxCell>
+<mxCell id="chen_231" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;refund_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="125" x="285.0" y="1512.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_232" edge="1" parent="1" source="chen_230" target="chen_231" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_233" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_code" vertex="1">
+      <mxGeometry height="38" width="125" x="295.0" y="1582.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_234" edge="1" parent="1" source="chen_230" target="chen_233" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_235" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_amount" vertex="1">
+      <mxGeometry height="38" width="125" x="425.0" y="1612.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_236" edge="1" parent="1" source="chen_230" target="chen_235" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_237" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_status" vertex="1">
+      <mxGeometry height="38" width="125" x="555.0" y="1592.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_238" edge="1" parent="1" source="chen_230" target="chen_237" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_239" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="VERIFIES" vertex="1">
+      <mxGeometry height="65" width="100" x="370" y="520" as="geometry" />
+    </mxCell>
+<mxCell id="chen_240" edge="1" parent="1" source="chen_102" target="chen_239" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_241" edge="1" parent="1" source="chen_239" target="chen_190" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_242" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="RENTS" vertex="1">
+      <mxGeometry height="65" width="100" x="600" y="680" as="geometry" />
+    </mxCell>
+<mxCell id="chen_243" edge="1" parent="1" source="chen_102" target="chen_242" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_244" edge="1" parent="1" source="chen_242" target="chen_144" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_245" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="CONTAINS" vertex="1">
+      <mxGeometry height="65" width="110" x="950" y="950" as="geometry" />
+    </mxCell>
+<mxCell id="chen_246" edge="1" parent="1" source="chen_144" target="chen_245" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_247" edge="1" parent="1" source="chen_245" target="chen_157" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_248" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="TRIGGERS" vertex="1">
+      <mxGeometry height="65" width="110" x="1580" y="950" as="geometry" />
+    </mxCell>
+<mxCell id="chen_249" edge="1" parent="1" source="chen_157" target="chen_248" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_250" edge="1" parent="1" source="chen_248" target="chen_168" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_251" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="PLACES" vertex="1">
+      <mxGeometry height="65" width="100" x="1250" y="680" as="geometry" />
+    </mxCell>
+<mxCell id="chen_252" edge="1" parent="1" source="chen_102" target="chen_251" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_253" edge="1" parent="1" source="chen_251" target="chen_168" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_254" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="FULFILLS" vertex="1">
+      <mxGeometry height="65" width="100" x="1750" y="680" as="geometry" />
+    </mxCell>
+<mxCell id="chen_255" edge="1" parent="1" source="chen_113" target="chen_254" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_256" edge="1" parent="1" source="chen_254" target="chen_168" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_257" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="OWNS" vertex="1">
+      <mxGeometry height="65" width="100" x="2000" y="380" as="geometry" />
+    </mxCell>
+<mxCell id="chen_258" edge="1" parent="1" source="chen_113" target="chen_257" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_259" edge="1" parent="1" source="chen_257" target="chen_124" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_260" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="CLASSIFIES" vertex="1">
+      <mxGeometry height="65" width="110" x="2700" y="380" as="geometry" />
+    </mxCell>
+<mxCell id="chen_261" edge="1" parent="1" source="chen_135" target="chen_260" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_262" edge="1" parent="1" source="chen_260" target="chen_124" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_263" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="INCLUDES" vertex="1">
+      <mxGeometry height="65" width="110" x="2250" y="950" as="geometry" />
+    </mxCell>
+<mxCell id="chen_264" edge="1" parent="1" source="chen_168" target="chen_263" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_265" edge="1" parent="1" source="chen_263" target="chen_181" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_266" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="ORDERED_AS" vertex="1">
+      <mxGeometry height="65" width="120" x="2500" y="680" as="geometry" />
+    </mxCell>
+<mxCell id="chen_267" edge="1" parent="1" source="chen_124" target="chen_266" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_268" edge="1" parent="1" source="chen_266" target="chen_181" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_269" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="MANAGES" vertex="1">
+      <mxGeometry height="60" width="100" x="1600" y="280" as="geometry" />
+    </mxCell>
+<mxCell id="chen_270" edge="1" parent="1" source="chen_113" target="chen_269" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_271" edge="1" parent="1" source="chen_269" target="chen_201" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_272" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="SETTLED_BY" vertex="1">
+      <mxGeometry height="65" width="110" x="1680" y="1250" as="geometry" />
+    </mxCell>
+<mxCell id="chen_273" edge="1" parent="1" source="chen_168" target="chen_272" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_274" edge="1" parent="1" source="chen_272" target="chen_210" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_275" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="DELIVERED_BY" vertex="1">
+      <mxGeometry height="65" width="120" x="2100" y="1250" as="geometry" />
+    </mxCell>
+<mxCell id="chen_276" edge="1" parent="1" source="chen_168" target="chen_275" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_277" edge="1" parent="1" source="chen_275" target="chen_221" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_278" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="REFUNDS" vertex="1">
+      <mxGeometry height="65" width="100" x="500" y="1250" as="geometry" />
+    </mxCell>
+<mxCell id="chen_279" edge="1" parent="1" source="chen_144" target="chen_278" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_280" edge="1" parent="1" source="chen_278" target="chen_230" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_281" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="DISBURSED_TO" vertex="1">
+      <mxGeometry height="65" width="130" x="250" y="1150" as="geometry" />
+    </mxCell>
+<mxCell id="chen_282" edge="1" parent="1" source="chen_230" target="chen_281" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_283" edge="1" parent="1" source="chen_281" target="chen_190" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
       </root>
     </mxGraphModel>
-  </diagram>
-  <diagram id="page_order_lifecycle" name="[STATE 1] Order Lifecycle">
+  </diagram><diagram id="page_order_lifecycle" name="[STATE 1] Order Lifecycle">
     <mxGraphModel dx="1426" dy="849" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1600" math="0" shadow="0">
       <root>
         <mxCell id="0" />
@@ -15359,14 +15148,14 @@
         <mxCell id="lane_s3_payos" parent="pool_s3" style="swimlane;horizontal=1;startSize=36;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontStyle=1;fontSize=11;collapsible=0;" value="PayOS Payout Gateway" vertex="1">
           <mxGeometry x="1080" y="30" width="360" height="930" as="geometry" />
         </mxCell>
-        <!-- Nodes in lane_s3_owner -->
+
         <mxCell id="s3_init" parent="lane_s3_owner" style="ellipse;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="166" y="50" width="28" height="28" as="geometry" />
         </mxCell>
         <mxCell id="s3_st_pending" parent="lane_s3_owner" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;PENDING&lt;/b&gt;&lt;br&gt;Request withdrawal;&lt;br&gt;Lock wallet &amp; reserve balance;&lt;br&gt;Snapshot encrypted bank details." vertex="1">
           <mxGeometry x="65" y="110" width="230" height="75" as="geometry" />
         </mxCell>
-        <!-- Nodes in lane_s3_admin -->
+
         <mxCell id="s3_st_rejected" parent="lane_s3_admin" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;REJECTED&lt;/b&gt;&lt;br&gt;Authorized reject before dispatch;&lt;br&gt;Unfreeze wallet balance atomically;&lt;br&gt;Audit log persisted." vertex="1">
           <mxGeometry x="65" y="110" width="230" height="75" as="geometry" />
         </mxCell>
@@ -15376,7 +15165,7 @@
         <mxCell id="s3_st_recon" parent="lane_s3_admin" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;PENDING_RECONCILIATION&lt;/b&gt;&lt;br&gt;Network timeout / 403 / unknown;&lt;br&gt;Frozen balance retained strictly;&lt;br&gt;Admin manual query / resolve." vertex="1">
           <mxGeometry x="65" y="420" width="230" height="85" as="geometry" />
         </mxCell>
-        <!-- Nodes in lane_s3_backend -->
+
         <mxCell id="s3_st_processing" parent="lane_s3_backend" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;PROCESSING&lt;/b&gt;&lt;br&gt;CAS transition to prevent race;&lt;br&gt;Submit stable payout reference&lt;br&gt;via automated PayOS Payout API." vertex="1">
           <mxGeometry x="65" y="270" width="230" height="75" as="geometry" />
         </mxCell>
@@ -15392,11 +15181,11 @@
         <mxCell id="s3_fin_failed" parent="lane_s3_backend" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="166" y="880" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- Nodes in lane_s3_payos -->
+
         <mxCell id="s3_st_payos_exec" parent="lane_s3_payos" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;PAYOS_EXECUTING&lt;/b&gt;&lt;br&gt;Napas 247 Interbank Transfer;&lt;br&gt;Validate IP whitelist &amp; signature." vertex="1">
           <mxGeometry x="65" y="270" width="230" height="75" as="geometry" />
         </mxCell>
-        <!-- Edges -->
+
         <mxCell id="s3_e0" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.2;fontSize=9;fontColor=#000000;labelBackgroundColor=#FFFFFF;" edge="1" source="s3_init" target="s3_st_pending" value="Request [Balance &gt;= Min]">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -15467,7 +15256,7 @@
         <mxCell id="lane_s4_cron" parent="pool_s4" style="swimlane;horizontal=1;startSize=36;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontStyle=1;fontSize=11;collapsible=0;" value="System Cron &amp; Payment/Refund (PayOS)" vertex="1">
           <mxGeometry x="1140" y="30" width="380" height="1090" as="geometry" />
         </mxCell>
-        <!-- lane_s4_cust -->
+
         <mxCell id="s4_init" parent="lane_s4_cust" style="ellipse;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="176" y="50" width="28" height="28" as="geometry" />
         </mxCell>
@@ -15477,14 +15266,14 @@
         <mxCell id="s4_st_returning" parent="lane_s4_cust" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Return PENDING_RECEIPT&lt;/b&gt;&lt;br&gt;Customer requests return;&lt;br&gt;Device status: RETURN_IN_TRANSIT." vertex="1">
           <mxGeometry x="75" y="600" width="230" height="75" as="geometry" />
         </mxCell>
-        <!-- lane_s4_store -->
+
         <mxCell id="s4_st_pending_handover" parent="lane_s4_store" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;PENDING_HANDOVER&lt;/b&gt;&lt;br&gt;BillingCharge PAID;&lt;br&gt;Assign fulfillment store &amp; physical button;&lt;br&gt;Button: ALLOCATED_TO_STORE." vertex="1">
           <mxGeometry x="75" y="110" width="230" height="85" as="geometry" />
         </mxCell>
         <mxCell id="s4_st_returned" parent="lane_s4_store" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;RETURNED&lt;/b&gt;&lt;br&gt;Store inspects &amp; receives physical buttons;&lt;br&gt;Device: RETURNED_RESTOCKED;&lt;br&gt;Trigger deposit refund check." vertex="1">
           <mxGeometry x="75" y="730" width="230" height="85" as="geometry" />
         </mxCell>
-        <!-- lane_s4_engine -->
+
         <mxCell id="s4_st_active" parent="lane_s4_engine" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;ACTIVE&lt;/b&gt;&lt;br&gt;Handover transaction completed;&lt;br&gt;Start paidThrough &amp; effectiveExpiresAt;&lt;br&gt;canOrder = true (IoT ordering enabled)." vertex="1">
           <mxGeometry x="75" y="250" width="230" height="85" as="geometry" />
         </mxCell>
@@ -15497,14 +15286,14 @@
         <mxCell id="s4_fin_rental" parent="lane_s4_engine" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="176" y="990" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- lane_s4_cron -->
+
         <mxCell id="s4_st_expired" parent="lane_s4_cron" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;EXPIRED&lt;/b&gt;&lt;br&gt;effectiveExpiresAt &lt;= now;&lt;br&gt;10-min Cron job runs;&lt;br&gt;Disable IoT button ordering immediately." vertex="1">
           <mxGeometry x="75" y="490" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="s4_st_refund_payout" parent="lane_s4_cron" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;REFUND_SUCCEEDED&lt;/b&gt;&lt;br&gt;PayOS automated payout completed;&lt;br&gt;Deposit marked REFUNDED." vertex="1">
           <mxGeometry x="75" y="860" width="230" height="85" as="geometry" />
         </mxCell>
-        <!-- Edges -->
+
         <mxCell id="s4_e0" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.2;fontSize=9;fontColor=#000000;labelBackgroundColor=#FFFFFF;" edge="1" source="s4_init" target="s4_st_pending_payment" value="Customer chooses package">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -15663,7 +15452,7 @@
         <mxCell id="lane_s6_system" parent="pool_s6" style="swimlane;horizontal=1;startSize=36;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontStyle=1;fontSize=11;collapsible=0;" value="Shift Service &amp; Driver Duty Engine" vertex="1">
           <mxGeometry x="800" y="30" width="400" height="850" as="geometry" />
         </mxCell>
-        <!-- Driver Lane -->
+
         <mxCell id="s6_init" parent="lane_s6_driver" style="ellipse;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="186" y="50" width="28" height="28" as="geometry" />
         </mxCell>
@@ -15673,21 +15462,21 @@
         <mxCell id="s6_st_closed" parent="lane_s6_driver" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;CLOSED&lt;/b&gt;&lt;br&gt;Driver closeShift;&lt;br&gt;Snapshot delivered count &amp; COD total;&lt;br&gt;Pending physical handover." vertex="1">
           <mxGeometry x="85" y="270" width="230" height="80" as="geometry" />
         </mxCell>
-        <!-- Manager Lane -->
+
         <mxCell id="s6_st_handed" parent="lane_s6_manager" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;HANDED_OVER&lt;/b&gt;&lt;br&gt;Authorized store confirmer confirms;&lt;br&gt;Cash COD verified &amp; settled;&lt;br&gt;Store audit log persisted." vertex="1">
           <mxGeometry x="85" y="270" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="s6_fin_shift" parent="lane_s6_manager" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="186" y="390" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- System Lane (Duty state independent) -->
+
         <mxCell id="s6_st_duty_online" parent="lane_s6_system" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;DriverDuty.ONLINE&lt;/b&gt;&lt;br&gt;Driver app sends heartbeat;&lt;br&gt;Dispatch engine maps active orders.&lt;br&gt;(Independent from Shift status)" vertex="1">
           <mxGeometry x="85" y="520" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="s6_st_duty_offline" parent="lane_s6_system" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;DriverDuty.OFFLINE&lt;/b&gt;&lt;br&gt;Driver toggles offline / app closed;&lt;br&gt;Excluded from dispatch pool." vertex="1">
           <mxGeometry x="85" y="680" width="230" height="80" as="geometry" />
         </mxCell>
-        <!-- Edges -->
+
         <mxCell id="s6_e0" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.2;fontSize=9;fontColor=#000000;labelBackgroundColor=#FFFFFF;" edge="1" source="s6_init" target="s6_st_open" value="Driver clicks Start Shift">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -15750,7 +15539,7 @@
         <mxCell id="lane_s7_refund" parent="pool_s7" style="swimlane;horizontal=1;startSize=36;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontStyle=1;fontSize=11;collapsible=0;" value="Automatic Refund Worker &amp; Payout" vertex="1">
           <mxGeometry x="1140" y="30" width="380" height="1110" as="geometry" />
         </mxCell>
-        <!-- lane_s7_cust -->
+
         <mxCell id="s7_init" parent="lane_s7_cust" style="ellipse;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="176" y="50" width="28" height="28" as="geometry" />
         </mxCell>
@@ -15766,7 +15555,7 @@
         <mxCell id="s7_fin_acc" parent="lane_s7_cust" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="176" y="640" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- lane_s7_payos -->
+
         <mxCell id="s7_st_webhook_inbound" parent="lane_s7_payos" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Inbound Webhook Received&lt;/b&gt;&lt;br&gt;Verify timing-safe HMAC raw body;&lt;br&gt;Extract source bank bin &amp; account." vertex="1">
           <mxGeometry x="75" y="240" width="230" height="75" as="geometry" />
         </mxCell>
@@ -15776,14 +15565,14 @@
         <mxCell id="s7_st_inbound_confirmed" parent="lane_s7_payos" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Confirmed Inbound Transaction&lt;/b&gt;&lt;br&gt;UNIQUE(provider, channel, reference);&lt;br&gt;Atomic creation with Refund Obligation;&lt;br&gt;Actual received amount recorded." vertex="1">
           <mxGeometry x="75" y="520" width="230" height="85" as="geometry" />
         </mxCell>
-        <!-- lane_s7_service -->
+
         <mxCell id="s7_st_proof_expired" parent="lane_s7_service" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Proof EXPIRED / REJECTED&lt;/b&gt;&lt;br&gt;Session timeout or name mismatch;&lt;br&gt;Late inbound still accounted for refund." vertex="1">
           <mxGeometry x="75" y="370" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="s7_st_manual_refund" parent="lane_s7_service" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;PENDING_MANUAL_REFUND&lt;/b&gt;&lt;br&gt;Missing source account evidence;&lt;br&gt;Flag for compliance inspection;&lt;br&gt;No automated payout attempted." vertex="1">
           <mxGeometry x="75" y="670" width="230" height="80" as="geometry" />
         </mxCell>
-        <!-- lane_s7_refund -->
+
         <mxCell id="s7_st_obligation_created" parent="lane_s7_refund" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Obligation CREATED&lt;/b&gt;&lt;br&gt;Target amount: actual inbound amount;&lt;br&gt;Auto refund claimed by Cron Worker." vertex="1">
           <mxGeometry x="75" y="520" width="230" height="80" as="geometry" />
         </mxCell>
@@ -15799,7 +15588,7 @@
         <mxCell id="s7_fin_refund" parent="lane_s7_refund" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="176" y="1060" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- Edges -->
+
         <mxCell id="s7_e0" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.2;fontSize=9;fontColor=#000000;labelBackgroundColor=#FFFFFF;" edge="1" source="s7_init" target="s7_st_acc_pending" value="User registers bank">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -15868,7 +15657,7 @@
         <mxCell id="lane_s8_cron" parent="pool_s8" style="swimlane;horizontal=1;startSize=36;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontStyle=1;fontSize=11;collapsible=0;" value="Daily Expiry Cron Worker" vertex="1">
           <mxGeometry x="800" y="30" width="400" height="890" as="geometry" />
         </mxCell>
-        <!-- lane_s8_owner -->
+
         <mxCell id="s8_init" parent="lane_s8_owner" style="ellipse;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="186" y="50" width="28" height="28" as="geometry" />
         </mxCell>
@@ -15881,21 +15670,21 @@
         <mxCell id="s8_fin_cancelled" parent="lane_s8_owner" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="186" y="500" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- lane_s8_service -->
+
         <mxCell id="s8_st_active" parent="lane_s8_service" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;ACTIVE&lt;/b&gt;&lt;br&gt;Subscription active (60k / 30 days);&lt;br&gt;Products listed on mobile marketplace;&lt;br&gt;Orders accepted." vertex="1">
           <mxGeometry x="85" y="110" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="s8_st_renew" parent="lane_s8_service" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;RENEWED&lt;/b&gt;&lt;br&gt;Extend currentEndDate += 30 days;&lt;br&gt;Billing charge marked PAID." vertex="1">
           <mxGeometry x="85" y="250" width="230" height="75" as="geometry" />
         </mxCell>
-        <!-- lane_s8_cron -->
+
         <mxCell id="s8_st_expired" parent="lane_s8_cron" style="rounded=1;arcSize=16;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;EXPIRED&lt;/b&gt;&lt;br&gt;currentEndDate &lt;= now;&lt;br&gt;Immediately delist products;&lt;br&gt;Block customer IoT ordering." vertex="1">
           <mxGeometry x="85" y="380" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="s8_fin_expired" parent="lane_s8_cron" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="186" y="500" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- Edges -->
+
         <mxCell id="s8_e0" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.2;fontSize=9;fontColor=#000000;labelBackgroundColor=#FFFFFF;" edge="1" source="s8_init" target="s8_st_order_sub" value="Register store">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -16402,14 +16191,14 @@
         <mxCell id="lane_a4_payos" parent="pool_a4" style="swimlane;horizontal=1;startSize=36;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontStyle=1;fontSize=11;collapsible=0;" value="PayOS Payout Gateway" vertex="1">
           <mxGeometry x="1080" y="30" width="360" height="1070" as="geometry" />
         </mxCell>
-        <!-- lane_a4_owner -->
+
         <mxCell id="a4_init" parent="lane_a4_owner" style="ellipse;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="166" y="50" width="28" height="28" as="geometry" />
         </mxCell>
         <mxCell id="a4_act_request" parent="lane_a4_owner" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Request Withdrawal&lt;/b&gt;&lt;br&gt;Specify amount &amp; verify auth token;&lt;br&gt;Must have verified bank account." vertex="1">
           <mxGeometry x="65" y="110" width="230" height="75" as="geometry" />
         </mxCell>
-        <!-- lane_a4_service (reserve) -->
+
         <mxCell id="a4_act_reserve" parent="lane_a4_service" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Pessimistic Lock &amp; Reserve&lt;/b&gt;&lt;br&gt;SELECT ... FOR UPDATE on wallet;&lt;br&gt;Check balance &gt;= amount;&lt;br&gt;balance -= amount; frozen += amount;&lt;br&gt;Snapshot immutable bank details." vertex="1">
           <mxGeometry x="65" y="110" width="230" height="90" as="geometry" />
         </mxCell>
@@ -16431,18 +16220,18 @@
         <mxCell id="a4_fin_fail" parent="lane_a4_service" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="166" y="980" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- lane_a4_admin -->
+
         <mxCell id="a4_dec_admin" parent="lane_a4_admin" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;align=center;" value="Admin Approves?" vertex="1">
           <mxGeometry x="120" y="240" width="120" height="75" as="geometry" />
         </mxCell>
-        <!-- lane_a4_payos -->
+
         <mxCell id="a4_act_call_payos" parent="lane_a4_payos" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Call PayOS Payout API&lt;/b&gt;&lt;br&gt;POST /v1/payouts-account/payouts;&lt;br&gt;Send unique reference &amp; recipient." vertex="1">
           <mxGeometry x="65" y="360" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="a4_dec_provider" parent="lane_a4_payos" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;align=center;" value="Provider Response?" vertex="1">
           <mxGeometry x="110" y="500" width="140" height="85" as="geometry" />
         </mxCell>
-        <!-- Edges -->
+
         <mxCell id="a4_e0" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.2;fontSize=9;fontColor=#000000;labelBackgroundColor=#FFFFFF;" edge="1" source="a4_init" target="a4_act_request" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -16525,7 +16314,7 @@
         <mxCell id="lane_a5_payos" parent="pool_a5" style="swimlane;horizontal=1;startSize=36;fillColor=#FFFFFF;strokeColor=#000000;fontColor=#000000;fontStyle=1;fontSize=11;collapsible=0;" value="PayOS Gateway &amp; Expiry Cron" vertex="1">
           <mxGeometry x="1140" y="30" width="380" height="1210" as="geometry" />
         </mxCell>
-        <!-- lane_a5_cust -->
+
         <mxCell id="a5_init" parent="lane_a5_cust" style="ellipse;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="176" y="50" width="28" height="28" as="geometry" />
         </mxCell>
@@ -16541,7 +16330,7 @@
         <mxCell id="a5_act_req_return" parent="lane_a5_cust" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Request Button Return&lt;/b&gt;&lt;br&gt;Ship buttons back or drop off at store;&lt;br&gt;Status = PENDING_RECEIPT." vertex="1">
           <mxGeometry x="75" y="790" width="230" height="75" as="geometry" />
         </mxCell>
-        <!-- lane_a5_store -->
+
         <mxCell id="a5_act_assign" parent="lane_a5_store" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Assign Store &amp; Physical Buttons&lt;/b&gt;&lt;br&gt;Record DeviceMovements;&lt;br&gt;Button: ALLOCATED_TO_STORE." vertex="1">
           <mxGeometry x="75" y="340" width="230" height="75" as="geometry" />
         </mxCell>
@@ -16551,7 +16340,7 @@
         <mxCell id="a5_act_receive_btn" parent="lane_a5_store" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Store Inspects &amp; Confirms Receipt&lt;/b&gt;&lt;br&gt;Check hardware intactness;&lt;br&gt;Button: RETURNED_RESTOCKED;&lt;br&gt;Rental: RETURNED." vertex="1">
           <mxGeometry x="75" y="910" width="230" height="80" as="geometry" />
         </mxCell>
-        <!-- lane_a5_engine -->
+
         <mxCell id="a5_act_verify_payment" parent="lane_a5_engine" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;Verify Payment Webhook&lt;/b&gt;&lt;br&gt;BillingCharge marked PAID;&lt;br&gt;Rental status = PENDING_HANDOVER." vertex="1">
           <mxGeometry x="75" y="230" width="230" height="75" as="geometry" />
         </mxCell>
@@ -16564,14 +16353,14 @@
         <mxCell id="a5_fin_rental" parent="lane_a5_engine" style="ellipse;shape=endState;fillColor=#000000;strokeColor=#000000;html=1;" value="" vertex="1">
           <mxGeometry x="176" y="1150" width="28" height="28" as="geometry" />
         </mxCell>
-        <!-- lane_a5_payos -->
+
         <mxCell id="a5_act_cron_expiry" parent="lane_a5_payos" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;10-Minute Expiry Cron&lt;/b&gt;&lt;br&gt;effectiveExpiresAt &lt;= now;&lt;br&gt;Status = EXPIRED;&lt;br&gt;Disable IoT button clicks immediately." vertex="1">
           <mxGeometry x="75" y="690" width="230" height="80" as="geometry" />
         </mxCell>
         <mxCell id="a5_act_payout_refund" parent="lane_a5_payos" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=11;align=center;" value="&lt;b&gt;PayOS Automated Payout&lt;/b&gt;&lt;br&gt;Refund deposit to customer bank;&lt;br&gt;Status = REFUNDED." vertex="1">
           <mxGeometry x="75" y="1030" width="230" height="80" as="geometry" />
         </mxCell>
-        <!-- Edges -->
+
         <mxCell id="a5_e0" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.2;fontSize=9;fontColor=#000000;labelBackgroundColor=#FFFFFF;" edge="1" source="a5_init" target="a5_act_create" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
@@ -17613,12 +17402,12 @@
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <!-- System Boundary Box -->
+
         <mxCell id="sys_boundary" parent="1" style="swimlane;startSize=36;horizontal=1;fillColor=#F8FAFC;strokeColor=#1E293B;strokeWidth=2;fontColor=#0F172A;fontStyle=1;fontSize=15;rounded=1;arcSize=3;collapsible=0;" value="SYSTEM BOUNDARY: IOT CLICK-TO-ORDER PLATFORM (BACKEND ARCHITECTURE)" vertex="1">
           <mxGeometry height="1460" width="1340" x="330" y="60" as="geometry" />
         </mxCell>
 
-        <!-- Subgroup Boundary Labels (Visual Section Dividers) -->
+
         <mxCell id="grp_cust_header" parent="sys_boundary" style="text;html=1;strokeColor=none;fillColor=#E2E8F0;align=center;verticalAlign=middle;rounded=1;fontStyle=1;fontSize=12;fontColor=#1E293B;" value="CUSTOMER &amp; IOT DEVICE USE CASES" vertex="1">
           <mxGeometry x="30" y="45" width="280" height="28" as="geometry" />
         </mxCell>
@@ -17628,184 +17417,148 @@
         <mxCell id="grp_store_header" parent="sys_boundary" style="text;html=1;strokeColor=none;fillColor=#E2E8F0;align=center;verticalAlign=middle;rounded=1;fontStyle=1;fontSize=12;fontColor=#1E293B;" value="STORE OPERATIONS &amp; ADMIN GOVERNANCE" vertex="1">
           <mxGeometry x="870" y="45" width="310" height="28" as="geometry" />
         </mxCell>
-        <!-- Actor: Customer (Khách hàng) -->
-        <mxCell id="act_customer" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Customer
-(Khách hàng)" vertex="1">
+
+        <mxCell id="act_customer" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Customer (Khách hàng)" vertex="1">
           <mxGeometry height="120" width="70" x="100" y="320" as="geometry" />
         </mxCell>
-        <!-- Actor: IoT Physical Button (ESP32-S3 Device) -->
-        <mxCell id="act_iot_button" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="IoT Physical Button
-(ESP32-S3 Device)" vertex="1">
+
+        <mxCell id="act_iot_button" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="IoT Physical Button (ESP32-S3 Device)" vertex="1">
           <mxGeometry height="120" width="90" x="90" y="780" as="geometry" />
         </mxCell>
-        <!-- Actor: Didit AI Engine (eKYC Provider) -->
-        <mxCell id="act_didit" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Didit AI Engine
-(eKYC Provider)" vertex="1">
+
+        <mxCell id="act_didit" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Didit AI Engine (eKYC Provider)" vertex="1">
           <mxGeometry height="120" width="80" x="95" y="1220" as="geometry" />
         </mxCell>
-        <!-- Actor: Store Owner / Staff (Cửa hàng / Đại lý) -->
-        <mxCell id="act_store_owner" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Store Owner / Staff
-(Cửa hàng / Đại lý)" vertex="1">
+
+        <mxCell id="act_store_owner" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Store Owner / Staff (Cửa hàng / Đại lý)" vertex="1">
           <mxGeometry height="120" width="90" x="1750" y="280" as="geometry" />
         </mxCell>
-        <!-- Actor: Driver / Shipper (Tài xế giao hàng) -->
-        <mxCell id="act_driver" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Driver / Shipper
-(Tài xế giao hàng)" vertex="1">
+
+        <mxCell id="act_driver" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="Driver / Shipper (Tài xế giao hàng)" vertex="1">
           <mxGeometry height="120" width="70" x="1760" y="740" as="geometry" />
         </mxCell>
-        <!-- Actor: System Admin (Quản trị viên) -->
-        <mxCell id="act_admin" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="System Admin
-(Quản trị viên)" vertex="1">
+
+        <mxCell id="act_admin" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#0F172A;strokeWidth=1.8;fontColor=#0F172A;fontStyle=1;fontSize=12;" value="System Admin (Quản trị viên)" vertex="1">
           <mxGeometry height="120" width="70" x="1760" y="1180" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_auth_cust -->
-        <mxCell id="uc_auth_cust" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Register &amp; Authenticate
-(Phone OTP / Social)" vertex="1">
+
+        <mxCell id="uc_auth_cust" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Register &amp; Authenticate (Phone OTP / Social)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="60" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_ekyc_cust -->
-        <mxCell id="uc_ekyc_cust" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Perform eKYC Verification
-(CCCD &amp; 3D Liveness)" vertex="1">
+
+        <mxCell id="uc_ekyc_cust" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Perform eKYC Verification (CCCD &amp; 3D Liveness)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="140" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_bank_verify -->
-        <mxCell id="uc_bank_verify" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Verify Bank Account
-(2.000đ Micro-Deposit)" vertex="1">
+
+        <mxCell id="uc_bank_verify" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Verify Bank Account (2.000đ Micro-Deposit)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="220" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_pair_btn -->
-        <mxCell id="uc_pair_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Pair &amp; Activate IoT Button
-(Zero-Touch Provisioning)" vertex="1">
+
+        <mxCell id="uc_pair_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Pair &amp; Activate IoT Button (Zero-Touch Provisioning)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="300" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_order_btn -->
-        <mxCell id="uc_order_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Place Order via IoT Button
-(HMAC-SHA256 Click)" vertex="1">
+
+        <mxCell id="uc_order_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Place Order via IoT Button (HMAC-SHA256 Click)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="380" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_order_app -->
-        <mxCell id="uc_order_app" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Place Order via Mobile App
-(Manual Checkout)" vertex="1">
+
+        <mxCell id="uc_order_app" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Place Order via Mobile App (Manual Checkout)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="460" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_config_btn -->
-        <mxCell id="uc_config_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Remote Button Configuration
-&amp; Child-Lock Safety" vertex="1">
+
+        <mxCell id="uc_config_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Remote Button Configuration &amp; Child-Lock Safety" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="540" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_migrate_store -->
-        <mxCell id="uc_migrate_store" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Request Store Migration
-(Reassign Button Custody)" vertex="1">
+
+        <mxCell id="uc_migrate_store" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Request Store Migration (Reassign Button Custody)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="620" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_track_order -->
-        <mxCell id="uc_track_order" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Track Order &amp; Shipper Route
-(Real-time Updates)" vertex="1">
+
+        <mxCell id="uc_track_order" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Track Order &amp; Shipper Route (Real-time Updates)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="700" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_return_btn -->
-        <mxCell id="uc_return_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Return Button &amp; Refund Deposit
-(Rental Termination)" vertex="1">
+
+        <mxCell id="uc_return_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Return Button &amp; Refund Deposit (Rental Termination)" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="780" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_telemetry_btn -->
-        <mxCell id="uc_telemetry_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Transmit Battery Telemetry
-&amp; Low-Power Heartbeat" vertex="1">
+
+        <mxCell id="uc_telemetry_btn" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Transmit Battery Telemetry &amp; Low-Power Heartbeat" vertex="1">
           <mxGeometry height="55" width="220" x="50" y="860" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_pay_vietqr -->
-        <mxCell id="uc_pay_vietqr" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Process VietQR Payment
-&amp; Auto Webhook Reconciliation" vertex="1">
+
+        <mxCell id="uc_pay_vietqr" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Process VietQR Payment &amp; Auto Webhook Reconciliation" vertex="1">
           <mxGeometry height="60" width="230" x="470" y="90" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_cash_collection -->
-        <mxCell id="uc_cash_collection" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Collect &amp; Reconcile Cash Payments
-(Store Cash Vouchers &amp; Receipts)" vertex="1">
+
+        <mxCell id="uc_cash_collection" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Collect &amp; Reconcile Cash Payments (Store Cash Vouchers &amp; Receipts)" vertex="1">
           <mxGeometry height="60" width="230" x="470" y="180" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_order_fulfillment -->
-        <mxCell id="uc_order_fulfillment" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Prepare Orders &amp; Dispatch
-(Accept, Pack, Ready for Delivery)" vertex="1">
+
+        <mxCell id="uc_order_fulfillment" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Prepare Orders &amp; Dispatch (Accept, Pack, Ready for Delivery)" vertex="1">
           <mxGeometry height="60" width="230" x="470" y="270" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_driver_shift -->
-        <mxCell id="uc_driver_shift" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Check-in / Check-out Driver Shift
-(Roster &amp; Attendance)" vertex="1">
+
+        <mxCell id="uc_driver_shift" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Check-in / Check-out Driver Shift (Roster &amp; Attendance)" vertex="1">
           <mxGeometry height="55" width="230" x="470" y="490" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_delivery_duty -->
-        <mxCell id="uc_delivery_duty" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Accept Delivery Tasks
-&amp; Optimize Route" vertex="1">
+
+        <mxCell id="uc_delivery_duty" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Accept Delivery Tasks &amp; Optimize Route" vertex="1">
           <mxGeometry height="55" width="230" x="470" y="570" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_confirm_delivery -->
-        <mxCell id="uc_confirm_delivery" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Confirm Delivery Success
-&amp; Upload Photo Proof" vertex="1">
+
+        <mxCell id="uc_confirm_delivery" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Confirm Delivery Success &amp; Upload Photo Proof" vertex="1">
           <mxGeometry height="55" width="230" x="470" y="650" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_settle_overpayment -->
-        <mxCell id="uc_settle_overpayment" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Resolve Overpayment Obligations
-(Credit or Refund Settlement)" vertex="1">
+
+        <mxCell id="uc_settle_overpayment" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Resolve Overpayment Obligations (Credit or Refund Settlement)" vertex="1">
           <mxGeometry height="55" width="230" x="470" y="820" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_store_apply -->
-        <mxCell id="uc_store_apply" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Submit Store Application
-(Merchant Onboarding &amp; GPKD)" vertex="1">
+
+        <mxCell id="uc_store_apply" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Submit Store Application (Merchant Onboarding &amp; GPKD)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="60" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_manage_products -->
-        <mxCell id="uc_manage_products" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Products &amp; Catalogs
-(Pricing &amp; Discount Campaigns)" vertex="1">
+
+        <mxCell id="uc_manage_products" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Products &amp; Catalogs (Pricing &amp; Discount Campaigns)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="140" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_manage_inventory -->
-        <mxCell id="uc_manage_inventory" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Inventory &amp; Stock
-(Pessimistic Reservation)" vertex="1">
+
+        <mxCell id="uc_manage_inventory" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Inventory &amp; Stock (Pessimistic Reservation)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="220" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_store_rentals -->
-        <mxCell id="uc_store_rentals" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Button Rental Leases
-&amp; Hardware Custody" vertex="1">
+
+        <mxCell id="uc_store_rentals" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Button Rental Leases &amp; Hardware Custody" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="300" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_store_payout -->
-        <mxCell id="uc_store_payout" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Store Wallet &amp; Payout
-(Automated PayOS Disbursement)" vertex="1">
+
+        <mxCell id="uc_store_payout" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Store Wallet &amp; Payout (Automated PayOS Disbursement)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="380" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_pay_subscription -->
-        <mxCell id="uc_pay_subscription" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Pay Monthly Rental Charges
-(Billing Invoices &amp; Receipts)" vertex="1">
+
+        <mxCell id="uc_pay_subscription" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Pay Monthly Rental Charges (Billing Invoices &amp; Receipts)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="460" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_admin_approval -->
-        <mxCell id="uc_admin_approval" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Review &amp; Approve Store Applications
-(Compliance &amp; KYC Verification)" vertex="1">
+
+        <mxCell id="uc_admin_approval" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Review &amp; Approve Store Applications (Compliance &amp; KYC Verification)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="860" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_admin_users -->
-        <mxCell id="uc_admin_users" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Users, Roles &amp; Access
-(RBAC &amp; Account Suspensions)" vertex="1">
+
+        <mxCell id="uc_admin_users" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Users, Roles &amp; Access (RBAC &amp; Account Suspensions)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="940" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_admin_hardware -->
-        <mxCell id="uc_admin_hardware" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Central Button Stock
-&amp; Warehouse Allocation" vertex="1">
+
+        <mxCell id="uc_admin_hardware" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Manage Central Button Stock &amp; Warehouse Allocation" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1020" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_admin_plans -->
-        <mxCell id="uc_admin_plans" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Configure Rental Packages
-&amp; Subscription Plans" vertex="1">
+
+        <mxCell id="uc_admin_plans" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Configure Rental Packages &amp; Subscription Plans" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1100" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_admin_billing -->
-        <mxCell id="uc_admin_billing" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Generate &amp; Monitor Monthly Billing
-(Automated Cron Charges)" vertex="1">
+
+        <mxCell id="uc_admin_billing" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Generate &amp; Monitor Monthly Billing (Automated Cron Charges)" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1180" as="geometry" />
         </mxCell>
-        <!-- UseCase: uc_admin_audit -->
-        <mxCell id="uc_admin_audit" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Audit Financial Transactions
-&amp; Platform Analytics Dashboard" vertex="1">
+
+        <mxCell id="uc_admin_audit" parent="sys_boundary" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#0F172A;fontSize=11;fontStyle=1;align=center;" value="Audit Financial Transactions &amp; Platform Analytics Dashboard" vertex="1">
           <mxGeometry height="55" width="220" x="890" y="1260" as="geometry" />
         </mxCell>
         <mxCell id="uc_edge_1" edge="1" parent="1" source="act_customer" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#475569;strokeWidth=1.3;" target="uc_auth_cust">
