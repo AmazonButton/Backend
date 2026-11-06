@@ -14312,557 +14312,626 @@
     </mxGraphModel>
   </diagram>
   <diagram id="page_conceptual_diagram" name="[CDM] Conceptual Architecture &amp; Domain Model">
-    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="3400" pageHeight="2200" math="0" shadow="0">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="3500" pageHeight="2300" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-<mxCell id="chen_101" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;align=center;verticalAlign=middle;" value="&lt;b style=&quot;font-size: 18px;&quot;&gt;PETER CHEN CONCEPTUAL DATA MODEL (CDM) - CLICK-TO-ORDER PLATFORM&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;font-size: 11px;&quot;&gt;Black &amp;amp; White Academic ERD Notation: [Rectangle: Entity] — [Rhombus: Relationship] — [Ellipse: Attribute with PK underlined]&lt;/span&gt;" vertex="1">
-      <mxGeometry height="60" width="1600" x="800" y="40" as="geometry" />
+<mxCell id="chen_v2_201" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;align=center;verticalAlign=middle;" value="&lt;b style=&quot;font-size: 18px;&quot;&gt;SƠ ĐỒ THỰC THỂ LIÊN KẾT MỨC QUAN NIỆM (PETER CHEN CONCEPTUAL ERD)&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;font-size: 12px;&quot;&gt;HỆ THỐNG ĐẶT HÀNG QUA NÚT BẤM THÔNG MINH IOT (CLICK-TO-ORDER PLATFORM) — CHUẨN KÝ PHÁP CHEN ĐEN TRẮNG&lt;/span&gt;" vertex="1">
+      <mxGeometry height="65" width="1800" x="800" y="30" as="geometry" />
     </mxCell>
-<mxCell id="chen_102" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CUSTOMER" vertex="1">
-      <mxGeometry height="65" width="160" x="600" y="380" as="geometry" />
+<mxCell id="chen_v2_202" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.5;align=left;verticalAlign=top;spacing=8;" value="&lt;b style=&quot;font-size: 13px;&quot;&gt;BẢNG CHÚ GIẢI KÝ PHÁP PETER CHEN (CHEN'S ERD NOTATION LEGEND)&lt;/b&gt;&lt;br/&gt;&lt;hr/&gt;&lt;table style=&quot;width: 100%; font-size: 10px; text-align: left;&quot;&gt;&lt;tr&gt;&lt;td&gt;&lt;b&gt;[Hình chữ nhật đơn]&lt;/b&gt;: Thực thể mạnh (Strong Entity)&lt;/td&gt;&lt;td&gt;&lt;b&gt;[Elip nét liền]&lt;/b&gt;: Thuộc tính đơn (Simple Attribute)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;&lt;b&gt;[Hình chữ nhật kép]&lt;/b&gt;: Thực thể yếu (Weak Entity - cần thực thể chủ)&lt;/td&gt;&lt;td&gt;&lt;b&gt;[Chữ gạch chân]&lt;/b&gt;: Thuộc tính khóa chính (Primary Key)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;&lt;b&gt;[Hình thoi đơn]&lt;/b&gt;: Mối quan hệ giữa các thực thể (Relationship)&lt;/td&gt;&lt;td&gt;&lt;b&gt;[Elip nét đứt]&lt;/b&gt;: Thuộc tính suy diễn (Derived Attribute)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;&lt;b&gt;[Hình thoi kép]&lt;/b&gt;: Quan hệ định danh thực thể yếu (Identifying Rel)&lt;/td&gt;&lt;td&gt;&lt;b&gt;[Elip kép]&lt;/b&gt;: Thuộc tính đa trị (Multivalued Attribute)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;&lt;b&gt;[Đường đơn]&lt;/b&gt;: Tham gia bộ phận (Partial Participation: min=0)&lt;/td&gt;&lt;td&gt;&lt;b&gt;[Elip nối elip con]&lt;/b&gt;: Thuộc tính phức hợp (Composite Attribute)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;&lt;b&gt;[Đường đôi]&lt;/b&gt;: Tham gia toàn phần (Total Participation: min=1)&lt;/td&gt;&lt;td&gt;&lt;b&gt;1, N, M / (min, max)&lt;/b&gt;: Ràng buộc số lượng liên kết (Cardinality)&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;" vertex="1">
+      <mxGeometry height="145" width="850" x="2500" y="20" as="geometry" />
     </mxCell>
-<mxCell id="chen_103" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;customer_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="480.0" y="332.5" as="geometry" />
+<mxCell id="chen_v2_203" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CUSTOMER (Khách hàng)" vertex="1">
+      <mxGeometry height="70" width="170" x="650" y="420" as="geometry" />
     </mxCell>
-<mxCell id="chen_104" edge="1" parent="1" source="chen_102" target="chen_103" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_204" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;customer_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="532.5" y="375.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_205" edge="1" parent="1" source="chen_v2_203" target="chen_v2_204" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_206" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="phone_number" vertex="1">
+      <mxGeometry height="38" width="130" x="522.5" y="445.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_207" edge="1" parent="1" source="chen_v2_203" target="chen_v2_206" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_208" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="full_name" vertex="1">
+      <mxGeometry height="38" width="130" x="522.5" y="520.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_209" edge="1" parent="1" source="chen_v2_203" target="chen_v2_208" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_210" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="first_name" vertex="1">
+      <mxGeometry height="34" width="115" x="430.0" y="502.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_211" edge="1" parent="1" source="chen_v2_208" target="chen_v2_210" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_212" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="last_name" vertex="1">
+      <mxGeometry height="34" width="115" x="430.0" y="552.5" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_213" edge="1" parent="1" source="chen_v2_208" target="chen_v2_212" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_214" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="email" vertex="1">
+      <mxGeometry height="38" width="130" x="672.5" y="350.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_215" edge="1" parent="1" source="chen_v2_203" target="chen_v2_214" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_105" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="phone_number" vertex="1">
-      <mxGeometry height="38" width="125" x="470.0" y="402.5" as="geometry" />
+<mxCell id="chen_v2_216" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="status" vertex="1">
+      <mxGeometry height="38" width="130" x="822.5" y="355.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_106" edge="1" parent="1" source="chen_102" target="chen_105" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_217" edge="1" parent="1" source="chen_v2_203" target="chen_v2_216" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_107" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="full_name" vertex="1">
-      <mxGeometry height="38" width="125" x="480.0" y="472.5" as="geometry" />
+<mxCell id="chen_v2_218" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;double=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="contact_numbers" vertex="1">
+      <mxGeometry height="38" width="130" x="532.5" y="595.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_108" edge="1" parent="1" source="chen_102" target="chen_107" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_219" edge="1" parent="1" source="chen_v2_203" target="chen_v2_218" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_220" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="STORE (Gian hàng / Cửa hàng)" vertex="1">
+      <mxGeometry height="70" width="180" x="1650" y="420" as="geometry" />
     </mxCell>
-<mxCell id="chen_109" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="email" vertex="1">
-      <mxGeometry height="38" width="125" x="620.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_221" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;store_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="1577.5" y="350.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_110" edge="1" parent="1" source="chen_102" target="chen_109" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_222" edge="1" parent="1" source="chen_v2_220" target="chen_v2_221" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_111" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="status" vertex="1">
-      <mxGeometry height="38" width="125" x="760.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_223" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="store_name" vertex="1">
+      <mxGeometry height="38" width="130" x="1747.5" y="350.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_112" edge="1" parent="1" source="chen_102" target="chen_111" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_224" edge="1" parent="1" source="chen_v2_220" target="chen_v2_223" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_113" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="STORE" vertex="1">
-      <mxGeometry height="65" width="160" x="1600" y="380" as="geometry" />
+<mxCell id="chen_v2_225" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="store_address" vertex="1">
+      <mxGeometry height="38" width="130" x="1852.5" y="385.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_114" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;store_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="1520.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_226" edge="1" parent="1" source="chen_v2_220" target="chen_v2_225" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_227" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="province_city" vertex="1">
+      <mxGeometry height="34" width="115" x="1970.0" y="357.5" as="geometry" />
     </mxCell>
-<mxCell id="chen_115" edge="1" parent="1" source="chen_113" target="chen_114" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_228" edge="1" parent="1" source="chen_v2_225" target="chen_v2_227" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_116" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="store_name" vertex="1">
-      <mxGeometry height="38" width="125" x="1680.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_229" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="district_ward" vertex="1">
+      <mxGeometry height="34" width="115" x="1980.0" y="397.5" as="geometry" />
     </mxCell>
-<mxCell id="chen_117" edge="1" parent="1" source="chen_113" target="chen_116" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_230" edge="1" parent="1" source="chen_v2_225" target="chen_v2_229" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_118" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="address" vertex="1">
-      <mxGeometry height="38" width="125" x="1780.0" y="342.5" as="geometry" />
+<mxCell id="chen_v2_231" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="street_detail" vertex="1">
+      <mxGeometry height="34" width="115" x="1970.0" y="437.5" as="geometry" />
     </mxCell>
-<mxCell id="chen_119" edge="1" parent="1" source="chen_113" target="chen_118" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_232" edge="1" parent="1" source="chen_v2_225" target="chen_v2_231" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_120" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="operating_status" vertex="1">
-      <mxGeometry height="38" width="125" x="1780.0" y="412.5" as="geometry" />
+<mxCell id="chen_v2_233" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="operating_status" vertex="1">
+      <mxGeometry height="38" width="130" x="1847.5" y="485.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_121" edge="1" parent="1" source="chen_113" target="chen_120" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_234" edge="1" parent="1" source="chen_v2_220" target="chen_v2_233" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_122" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="contact_phone" vertex="1">
-      <mxGeometry height="38" width="125" x="1770.0" y="482.5" as="geometry" />
+<mxCell id="chen_v2_235" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="contact_phone" vertex="1">
+      <mxGeometry height="38" width="130" x="1837.5" y="545.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_123" edge="1" parent="1" source="chen_113" target="chen_122" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_236" edge="1" parent="1" source="chen_v2_220" target="chen_v2_235" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_237" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="PRODUCT (Sản phẩm)" vertex="1">
+      <mxGeometry height="70" width="170" x="2450" y="420" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_238" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;product_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="2392.5" y="350.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_124" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="PRODUCT" vertex="1">
-      <mxGeometry height="65" width="160" x="2400" y="380" as="geometry" />
+<mxCell id="chen_v2_239" edge="1" parent="1" source="chen_v2_237" target="chen_v2_238" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_125" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;product_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="2340.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_240" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="product_name" vertex="1">
+      <mxGeometry height="38" width="130" x="2542.5" y="350.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_126" edge="1" parent="1" source="chen_124" target="chen_125" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_241" edge="1" parent="1" source="chen_v2_237" target="chen_v2_240" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_127" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="product_name" vertex="1">
-      <mxGeometry height="38" width="125" x="2490.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_242" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="base_price" vertex="1">
+      <mxGeometry height="38" width="130" x="2637.5" y="385.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_128" edge="1" parent="1" source="chen_124" target="chen_127" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_243" edge="1" parent="1" source="chen_v2_237" target="chen_v2_242" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_129" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="base_price" vertex="1">
-      <mxGeometry height="38" width="125" x="2580.0" y="342.5" as="geometry" />
+<mxCell id="chen_v2_244" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="sku" vertex="1">
+      <mxGeometry height="38" width="130" x="2637.5" y="455.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_130" edge="1" parent="1" source="chen_124" target="chen_129" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_245" edge="1" parent="1" source="chen_v2_237" target="chen_v2_244" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_131" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="sku" vertex="1">
-      <mxGeometry height="38" width="125" x="2580.0" y="412.5" as="geometry" />
+<mxCell id="chen_v2_246" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="is_active" vertex="1">
+      <mxGeometry height="38" width="130" x="2627.5" y="525.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_132" edge="1" parent="1" source="chen_124" target="chen_131" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_247" edge="1" parent="1" source="chen_v2_237" target="chen_v2_246" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_248" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CATEGORY (Ngành hàng)" vertex="1">
+      <mxGeometry height="70" width="160" x="3050" y="420" as="geometry" />
     </mxCell>
-<mxCell id="chen_133" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="is_active" vertex="1">
-      <mxGeometry height="38" width="125" x="2570.0" y="482.5" as="geometry" />
+<mxCell id="chen_v2_249" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;category_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="3017.5" y="350.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_134" edge="1" parent="1" source="chen_124" target="chen_133" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_250" edge="1" parent="1" source="chen_v2_248" target="chen_v2_249" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_135" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CATEGORY" vertex="1">
-      <mxGeometry height="65" width="160" x="3000" y="380" as="geometry" />
+<mxCell id="chen_v2_251" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="category_name" vertex="1">
+      <mxGeometry height="38" width="130" x="3147.5" y="350.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_252" edge="1" parent="1" source="chen_v2_248" target="chen_v2_251" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_136" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;category_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="2970.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_253" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="display_order" vertex="1">
+      <mxGeometry height="38" width="130" x="3217.5" y="435.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_137" edge="1" parent="1" source="chen_135" target="chen_136" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_254" edge="1" parent="1" source="chen_v2_248" target="chen_v2_253" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_138" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="category_name" vertex="1">
-      <mxGeometry height="38" width="125" x="3100.0" y="312.5" as="geometry" />
+<mxCell id="chen_v2_255" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="is_active" vertex="1">
+      <mxGeometry height="38" width="130" x="3207.5" y="505.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_139" edge="1" parent="1" source="chen_135" target="chen_138" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_256" edge="1" parent="1" source="chen_v2_248" target="chen_v2_255" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_140" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="display_order" vertex="1">
-      <mxGeometry height="38" width="125" x="3170.0" y="392.5" as="geometry" />
+<mxCell id="chen_v2_257" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="BUTTON_RENTAL (Hợp đồng thuê nút)" vertex="1">
+      <mxGeometry height="70" width="180" x="650" y="980" as="geometry" />
     </mxCell>
-<mxCell id="chen_141" edge="1" parent="1" source="chen_135" target="chen_140" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_258" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;rental_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="527.5" y="935.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_259" edge="1" parent="1" source="chen_v2_257" target="chen_v2_258" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_142" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="is_active" vertex="1">
-      <mxGeometry height="38" width="125" x="3160.0" y="462.5" as="geometry" />
+<mxCell id="chen_v2_260" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="rental_code" vertex="1">
+      <mxGeometry height="38" width="130" x="517.5" y="1005.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_143" edge="1" parent="1" source="chen_135" target="chen_142" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_261" edge="1" parent="1" source="chen_v2_257" target="chen_v2_260" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_262" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="button_quantity" vertex="1">
+      <mxGeometry height="38" width="130" x="527.5" y="1075.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_144" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="BUTTON_RENTAL" vertex="1">
-      <mxGeometry height="65" width="170" x="600" y="950" as="geometry" />
+<mxCell id="chen_v2_263" edge="1" parent="1" source="chen_v2_257" target="chen_v2_262" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_145" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;rental_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="475.0" y="902.5" as="geometry" />
+<mxCell id="chen_v2_264" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="deposit_amount" vertex="1">
+      <mxGeometry height="38" width="130" x="527.5" y="1140.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_146" edge="1" parent="1" source="chen_144" target="chen_145" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_265" edge="1" parent="1" source="chen_v2_257" target="chen_v2_264" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_147" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="rental_code" vertex="1">
-      <mxGeometry height="38" width="125" x="465.0" y="972.5" as="geometry" />
+<mxCell id="chen_v2_266" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="start_date" vertex="1">
+      <mxGeometry height="38" width="130" x="667.5" y="1095.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_148" edge="1" parent="1" source="chen_144" target="chen_147" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_267" edge="1" parent="1" source="chen_v2_257" target="chen_v2_266" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_149" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="button_quantity" vertex="1">
-      <mxGeometry height="38" width="125" x="475.0" y="1042.5" as="geometry" />
+<mxCell id="chen_v2_268" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="expiry_date" vertex="1">
+      <mxGeometry height="38" width="130" x="787.5" y="1095.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_150" edge="1" parent="1" source="chen_144" target="chen_149" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_269" edge="1" parent="1" source="chen_v2_257" target="chen_v2_268" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_151" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="deposit_amount" vertex="1">
-      <mxGeometry height="38" width="125" x="485.0" y="1102.5" as="geometry" />
+<mxCell id="chen_v2_270" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;dashed=1;dashPattern=3 3;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="remaining_days" vertex="1">
+      <mxGeometry height="38" width="130" x="827.5" y="1145.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_152" edge="1" parent="1" source="chen_144" target="chen_151" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_271" edge="1" parent="1" source="chen_v2_257" target="chen_v2_270" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_272" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="IOT_BUTTON (Nút bấm phần cứng)" vertex="1">
+      <mxGeometry height="70" width="170" x="1300" y="980" as="geometry" />
     </mxCell>
-<mxCell id="chen_153" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="start_date" vertex="1">
-      <mxGeometry height="38" width="125" x="625.0" y="1062.5" as="geometry" />
+<mxCell id="chen_v2_273" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;button_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="1222.5" y="910.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_154" edge="1" parent="1" source="chen_144" target="chen_153" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_274" edge="1" parent="1" source="chen_v2_272" target="chen_v2_273" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_155" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="expiry_date" vertex="1">
-      <mxGeometry height="38" width="125" x="745.0" y="1062.5" as="geometry" />
+<mxCell id="chen_v2_275" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="device_serial_no" vertex="1">
+      <mxGeometry height="38" width="130" x="1382.5" y="910.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_156" edge="1" parent="1" source="chen_144" target="chen_155" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_276" edge="1" parent="1" source="chen_v2_272" target="chen_v2_275" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_157" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="IOT_BUTTON" vertex="1">
-      <mxGeometry height="65" width="160" x="1250" y="950" as="geometry" />
+<mxCell id="chen_v2_277" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="mac_address" vertex="1">
+      <mxGeometry height="38" width="130" x="1202.5" y="1090.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_158" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;button_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="1170.0" y="882.5" as="geometry" />
+<mxCell id="chen_v2_278" edge="1" parent="1" source="chen_v2_272" target="chen_v2_277" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_279" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="battery_level" vertex="1">
+      <mxGeometry height="38" width="130" x="1342.5" y="1090.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_159" edge="1" parent="1" source="chen_157" target="chen_158" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_280" edge="1" parent="1" source="chen_v2_272" target="chen_v2_279" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_160" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="device_serial_no" vertex="1">
-      <mxGeometry height="38" width="125" x="1320.0" y="882.5" as="geometry" />
+<mxCell id="chen_v2_281" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="inventory_state" vertex="1">
+      <mxGeometry height="38" width="130" x="1477.5" y="1080.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_161" edge="1" parent="1" source="chen_157" target="chen_160" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_282" edge="1" parent="1" source="chen_v2_272" target="chen_v2_281" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_162" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="mac_address" vertex="1">
-      <mxGeometry height="38" width="125" x="1150.0" y="1052.5" as="geometry" />
+<mxCell id="chen_v2_283" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;double=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="telemetry_logs" vertex="1">
+      <mxGeometry height="38" width="130" x="1477.5" y="1140.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_163" edge="1" parent="1" source="chen_157" target="chen_162" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_284" edge="1" parent="1" source="chen_v2_272" target="chen_v2_283" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_164" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="battery_level" vertex="1">
-      <mxGeometry height="38" width="125" x="1290.0" y="1052.5" as="geometry" />
+<mxCell id="chen_v2_285" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="ORDER (Đơn hàng)" vertex="1">
+      <mxGeometry height="70" width="170" x="1950" y="980" as="geometry" />
     </mxCell>
-<mxCell id="chen_165" edge="1" parent="1" source="chen_157" target="chen_164" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_286" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;order_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="1862.5" y="910.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_287" edge="1" parent="1" source="chen_v2_285" target="chen_v2_286" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_166" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="inventory_state" vertex="1">
-      <mxGeometry height="38" width="125" x="1420.0" y="1042.5" as="geometry" />
+<mxCell id="chen_v2_288" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="order_code" vertex="1">
+      <mxGeometry height="38" width="130" x="2022.5" y="910.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_167" edge="1" parent="1" source="chen_157" target="chen_166" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_289" edge="1" parent="1" source="chen_v2_285" target="chen_v2_288" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_168" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="ORDER" vertex="1">
-      <mxGeometry height="65" width="160" x="1900" y="950" as="geometry" />
+<mxCell id="chen_v2_290" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;dashed=1;dashPattern=3 3;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="total_amount" vertex="1">
+      <mxGeometry height="38" width="130" x="2137.5" y="935.0" as="geometry" />
+    </mxCell>
+<mxCell id="chen_v2_291" edge="1" parent="1" source="chen_v2_285" target="chen_v2_290" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+      <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_169" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;order_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="1810.0" y="882.5" as="geometry" />
+<mxCell id="chen_v2_292" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="order_status" vertex="1">
+      <mxGeometry height="38" width="130" x="1842.5" y="1090.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_170" edge="1" parent="1" source="chen_168" target="chen_169" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_293" edge="1" parent="1" source="chen_v2_285" target="chen_v2_292" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_171" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="order_code" vertex="1">
-      <mxGeometry height="38" width="125" x="1960.0" y="882.5" as="geometry" />
+<mxCell id="chen_v2_294" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="created_at" vertex="1">
+      <mxGeometry height="38" width="130" x="1972.5" y="1095.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_172" edge="1" parent="1" source="chen_168" target="chen_171" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_295" edge="1" parent="1" source="chen_v2_285" target="chen_v2_294" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_173" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="total_amount" vertex="1">
-      <mxGeometry height="38" width="125" x="2080.0" y="902.5" as="geometry" />
+<mxCell id="chen_v2_296" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="delivery_address" vertex="1">
+      <mxGeometry height="38" width="130" x="2127.5" y="1090.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_174" edge="1" parent="1" source="chen_168" target="chen_173" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_297" edge="1" parent="1" source="chen_v2_285" target="chen_v2_296" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_175" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="order_status" vertex="1">
-      <mxGeometry height="38" width="125" x="1790.0" y="1052.5" as="geometry" />
+<mxCell id="chen_v2_298" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="recipient_name" vertex="1">
+      <mxGeometry height="34" width="115" x="2250.0" y="1067.5" as="geometry" />
     </mxCell>
-<mxCell id="chen_176" edge="1" parent="1" source="chen_168" target="chen_175" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_299" edge="1" parent="1" source="chen_v2_296" target="chen_v2_298" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_177" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="created_at" vertex="1">
-      <mxGeometry height="38" width="125" x="1920.0" y="1062.5" as="geometry" />
+<mxCell id="chen_v2_300" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="detailed_addr" vertex="1">
+      <mxGeometry height="34" width="115" x="2250.0" y="1112.5" as="geometry" />
     </mxCell>
-<mxCell id="chen_178" edge="1" parent="1" source="chen_168" target="chen_177" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_301" edge="1" parent="1" source="chen_v2_296" target="chen_v2_300" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_179" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="delivery_address" vertex="1">
-      <mxGeometry height="38" width="125" x="2060.0" y="1052.5" as="geometry" />
+<mxCell id="chen_v2_302" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontColor=#000000;fontSize=9;align=center;" value="phone_contact" vertex="1">
+      <mxGeometry height="34" width="115" x="2250.0" y="1157.5" as="geometry" />
     </mxCell>
-<mxCell id="chen_180" edge="1" parent="1" source="chen_168" target="chen_179" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_303" edge="1" parent="1" source="chen_v2_296" target="chen_v2_302" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_181" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="ORDER_ITEM" vertex="1">
-      <mxGeometry height="65" width="160" x="2600" y="950" as="geometry" />
+<mxCell id="chen_v2_304" parent="1" style="rounded=0;whiteSpace=wrap;html=1;double=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="ORDER_ITEM (Chi tiết đơn hàng)" vertex="1">
+      <mxGeometry height="70" width="180" x="2650" y="980" as="geometry" />
     </mxCell>
-<mxCell id="chen_182" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;order_item_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="2620.0" y="882.5" as="geometry" />
+<mxCell id="chen_v2_305" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;item_seq_no&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="2677.5" y="910.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_183" edge="1" parent="1" source="chen_181" target="chen_182" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_306" edge="1" parent="1" source="chen_v2_304" target="chen_v2_305" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_184" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="quantity" vertex="1">
-      <mxGeometry height="38" width="125" x="2770.0" y="902.5" as="geometry" />
+<mxCell id="chen_v2_307" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="quantity" vertex="1">
+      <mxGeometry height="38" width="130" x="2832.5" y="935.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_185" edge="1" parent="1" source="chen_181" target="chen_184" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_308" edge="1" parent="1" source="chen_v2_304" target="chen_v2_307" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_186" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="unit_price" vertex="1">
-      <mxGeometry height="38" width="125" x="2780.0" y="972.5" as="geometry" />
+<mxCell id="chen_v2_309" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="unit_price" vertex="1">
+      <mxGeometry height="38" width="130" x="2842.5" y="1005.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_187" edge="1" parent="1" source="chen_181" target="chen_186" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_310" edge="1" parent="1" source="chen_v2_304" target="chen_v2_309" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_188" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="total_price" vertex="1">
-      <mxGeometry height="38" width="125" x="2770.0" y="1042.5" as="geometry" />
+<mxCell id="chen_v2_311" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;dashed=1;dashPattern=3 3;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="total_item_price" vertex="1">
+      <mxGeometry height="38" width="130" x="2837.5" y="1080.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_189" edge="1" parent="1" source="chen_181" target="chen_188" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_312" edge="1" parent="1" source="chen_v2_304" target="chen_v2_311" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_190" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CUSTOMER_BANK_ACCOUNT" vertex="1">
-      <mxGeometry height="65" width="200" x="150" y="660" as="geometry" />
+<mxCell id="chen_v2_313" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="CUSTOMER_BANK_ACCOUNT (Tài khoản ngân hàng)" vertex="1">
+      <mxGeometry height="70" width="210" x="180" y="680" as="geometry" />
     </mxCell>
-<mxCell id="chen_191" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;bank_account_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="110.0" y="597.5" as="geometry" />
+<mxCell id="chen_v2_314" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;bank_account_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="142.5" y="615.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_192" edge="1" parent="1" source="chen_190" target="chen_191" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_315" edge="1" parent="1" source="chen_v2_313" target="chen_v2_314" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_193" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="bank_bin" vertex="1">
-      <mxGeometry height="38" width="125" x="270.0" y="597.5" as="geometry" />
+<mxCell id="chen_v2_316" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="bank_bin" vertex="1">
+      <mxGeometry height="38" width="130" x="302.5" y="615.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_194" edge="1" parent="1" source="chen_190" target="chen_193" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_317" edge="1" parent="1" source="chen_v2_313" target="chen_v2_316" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_195" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="account_number_masked" vertex="1">
-      <mxGeometry height="38" width="125" x="80.0" y="752.5" as="geometry" />
+<mxCell id="chen_v2_318" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="account_number_masked" vertex="1">
+      <mxGeometry height="38" width="130" x="102.5" y="780.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_196" edge="1" parent="1" source="chen_190" target="chen_195" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_319" edge="1" parent="1" source="chen_v2_313" target="chen_v2_318" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_197" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="account_holder_name" vertex="1">
-      <mxGeometry height="38" width="125" x="230.0" y="752.5" as="geometry" />
+<mxCell id="chen_v2_320" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="account_holder_name" vertex="1">
+      <mxGeometry height="38" width="130" x="262.5" y="780.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_198" edge="1" parent="1" source="chen_190" target="chen_197" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_321" edge="1" parent="1" source="chen_v2_313" target="chen_v2_320" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_199" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="verification_status" vertex="1">
-      <mxGeometry height="38" width="125" x="350.0" y="732.5" as="geometry" />
+<mxCell id="chen_v2_322" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="verification_status" vertex="1">
+      <mxGeometry height="38" width="130" x="392.5" y="760.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_200" edge="1" parent="1" source="chen_190" target="chen_199" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_323" edge="1" parent="1" source="chen_v2_313" target="chen_v2_322" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_201" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="STORE_WALLET" vertex="1">
-      <mxGeometry height="65" width="160" x="1600" y="180" as="geometry" />
+<mxCell id="chen_v2_324" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="STORE_WALLET (Ví tiền cửa hàng)" vertex="1">
+      <mxGeometry height="70" width="170" x="1650" y="200" as="geometry" />
     </mxCell>
-<mxCell id="chen_202" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;wallet_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="1490.0" y="152.5" as="geometry" />
+<mxCell id="chen_v2_325" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;wallet_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="1537.5" y="175.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_203" edge="1" parent="1" source="chen_201" target="chen_202" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_326" edge="1" parent="1" source="chen_v2_324" target="chen_v2_325" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_204" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="balance" vertex="1">
-      <mxGeometry height="38" width="125" x="1510.0" y="242.5" as="geometry" />
+<mxCell id="chen_v2_327" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="balance" vertex="1">
+      <mxGeometry height="38" width="130" x="1557.5" y="265.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_205" edge="1" parent="1" source="chen_201" target="chen_204" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_328" edge="1" parent="1" source="chen_v2_324" target="chen_v2_327" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_206" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="frozen_balance" vertex="1">
-      <mxGeometry height="38" width="125" x="1760.0" y="152.5" as="geometry" />
+<mxCell id="chen_v2_329" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="frozen_balance" vertex="1">
+      <mxGeometry height="38" width="130" x="1817.5" y="175.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_207" edge="1" parent="1" source="chen_201" target="chen_206" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_330" edge="1" parent="1" source="chen_v2_324" target="chen_v2_329" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_208" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="updated_at" vertex="1">
-      <mxGeometry height="38" width="125" x="1760.0" y="242.5" as="geometry" />
+<mxCell id="chen_v2_331" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="updated_at" vertex="1">
+      <mxGeometry height="38" width="130" x="1817.5" y="265.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_209" edge="1" parent="1" source="chen_201" target="chen_208" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_332" edge="1" parent="1" source="chen_v2_324" target="chen_v2_331" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_210" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="PAYMENT_TRANSACTION" vertex="1">
-      <mxGeometry height="65" width="190" x="1400" y="1500" as="geometry" />
+<mxCell id="chen_v2_333" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="PAYMENT_TRANSACTION (Giao dịch thanh toán)" vertex="1">
+      <mxGeometry height="70" width="200" x="1450" y="1550" as="geometry" />
     </mxCell>
-<mxCell id="chen_211" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;transaction_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="1305.0" y="1462.5" as="geometry" />
+<mxCell id="chen_v2_334" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;transaction_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="1352.5" y="1515.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_212" edge="1" parent="1" source="chen_210" target="chen_211" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_335" edge="1" parent="1" source="chen_v2_333" target="chen_v2_334" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_213" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="amount" vertex="1">
-      <mxGeometry height="38" width="125" x="1295.0" y="1542.5" as="geometry" />
+<mxCell id="chen_v2_336" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="amount" vertex="1">
+      <mxGeometry height="38" width="130" x="1342.5" y="1595.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_214" edge="1" parent="1" source="chen_210" target="chen_213" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_337" edge="1" parent="1" source="chen_v2_333" target="chen_v2_336" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_215" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="payment_method" vertex="1">
-      <mxGeometry height="38" width="125" x="1315.0" y="1612.5" as="geometry" />
+<mxCell id="chen_v2_338" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="payment_method" vertex="1">
+      <mxGeometry height="38" width="130" x="1362.5" y="1670.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_216" edge="1" parent="1" source="chen_210" target="chen_215" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_339" edge="1" parent="1" source="chen_v2_333" target="chen_v2_338" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_217" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="payment_status" vertex="1">
-      <mxGeometry height="38" width="125" x="1475.0" y="1612.5" as="geometry" />
+<mxCell id="chen_v2_340" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="payment_status" vertex="1">
+      <mxGeometry height="38" width="130" x="1532.5" y="1670.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_218" edge="1" parent="1" source="chen_210" target="chen_217" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_341" edge="1" parent="1" source="chen_v2_333" target="chen_v2_340" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_219" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="provider_ref" vertex="1">
-      <mxGeometry height="38" width="125" x="1595.0" y="1592.5" as="geometry" />
+<mxCell id="chen_v2_342" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="provider_ref" vertex="1">
+      <mxGeometry height="38" width="130" x="1657.5" y="1650.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_220" edge="1" parent="1" source="chen_210" target="chen_219" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_343" edge="1" parent="1" source="chen_v2_333" target="chen_v2_342" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_221" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="DRIVER_DUTY" vertex="1">
-      <mxGeometry height="65" width="160" x="2300" y="1500" as="geometry" />
+<mxCell id="chen_v2_344" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="DRIVER_DUTY (Phân công tài xế)" vertex="1">
+      <mxGeometry height="70" width="170" x="2350" y="1550" as="geometry" />
     </mxCell>
-<mxCell id="chen_222" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;duty_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="2190.0" y="1532.5" as="geometry" />
+<mxCell id="chen_v2_345" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;duty_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="2237.5" y="1585.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_223" edge="1" parent="1" source="chen_221" target="chen_222" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_346" edge="1" parent="1" source="chen_v2_344" target="chen_v2_345" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_224" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="driver_user_id" vertex="1">
-      <mxGeometry height="38" width="125" x="2210.0" y="1602.5" as="geometry" />
+<mxCell id="chen_v2_347" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="driver_user_id" vertex="1">
+      <mxGeometry height="38" width="130" x="2257.5" y="1660.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_225" edge="1" parent="1" source="chen_221" target="chen_224" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_348" edge="1" parent="1" source="chen_v2_344" target="chen_v2_347" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_226" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="shift_status" vertex="1">
-      <mxGeometry height="38" width="125" x="2340.0" y="1612.5" as="geometry" />
+<mxCell id="chen_v2_349" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="shift_status" vertex="1">
+      <mxGeometry height="38" width="130" x="2397.5" y="1670.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_227" edge="1" parent="1" source="chen_221" target="chen_226" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_350" edge="1" parent="1" source="chen_v2_344" target="chen_v2_349" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_228" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="duty_date" vertex="1">
-      <mxGeometry height="38" width="125" x="2460.0" y="1592.5" as="geometry" />
+<mxCell id="chen_v2_351" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="duty_date" vertex="1">
+      <mxGeometry height="38" width="130" x="2517.5" y="1650.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_229" edge="1" parent="1" source="chen_221" target="chen_228" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_352" edge="1" parent="1" source="chen_v2_344" target="chen_v2_351" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_230" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="DEPOSIT_REFUND" vertex="1">
-      <mxGeometry height="65" width="170" x="400" y="1500" as="geometry" />
+<mxCell id="chen_v2_353" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.8;fontColor=#000000;fontStyle=1;fontSize=13;align=center;" value="DEPOSIT_REFUND (Lệnh hoàn tiền cọc)" vertex="1">
+      <mxGeometry height="70" width="180" x="450" y="1550" as="geometry" />
     </mxCell>
-<mxCell id="chen_231" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;refund_id&lt;/u&gt;" vertex="1">
-      <mxGeometry height="38" width="125" x="285.0" y="1512.5" as="geometry" />
+<mxCell id="chen_v2_354" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="&lt;u&gt;refund_id&lt;/u&gt;" vertex="1">
+      <mxGeometry height="38" width="130" x="332.5" y="1565.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_232" edge="1" parent="1" source="chen_230" target="chen_231" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_355" edge="1" parent="1" source="chen_v2_353" target="chen_v2_354" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_233" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_code" vertex="1">
-      <mxGeometry height="38" width="125" x="295.0" y="1582.5" as="geometry" />
+<mxCell id="chen_v2_356" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_code" vertex="1">
+      <mxGeometry height="38" width="130" x="342.5" y="1640.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_234" edge="1" parent="1" source="chen_230" target="chen_233" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_357" edge="1" parent="1" source="chen_v2_353" target="chen_v2_356" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_235" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_amount" vertex="1">
-      <mxGeometry height="38" width="125" x="425.0" y="1612.5" as="geometry" />
+<mxCell id="chen_v2_358" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_amount" vertex="1">
+      <mxGeometry height="38" width="130" x="477.5" y="1670.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_236" edge="1" parent="1" source="chen_230" target="chen_235" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_359" edge="1" parent="1" source="chen_v2_353" target="chen_v2_358" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_237" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_status" vertex="1">
-      <mxGeometry height="38" width="125" x="555.0" y="1592.5" as="geometry" />
+<mxCell id="chen_v2_360" parent="1" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.2;fontColor=#000000;fontSize=10;align=center;" value="refund_status" vertex="1">
+      <mxGeometry height="38" width="130" x="612.5" y="1650.0" as="geometry" />
     </mxCell>
-<mxCell id="chen_238" edge="1" parent="1" source="chen_230" target="chen_237" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
+<mxCell id="chen_v2_361" edge="1" parent="1" source="chen_v2_353" target="chen_v2_360" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1;">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_239" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="VERIFIES" vertex="1">
-      <mxGeometry height="65" width="100" x="370" y="520" as="geometry" />
+<mxCell id="chen_v2_362" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="VERIFIES (Xác thực)" vertex="1">
+      <mxGeometry height="70" width="110" x="410" y="550" as="geometry" />
     </mxCell>
-<mxCell id="chen_240" edge="1" parent="1" source="chen_102" target="chen_239" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_363" edge="1" parent="1" source="chen_v2_203" target="chen_v2_362" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_241" edge="1" parent="1" source="chen_239" target="chen_190" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_364" edge="1" parent="1" source="chen_v2_362" target="chen_v2_313" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_242" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="RENTS" vertex="1">
-      <mxGeometry height="65" width="100" x="600" y="680" as="geometry" />
+<mxCell id="chen_v2_365" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="RENTS (Thuê nút)" vertex="1">
+      <mxGeometry height="70" width="110" x="650" y="710" as="geometry" />
     </mxCell>
-<mxCell id="chen_243" edge="1" parent="1" source="chen_102" target="chen_242" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_366" edge="1" parent="1" source="chen_v2_203" target="chen_v2_365" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_244" edge="1" parent="1" source="chen_242" target="chen_144" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_367" edge="1" parent="1" source="chen_v2_365" target="chen_v2_257" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_245" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="CONTAINS" vertex="1">
-      <mxGeometry height="65" width="110" x="950" y="950" as="geometry" />
+<mxCell id="chen_v2_368" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="CONTAINS (Gán nút)" vertex="1">
+      <mxGeometry height="70" width="115" x="1000" y="980" as="geometry" />
     </mxCell>
-<mxCell id="chen_246" edge="1" parent="1" source="chen_144" target="chen_245" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_369" edge="1" parent="1" source="chen_v2_257" target="chen_v2_368" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (1,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_247" edge="1" parent="1" source="chen_245" target="chen_157" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_370" edge="1" parent="1" source="chen_v2_368" target="chen_v2_272" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_248" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="TRIGGERS" vertex="1">
-      <mxGeometry height="65" width="110" x="1580" y="950" as="geometry" />
+<mxCell id="chen_v2_371" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="TRIGGERS (Bấm nút)" vertex="1">
+      <mxGeometry height="70" width="115" x="1630" y="980" as="geometry" />
     </mxCell>
-<mxCell id="chen_249" edge="1" parent="1" source="chen_157" target="chen_248" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_372" edge="1" parent="1" source="chen_v2_272" target="chen_v2_371" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_250" edge="1" parent="1" source="chen_248" target="chen_168" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_373" edge="1" parent="1" source="chen_v2_371" target="chen_v2_285" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (0,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_251" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="PLACES" vertex="1">
-      <mxGeometry height="65" width="100" x="1250" y="680" as="geometry" />
+<mxCell id="chen_v2_374" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="PLACES (Đặt đơn)" vertex="1">
+      <mxGeometry height="70" width="110" x="1300" y="710" as="geometry" />
     </mxCell>
-<mxCell id="chen_252" edge="1" parent="1" source="chen_102" target="chen_251" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_375" edge="1" parent="1" source="chen_v2_203" target="chen_v2_374" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_253" edge="1" parent="1" source="chen_251" target="chen_168" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_376" edge="1" parent="1" source="chen_v2_374" target="chen_v2_285" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_254" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="FULFILLS" vertex="1">
-      <mxGeometry height="65" width="100" x="1750" y="680" as="geometry" />
+<mxCell id="chen_v2_377" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="FULFILLS (Xử lý đơn)" vertex="1">
+      <mxGeometry height="70" width="110" x="1800" y="710" as="geometry" />
     </mxCell>
-<mxCell id="chen_255" edge="1" parent="1" source="chen_113" target="chen_254" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_378" edge="1" parent="1" source="chen_v2_220" target="chen_v2_377" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_256" edge="1" parent="1" source="chen_254" target="chen_168" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_379" edge="1" parent="1" source="chen_v2_377" target="chen_v2_285" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_257" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="OWNS" vertex="1">
-      <mxGeometry height="65" width="100" x="2000" y="380" as="geometry" />
+<mxCell id="chen_v2_380" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="OWNS (Sở hữu)" vertex="1">
+      <mxGeometry height="70" width="110" x="2060" y="420" as="geometry" />
     </mxCell>
-<mxCell id="chen_258" edge="1" parent="1" source="chen_113" target="chen_257" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_381" edge="1" parent="1" source="chen_v2_220" target="chen_v2_380" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_259" edge="1" parent="1" source="chen_257" target="chen_124" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_382" edge="1" parent="1" source="chen_v2_380" target="chen_v2_237" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_260" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="CLASSIFIES" vertex="1">
-      <mxGeometry height="65" width="110" x="2700" y="380" as="geometry" />
+<mxCell id="chen_v2_383" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="CLASSIFIES (Phân loại)" vertex="1">
+      <mxGeometry height="70" width="115" x="2760" y="420" as="geometry" />
     </mxCell>
-<mxCell id="chen_261" edge="1" parent="1" source="chen_135" target="chen_260" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_384" edge="1" parent="1" source="chen_v2_248" target="chen_v2_383" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_262" edge="1" parent="1" source="chen_260" target="chen_124" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_385" edge="1" parent="1" source="chen_v2_383" target="chen_v2_237" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_263" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="INCLUDES" vertex="1">
-      <mxGeometry height="65" width="110" x="2250" y="950" as="geometry" />
+<mxCell id="chen_v2_386" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;double=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="INCLUDES (Gồm mục)" vertex="1">
+      <mxGeometry height="70" width="120" x="2310" y="980" as="geometry" />
     </mxCell>
-<mxCell id="chen_264" edge="1" parent="1" source="chen_168" target="chen_263" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_387" edge="1" parent="1" source="chen_v2_285" target="chen_v2_386" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (1,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_265" edge="1" parent="1" source="chen_263" target="chen_181" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_388" edge="1" parent="1" source="chen_v2_386" target="chen_v2_304" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_266" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="ORDERED_AS" vertex="1">
-      <mxGeometry height="65" width="120" x="2500" y="680" as="geometry" />
+<mxCell id="chen_v2_389" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="ORDERED_AS (Là mặt hàng)" vertex="1">
+      <mxGeometry height="70" width="120" x="2560" y="710" as="geometry" />
     </mxCell>
-<mxCell id="chen_267" edge="1" parent="1" source="chen_124" target="chen_266" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_390" edge="1" parent="1" source="chen_v2_237" target="chen_v2_389" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_268" edge="1" parent="1" source="chen_266" target="chen_181" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_391" edge="1" parent="1" source="chen_v2_389" target="chen_v2_304" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_269" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="MANAGES" vertex="1">
-      <mxGeometry height="60" width="100" x="1600" y="280" as="geometry" />
+<mxCell id="chen_v2_392" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="MANAGES (Quản lý ví)" vertex="1">
+      <mxGeometry height="65" width="110" x="1650" y="310" as="geometry" />
     </mxCell>
-<mxCell id="chen_270" edge="1" parent="1" source="chen_113" target="chen_269" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_393" edge="1" parent="1" source="chen_v2_220" target="chen_v2_392" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_271" edge="1" parent="1" source="chen_269" target="chen_201" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_394" edge="1" parent="1" source="chen_v2_392" target="chen_v2_324" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_272" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="SETTLED_BY" vertex="1">
-      <mxGeometry height="65" width="110" x="1680" y="1250" as="geometry" />
+<mxCell id="chen_v2_395" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="SETTLED_BY (Quyết toán)" vertex="1">
+      <mxGeometry height="70" width="120" x="1720" y="1280" as="geometry" />
     </mxCell>
-<mxCell id="chen_273" edge="1" parent="1" source="chen_168" target="chen_272" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_396" edge="1" parent="1" source="chen_v2_285" target="chen_v2_395" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_274" edge="1" parent="1" source="chen_272" target="chen_210" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_397" edge="1" parent="1" source="chen_v2_395" target="chen_v2_333" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_275" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="DELIVERED_BY" vertex="1">
-      <mxGeometry height="65" width="120" x="2100" y="1250" as="geometry" />
+<mxCell id="chen_v2_398" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="DELIVERED_BY (Giao bởi)" vertex="1">
+      <mxGeometry height="70" width="125" x="2150" y="1280" as="geometry" />
     </mxCell>
-<mxCell id="chen_276" edge="1" parent="1" source="chen_168" target="chen_275" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_399" edge="1" parent="1" source="chen_v2_285" target="chen_v2_398" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (0,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_277" edge="1" parent="1" source="chen_275" target="chen_221" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_400" edge="1" parent="1" source="chen_v2_398" target="chen_v2_344" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_278" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="REFUNDS" vertex="1">
-      <mxGeometry height="65" width="100" x="500" y="1250" as="geometry" />
+<mxCell id="chen_v2_401" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="REFUNDS (Hoàn cọc)" vertex="1">
+      <mxGeometry height="70" width="110" x="540" y="1280" as="geometry" />
     </mxCell>
-<mxCell id="chen_279" edge="1" parent="1" source="chen_144" target="chen_278" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_402" edge="1" parent="1" source="chen_v2_257" target="chen_v2_401" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_280" edge="1" parent="1" source="chen_278" target="chen_230" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_403" edge="1" parent="1" source="chen_v2_401" target="chen_v2_353" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_281" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="DISBURSED_TO" vertex="1">
-      <mxGeometry height="65" width="130" x="250" y="1150" as="geometry" />
+<mxCell id="chen_v2_404" parent="1" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1.6;fontColor=#000000;fontStyle=1;fontSize=10;align=center;" value="DISBURSED_TO (Chuyển khoản)" vertex="1">
+      <mxGeometry height="70" width="130" x="290" y="1180" as="geometry" />
     </mxCell>
-<mxCell id="chen_282" edge="1" parent="1" source="chen_230" target="chen_281" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N">
+<mxCell id="chen_v2_405" edge="1" parent="1" source="chen_v2_353" target="chen_v2_404" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;double=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="N (1,1)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
-<mxCell id="chen_283" edge="1" parent="1" source="chen_281" target="chen_190" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontStyle=1;fontSize=11;" value="1">
+<mxCell id="chen_v2_406" edge="1" parent="1" source="chen_v2_404" target="chen_v2_313" style="edgeStyle=straight;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#000000;strokeWidth=1.3;fontColor=#000000;fontStyle=1;fontSize=11;" value="1 (0,N)">
       <mxGeometry relative="1" as="geometry" />
     </mxCell>
       </root>

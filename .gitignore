@@ -25,3 +25,5 @@ firebase-service-account.json
 # Context & Scratch Directory
 context/
 scratch/
+*.dtmp
+.*.dtmp
