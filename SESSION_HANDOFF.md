@@ -1,5 +1,28 @@
 # Project Handoff & Session Context
 
+### [2026-11-07] Peter Chen Conceptual ERD Notation (Black & White Academic Style)
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Peter Chen Conceptual ERD Redraw in Monochrome (Black & White)**:
+    - Redrew Page 2 `[CDM] Conceptual Architecture & Domain Model` in [BRD/ERD_Level_3_Editable.drawio](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio) strictly following the authentic Peter Chen ERD model from user reference image `media_1794006834624_f1fa921a.png`.
+    - Pure Black & White monochrome styling: `#FFFFFF` fill, `#000000` stroke (1.8 width for entities, 1.6 for relationships, 1.2 for attributes), `#000000` font color, zero colored fills.
+    - Notation Mapping:
+      * **Entities (Rectangles)**: `CUSTOMER`, `STORE`, `PRODUCT`, `CATEGORY`, `BUTTON_RENTAL`, `IOT_BUTTON`, `ORDER`, `ORDER_ITEM`, `CUSTOMER_BANK_ACCOUNT`, `STORE_WALLET`, `PAYMENT_TRANSACTION`, `DRIVER_DUTY`, `DEPOSIT_REFUND`.
+      * **Relationships (Diamonds / Rhombus)**: `RENTS`, `CONTAINS`, `TRIGGERS`, `PLACES`, `FULFILLS`, `OWNS`, `CLASSIFIES`, `INCLUDES`, `ORDERED_AS`, `MANAGES`, `SETTLED_BY`, `DELIVERED_BY`, `VERIFIES`, `REFUNDS`, `DISBURSED_TO`.
+      * **Attributes (Ellipses)**: Primary keys underlined (`<u>customer_id</u>`, `<u>store_id</u>`, `<u>product_id</u>`, etc.) connected via straight solid lines to entities.
+      * **Cardinalities**: Explicit `1`, `N`, `M` connectors labeled on relationships.
+  * **Build & XML Verification**:
+    - `python -c "import xml.etree.ElementTree as ET; ET.parse('BRD/ERD_Level_3_Editable.drawio')"`: PASS (all 25 diagrams well-formed).
+    - `npx tsc --noEmit --incremental false`: PASS (0 errors, code 0).
+    - `git diff --check`: PASS (0 whitespace issues).
+    - Synchronized across local, GitHub `main` (commit `d20de73`), and AWS EC2 Node-3.
+- **Files Modified**:
+  * `BRD/ERD_Level_3_Editable.drawio`
+  * `SESSION_HANDOFF.md`
+- **Verification Evidence**:
+  * Clean XML parse of 25 diagrams verified via Python ElementTree.
+  * AWS EC2 Node-3 pulled commit `d20de73` successfully.
+
 ### [2026-11-07] Draw.io XML Entity Parsing Fix & Multi-Instance API Speed Benchmarking
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:
