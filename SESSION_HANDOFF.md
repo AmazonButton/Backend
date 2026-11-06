@@ -1,5 +1,29 @@
 # Project Handoff & Session Context
 
+### [2026-11-07] Advanced Peter Chen ERD Notation Synthesis (Weak Entities, Identifying Relationships & Legend)
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Advanced Peter Chen ERD Notation**:
+    - Incorporated the full spectrum of Chen's ERD notations into Page 2 `[CDM] Conceptual Architecture & Domain Model` in [BRD/ERD_Level_3_Editable.drawio](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio):
+      * **Weak Entity (Hình chữ nhật kép)**: `ORDER_ITEM` (`double=1;`), identifying partial key `<u>item_seq_no</u>`.
+      * **Identifying Relationship (Hình thoi kép)**: `INCLUDES` (`double=1;`) binding weak entity `ORDER_ITEM` to strong entity `ORDER`.
+      * **Derived Attributes (Elip nét đứt `dashed=1;`)**: `total_amount` on `ORDER`, `total_item_price` on `ORDER_ITEM`, `remaining_days` on `BUTTON_RENTAL`.
+      * **Multivalued Attributes (Elip kép `double=1;`)**: `contact_numbers` on `CUSTOMER`, `telemetry_logs` on `IOT_BUTTON`.
+      * **Composite Attributes (Elip phân nhánh)**: `full_name` -> (`first_name`, `last_name`), `store_address` -> (`province_city`, `district_ward`, `street_detail`), `delivery_address` -> (`recipient_name`, `detailed_addr`, `phone_contact`).
+      * **Total vs. Partial Participation**: Total participation (`double=1;` double lines) enforced on mandatory relationships (`ORDER_ITEM` to `INCLUDES`, `ORDER` to `PLACES`, `ORDER` to `FULFILLS`), and partial participation (single lines) on optional relationships (`CUSTOMER` to `PLACES`: `(0,N)`).
+      * **Academic Legend Box**: Rendered a structured Black & White Peter Chen Legend on the canvas explaining all 12 Chen symbols and cardinality constraints in Vietnamese.
+  * **Verification**:
+    - `python -c "import xml.etree.ElementTree as ET; ET.parse('BRD/ERD_Level_3_Editable.drawio')"`: PASS (all 25 diagrams well-formed).
+    - `npx tsc --noEmit --incremental false`: PASS (0 errors, code 0).
+    - Synchronized with `main` (commit `371ca6b`), `feature/security-invariant-hardening`, and AWS EC2 Node-3.
+- **Files Modified**:
+  * `BRD/ERD_Level_3_Editable.drawio`
+  * `.gitignore`
+  * `SESSION_HANDOFF.md`
+- **Verification Evidence**:
+  * All 25 Draw.io pages validated.
+  * AWS EC2 Node-3 pulled commit `371ca6b` cleanly.
+
 ### [2026-11-07] Peter Chen Conceptual ERD Notation (Black & White Academic Style)
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:
