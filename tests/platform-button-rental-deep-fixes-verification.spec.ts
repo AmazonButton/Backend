@@ -231,6 +231,20 @@ async function runDeepFixesTestSuite() {
             if (sql.includes('rental_deposits') && sql.includes('FOR UPDATE')) {
               return [{ rental_id: args[0], held_amount: heldAmount, refund_reserved_amount: reservedAmount }];
             }
+            if (sql.includes('customer_bank_accounts')) {
+              return [{
+                id: BigInt(1),
+                customer_id: BigInt(88),
+                bank_bin: '970422',
+                bank_name: 'MBBank',
+                account_holder_name: 'TEST CUSTOMER',
+                account_number_encrypted: 'mock_enc',
+                account_number_hash: 'mock_hash',
+                account_number_masked: '******1234',
+                verification_status: 'VERIFIED',
+                is_default: true,
+              }];
+            }
             return [];
           },
           $executeRawUnsafe: async (sql: string, ...args: any[]) => {

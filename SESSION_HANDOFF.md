@@ -13,7 +13,7 @@
       * Test 5: Removed mutation of immutable `billingPolicy` snapshot and tested that customer cannot be billed for rent under `STORE_RENT_CUSTOMER_DEPOSIT`, while Store Owner successfully provisions extension obligation (`payer: 'STORE'`).
       * Test 6: Accepted `PENDING_RECEIPT` return status.
       * Enhanced teardown cleanup for rental returns, IoT buttons, and billing charges.
-    - Suite 50 (`tests/platform-button-rental-deep-fixes-verification.spec.ts`): Added store active membership query mock in `$queryRawUnsafe` for receiver authority checks, and populated `depositPerButton: 200000` / `buttonQuantity: 2` on mock contract to satisfy per-button deposit snapshot consistency.
+    - Suite 50 (`tests/platform-button-rental-deep-fixes-verification.spec.ts`): Added store active membership query mock in `$queryRawUnsafe` for receiver authority checks, populated `depositPerButton: 200000` / `buttonQuantity: 2` on mock contract to satisfy per-button deposit snapshot consistency, and added verified customer bank account query mock in `$queryRawUnsafe` for `approveDepositRefundTx`.
     - Suite 71 (`tests/rental-closeout-postgres.spec.ts`): Aligned wallet balance expectations with deposit-only cash collection (1,000,000 - 600,000 = 400,000 VND) and used `charge.totalAmount.toNumber()`.
 - **Files Modified**:
   * `.github/workflows/ci-cd.yml`
