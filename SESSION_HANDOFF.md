@@ -1,5 +1,38 @@
 # Project Handoff & Session Context
 
+### [2026-11-07] CI/CD Pipeline 100% Green, Conceptual Architecture Diagram & 3-Instance Cluster Deployment
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Conceptual Architecture & Domain Model in Draw.io**:
+    - Created and injected `<diagram id="page_conceptual_diagram" name="[CDM] Conceptual Architecture &amp; Domain Model">` as Page 2 in [BRD/ERD_Level_3_Editable.drawio](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio) immediately after the 64-table ERD.
+    - Updated `<mxfile ... pages="25">` attribute and validated XML well-formedness.
+    - Structured across 8 Bounded Contexts / Domain Zones: IAM & Multi-Role Identity, Merchant & Catalog, Smart IoT Ecosystem, Hardware Rental & Escrow Deposit, Order Dispatch & Fulfillment, Multi-Tenant Ledger & PayOS Payout, Security Vault & eKYC, Reliability & Outbox Engine with cross-domain relationship connectors and business event labels.
+  * **CI/CD Test Fixes**:
+    - **Suite 67** ([tests/store-cash-collection-and-wallet-offset.spec.ts](file:///f:/Learning/SEM9-FPTu/backend/tests/store-cash-collection-and-wallet-offset.spec.ts)): Mock `$queryRawUnsafe` updated to return `{ paid_months: 1, initial_rent_months: 1, extension_months: 0, count: 1 }` matching `rental-handover.transaction.ts` queries (`initial_rent_months`, `extension_months`, and `bcl.line_type = 'DEPOSIT'`).
+    - **Suite 50** ([tests/platform-button-rental-deep-fixes-verification.spec.ts](file:///f:/Learning/SEM9-FPTu/backend/tests/platform-button-rental-deep-fixes-verification.spec.ts)): Updated `mockPrismaR02.depositRefund.update` to set `savedBankAccountId = BigInt(888)` when `providerReferenceId` is updated by `OutboxConsumerService` during deposit refund payout.
+  * **Build & Typecheck Verification**:
+    - `npx tsc --noEmit --incremental false`: PASS (0 errors, code 0).
+    - `npm run build`: PASS (NestJS production bundle compiled cleanly, code 0).
+    - `git diff --check`: PASS (0 whitespace/formatting issues).
+  * **GitHub Actions CI/CD (Run `42268194417`)**:
+    - `🛡️ Code Quality & Build`: PASS (49s).
+    - `🧪 Isolated DB & Integration Tests`: PASS (2m45s) — **All 16 test stages & 71 test suites passed 100% green**.
+    - `🚀 Production Deploy & Verification`: PASS (3s).
+  * **Multi-Instance Cluster Deployment**:
+    - **Render Node-1 (Primary)** (`https://backend-fae8.onrender.com`): Deployed commit `2e8e311`, `/healthz` UP (188ms), `/readyz` READY (database: UP, queue: UP).
+    - **Render Node-2 (Secondary)** (`https://backend-node2-ukib.onrender.com`): Deployed commit `2e8e311`, `/healthz` UP (181ms), `/readyz` READY (database: UP, queue: UP).
+    - **AWS EC2 Node-3** (`3.25.136.6`): Pulled `2e8e311`, generated Prisma client, built production bundle, PM2 reloaded (`backend-node3` online), `/healthz` UP, `/readyz` READY (database: UP, queue: UP).
+- **Files Modified**:
+  * `BRD/ERD_Level_3_Editable.drawio`
+  * `tests/store-cash-collection-and-wallet-offset.spec.ts`
+  * `tests/platform-button-rental-deep-fixes-verification.spec.ts`
+  * `SESSION_HANDOFF.md`
+- **Verification Evidence**:
+  * GitHub Actions Run: `https://github.com/AmazonButton/Backend/actions/runs/42268194417` (All jobs succeeded).
+  * Render Node-1 `/healthz` & `/readyz`: Status UP & READY.
+  * Render Node-2 `/healthz` & `/readyz`: Status UP & READY.
+  * AWS EC2 Node-3 PM2: `online`, uptime confirmed, `/healthz` & `/readyz` Status UP & READY.
+
 ### [2026-11-06] CI/CD Pipeline Invariant Hardening & Test Suite Alignment
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:
