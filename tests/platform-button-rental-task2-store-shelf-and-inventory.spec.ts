@@ -26,6 +26,7 @@ async function runTask2TestSuite() {
     // -------------------------------------------------------------
     const mockSubRepo: any = {
       getCurrentSubscription: async () => null,
+      getUpcomingSubscription: async () => null,
       countStoreProducts: async () => 0,
       countTotalPlans: async () => 1,
     };

@@ -95,6 +95,7 @@ async function runPhase3StoreSubscriptionSuite() {
 
   const mockSubscriptionsRepo: any = {
     getCurrentSubscription: async (storeId: bigint) => subscriptionsMap.get(storeId.toString()) || null,
+    getUpcomingSubscription: async () => null,
     countStoreProducts: async (storeId: bigint) => 10,
   };
   const mockWalletService: any = {};

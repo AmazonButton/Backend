@@ -84,3 +84,4 @@ Target: Resolution of Frontend Handoff 2026-11-07 issues (`update_required for b
   - Execute test suite using `tsx`.
   - Type-check with `npx tsc --noEmit`.
   - Build check with `npm run build`.
+

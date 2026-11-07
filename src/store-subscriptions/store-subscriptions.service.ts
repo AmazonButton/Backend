@@ -25,7 +25,11 @@ export class StoreSubscriptionsService {
     const daysRemaining = isUpcoming ? 0 : Math.max(0, Math.ceil((end - now) / (1000 * 60 * 60 * 24)));
 
     let upcomingSubscription = null;
-    if (!isUpcoming && !isExpired) {
+    if (
+      !isUpcoming &&
+      !isExpired &&
+      typeof this.subscriptionsRepo?.getUpcomingSubscription === 'function'
+    ) {
       upcomingSubscription = await this.subscriptionsRepo.getUpcomingSubscription(rawStoreId);
     }
 
