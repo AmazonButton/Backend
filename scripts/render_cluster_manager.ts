@@ -37,11 +37,16 @@ async function renderFetch(apiKey: string, path: string, options: RequestInit = 
       ...(options.headers || {}),
     },
   });
+  const text = await res.text().catch(() => '');
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
     throw new Error(`Render API HTTP ${res.status}: ${text}`);
   }
-  return res.json();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
 }
 
 async function getClusterStatus() {
