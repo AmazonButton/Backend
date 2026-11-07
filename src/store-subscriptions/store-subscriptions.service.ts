@@ -18,12 +18,23 @@ export class StoreSubscriptionsService {
     if (!sub) return null;
 
     const now = Date.now();
+    const start = new Date(sub.startDate).getTime();
     const end = new Date(sub.endDate).getTime();
-    const daysRemaining = Math.max(0, Math.ceil((end - now) / (1000 * 60 * 60 * 24)));
+    const isUpcoming = start > now;
+    const isExpired = end < now;
+    const daysRemaining = isUpcoming ? 0 : Math.max(0, Math.ceil((end - now) / (1000 * 60 * 60 * 24)));
+
+    let upcomingSubscription = null;
+    if (!isUpcoming && !isExpired) {
+      upcomingSubscription = await this.subscriptionsRepo.getUpcomingSubscription(rawStoreId);
+    }
 
     return {
       ...sub,
       daysRemaining,
+      isUpcoming,
+      isExpired,
+      upcomingSubscription,
     };
   }
 

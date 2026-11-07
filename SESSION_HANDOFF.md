@@ -1,5 +1,48 @@
 # Project Handoff & Session Context
 
+### [2026-11-08] Store Bank Verification & Subscription Handoff Fixes (Superpowers Implementation)
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Task 1: Bank Verification Ownership Authorization (Staff STORE_OWNER & Admins)**:
+    - Updated [`src/bank-verification/bank-verification.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/bank-verification.service.ts) in `verifyStoreOwnership()`:
+      * Authorized `SUPER_ADMIN`, `SYSTEM_ADMIN`, and `ADMIN` without requiring ownership match.
+      * Authorized direct store owners (`store.ownerUserId === userId`).
+      * Authorized active staff members assigned as `STORE_OWNER` or `OWNER` in table `store_staff` (`status = 'ACTIVE'`, `leftAt = null`).
+      * Rejection with HTTP 403 `ForbiddenException` for unauthorized regular staff or unrelated users.
+  * **Task 2: Platform Receiving Bank Info & VietQR Generation for Penny Verification**:
+    - Updated `createVerificationRequest()` in [`src/bank-verification/bank-verification.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/bank-verification.service.ts):
+      * Injected platform receiving bank configurations (`recipientBankBin`, `recipientBankName`, `recipientAccountNumber`, `recipientAccountHolder`).
+      * Generated dynamic VietQR URL (`https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?...`).
+      * Formatted clear instructions specifying the destination account, exact amount, and reference code.
+  * **Task 3: Subscription Period Priority (Running vs Upcoming Prepaid) & Overview**:
+    - Updated [`src/store-subscriptions/store-subscriptions.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-subscriptions/store-subscriptions.repository.ts):
+      * Hardened `getCurrentSubscription()`: strictly prioritizes currently active period (`startDate <= now AND endDate >= now AND status = 'ACTIVE'`).
+      * Fixed bug where prepaid future renewals (`startDate > now`) shadowed the running subscription and downgraded store limits prematurely.
+      * Added `getUpcomingSubscription()` to fetch scheduled prepaid renewals.
+    - Updated [`src/store-subscriptions/store-subscriptions.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-subscriptions/store-subscriptions.service.ts):
+      * Enriched `getCurrentSubscription()` payload with `isUpcoming`, `isExpired`, `daysRemaining`, and `upcomingSubscription`.
+  * **Task 4: Store Subscription Plans Catalog Alias**:
+    - Added `@Get('plans')` to [`src/store-subscriptions/store-subscriptions.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-subscriptions/store-subscriptions.controller.ts):
+      * Registered before `:id` route parameter to eliminate routing conflict.
+      * Accessible by `STORE_OWNER`, `STORE_MANAGER`, `STAFF`, `SUPER_ADMIN`, `SYSTEM_ADMIN`, `ADMIN`, `CUSTOMER` at `GET /api/v1/store/subscriptions/plans`.
+  * **Task 5: Verification & Zero-Residue Test Suite**:
+    - Authored implementation plan [`docs/superpowers/plans/2026-11-08-store-bank-and-subscription-fixes.md`](file:///f:/Learning/SEM9-FPTu/backend/docs/superpowers/plans/2026-11-08-store-bank-and-subscription-fixes.md).
+    - Created dedicated test suite [`tests/store-bank-and-subscription-handoff-fixes.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/store-bank-and-subscription-handoff-fixes.spec.ts) covering all 4 tasks with 11 automated checks.
+- **Files Modified**:
+  * `src/bank-verification/bank-verification.service.ts`
+  * `src/store-subscriptions/store-subscriptions.controller.ts`
+  * `src/store-subscriptions/store-subscriptions.repository.ts`
+  * `src/store-subscriptions/store-subscriptions.service.ts`
+  * `docs/superpowers/plans/2026-11-08-store-bank-and-subscription-fixes.md`
+  * `tests/store-bank-and-subscription-handoff-fixes.spec.ts`
+  * `SESSION_HANDOFF.md`
+- **Verification Evidence**:
+  * `npx tsx tests/store-bank-and-subscription-handoff-fixes.spec.ts`: **11 passed, 0 failed** (100% PASS).
+  * `npx tsx tests/store-subscriptions.spec.ts`: **10 passed, 0 failed** (100% PASS).
+  * `npx tsx tests/bank-account-verification.spec.ts`: **39 passed, 0 failed** (100% PASS).
+  * `npx tsc --noEmit`: **0 errors** (Exit code 0).
+  * `npm run build`: **Compiled successfully** (Exit code 0).
+
 ### [2026-11-07] Advanced Peter Chen ERD Notation Synthesis (Weak Entities, Identifying Relationships & Legend)
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:

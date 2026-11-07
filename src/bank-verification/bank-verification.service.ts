@@ -162,6 +162,14 @@ export class BankVerificationService implements OnModuleInit {
       expiresAt,
     });
 
+    // Platform receiving bank info (destination for the penny deposit)
+    const recipientBankBin = process.env.PLATFORM_BANK_BIN || '970422';
+    const recipientBankName = process.env.PLATFORM_BANK_NAME || 'MBBank';
+    const recipientAccountNumber = process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '0339898989';
+    const recipientAccountHolder = process.env.PLATFORM_BANK_ACCOUNT_HOLDER || 'CONG TY CP SMART ORDER';
+
+    const qrCodeUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(referenceCode)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
+
     return {
       verificationId: transaction.id.toString(),
       bankAccountId: bankAccount.id.toString(),
@@ -171,7 +179,12 @@ export class BankVerificationService implements OnModuleInit {
       amount: expectedAmount,
       referenceCode,
       expiresAt: expiresAt.toISOString(),
-      instructions: `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`,
+      recipientBankBin,
+      recipientBankName,
+      recipientAccountNumber,
+      recipientAccountHolder,
+      qrCodeUrl,
+      instructions: `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`,
     };
   }
 
@@ -486,16 +499,38 @@ export class BankVerificationService implements OnModuleInit {
       throw new NotFoundException('Cửa hàng không tồn tại');
     }
 
-    const isOwner = store.ownerUserId === userId;
-    const isAdmin = userRole === 'ADMIN';
-
-    if (!isOwner && !isAdmin) {
-      throw new ForbiddenException(
-        'Chỉ chủ cửa hàng (STORE_OWNER) hoặc Quản trị viên (ADMIN) mới có quyền quản lý tài khoản ngân hàng',
-      );
+    const isAdmin = ['ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(userRole || '');
+    if (isAdmin) {
+      return store;
     }
 
-    return store;
+    const isDirectOwner = store.ownerUserId === userId;
+    if (isDirectOwner) {
+      return store;
+    }
+
+    // Check if user is an active STORE_OWNER staff of this store
+    const staffOwner = await this.prisma.storeStaff.findFirst({
+      where: {
+        storeId,
+        userId,
+        status: 'ACTIVE',
+        leftAt: null,
+        role: {
+          roleCode: {
+            in: ['STORE_OWNER', 'OWNER'],
+          },
+        },
+      },
+    });
+
+    if (staffOwner) {
+      return store;
+    }
+
+    throw new ForbiddenException(
+      'Chỉ chủ cửa hàng (STORE_OWNER) hoặc Quản trị viên (ADMIN) mới có quyền quản lý tài khoản ngân hàng',
+    );
   }
 
   formatVerificationTransaction(tx: any) {

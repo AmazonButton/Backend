@@ -65,14 +65,56 @@ export class StoreSubscriptionsRepository {
   }
 
   async getCurrentSubscription(storeId: bigint) {
+    const now = new Date();
+    // 1. Prioritize currently running subscription: startDate <= now AND endDate >= now
+    const runningSub = await this.prisma.storeSubscription.findFirst({
+      where: {
+        storeId,
+        status: 'ACTIVE',
+        startDate: { lte: now },
+        endDate: { gte: now },
+      },
+      include: { plan: true },
+      orderBy: { endDate: 'desc' },
+    });
+
+    if (runningSub) {
+      return runningSub;
+    }
+
+    // 2. Fallback to upcoming prepaid subscription if not yet started
+    const upcomingSub = await this.prisma.storeSubscription.findFirst({
+      where: {
+        storeId,
+        status: 'ACTIVE',
+        startDate: { gt: now },
+      },
+      include: { plan: true },
+      orderBy: { startDate: 'asc' },
+    });
+
+    if (upcomingSub) {
+      return upcomingSub;
+    }
+
+    // 3. Fallback to most recent subscription
+    return this.prisma.storeSubscription.findFirst({
+      where: { storeId },
+      include: { plan: true },
+      orderBy: { endDate: 'desc' },
+    });
+  }
+
+  async getUpcomingSubscription(storeId: bigint) {
+    const now = new Date();
     return this.prisma.storeSubscription.findFirst({
       where: {
         storeId,
         status: 'ACTIVE',
-        endDate: { gte: new Date() },
+        startDate: { gt: now },
       },
       include: { plan: true },
-      orderBy: { endDate: 'desc' },
+      orderBy: { startDate: 'asc' },
     });
   }
 

@@ -58,6 +58,17 @@ export class StoreSubscriptionsController {
     return { success: true, data };
   }
 
+  @Get('plans')
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'CUSTOMER')
+  async getActivePlansCatalog() {
+    const data = await this.subscriptionsService.listPlans();
+    return {
+      success: true,
+      message: 'Lấy danh sách các gói dịch vụ gian hàng thành công',
+      data,
+    };
+  }
+
   @Get(':id')
   async getSubscriptionDetail(
     @Param('id') id: string,
