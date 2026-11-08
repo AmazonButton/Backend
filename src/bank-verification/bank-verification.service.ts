@@ -322,7 +322,7 @@ export class BankVerificationService implements OnModuleInit {
     // Handle PayOS nested webhook payload structure (Signed-Data Precedence)
     if (dto.data) {
       // P1 Fix: Reject tampered payloads where unsigned top-level fields conflict with signed data
-      if (dto.amount !== undefined && Number(dto.amount) !== Number(dto.data.amount)) {
+      if (dto.amount !== undefined && dto.data.amount !== undefined && Number(dto.amount) !== Number(dto.data.amount)) {
         throw new BadRequestException('Dữ liệu webhook không nhất quán: top-level amount khác với signed data.amount');
       }
       if (dto.providerTransactionId && dto.data.reference && dto.providerTransactionId !== dto.data.reference) {
@@ -330,9 +330,9 @@ export class BankVerificationService implements OnModuleInit {
       }
 
       // Signed inner fields strictly take precedence over unsigned top-level fields
-      amount = dto.data.amount;
+      amount = dto.data.amount !== undefined ? dto.data.amount : amount;
       description = dto.data.description || dto.description || '';
-      providerTransactionId = dto.data.reference || (dto.data.orderCode ? String(dto.data.orderCode) : dto.providerTransactionId);
+      providerTransactionId = dto.data.reference || dto.providerTransactionId;
     }
 
     // Trích xuất referenceCode từ description nếu chưa có
