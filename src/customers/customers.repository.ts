@@ -379,6 +379,85 @@ export class CustomersRepository {
     });
   }
 
+  async setDefaultCustomerBankAccount(customerId: bigint, accountId: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT customer_id FROM customer_profile
+        WHERE customer_id = ${customerId}
+        FOR UPDATE
+      `;
+
+      await tx.customerBankAccount.updateMany({
+        where: { customerId },
+        data: { isDefault: false },
+      });
+
+      return tx.customerBankAccount.update({
+        where: { id: accountId, customerId },
+        data: { isDefault: true, updatedAt: new Date() },
+      });
+    });
+  }
+
+  async deleteCustomerBankAccount(customerId: bigint, accountId: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Check pending deposit refunds
+      const pendingRefunds = await tx.depositRefund.count({
+        where: {
+          bankAccountId: accountId,
+          status: { in: ['PENDING_APPROVAL', 'PENDING', 'PROCESSING'] },
+        },
+      });
+      if (pendingRefunds > 0) {
+        throw new BadRequestException('Không thể xóa tài khoản ngân hàng đang có yêu cầu hoàn cọc chưa hoàn tất');
+      }
+
+      // 2. Check active refund obligations
+      const activeObligations = await tx.customerBankRefundObligation.count({
+        where: {
+          refundStatus: { in: ['PENDING_REFUND', 'PROCESSING_REFUND', 'PENDING_MANUAL_REFUND'] },
+          inboundTransaction: {
+            proof: { accountId },
+          },
+        },
+      });
+      if (activeObligations > 0) {
+        throw new BadRequestException('Không thể xóa tài khoản ngân hàng đang có nghĩa vụ hoàn tiền chưa hoàn tất');
+      }
+
+      // 3. Check active verification sessions
+      const activeSessions = await tx.customerBankVerificationProof.count({
+        where: {
+          accountId,
+          sessionStatus: 'ACTIVE',
+        },
+      });
+      if (activeSessions > 0) {
+        throw new BadRequestException('Không thể xóa tài khoản ngân hàng đang có phiên xác minh chưa hoàn tất');
+      }
+
+      // 4. Clean up inactive verification proofs without inbound transactions
+      await tx.customerBankVerificationProof.deleteMany({
+        where: {
+          accountId,
+          inboundTransactions: { none: {} },
+        },
+      });
+
+      // 5. If there are still proofs (having financial inbound transactions), prevent deletion to protect financial audit log
+      const remainingProofs = await tx.customerBankVerificationProof.count({
+        where: { accountId },
+      });
+      if (remainingProofs > 0) {
+        throw new BadRequestException('Không thể xóa tài khoản ngân hàng đã có lịch sử giao dịch đối soát tài chính');
+      }
+
+      return tx.customerBankAccount.delete({
+        where: { id: accountId, customerId },
+      });
+    });
+  }
+
   async createBankVerificationProof(data: {
     proofReference: string;
     customerId: bigint;
@@ -889,6 +968,7 @@ export class CustomersRepository {
         skip,
         take,
         include: {
+          bankAccount: true,
           inboundTransactions: {
             include: {
               refundObligation: true,

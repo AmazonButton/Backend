@@ -12,6 +12,7 @@ import {
   HttpStatus,
   Query,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { BankVerificationService } from './bank-verification.service';
 import { LookupBankAccountDto } from './dto/lookup-bank-account.dto';
@@ -19,10 +20,13 @@ import { CreateVerificationRequestDto } from './dto/create-verification-request.
 import { BankLookupRateLimitGuard } from './guards/bank-lookup-rate-limit.guard';
 import { buildPaginatedResponse } from '../common/utils/pagination.helper';
 
+@ApiTags('Store Bank Accounts')
 @Controller('stores')
 export class StoreBankAccountsController {
   constructor(private readonly service: BankVerificationService) {}
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Tra cứu tên chủ tài khoản ngân hàng từ VietQR / NAPAS' })
   @UseGuards(JwtAuthGuard, BankLookupRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Post('bank-accounts/lookup')
@@ -35,6 +39,8 @@ export class StoreBankAccountsController {
     };
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Tạo yêu cầu xác minh tài khoản ngân hàng chính chủ (2.000 VND)' })
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   @Post('bank-accounts/verification')
@@ -52,6 +58,8 @@ export class StoreBankAccountsController {
     };
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Lấy danh sách tài khoản ngân hàng của cửa hàng' })
   @UseGuards(JwtAuthGuard)
   @Get(':storeId/bank-accounts')
   async listBankAccounts(
@@ -68,6 +76,11 @@ export class StoreBankAccountsController {
     };
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Lấy danh sách lịch sử giao dịch xác minh tài khoản của cửa hàng' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, type: String })
   @UseGuards(JwtAuthGuard)
   @Get(':storeId/bank-account-verifications')
   async listStoreVerificationTransactions(
@@ -99,6 +112,8 @@ export class StoreBankAccountsController {
     );
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Đặt tài khoản ngân hàng làm mặc định của cửa hàng' })
   @UseGuards(JwtAuthGuard)
   @Patch(':storeId/bank-accounts/:id/default')
   async setDefaultBankAccount(
@@ -115,6 +130,8 @@ export class StoreBankAccountsController {
     };
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Xóa tài khoản ngân hàng của cửa hàng' })
   @UseGuards(JwtAuthGuard)
   @Delete(':storeId/bank-accounts/:id')
   async deleteBankAccount(
@@ -131,6 +148,8 @@ export class StoreBankAccountsController {
     };
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Hủy yêu cầu xác minh tài khoản đang PENDING của cửa hàng' })
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('bank-accounts/verification/:id/cancel')

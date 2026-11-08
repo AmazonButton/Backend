@@ -34,6 +34,7 @@ export class CustomerBankVerificationStatusResponseDto {
     expiresAt: string;
     isExpired: boolean;
     rejectionReason?: string | null;
+    checkoutUrl?: string | null;
   } | null;
   message: string;
 }
@@ -42,6 +43,12 @@ export class CustomerBankVerificationHistoryItemDto {
   sessionId: string;
   sessionReference: string;
   orderCode?: string | null;
+  accountId?: string | null;
+  bankBin?: string | null;
+  bankName?: string | null;
+  accountNumberMasked?: string | null;
+  accountName?: string | null;
+  checkoutUrl?: string | null;
   sessionStatus: string;
   verificationStatus: string;
   paymentReceived: boolean;

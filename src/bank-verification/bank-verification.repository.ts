@@ -151,10 +151,22 @@ export class BankVerificationRepository {
         data: { isDefault: false },
       });
 
-      return tx.storeBankAccount.update({
+      const updated = await tx.storeBankAccount.update({
         where: { id: bankAccountId, storeId },
         data: { isDefault: true, updatedAt: new Date() },
       });
+
+      // Sync store_wallets bankName and bankAccountHolder (Rule 13: Zero Plaintext Financial Storage)
+      await tx.storeWallet.updateMany({
+        where: { storeId },
+        data: {
+          bankName: updated.bankName,
+          bankAccountHolder: updated.accountName,
+          updatedAt: new Date(),
+        },
+      });
+
+      return updated;
     });
     });
   }
@@ -173,6 +185,7 @@ export class BankVerificationRepository {
       },
       data: {
         status: 'EXPIRED',
+        failureReason: 'USER_CANCELLED',
         updatedAt: new Date(),
       },
     });

@@ -135,6 +135,57 @@ export class CustomersService {
     }));
   }
 
+  async setDefaultBankAccount(user: any, accountId: string | number | bigint) {
+    const userId = BigInt(user.userId || user.id);
+    const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
+    if (!profile) {
+      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+    }
+
+    const rawAccountId = BigInt(accountId);
+    const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    if (!account) {
+      throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
+    }
+
+    if (account.verificationStatus !== 'VERIFIED') {
+      throw new BadRequestException('Chỉ tài khoản ngân hàng đã xác minh mới có thể đặt làm mặc định');
+    }
+
+    const updated = await this.customersRepo.setDefaultCustomerBankAccount(profile.customerId, rawAccountId);
+    return {
+      id: updated.id.toString(),
+      customerId: updated.customerId.toString(),
+      bankBin: updated.bankBin,
+      bankCode: updated.bankCode,
+      bankName: updated.bankName,
+      accountNumberMasked: updated.accountNumberMasked,
+      accountName: updated.accountName,
+      verificationStatus: updated.verificationStatus,
+      isDefault: updated.isDefault,
+    };
+  }
+
+  async deleteBankAccount(user: any, accountId: string | number | bigint) {
+    const userId = BigInt(user.userId || user.id);
+    const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
+    if (!profile) {
+      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+    }
+
+    const rawAccountId = BigInt(accountId);
+    const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    if (!account) {
+      throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
+    }
+
+    await this.customersRepo.deleteCustomerBankAccount(profile.customerId, rawAccountId);
+    return {
+      success: true,
+      message: 'Xóa tài khoản ngân hàng thành công',
+    };
+  }
+
   async getBankAccountVerificationStatus(user: any, accountId: string | number | bigint) {
     const userId = BigInt(user.userId || user.id);
     const profile = await this.customersRepo.getCustomerProfileByUserId(userId);

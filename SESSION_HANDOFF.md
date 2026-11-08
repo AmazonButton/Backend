@@ -1,5 +1,52 @@
 # Project Handoff & Session Context
 
+### [2026-11-08] Banking Backend Review Fixes & API Hardening (Review 08-11-2026)
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Point 1 & 2: Store Verification Formatter, Recipient Fields & Actual Amount Mapping**:
+    - Updated `formatVerificationTransaction()` in [`src/bank-verification/bank-verification.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/bank-verification.service.ts):
+      * Returns platform receiving bank credentials: `recipientBankBin`, `recipientBankName`, `recipientAccountNumber`, `recipientAccountHolder`, `qrCodeUrl`, and detailed payment instructions.
+      * Mapped `actualAmount` and `receivedAmount` accurately from `tx.receivedAmount ? Number(tx.receivedAmount) : (tx.actualAmount ? Number(tx.actualAmount) : null)`, resolving Prisma column naming mismatch (`received_amount`) where unpaid returns `null` and paid returns exact numeric amount without fake padding.
+      * Exposes `failureReason: tx.failureReason || null`.
+    - Updated `cancelVerificationTransaction()` in [`src/bank-verification/bank-verification.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/bank-verification.repository.ts) to set `status: 'EXPIRED'` and `failureReason: 'USER_CANCELLED'`, allowing frontend to distinguish owner cancellation from natural 30-minute expiry.
+  * **Point 8: VietQR Upstream Error Differentiation & Zero Vendor Leakage**:
+    - Updated [`src/bank-verification/providers/payos-bank-verification.provider.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/providers/payos-bank-verification.provider.ts):
+      * Throws HTTP 503 `ServiceUnavailableException` when `VIETQR_CLIENT_ID` / `VIETQR_API_KEY` are not configured in non-mock mode.
+      * Catches upstream VietQR HTTP 401/403/503/timeout and throws HTTP 503 `ServiceUnavailableException` with `BANK_LOOKUP_SERVICE_UNAVAILABLE` instead of misleading client 400.
+      * Differentiates VietQR business codes:
+        - Code `42` -> HTTP 400 `BadRequestException` (`BANK_ACCOUNT_NOT_FOUND`).
+        - Code `41` -> HTTP 400 `BadRequestException` (`BANK_NOT_SUPPORTED_FOR_LOOKUP`).
+        - Code `45` -> HTTP 503 `ServiceUnavailableException` (`BANK_SYSTEM_BUSY`).
+    - Hardened `BankVerificationService.lookupBankAccount()`:
+      * Propagates `HttpException` instances directly.
+      * Masks unexpected raw vendor/stack trace errors with generic message ensuring Rule 1.7 Zero Vendor Leakage compliance.
+  * **Point 3: Default Bank Account & Store Withdrawal Prioritization**:
+    - Updated `StoreWalletService.requestWithdrawal()` in [`src/store-wallet/store-wallet.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.service.ts):
+      * Prioritizes default verified account first via `orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }]`.
+      * Supports explicit `bankAccountId` if provided in request.
+    - Updated `BankVerificationRepository.setDefaultBankAccount()` in [`src/bank-verification/bank-verification.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/bank-verification.repository.ts):
+      * Syncs `store_wallets.bankName` and `store_wallets.bankAccountHolder` on default account switch.
+      * Strictly adheres to Rule 13 (Zero Plaintext Financial Storage) - never persists plaintext bank account numbers in wallets.
+  * **Point 6: Customer Bank Account Management & Verification History Enrichment**:
+    - Added endpoints in [`src/customers/customers.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/customers/customers.controller.ts), [`src/customers/customers.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/customers/customers.service.ts), and [`src/customers/customers.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/customers/customers.repository.ts):
+      * `PATCH /api/v1/customers/me/bank-accounts/:id/default`: sets verified customer bank account as default, resetting previous default accounts.
+      * `DELETE /api/v1/customers/me/bank-accounts/:id`: validates that no active deposit refund obligations or pending verification sessions exist before deleting; protects financial audit trails.
+    - Enriched customer verification history items in `CustomerBankPennyVerificationService.getVerificationHistory()`:
+      * Returns `accountId`, `bankBin`, `bankName`, `accountNumberMasked`, `accountName`, and `checkoutUrl`.
+    - Enriched status in `CustomerBankPennyVerificationService.getVerificationStatus()`:
+      * Returns `checkoutUrl: latestSession.paymentCheckoutUrl || null`.
+    - Default URLs in `CustomerBankPennyVerificationService.initiateVerificationSession()`:
+      * Defaults `PAYOS_RETURN_URL` to `${frontendOrigin}/customer/banking?status=success` and `PAYOS_CANCEL_URL` to `${frontendOrigin}/customer/banking?status=cancelled`.
+  * **Point 7: Swagger / OpenAPI Documentation & Metadata**:
+    - Added `@ApiProperty()` with examples and descriptions to `LookupBankAccountDto` and `CreateVerificationRequestDto`.
+    - Added `@ApiTags('Store Bank Accounts')`, `@ApiBearerAuth('JWT-auth')`, and `@ApiOperation()` to `StoreBankAccountsController`.
+    - Documented optional query parameters with `@ApiQuery({ required: false })`.
+  * **Verification Evidence**:
+    - Dedicated test suite [`tests/banking-review-2026-11-08-fixes.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/banking-review-2026-11-08-fixes.spec.ts): **19 passed, 0 failed** (100% PASS).
+    - Existing suite [`tests/bank-account-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/bank-account-verification.spec.ts): **39 passed, 0 failed** (100% PASS).
+    - Comprehensive customer penny deposit suite [`tests/customer_bank_penny_deposit_comprehensive_spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/customer_bank_penny_deposit_comprehensive_spec.ts): **36 passed, 0 failed** (100% PASS).
+    - `npm run build`: **Compiled successfully** (Exit code 0).
+
 ### [2026-11-08] Store Bank Verification & Subscription Handoff Fixes (Superpowers Implementation)
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:

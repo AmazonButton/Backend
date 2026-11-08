@@ -167,8 +167,9 @@ export class CustomerBankPennyVerificationService {
         }
 
         const description = `VRF ${account.bankBin}`.slice(0, 25);
-        const returnUrl = process.env.PAYOS_RETURN_URL || 'https://smart-order.vn/verification/success';
-        const cancelUrl = process.env.PAYOS_CANCEL_URL || 'https://smart-order.vn/verification/cancel';
+        const frontendOrigin = process.env.FRONTEND_URL || 'https://buttontdash.vercel.app';
+        const returnUrl = process.env.PAYOS_RETURN_URL || `${frontendOrigin}/customer/banking?status=success`;
+        const cancelUrl = process.env.PAYOS_CANCEL_URL || `${frontendOrigin}/customer/banking?status=cancelled`;
 
         const signature = signPaymentRequest(
           {
@@ -383,6 +384,7 @@ export class CustomerBankPennyVerificationService {
         expiresAt: latestSession.expiresAt.toISOString(),
         isExpired,
         rejectionReason: latestSession.rejectionReason,
+        checkoutUrl: latestSession.paymentCheckoutUrl || null,
       };
 
       // Chuẩn hóa thông điệp người dùng
@@ -484,6 +486,12 @@ export class CustomerBankPennyVerificationService {
         sessionId: s.id.toString(),
         sessionReference: s.proofReference,
         orderCode: s.paymentOrderCode ? s.paymentOrderCode.toString() : null,
+        accountId: s.accountId ? s.accountId.toString() : null,
+        bankBin: s.bankAccount?.bankBin || s.bankBin || null,
+        bankName: s.bankAccount?.bankName || null,
+        accountNumberMasked: s.bankAccount?.accountNumberMasked || null,
+        accountName: s.bankAccount?.accountName || null,
+        checkoutUrl: s.paymentCheckoutUrl || null,
         sessionStatus: s.sessionStatus,
         verificationStatus: s.verificationStatus,
         paymentReceived,

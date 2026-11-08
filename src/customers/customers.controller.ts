@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Query, Param, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
 import { CustomerBankPennyVerificationService } from './customer-bank-penny-verification.service';
@@ -90,6 +90,30 @@ export class CustomersController {
     return {
       success: true,
       message: 'Lấy danh sách tài khoản ngân hàng thành công',
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Đặt tài khoản ngân hàng làm mặc định của khách hàng' })
+  @Patch('me/bank-accounts/:id/default')
+  async setDefaultMyBankAccount(@Request() req: any, @Param('id') id: string) {
+    const data = await this.customersService.setDefaultBankAccount(req.user, id);
+    return {
+      success: true,
+      message: 'Đặt tài khoản ngân hàng mặc định thành công',
+      data,
+    };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Xóa / Hủy liên kết tài khoản ngân hàng của khách hàng' })
+  @Delete('me/bank-accounts/:id')
+  async deleteMyBankAccount(@Request() req: any, @Param('id') id: string) {
+    const data = await this.customersService.deleteBankAccount(req.user, id);
+    return {
+      success: true,
+      message: data.message || 'Xóa tài khoản ngân hàng thành công',
       data,
     };
   }

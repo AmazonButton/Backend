@@ -4,6 +4,7 @@ import {
   Inject,
   Optional,
   ServiceUnavailableException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import {
@@ -58,7 +59,7 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
 
     if (!vietqrClientId || !vietqrApiKey) {
       this.logger.warn('[PayOSBankVerificationProvider] VietQR API credentials are not configured');
-      throw new ServiceUnavailableException('Dịch vụ tra cứu tài khoản chưa được cấu hình');
+      throw new ServiceUnavailableException('Dịch vụ tra cứu tài khoản ngân hàng chưa được cấu hình (thiếu VIETQR_CLIENT_ID / VIETQR_API_KEY)');
     }
 
     try {
@@ -78,7 +79,19 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`VietQR Lookup HTTP ${response.status}`);
+        this.logger.warn(`VietQR Lookup HTTP ${response.status} for BIN ${bankBin}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new ServiceUnavailableException({
+            success: false,
+            errorCode: 'BANK_LOOKUP_SERVICE_UNAVAILABLE',
+            message: 'Dịch vụ tra cứu tài khoản ngân hàng tạm thời không khả dụng (xác thực dịch vụ thất bại)',
+          });
+        }
+        throw new ServiceUnavailableException({
+          success: false,
+          errorCode: 'BANK_LOOKUP_SERVICE_UNAVAILABLE',
+          message: 'Dịch vụ tra cứu tài khoản ngân hàng tạm thời không khả dụng',
+        });
       }
 
       const resData = (await response.json()) as any;
@@ -91,10 +104,45 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
         };
       }
 
-      throw new Error('Không tìm thấy thông tin tài khoản ngân hàng');
+      if (resData.code === '42') {
+        throw new BadRequestException({
+          success: false,
+          errorCode: 'BANK_ACCOUNT_NOT_FOUND',
+          message: 'Tài khoản ngân hàng không tồn tại hoặc không chính xác',
+        });
+      }
+
+      if (resData.code === '41') {
+        throw new BadRequestException({
+          success: false,
+          errorCode: 'BANK_NOT_SUPPORTED_FOR_LOOKUP',
+          message: 'Ngân hàng chưa hỗ trợ tra cứu tên chủ tài khoản trực tuyến',
+        });
+      }
+
+      if (resData.code === '45') {
+        throw new ServiceUnavailableException({
+          success: false,
+          errorCode: 'BANK_SYSTEM_BUSY',
+          message: 'Hệ thống ngân hàng đang bận, vui lòng thử lại sau',
+        });
+      }
+
+      throw new BadRequestException({
+        success: false,
+        errorCode: 'BANK_LOOKUP_FAILED',
+        message: resData.desc || 'Không tìm thấy thông tin tài khoản ngân hàng',
+      });
     } catch (error: any) {
-      this.logger.warn(`[PayOSBankVerificationProvider] Lookup failed for BIN ${bankBin}`);
-      throw error;
+      this.logger.warn(`[PayOSBankVerificationProvider] Lookup failed for BIN ${bankBin}: ${error.message}`);
+      if (error instanceof ServiceUnavailableException || error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new ServiceUnavailableException({
+        success: false,
+        errorCode: 'BANK_LOOKUP_SERVICE_UNAVAILABLE',
+        message: 'Dịch vụ tra cứu tài khoản ngân hàng tạm thời không khả dụng',
+      });
     }
   }
 

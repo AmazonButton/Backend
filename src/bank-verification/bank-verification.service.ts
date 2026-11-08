@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  HttpException,
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -96,12 +97,11 @@ export class BankVerificationService implements OnModuleInit {
         accountName: result.accountName,
       };
     } catch (error: any) {
-      this.logger.error(`Lookup account failed [bankBin: ${dto.bankBin}] [operation: lookupAccount]`);
-      throw new BadRequestException({
-        success: false,
-        errorCode: 'BANK_LOOKUP_UNAVAILABLE',
-        message: 'Không thể xác minh tài khoản ngân hàng lúc này',
-      });
+      this.logger.error(`Lookup account failed [bankBin: ${dto.bankBin}] [operation: lookupAccount]: ${error.message}`);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new BadRequestException('Không thể xác minh tài khoản ngân hàng lúc này');
     }
   }
 
@@ -544,6 +544,16 @@ export class BankVerificationService implements OnModuleInit {
       }
     }
 
+    const recipientBankBin = process.env.PLATFORM_BANK_BIN || '970422';
+    const recipientBankName = process.env.PLATFORM_BANK_NAME || 'MBBank';
+    const recipientAccountNumber = process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '0339898989';
+    const recipientAccountHolder = process.env.PLATFORM_BANK_ACCOUNT_HOLDER || 'CONG TY CP SMART ORDER';
+    const expectedAmount = Number(tx.expectedAmount);
+    const referenceCode = tx.referenceCode;
+    const qrCodeUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(referenceCode)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
+    const instructions = `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`;
+    const actualAmount = tx.receivedAmount ? Number(tx.receivedAmount) : (tx.actualAmount ? Number(tx.actualAmount) : null);
+
     return {
       id: tx.id.toString(),
       verificationId: tx.id.toString(),
@@ -554,11 +564,19 @@ export class BankVerificationService implements OnModuleInit {
       bankName: tx.bankAccount?.bankName || '',
       accountNumberMasked: masked,
       accountName: tx.bankAccount?.accountName || '',
-      referenceCode: tx.referenceCode,
-      expectedAmount: Number(tx.expectedAmount),
-      actualAmount: tx.actualAmount ? Number(tx.actualAmount) : null,
+      referenceCode,
+      expectedAmount,
+      actualAmount,
+      receivedAmount: actualAmount,
       status: tx.status,
       refundStatus: tx.refundStatus,
+      failureReason: tx.failureReason || null,
+      recipientBankBin,
+      recipientBankName,
+      recipientAccountNumber,
+      recipientAccountHolder,
+      qrCodeUrl,
+      instructions,
       expiresAt: tx.expiresAt,
       verifiedAt: tx.verifiedAt || null,
       createdAt: tx.createdAt,

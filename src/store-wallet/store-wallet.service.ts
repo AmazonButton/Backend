@@ -194,13 +194,26 @@ export class StoreWalletService {
     }
 
     // Invariant (Section 8): Chỉ cho phép rút tiền vào tài khoản ngân hàng đã xác minh chính chủ (OWNERSHIP_VERIFIED)
-    let verifiedAccount = await this.prisma.storeBankAccount.findFirst({
-      where: {
-        storeId: rawStoreId,
-        verificationStatus: 'OWNERSHIP_VERIFIED',
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
+    let verifiedAccount = null;
+    if ((dto as any).bankAccountId) {
+      verifiedAccount = await this.prisma.storeBankAccount.findFirst({
+        where: {
+          id: BigInt((dto as any).bankAccountId),
+          storeId: rawStoreId,
+          verificationStatus: 'OWNERSHIP_VERIFIED',
+        },
+      });
+    }
+
+    if (!verifiedAccount) {
+      verifiedAccount = await this.prisma.storeBankAccount.findFirst({
+        where: {
+          storeId: rawStoreId,
+          verificationStatus: 'OWNERSHIP_VERIFIED',
+        },
+        orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+      });
+    }
 
     const isStrict =
       process.env.BANK_VERIFICATION_STRICT === 'true' ||
