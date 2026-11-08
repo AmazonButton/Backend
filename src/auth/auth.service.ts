@@ -468,10 +468,14 @@ export class AuthService {
         }
 
         // Authoritative domain: safely link Google provider subject
-        // P1 Fix: Anti-Pre-Account Takeover Defense
-        // If account had a pre-link password (e.g. unverified attacker registration),
-        // clear passwordHash and revoke all existing active refresh tokens so the attacker cannot hijack the account!
-        const shouldClearPreLinkCredentials = Boolean(existingUser.passwordHash);
+        // P1 Fix Refined: Anti-Pre-Account Takeover Defense
+        // An attacker cannot pre-register an unverified account to hijack a Google user.
+        // If the existing account email was NEVER verified (!existingUser.emailVerifiedAt or has pending emailVerificationToken),
+        // then clear any pre-set password credentials and revoke existing refresh tokens so the attacker is locked out.
+        // If the email WAS ALREADY legitimately verified (existingUser.emailVerifiedAt != null and no pending token),
+        // do NOT clear passwordHash, allowing the legitimate user to retain both password and Google login methods!
+        const isEmailVerified = Boolean(existingUser.emailVerifiedAt) && !existingUser.emailVerificationToken;
+        const shouldClearPreLinkCredentials = !isEmailVerified && Boolean(existingUser.passwordHash);
         user = existingUser;
         if (googleSub) {
           user = (await this.authRepo.linkProviderSubject(
@@ -507,6 +511,7 @@ export class AuthService {
               avatarUrl,
               phone: dto.phone?.trim() || null,
               status: 'ACTIVE',
+              emailVerifiedAt: new Date(),
               authId,
               authProvider: 'GOOGLE',
               providerSubject: googleSub,
@@ -541,6 +546,7 @@ export class AuthService {
               avatarUrl,
               phone: dto.phone?.trim() || null,
               status: 'ACTIVE',
+              emailVerifiedAt: new Date(),
               authId,
               authProvider: 'GOOGLE',
               providerSubject: googleSub,

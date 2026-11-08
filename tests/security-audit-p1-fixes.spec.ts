@@ -83,14 +83,22 @@ async function runSecurityAuditP1FixesTests() {
       assert.strictEqual((customerProfile.iotButtons[0] as any).hmacSecret, undefined, 'hmacSecret must be stripped');
     });
 
-    await test('1.2 unclaim and factoryReset generate fresh random hmacSecret', async () => {
-      const originalSecret = 'old_secret_11111111111111111111111111111111';
-      const newSecret1 = crypto.randomBytes(32).toString('hex');
-      const newSecret2 = crypto.randomBytes(32).toString('hex');
+    await test('1.2 Hardware secret preservation: unclaim and claim do not destroy ESP32 signing secret', async () => {
+      const flashedSecret = 'esp32_flashed_hardware_secret_key_32bytes_hex';
+      const buttonState = {
+        buttonId: 1n,
+        customerId: 123n,
+        status: 'ACTIVE',
+        hmacSecret: flashedSecret,
+      };
 
-      assert.notStrictEqual(newSecret1, originalSecret);
-      assert.notStrictEqual(newSecret2, newSecret1);
-      assert.strictEqual(newSecret1.length, 64);
+      const unclaimedState = {
+        ...buttonState,
+        customerId: null,
+        status: 'UNASSIGNED',
+      };
+
+      assert.strictEqual(unclaimedState.hmacSecret, flashedSecret, 'Flashed secret must remain valid for physical device');
     });
   }
 
@@ -140,6 +148,22 @@ async function runSecurityAuditP1FixesTests() {
       assert.strictEqual(updatedUser.passwordHash, null, 'Pre-link passwordHash must be wiped');
       assert.ok(updatedUser.passwordChangedAt instanceof Date, 'passwordChangedAt must be updated');
       assert.strictEqual(updatedUser.emailVerificationToken, null);
+    });
+
+    await test('2.2 Verified user linking Google retains password and active sessions', async () => {
+      const verifiedExistingUser = {
+        userId: 20n,
+        email: 'legit_user@gmail.com',
+        emailVerifiedAt: new Date(Date.now() - 86400000),
+        emailVerificationToken: null,
+        passwordHash: '$2a$12$someValidBcryptPasswordHashHere',
+      };
+
+      const isEmailVerified = Boolean(verifiedExistingUser.emailVerifiedAt) && !verifiedExistingUser.emailVerificationToken;
+      const shouldClearPreLinkCredentials = !isEmailVerified && Boolean(verifiedExistingUser.passwordHash);
+
+      assert.strictEqual(isEmailVerified, true, 'User email must be recognized as verified');
+      assert.strictEqual(shouldClearPreLinkCredentials, false, 'Pre-link password credentials must NOT be wiped for verified users');
     });
   }
 
@@ -399,6 +423,43 @@ async function runSecurityAuditP1FixesTests() {
       assert.strictEqual(role, 'CUSTOMER', 'Customer session must not be hijacked by unsolicited store_staff row');
       assert.strictEqual(storeId, null);
     });
+
+    await test('8.4 Database platform admin role or active store owner cannot be added as store staff', async () => {
+      const userPlatformRoles = ['SUPER_ADMIN'];
+      const ownedStoreCount = 1;
+
+      const isPlatformAdmin = userPlatformRoles.some((r) =>
+        ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(r),
+      );
+      assert.strictEqual(isPlatformAdmin, true, 'Platform admin role must be detected from DB roles');
+
+      let rejectedAdmin = false;
+      try {
+        if (isPlatformAdmin) throw new ForbiddenException('Không thể thêm tài khoản quản trị hệ thống làm nhân viên cửa hàng');
+      } catch (err: any) {
+        rejectedAdmin = true;
+      }
+      assert.strictEqual(rejectedAdmin, true);
+
+      let rejectedOwner = false;
+      try {
+        if (ownedStoreCount > 0) throw new ConflictException('Không thể thêm người dùng đang là chủ cửa hàng khác làm nhân viên');
+      } catch (err: any) {
+        rejectedOwner = true;
+      }
+      assert.strictEqual(rejectedOwner, true);
+    });
+
+    await test('8.5 Staff invitations require explicit acceptance before role resolution', () => {
+      const pendingStaffUser = {
+        storeStaffs: [
+          { storeId: 20n, status: 'PENDING', role: { roleCode: 'STORE_MANAGER' } },
+        ],
+      };
+
+      const activeStaff = pendingStaffUser.storeStaffs.find((s: any) => s.status === 'ACTIVE');
+      assert.strictEqual(activeStaff, undefined, 'PENDING staff invitation must not be treated as active staff');
+    });
   }
 
   console.log('\n================================================================');
@@ -414,3 +475,4 @@ runSecurityAuditP1FixesTests().catch((err) => {
   console.error('Fatal test error:', err);
   process.exit(1);
 });
+

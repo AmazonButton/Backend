@@ -1,24 +1,25 @@
 # Project Handoff & Session Context
 
-### [2026-11-09] Deep Security Audit P1 Invariant Hardening & Regression Suite (Suite 73)
+### [2026-11-09] Deep Security Audit P1 Invariant Hardening & Refinements (Suite 73)
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:
-  * **P1 Item 1: IoT Device HMAC Secret Leak & Rotation (`auth/me-leaks-device-hmac-secret-no-rotation`)**:
+  * **P1 Item 1: IoT Device HMAC Secret Leak Prevention & Hardware Preservation (`auth/me-leaks-device-hmac-secret-no-rotation`)**:
     - Updated [`src/auth/auth.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.repository.ts): replaced unfiltered `iotButtons: { include: ... }` in `findById()` with explicit field `select`, completely excluding `hmacSecret`.
     - Updated [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts): added defensive sanitization in `getMe()` stripping `hmacSecret` from all `customerProfile.iotButtons`.
-    - Updated [`src/devices/provisioning.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/provisioning.repository.ts): rotated `hmacSecret` with fresh cryptographic bytes (`crypto.randomBytes(32).toString('hex')`) inside `unclaimDeviceAtomicTx()`, `factoryResetAtomicTx()`, and `claimDeviceAtomicTx()`.
-  * **P1 Item 2: Pre-Account Hijacking Defense on Federated Linking (`auth/register-unverified-email-preaccount-hijack`)**:
-    - Updated [`src/auth/auth.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.repository.ts) in `linkProviderSubject()`: added `clearPreLinkCredentials` flag. When linking a Google identity to an account that previously had local password credentials, all existing active refresh tokens are atomically revoked (`isRevoked: true`), `passwordHash` is nullified, and `passwordChangedAt` is updated to prevent attackers from using pre-link credentials.
-    - Updated [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts) in `googleLogin()` to activate `clearPreLinkCredentials`.
-  * **P1 Item 3: Bank Verification Webhook Signed Data Precedence (`bank-verification/webhook-unsigned-top-level-fields-override-signed-data`)**:
+    - Updated [`src/devices/provisioning.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/provisioning.repository.ts): strictly reverted server-side `hmacSecret` rotation in `claimDeviceAtomicTx()`, `unclaimDeviceAtomicTx()`, and `factoryResetAtomicTx()` to avoid breaking flashed ESP32 physical hardware buttons that authenticate IoT button click events via HMAC-SHA256 without OTA secret channels.
+  * **P1 Item 2: Pre-Account Hijacking Defense on Federated Linking with Email Verification Column (`auth/register-unverified-email-preaccount-hijack`)**:
+    - Added `emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)` to `User` model in [`prisma/schema.prisma`](file:///f:/Learning/SEM9-FPTu/backend/prisma/schema.prisma) and executed SQL migration backfilling existing active users.
+    - Updated [`src/auth/auth.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.repository.ts): `verifyEmailAtomicTx()`, `markEmailVerified()`, and `linkProviderSubject()` stamp `emailVerifiedAt: new Date()`.
+    - Updated [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts) in `googleLogin()`: if the account was already legitimately verified (`Boolean(existingUser.emailVerifiedAt) && !existingUser.emailVerificationToken`), passwords and active sessions are preserved so legitimate users can log in via both methods. Only unverified pre-accounts have their passwords wiped and sessions revoked to neutralize attacker hijacking.
+  * **P1 Item 3: Bank Verification Webhook Signed Data Strictness (`bank-verification/webhook-unsigned-top-level-fields-override-signed-data`)**:
     - Updated [`src/bank-verification/bank-verification.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/bank-verification.service.ts) in `handleVerificationWebhook()`:
       * Validated that top-level fields do not contradict verified signed data; throws HTTP 400 `BadRequestException` on tampered amounts or transaction references.
-      * Strictly extracts `amount`, `referenceCode`, `providerTransactionId`, destination accounts, and sender accounts from verified `dto.data` payload.
+      * Strictly extracts destination and sender bank credentials directly from authenticated `dto.data` without falling back to unsigned top-level fields.
   * **P1 Item 4: Cloudflare Worker Authenticated Edge Caching Protection (`cloudflare-worker/authenticated-get-cache-everything-stores-prefix`)**:
     - Updated [`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js):
       * Refused edge-caching for any request with `Authorization` or `Cookie` headers.
       * Honored client `Cache-Control: no-cache, no-store`.
-      * Replaced coarse prefix matching `startsWith('/api/v1/stores')` with exact route whitelist (`/healthz`, `/api/v1/stores`, `/api/v1/categories`, `/api/v1/subscription-plans/public`), completely isolating tenant sub-paths (`/stores/me`, `/stores/:id/customers`, `/stores/:id/bank-accounts`).
+      * Configured exact route whitelist with `/api/v1/subscription-plans`, `/healthz`, `/api/v1/stores`, `/api/v1/categories`, completely isolating tenant sub-paths.
   * **P1 Item 5: Legacy Device Claim Tenant Access Isolation (`devices/legacy-claim-unscoped-device-disclosure`)**:
     - Updated [`src/devices/devices.controller.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/devices.controller.ts) and [`src/devices/devices.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/devices/devices.service.ts):
       * Passed authenticated `user` to `claim()`.
@@ -33,14 +34,17 @@
       * In `updateCustomerStatus()`, checked for existing store-customer relationship via `findStoreCustomer()`.
       * Threw HTTP 404 `NotFoundException` if no prior relationship exists, completely eliminating PII harvesting via arbitrary customer status upserts.
       * Replaced `upsert` with explicit `updateStoreCustomerStatus()`.
-  * **P1 Item 8: Store Staff PII Masking & Involuntary Role Override Prevention (`store-staff/add-staff-without-target-consent`)**:
+  * **P1 Item 8: Store Staff Anti-Hijack, Database Platform Admin Defense & Invitation Flow (`store-staff/add-staff-without-target-consent`)**:
     - Updated [`src/store-staff/dto/store-staff-response.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-staff/dto/store-staff-response.dto.ts): added `maskEmail()` and `maskPhone()`, returning masked PII in staff API representations.
-    - Updated [`src/store-staff/store-staff.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-staff/store-staff.service.ts): forbade adding system administrative accounts (`admin`, `admin@smartorder.local`) as store staff.
-    - Updated [`src/auth/jwt.strategy.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/jwt.strategy.ts): preserved `CUSTOMER` role when the token was issued for customer operations without explicit staff store scope, preventing unsolicited staff memberships from hijacking user sessions.
+    - Updated [`src/store-staff/store-staff.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-staff/store-staff.service.ts) and [`src/store-staff/store-staff.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/store-staff/store-staff.repository.ts):
+      * Blocked platform admin accounts based on database active roles (`SUPER_ADMIN`, `SYSTEM_ADMIN`, `ADMIN`) or `SUPER_ADMIN_EMAILS` from being added as store staff.
+      * Blocked users who own an active store from being added as staff of another store.
+      * Added invitation flow: adding staff creates a record with `status: 'PENDING'`. Added `acceptInvitation()` (`POST /store-staff/:id/accept`) and `rejectInvitation()` (`POST /store-staff/:id/reject`) with strict BOLA checks (`staff.userId === req.user.userId`).
+      * In [`src/auth/auth.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/auth/auth.service.ts) -> `resolveUserRole()`: only staff rows with `status: 'ACTIVE'` grant store staff role; users with pending invitations retain their `CUSTOMER` role on login.
   * **Verification Evidence**:
-    - Dedicated test suite [`tests/security-audit-p1-fixes.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/security-audit-p1-fixes.spec.ts): **18 passed, 0 failed** (100% PASS).
+    - Dedicated test suite [`tests/security-audit-p1-fixes.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/security-audit-p1-fixes.spec.ts): **21 passed, 0 failed** (100% PASS).
+    - Existing suite [`tests/bank-account-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/bank-account-verification.spec.ts): **39 passed, 0 failed** (100% PASS).
     - Existing suite [`tests/banking-review-2026-11-08-fixes.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/banking-review-2026-11-08-fixes.spec.ts): **19 passed, 0 failed** (100% PASS).
-    - Comprehensive customer penny deposit suite [`tests/customer_bank_penny_deposit_comprehensive_spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/customer_bank_penny_deposit_comprehensive_spec.ts): **36 passed, 0 failed** (100% PASS).
     - `npx tsc --noEmit`: **0 errors**.
     - `npm run build`: **Compiled successfully** (Exit code 0).
 

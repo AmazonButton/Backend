@@ -358,30 +358,37 @@ export class BankVerificationService implements OnModuleInit {
 
     const receivedAmount = Number(amount || 0);
 
-    // Trích xuất thông tin tài khoản và BIN gửi / nhận để kiểm tra chéo (Signed data takes precedence)
-    const destinationAccountNumber =
-      dto.data?.destinationAccountNumber ||
-      dto.data?.accountNumber ||
-      dto.data?.virtualAccountNumber ||
-      dto.destinationAccountNumber;
+    // Trích xuất thông tin tài khoản và BIN gửi / nhận để kiểm tra chéo (Signed data strictness, no unsigned fallback)
+    let destinationAccountNumber: string | undefined;
+    let destinationBankBin: string | undefined;
+    let senderAccountNumber: string | undefined;
+    let senderBankBin: string | undefined;
 
-    const destinationBankBin =
-      dto.data?.destinationBankBin ||
-      dto.data?.bin ||
-      dto.destinationBankBin;
+    if (dto.data) {
+      destinationAccountNumber =
+        dto.data.destinationAccountNumber ||
+        dto.data.accountNumber ||
+        dto.data.virtualAccountNumber;
 
-    const senderAccountNumber =
-      dto.data?.counterAccountNumber ||
-      dto.data?.senderAccountNumber ||
-      dto.senderAccountNumber ||
-      dto.counterAccountNumber;
+      destinationBankBin =
+        dto.data.destinationBankBin ||
+        dto.data.bin;
 
-    const senderBankBin =
-      dto.data?.counterAccountBankId ||
-      dto.data?.counterBankBin ||
-      dto.data?.senderBankBin ||
-      dto.senderBankBin ||
-      dto.counterBankBin;
+      senderAccountNumber =
+        dto.data.counterAccountNumber ||
+        dto.data.senderAccountNumber;
+
+      senderBankBin =
+        dto.data.counterAccountBankId ||
+        dto.data.counterBankBin ||
+        dto.data.senderBankBin;
+    } else {
+      // Direct raw-body signed webhook where the entire top-level body is authenticated
+      destinationAccountNumber = dto.destinationAccountNumber;
+      destinationBankBin = dto.destinationBankBin;
+      senderAccountNumber = dto.senderAccountNumber || dto.counterAccountNumber;
+      senderBankBin = dto.senderBankBin || dto.counterBankBin;
+    }
 
     // Thực thi transaction nguyên tử với SELECT ... FOR UPDATE
     const txResult = await this.repository.executeAtomicWebhookVerificationTx({

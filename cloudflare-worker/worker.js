@@ -32,7 +32,7 @@ const EXACT_CACHEABLE_ROUTES = [
   '/healthz',
   '/api/v1/stores',
   '/api/v1/categories',
-  '/api/v1/subscription-plans/public',
+  '/api/v1/subscription-plans',
 ];
 
 let lastNode2PingTimestamp = 0;

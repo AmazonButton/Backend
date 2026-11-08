@@ -94,13 +94,13 @@ export class StoreStaffRepository {
     });
   }
 
-  async createStaff(data: { storeId: bigint; userId: bigint; roleId: bigint }) {
+  async createStaff(data: { storeId: bigint; userId: bigint; roleId: bigint; status?: string }) {
     return this.prisma.storeStaff.create({
       data: {
         storeId: data.storeId,
         userId: data.userId,
         roleId: data.roleId,
-        status: 'ACTIVE',
+        status: data.status || 'PENDING',
       },
       include: {
         user: true,
@@ -111,7 +111,7 @@ export class StoreStaffRepository {
 
   async updateStaff(
     storeStaffId: bigint,
-    data: { roleId?: bigint; status?: string; leftAt?: Date | null },
+    data: { roleId?: bigint; status?: string; joinedAt?: Date | null; leftAt?: Date | null },
   ) {
     return this.prisma.storeStaff.update({
       where: { storeStaffId },
@@ -133,5 +133,19 @@ export class StoreStaffRepository {
     return this.prisma.store.findUnique({
       where: { storeId },
     });
+  }
+
+  async countOwnedStores(userId: bigint): Promise<number> {
+    return this.prisma.store.count({
+      where: { ownerUserId: userId, status: 'ACTIVE' },
+    });
+  }
+
+  async findUserActivePlatformRoles(userId: bigint): Promise<string[]> {
+    const staffs = await this.prisma.storeStaff.findMany({
+      where: { userId, status: 'ACTIVE' },
+      include: { role: true },
+    });
+    return staffs.map((s) => s.role.roleCode);
   }
 }

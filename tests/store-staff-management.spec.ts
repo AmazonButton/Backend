@@ -148,6 +148,28 @@ async function runStoreStaffManagementSuite() {
       },
     });
 
+    const tokenCandidate1 = jwt.sign(
+      {
+        userId: candidateUser1.userId.toString(),
+        sub: candidateUser1.userId.toString(),
+        email: candidateUser1.email,
+        role: 'CUSTOMER',
+      },
+      jwtSecret,
+      { expiresIn: '1h' },
+    );
+
+    const tokenCandidate2 = jwt.sign(
+      {
+        userId: candidateUser2.userId.toString(),
+        sub: candidateUser2.userId.toString(),
+        email: candidateUser2.email,
+        role: 'CUSTOMER',
+      },
+      jwtSecret,
+      { expiresIn: '1h' },
+    );
+
     // Test 1: GET /store-staff-roles returns whitelist of assignable roles
     try {
       const res = await fetch(`${BASE_URL}/store-staff-roles`);
@@ -171,7 +193,7 @@ async function runStoreStaffManagementSuite() {
       failed++;
     }
 
-    // Test 2: POST /stores/:storeId/staff adds staff member with whitelisted role
+    // Test 2: POST /stores/:storeId/staff creates staff invitation with PENDING status & requires acceptance
     try {
       const res = await fetch(`${BASE_URL}/stores/${storeA.storeId}/staff`, {
         method: 'POST',
@@ -191,17 +213,38 @@ async function runStoreStaffManagementSuite() {
         body.success === true &&
         body.data.userId === candidateUser1.userId.toString() &&
         body.data.role.roleCode === 'STORE_MANAGER' &&
-        body.data.status === 'ACTIVE'
+        body.data.status === 'PENDING'
       ) {
         createdStaff1Id = body.data.storeStaffId;
-        logTest('POST /stores/:storeId/staff adds staff member with STORE_MANAGER role', true);
-        passed++;
+
+        // Verify BOLA: Candidate 2 cannot accept Candidate 1's invitation (403)
+        const bolaRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tokenCandidate2}` },
+        });
+        const bolaOk = bolaRes.status === 403;
+
+        // Candidate 1 accepts their own invitation -> ACTIVE
+        const acceptRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tokenCandidate1}` },
+        });
+        const acceptBody = await acceptRes.json();
+        const acceptOk = acceptRes.status === 200 && acceptBody.data.status === 'ACTIVE';
+
+        if (bolaOk && acceptOk) {
+          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', true);
+          passed++;
+        } else {
+          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', false, `bolaOk: ${bolaOk}, acceptOk: ${acceptOk}`);
+          failed++;
+        }
       } else {
-        logTest('POST /stores/:storeId/staff adds staff member with STORE_MANAGER role', false, JSON.stringify(body));
+        logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', false, JSON.stringify(body));
         failed++;
       }
     } catch (err: any) {
-      logTest('POST /stores/:storeId/staff adds staff member with STORE_MANAGER role', false, err.message);
+      logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', false, err.message);
       failed++;
     }
 

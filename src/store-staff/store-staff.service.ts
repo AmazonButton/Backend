@@ -125,8 +125,23 @@ export class StoreStaffService {
       throw new NotFoundException(`Không tìm thấy người dùng với thông tin: ${identifier}`);
     }
 
-    if (targetUser.username === 'admin' || targetUser.email === 'admin@smartorder.local') {
+    const userPlatformRoles = await this.repo.findUserActivePlatformRoles(targetUser.userId);
+    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
+      .split(',')
+      .map((e) => e.trim().toLowerCase());
+
+    const isPlatformAdmin =
+      userPlatformRoles.some((r) => ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(r)) ||
+      superAdminEmails.includes((targetUser.email || '').toLowerCase()) ||
+      targetUser.username === 'admin';
+
+    if (isPlatformAdmin) {
       throw new ForbiddenException('Không thể thêm tài khoản quản trị hệ thống làm nhân viên cửa hàng');
+    }
+
+    const ownedStoreCount = await this.repo.countOwnedStores(targetUser.userId);
+    if (ownedStoreCount > 0) {
+      throw new ConflictException('Không thể thêm người dùng đang là chủ cửa hàng khác làm nhân viên');
     }
 
     // Check existing staff
@@ -135,14 +150,17 @@ export class StoreStaffService {
       if (existing.status === 'ACTIVE') {
         throw new ConflictException('Người dùng đã là nhân viên đang hoạt động của cửa hàng');
       }
-      // Reactivate staff if previously inactive
+      if (existing.status === 'PENDING') {
+        throw new ConflictException('Người dùng đã có lời mời tham gia đang chờ phản hồi');
+      }
+      // Re-invite staff if previously inactive
       let role = await this.repo.findRoleByCode(dto.roleCode);
       if (!role) {
         throw new NotFoundException(`Vai trò ${dto.roleCode} không tồn tại trong hệ thống`);
       }
       const updated = await this.repo.updateStaff(existing.storeStaffId, {
         roleId: role.roleId,
-        status: 'ACTIVE',
+        status: 'PENDING',
         leftAt: null,
       });
       return StoreStaffResponseDto.fromEntity(updated);
@@ -157,9 +175,58 @@ export class StoreStaffService {
       storeId,
       userId: targetUser.userId,
       roleId: role.roleId,
+      status: 'PENDING',
     });
 
     return StoreStaffResponseDto.fromEntity(created);
+  }
+
+  async acceptInvitation(staffIdStr: string, user: any): Promise<StoreStaffResponseDto> {
+    const staffId = BigInt(staffIdStr);
+    const staff = await this.repo.findStaffById(staffId);
+    if (!staff) {
+      throw new NotFoundException('Lời mời làm nhân viên không tồn tại');
+    }
+
+    const currentUserId = (user?.userId || user?.id || user?.sub)?.toString();
+    if (staff.userId.toString() !== currentUserId) {
+      throw new ForbiddenException('BOLA_VIOLATION: Bạn chỉ có thể chấp nhận lời mời gửi cho chính mình');
+    }
+
+    if (staff.status === 'ACTIVE') {
+      return StoreStaffResponseDto.fromEntity(staff);
+    }
+
+    const updated = await this.repo.updateStaff(staffId, {
+      status: 'ACTIVE',
+      joinedAt: new Date(),
+      leftAt: null,
+    });
+
+    return StoreStaffResponseDto.fromEntity(updated);
+  }
+
+  async rejectInvitation(staffIdStr: string, user: any): Promise<{ success: boolean; message: string }> {
+    const staffId = BigInt(staffIdStr);
+    const staff = await this.repo.findStaffById(staffId);
+    if (!staff) {
+      throw new NotFoundException('Lời mời làm nhân viên không tồn tại');
+    }
+
+    const currentUserId = (user?.userId || user?.id || user?.sub)?.toString();
+    if (staff.userId.toString() !== currentUserId) {
+      throw new ForbiddenException('BOLA_VIOLATION: Bạn chỉ có thể từ chối lời mời gửi cho chính mình');
+    }
+
+    await this.repo.updateStaff(staffId, {
+      status: 'INACTIVE',
+      leftAt: new Date(),
+    });
+
+    return {
+      success: true,
+      message: 'Đã từ chối lời mời làm nhân viên cửa hàng',
+    };
   }
 
   async getStaff(staffIdStr: string, user: any): Promise<StoreStaffResponseDto> {

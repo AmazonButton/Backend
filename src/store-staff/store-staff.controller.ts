@@ -102,6 +102,42 @@ export class StoreStaffController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post('store-staff/:id/accept')
+  async acceptStoreStaffInvitation(@Param('id') id: string, @Request() req: any) {
+    const data = await this.service.acceptInvitation(id, req.user);
+    return {
+      success: true,
+      message: 'Chấp nhận lời mời làm nhân viên cửa hàng thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('stores/:storeId/staff/:id/accept')
+  async acceptStoreStaffInvitationNested(@Param('id') id: string, @Request() req: any) {
+    const data = await this.service.acceptInvitation(id, req.user);
+    return {
+      success: true,
+      message: 'Chấp nhận lời mời làm nhân viên cửa hàng thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('store-staff/:id/reject')
+  async rejectStoreStaffInvitation(@Param('id') id: string, @Request() req: any) {
+    const result = await this.service.rejectInvitation(id, req.user);
+    return result;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('stores/:storeId/staff/:id/reject')
+  async rejectStoreStaffInvitationNested(@Param('id') id: string, @Request() req: any) {
+    const result = await this.service.rejectInvitation(id, req.user);
+    return result;
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete('store-staff/:id')
   async deleteStoreStaff(@Param('id') id: string, @Request() req: any) {
     const result = await this.service.deleteStaff(id, req.user);

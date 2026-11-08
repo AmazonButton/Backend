@@ -271,6 +271,7 @@ export class AuthRepository {
         where: { userId: targetUserId },
         data: {
           status: 'ACTIVE',
+          emailVerifiedAt: new Date(),
           emailVerificationToken: null,
           emailVerificationExpiresAt: null,
         },
@@ -286,6 +287,7 @@ export class AuthRepository {
         where: { userId },
         data: {
           status: 'ACTIVE',
+          emailVerifiedAt: new Date(),
           emailVerificationToken: null,
           emailVerificationExpiresAt: null,
         },
@@ -434,7 +436,7 @@ export class AuthRepository {
       }
 
       // 6. Sync to direct user columns and return updated user object
-      const updateData: any = { authProvider, providerSubject };
+      const updateData: any = { authProvider, providerSubject, emailVerifiedAt: new Date() };
       if (clearPreLinkCredentials) {
         updateData.passwordHash = null;
         updateData.passwordChangedAt = new Date();

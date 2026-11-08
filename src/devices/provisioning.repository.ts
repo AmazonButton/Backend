@@ -325,9 +325,8 @@ export class ProvisioningRepository {
         }
       }
 
-      // Update device owner, address, and status with rotated HMAC secret
+      // Update device owner, address, and status (Keep flashed hardware hmacSecret intact so ESP32 firmware can sign events)
       const buttonName = dto.buttonName?.trim() || device.button_name;
-      const newHmacSecret = crypto.randomBytes(32).toString('hex');
       await tx.$executeRawUnsafe(
         `UPDATE iot_button
          SET customer_id = $1,
@@ -338,14 +337,12 @@ export class ProvisioningRepository {
              can_order = true,
              custody_store_id = NULL,
              installed_at = NOW(),
-             updated_at = NOW(),
-             hmac_secret = $5
+             updated_at = NOW()
          WHERE button_id = $4;`,
         customerId,
         resolvedAddressId,
         buttonName,
         device.button_id,
-        newHmacSecret,
       );
 
       // 5. Upsert store_customer
@@ -393,7 +390,6 @@ export class ProvisioningRepository {
 
   async unclaimDeviceAtomicTx(buttonId: bigint): Promise<any> {
     return this.prisma.$transaction(async (tx) => {
-      const newHmacSecret = crypto.randomBytes(32).toString('hex');
       await tx.ioTButton.update({
         where: { buttonId },
         data: {
@@ -401,7 +397,6 @@ export class ProvisioningRepository {
           addressId: null,
           status: 'UNASSIGNED',
           installedAt: null,
-          hmacSecret: newHmacSecret,
         },
       });
 
@@ -413,7 +408,6 @@ export class ProvisioningRepository {
 
   async factoryResetAtomicTx(buttonId: bigint): Promise<any> {
     return this.prisma.$transaction(async (tx) => {
-      const newHmacSecret = crypto.randomBytes(32).toString('hex');
       await tx.ioTButton.update({
         where: { buttonId },
         data: {
@@ -421,7 +415,6 @@ export class ProvisioningRepository {
           addressId: null,
           status: 'INACTIVE',
           installedAt: null,
-          hmacSecret: newHmacSecret,
         },
       });
 
