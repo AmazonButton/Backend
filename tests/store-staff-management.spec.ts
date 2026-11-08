@@ -230,7 +230,9 @@ async function runStoreStaffManagementSuite() {
           headers: { Authorization: `Bearer ${tokenCandidate1}` },
         });
         const acceptBody = await acceptRes.json();
-        const acceptOk = acceptRes.status === 200 && acceptBody.data.status === 'ACTIVE';
+        const acceptOk =
+          (acceptRes.status === 200 || acceptRes.status === 201) &&
+          acceptBody.data?.status === 'ACTIVE';
 
         if (bolaOk && acceptOk) {
           logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', true);

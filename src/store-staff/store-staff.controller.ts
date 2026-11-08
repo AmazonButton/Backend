@@ -9,6 +9,8 @@ import {
   Query,
   UseGuards,
   Request,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { StoreStaffService } from './store-staff.service';
 import { CreateStoreStaffDto } from './dto/create-store-staff.dto';
@@ -102,6 +104,7 @@ export class StoreStaffController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
   @Post('store-staff/:id/accept')
   async acceptStoreStaffInvitation(@Param('id') id: string, @Request() req: any) {
     const data = await this.service.acceptInvitation(id, req.user);
@@ -113,6 +116,7 @@ export class StoreStaffController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
   @Post('stores/:storeId/staff/:id/accept')
   async acceptStoreStaffInvitationNested(@Param('id') id: string, @Request() req: any) {
     const data = await this.service.acceptInvitation(id, req.user);
@@ -124,6 +128,7 @@ export class StoreStaffController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
   @Post('store-staff/:id/reject')
   async rejectStoreStaffInvitation(@Param('id') id: string, @Request() req: any) {
     const result = await this.service.rejectInvitation(id, req.user);
@@ -131,6 +136,7 @@ export class StoreStaffController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
   @Post('stores/:storeId/staff/:id/reject')
   async rejectStoreStaffInvitationNested(@Param('id') id: string, @Request() req: any) {
     const result = await this.service.rejectInvitation(id, req.user);
