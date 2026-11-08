@@ -26,7 +26,32 @@ export class AuthRepository {
           include: {
             addresses: true,
             iotButtons: {
-              include: {
+              select: {
+                buttonId: true,
+                storeId: true,
+                customerId: true,
+                addressId: true,
+                deviceId: true,
+                buttonCode: true,
+                buttonName: true,
+                status: true,
+                batteryLevel: true,
+                warrantyUntil: true,
+                clickBehavior: true,
+                doubleClickWindowMs: true,
+                holdDurationMs: true,
+                singlePressAction: true,
+                doublePressAction: true,
+                longPressAction: true,
+                cancelWindowSeconds: true,
+                deployedTemplateId: true,
+                installedAt: true,
+                createdAt: true,
+                updatedAt: true,
+                rentalId: true,
+                custodyStoreId: true,
+                inventoryState: true,
+                canOrder: true,
                 buttonProducts: { include: { product: true } },
                 store: true,
               },
@@ -342,7 +367,7 @@ export class AuthRepository {
     });
   }
 
-  async linkProviderSubject(userId: bigint, authProvider: string, providerSubject: string) {
+  async linkProviderSubject(userId: bigint, authProvider: string, providerSubject: string, clearPreLinkCredentials = false) {
     return this.prisma.$transaction(async (tx) => {
       // 1. Row-lock user to serialize concurrent linking operations
       await tx.$queryRaw`SELECT user_id FROM users WHERE user_id = ${userId} FOR UPDATE`;
@@ -399,10 +424,27 @@ export class AuthRepository {
         }
       }
 
-      // 5. Sync to direct user columns and return updated user object
+      // 5. Anti-Pre-Account Takeover Defense:
+      // If clearPreLinkCredentials is true, wipe pre-link password credentials and revoke all active refresh tokens!
+      if (clearPreLinkCredentials) {
+        await tx.refreshToken.updateMany({
+          where: { userId, isRevoked: false },
+          data: { isRevoked: true },
+        });
+      }
+
+      // 6. Sync to direct user columns and return updated user object
+      const updateData: any = { authProvider, providerSubject };
+      if (clearPreLinkCredentials) {
+        updateData.passwordHash = null;
+        updateData.passwordChangedAt = new Date();
+        updateData.emailVerificationToken = null;
+        updateData.emailVerificationExpiresAt = null;
+      }
+
       return tx.user.update({
         where: { userId },
-        data: { authProvider, providerSubject },
+        data: updateData,
         include: {
           customerProfile: { include: { addresses: true } },
           ownedStores: true,

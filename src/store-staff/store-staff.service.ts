@@ -125,6 +125,10 @@ export class StoreStaffService {
       throw new NotFoundException(`Không tìm thấy người dùng với thông tin: ${identifier}`);
     }
 
+    if (targetUser.username === 'admin' || targetUser.email === 'admin@smartorder.local') {
+      throw new ForbiddenException('Không thể thêm tài khoản quản trị hệ thống làm nhân viên cửa hàng');
+    }
+
     // Check existing staff
     const existing = await this.repo.findStaffByStoreAndUser(storeId, targetUser.userId);
     if (existing) {

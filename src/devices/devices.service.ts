@@ -421,32 +421,28 @@ export class DevicesService {
       storeId = firstStore.storeId;
     }
 
-    // Resolve Customer
+    // Resolve Customer (P1 Fix: Do NOT auto-bind arbitrary customer or leak customer PII)
     let customerId: bigint | null = null;
+    let addressId: bigint | null = null;
+
     if (user.role === 'CUSTOMER' && user.customerProfileId) {
       customerId = BigInt(user.customerProfileId);
-    } else if (dto.customerId) {
-      customerId = BigInt(dto.customerId);
-    }
-
-    if (!customerId) {
-      const firstCustomer = await this.devicesRepo.findFirstCustomer();
-      if (!firstCustomer) {
-        throw new BadRequestException('Chưa có hồ sơ khách hàng trong hệ thống');
+      let address = await this.devicesRepo.findFirstCustomerAddress(customerId);
+      if (!address) {
+        address = await this.devicesRepo.createDefaultCustomerAddress({
+          customerId,
+          recipientName: user.fullName || 'Khách hàng',
+          phone: user.phone || '0900000000',
+          addressDetail: 'Địa chỉ mặc định',
+          isDefault: true,
+        });
       }
-      customerId = firstCustomer.customerId;
-    }
-
-    // Resolve Customer Address
-    let address = await this.devicesRepo.findFirstCustomerAddress(customerId);
-    if (!address) {
-      address = await this.devicesRepo.createDefaultCustomerAddress({
-        customerId,
-        recipientName: user.fullName || 'Khách hàng',
-        phone: user.phone || '0900000000',
-        addressDetail: 'Địa chỉ mặc định',
-        isDefault: true,
-      });
+      addressId = address?.addressId || null;
+    } else if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role) && dto.customerId) {
+      // Platform Admin explicitly binding customer
+      customerId = BigInt(dto.customerId);
+      const address = await this.devicesRepo.findFirstCustomerAddress(customerId);
+      addressId = address?.addressId || null;
     }
 
     const hmacSecret = crypto.randomBytes(32).toString('hex');
@@ -455,16 +451,18 @@ export class DevicesService {
       hmacSecret,
       storeId,
       customerId,
-      addressId: address.addressId,
+      addressId,
       deviceId,
       buttonCode,
       buttonName,
-      status: 'ACTIVE',
-      installedAt: new Date(),
+      status: customerId ? 'ACTIVE' : 'UNASSIGNED',
+      installedAt: customerId ? new Date() : null,
     });
 
-    // Automatically bind StoreCustomer (BRD-CUSTOMER-05)
-    await this.devicesRepo.linkStoreCustomer(storeId, customerId);
+    // Automatically bind StoreCustomer ONLY if customer is legitimately bound
+    if (customerId) {
+      await this.devicesRepo.linkStoreCustomer(storeId, customerId);
+    }
 
     // Assign product if provided
     if (dto.productId) {
@@ -665,9 +663,9 @@ export class DevicesService {
     ];
   }
 
-  async claim(deviceId: string, claimCode: string, storeId: string, userId: string) {
-    const button = await this.devicesRepo.findByIdentifier(deviceId);
-    if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
+  async claim(deviceId: string, claimCode: string, storeId: string, user: any) {
+    const userObj = typeof user === 'string' ? { id: user, role: 'STORE_OWNER', storeId } : user;
+    const button = await this.assertDeviceAccess(deviceId, userObj);
     return this.formatButton(button);
   }
 

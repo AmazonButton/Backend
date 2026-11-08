@@ -19,6 +19,22 @@ export class StoreStaffResponseDto {
   createdAt: Date;
   updatedAt: Date;
 
+  static maskEmail(email: string | null): string | null {
+    if (!email) return null;
+    const parts = email.split('@');
+    if (parts.length !== 2) return email;
+    const [name, domain] = parts;
+    const maskedName = name.length <= 2 ? `${name[0]}*` : `${name.slice(0, 2)}***${name.slice(-1)}`;
+    return `${maskedName}@${domain}`;
+  }
+
+  static maskPhone(phone: string | null): string | null {
+    if (!phone) return null;
+    const clean = phone.trim();
+    if (clean.length < 6) return '***';
+    return `${clean.slice(0, 3)}****${clean.slice(-3)}`;
+  }
+
   static fromEntity(staff: any): StoreStaffResponseDto {
     return {
       storeStaffId: staff.storeStaffId.toString(),
@@ -26,8 +42,8 @@ export class StoreStaffResponseDto {
       userId: staff.userId.toString(),
       fullName: staff.user?.fullName || '',
       username: staff.user?.username || '',
-      email: staff.user?.email || null,
-      phone: staff.user?.phone || null,
+      email: StoreStaffResponseDto.maskEmail(staff.user?.email || null),
+      phone: StoreStaffResponseDto.maskPhone(staff.user?.phone || null),
       avatarUrl: staff.user?.avatarUrl || null,
       role: {
         roleId: staff.role?.roleId?.toString() || staff.roleId.toString(),

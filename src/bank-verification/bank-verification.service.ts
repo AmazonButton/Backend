@@ -319,11 +319,20 @@ export class BankVerificationService implements OnModuleInit {
     let providerTransactionId = dto.providerTransactionId;
     let description = dto.description || '';
 
-    // Handle PayOS nested webhook payload structure
+    // Handle PayOS nested webhook payload structure (Signed-Data Precedence)
     if (dto.data) {
-      amount = amount || dto.data.amount;
-      description = description || dto.data.description || '';
-      providerTransactionId = providerTransactionId || dto.data.reference;
+      // P1 Fix: Reject tampered payloads where unsigned top-level fields conflict with signed data
+      if (dto.amount !== undefined && Number(dto.amount) !== Number(dto.data.amount)) {
+        throw new BadRequestException('Dữ liệu webhook không nhất quán: top-level amount khác với signed data.amount');
+      }
+      if (dto.providerTransactionId && dto.data.reference && dto.providerTransactionId !== dto.data.reference) {
+        throw new BadRequestException('Dữ liệu webhook không nhất quán: top-level providerTransactionId khác với signed data.reference');
+      }
+
+      // Signed inner fields strictly take precedence over unsigned top-level fields
+      amount = dto.data.amount;
+      description = dto.data.description || dto.description || '';
+      providerTransactionId = dto.data.reference || (dto.data.orderCode ? String(dto.data.orderCode) : dto.providerTransactionId);
     }
 
     // Trích xuất referenceCode từ description nếu chưa có
@@ -349,30 +358,30 @@ export class BankVerificationService implements OnModuleInit {
 
     const receivedAmount = Number(amount || 0);
 
-    // Trích xuất thông tin tài khoản và BIN gửi / nhận để kiểm tra chéo
+    // Trích xuất thông tin tài khoản và BIN gửi / nhận để kiểm tra chéo (Signed data takes precedence)
     const destinationAccountNumber =
-      dto.destinationAccountNumber ||
       dto.data?.destinationAccountNumber ||
       dto.data?.accountNumber ||
-      dto.data?.virtualAccountNumber;
+      dto.data?.virtualAccountNumber ||
+      dto.destinationAccountNumber;
 
     const destinationBankBin =
-      dto.destinationBankBin ||
       dto.data?.destinationBankBin ||
-      dto.data?.bin;
+      dto.data?.bin ||
+      dto.destinationBankBin;
 
     const senderAccountNumber =
-      dto.senderAccountNumber ||
-      dto.counterAccountNumber ||
       dto.data?.counterAccountNumber ||
-      dto.data?.senderAccountNumber;
+      dto.data?.senderAccountNumber ||
+      dto.senderAccountNumber ||
+      dto.counterAccountNumber;
 
     const senderBankBin =
-      dto.senderBankBin ||
-      dto.counterBankBin ||
       dto.data?.counterAccountBankId ||
       dto.data?.counterBankBin ||
-      dto.data?.senderBankBin;
+      dto.data?.senderBankBin ||
+      dto.senderBankBin ||
+      dto.counterBankBin;
 
     // Thực thi transaction nguyên tử với SELECT ... FOR UPDATE
     const txResult = await this.repository.executeAtomicWebhookVerificationTx({

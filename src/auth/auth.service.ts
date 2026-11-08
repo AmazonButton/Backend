@@ -468,9 +468,18 @@ export class AuthService {
         }
 
         // Authoritative domain: safely link Google provider subject
+        // P1 Fix: Anti-Pre-Account Takeover Defense
+        // If account had a pre-link password (e.g. unverified attacker registration),
+        // clear passwordHash and revoke all existing active refresh tokens so the attacker cannot hijack the account!
+        const shouldClearPreLinkCredentials = Boolean(existingUser.passwordHash);
         user = existingUser;
         if (googleSub) {
-          user = (await this.authRepo.linkProviderSubject(user.userId, 'GOOGLE', googleSub)) as any;
+          user = (await this.authRepo.linkProviderSubject(
+            user.userId,
+            'GOOGLE',
+            googleSub,
+            shouldClearPreLinkCredentials,
+          )) as any;
         }
         if (authId && !user.authId) {
           await this.authRepo.updateAuthId(user.userId, authId);
@@ -1171,7 +1180,15 @@ export class AuthService {
         status: user.status,
         storeId,
         customerProfileId: user.customerProfile?.customerId?.toString() || null,
-        customerProfile: user.customerProfile,
+        customerProfile: user.customerProfile
+          ? {
+              ...user.customerProfile,
+              iotButtons: user.customerProfile.iotButtons?.map((btn: any) => {
+                const { hmacSecret, ...safeBtn } = btn;
+                return safeBtn;
+              }),
+            }
+          : null,
         ownedStores: user.ownedStores,
         storeStaffs: user.storeStaffs,
         createdAt: user.createdAt,

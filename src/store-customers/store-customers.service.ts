@@ -63,7 +63,13 @@ export class StoreCustomersService {
     const customerId = BigInt(customerIdStr);
     this.checkStoreAccess(storeId, user);
 
-    const updated = await this.repo.upsertStoreCustomerStatus(storeId, customerId, status);
+    // P1 Fix: Require existing store_customer relationship to prevent unauthorized PII disclosure and unconsented linking
+    const existing = await this.repo.findStoreCustomer(storeId, customerId);
+    if (!existing) {
+      throw new NotFoundException('Khách hàng chưa từng phát sinh quan hệ với cửa hàng');
+    }
+
+    const updated = await this.repo.updateStoreCustomerStatus(storeId, customerId, status);
     const stats = await this.repo.getCustomerStoreStats(storeId, customerId);
     return StoreCustomerResponseDto.fromEntity(updated, stats);
   }

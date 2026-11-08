@@ -27,11 +27,12 @@ const THIRD_PARTY_ROUTES = [
 ];
 
 // Public read-only endpoints suitable for Cloudflare Edge Caching (60s TTL)
-const CACHEABLE_ROUTES = [
+// Strictly whitelist purely public routes; never cache authenticated tenant sub-paths (e.g. /stores/me, /stores/:id/customers)
+const EXACT_CACHEABLE_ROUTES = [
+  '/healthz',
   '/api/v1/stores',
   '/api/v1/categories',
-  '/api/v1/subscription-plans',
-  '/healthz',
+  '/api/v1/subscription-plans/public',
 ];
 
 let lastNode2PingTimestamp = 0;
@@ -144,7 +145,16 @@ export default {
         requestInit.body = bodyBuffer.slice(0);
       }
 
-      const isCacheable = request.method === 'GET' && CACHEABLE_ROUTES.some((r) => url.pathname.startsWith(r));
+      // Edge Caching Invariant: NEVER cache authenticated requests or private user data
+      const hasAuth = Boolean(request.headers.get('Authorization') || request.headers.get('Cookie'));
+      const cacheControl = request.headers.get('Cache-Control') || '';
+      const noStoreRequested = cacheControl.includes('no-store') || cacheControl.includes('no-cache');
+
+      const isPathCacheable = EXACT_CACHEABLE_ROUTES.some((route) => {
+        return url.pathname === route || url.pathname === `${route}/`;
+      });
+
+      const isCacheable = request.method === 'GET' && !hasAuth && !noStoreRequested && isPathCacheable;
       if (isCacheable) {
         requestInit.cf = {
           cacheTtl: 60,

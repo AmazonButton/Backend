@@ -208,7 +208,7 @@ export class DevicesController {
       body.deviceId,
       body.claimCode,
       req.user.storeId,
-      req.user.id,
+      req.user,
     );
     return { success: true, message: 'Kích hoạt thiết bị thành công!', data };
   }

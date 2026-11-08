@@ -86,18 +86,12 @@ export class StoreCustomersRepository {
     });
   }
 
-  async upsertStoreCustomerStatus(storeId: bigint, customerId: bigint, status: string) {
-    return this.prisma.storeCustomer.upsert({
+  async updateStoreCustomerStatus(storeId: bigint, customerId: bigint, status: string) {
+    return this.prisma.storeCustomer.update({
       where: {
         uq_store_customer: { storeId, customerId },
       },
-      update: { status },
-      create: {
-        storeId,
-        customerId,
-        status,
-        joinedAt: new Date(),
-      },
+      data: { status },
       include: {
         customer: {
           include: {
@@ -114,6 +108,10 @@ export class StoreCustomersRepository {
         },
       },
     });
+  }
+
+  async upsertStoreCustomerStatus(storeId: bigint, customerId: bigint, status: string) {
+    return this.updateStoreCustomerStatus(storeId, customerId, status);
   }
 
   async getCustomerStoreStats(storeId: bigint, customerId: bigint) {

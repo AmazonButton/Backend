@@ -93,20 +93,27 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         storeId = user.ownedStores[0].storeId.toString();
         role = 'STORE_OWNER';
       } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-        // If payload had a storeId, ensure it matches an active membership
-        const activeMembership = payload.storeId
-          ? user.storeStaffs.find(
-              (s: any) => s.storeId.toString() === payload.storeId.toString() && s.status === 'ACTIVE',
-            )
-          : user.storeStaffs.find((s: any) => s.status === 'ACTIVE');
-
-        if (activeMembership) {
-          storeId = activeMembership.storeId.toString();
-          role = activeMembership.role?.roleCode || payload.role || 'STORE_STAFF';
-        } else {
-          // Stale authority revocation: Staff member has records in DB, but NONE are ACTIVE (e.g. TERMINATED/INACTIVE)
-          storeId = null;
+        // P1 Fix: Involuntary Role Override Prevention
+        // If user logged in as a CUSTOMER without explicitly requesting staff store scope, maintain CUSTOMER role!
+        if (payload.role === 'CUSTOMER' && !payload.storeId) {
           role = 'CUSTOMER';
+          storeId = null;
+        } else {
+          // If payload had a storeId, ensure it matches an active membership
+          const activeMembership = payload.storeId
+            ? user.storeStaffs.find(
+                (s: any) => s.storeId.toString() === payload.storeId.toString() && s.status === 'ACTIVE',
+              )
+            : user.storeStaffs.find((s: any) => s.status === 'ACTIVE');
+
+          if (activeMembership) {
+            storeId = activeMembership.storeId.toString();
+            role = activeMembership.role?.roleCode || payload.role || 'STORE_STAFF';
+          } else {
+            // Stale authority revocation: Staff member has records in DB, but NONE are ACTIVE (e.g. TERMINATED/INACTIVE)
+            storeId = null;
+            role = 'CUSTOMER';
+          }
         }
       } else {
         // Fallback for direct token roles (e.g. system tests, custom driver tokens)
