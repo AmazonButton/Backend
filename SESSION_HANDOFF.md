@@ -1,5 +1,27 @@
 # Project Handoff & Session Context
 
+### [2026-11-09] Store Staff Invitation Security Hardening & Auth Role Resolution Refinements
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Lỗ hổng 1: Owner Invitation Consent Bypass Prevention (`src/store-staff/store-staff.service.ts`)**:
+    - Disallowed store owners from PATCHing a `PENDING` staff invitation directly to `status: 'ACTIVE'`, completely preventing owners from bypassing candidate consent.
+    - Added guard throwing HTTP 403 `ForbiddenException` (`INVITATION_ACCEPTANCE_REQUIRED`) if `staff.status === 'PENDING'` and target status is `ACTIVE`.
+    - Added guard requiring re-invitation if staff is `TERMINATED` or `INACTIVE` (`REINVITATION_REQUIRED`), preventing direct reactivation via PATCH.
+  * **Lỗ hổng 2: Atomic State Machine & Self-Reactivation Prevention (`src/store-staff/store-staff.service.ts`, `src/store-staff/store-staff.repository.ts`)**:
+    - Guarded `acceptInvitation()` against inactive, terminated, or already-active staff. Throws HTTP 409 `ConflictException` if `staff.status !== 'PENDING'`.
+    - Implemented atomic database transition `acceptInvitationAtomic(storeStaffId, userId)` using `updateMany({ where: { storeStaffId, userId, status: 'PENDING' }, data: { status: 'ACTIVE', joinedAt, leftAt: null } })`, eliminating concurrent double-acceptance race conditions.
+    - Guarded `rejectInvitation()` to require `staff.status === 'PENDING'`, rejecting invalid transitions with HTTP 409 `ConflictException`.
+  * **Email Verification Migration Backfill Precision (`prisma/migrations/20261109000000_add_user_email_verified_at/migration.sql`)**:
+    - Added strict exclusions `AND "firebase_uid" IS NULL AND "phone_verified_at" IS NULL` so phone-registered accounts without verified emails are not inadvertently marked as verified.
+  * **Role Resolution Consistency in `getMe` and `updateProfile` (`src/auth/auth.service.ts`)**:
+    - Replaced raw `user.storeStaffs.length > 0` checks with single source of truth `this.resolveUserRole(user)` in both `getMe()` and `updateProfile()`.
+    - Users with pending invitations correctly receive `role: 'CUSTOMER'` and `storeId: null`, preventing frontend redirection errors.
+  * **Verification Evidence**:
+    - Suite 73 [`tests/security-audit-p1-fixes.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/security-audit-p1-fixes.spec.ts): **26 passed, 0 failed** (100% PASS, including tests 8.6–8.10).
+    - Suite 26 [`tests/store-staff-management.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/store-staff-management.spec.ts): updated with owner bypass defense, double acceptance rejection, terminated self-reactivation defense, and direct reactivation block.
+    - `npx tsc --noEmit`: **0 errors**.
+    - `npm run build`: **Compiled successfully** (Exit code 0).
+
 ### [2026-11-09] Deep Security Audit P1 Invariant Hardening & Refinements (Suite 73)
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:

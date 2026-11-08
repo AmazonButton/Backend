@@ -193,15 +193,18 @@ export class StoreStaffService {
       throw new ForbiddenException('BOLA_VIOLATION: Bạn chỉ có thể chấp nhận lời mời gửi cho chính mình');
     }
 
-    if (staff.status === 'ACTIVE') {
-      return StoreStaffResponseDto.fromEntity(staff);
+    if (staff.status !== 'PENDING') {
+      throw new ConflictException(
+        staff.status === 'ACTIVE'
+          ? 'Lời mời này đã được chấp nhận và đang hoạt động'
+          : 'Không thể chấp nhận lời mời đã bị từ chối hoặc nhân viên đã bị chấm dứt (TERMINATED/INACTIVE)',
+      );
     }
 
-    const updated = await this.repo.updateStaff(staffId, {
-      status: 'ACTIVE',
-      joinedAt: new Date(),
-      leftAt: null,
-    });
+    const updated = await this.repo.acceptInvitationAtomic(staffId, staff.userId);
+    if (!updated) {
+      throw new ConflictException('Không thể chấp nhận lời mời do trạng thái đã bị thay đổi');
+    }
 
     return StoreStaffResponseDto.fromEntity(updated);
   }
@@ -216,6 +219,10 @@ export class StoreStaffService {
     const currentUserId = (user?.userId || user?.id || user?.sub)?.toString();
     if (staff.userId.toString() !== currentUserId) {
       throw new ForbiddenException('BOLA_VIOLATION: Bạn chỉ có thể từ chối lời mời gửi cho chính mình');
+    }
+
+    if (staff.status !== 'PENDING') {
+      throw new ConflictException('Chỉ có thể từ chối lời mời đang ở trạng thái chờ phản hồi (PENDING)');
     }
 
     await this.repo.updateStaff(staffId, {
@@ -277,6 +284,22 @@ export class StoreStaffService {
 
     if (dto.status) {
       const canonicalStatus = dto.status === 'INACTIVE' ? 'TERMINATED' : dto.status;
+
+      // Lỗ hổng 1: Chủ cửa hàng không thể tự ý kích hoạt lời mời thay cho nhân viên.
+      // Người được mời phải tự gọi acceptInvitation.
+      if (staff.status === 'PENDING' && canonicalStatus === 'ACTIVE') {
+        throw new ForbiddenException(
+          'INVITATION_ACCEPTANCE_REQUIRED: Chủ cửa hàng không thể tự ý kích hoạt lời mời. Người dùng được mời phải tự chấp nhận qua API accept.',
+        );
+      }
+
+      // Lỗ hổng 2 liên đới: Không thể PATCH trực tiếp nhân viên đã TERMINATED/INACTIVE sang ACTIVE. Phải gửi lời mời mới.
+      if ((staff.status === 'TERMINATED' || staff.status === 'INACTIVE') && canonicalStatus === 'ACTIVE') {
+        throw new ForbiddenException(
+          'REINVITATION_REQUIRED: Không thể kích hoạt trực tiếp nhân viên đã bị chấm dứt (TERMINATED/INACTIVE). Vui lòng gửi lời mời mới.',
+        );
+      }
+
       updateData.status = canonicalStatus;
       if (canonicalStatus === 'TERMINATED') {
         updateData.leftAt = new Date();

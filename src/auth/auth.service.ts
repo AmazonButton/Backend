@@ -1160,17 +1160,7 @@ export class AuthService {
       return { success: false, data: null };
     }
 
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
-    if (user.username === 'admin' || user.email === 'admin@smartorder.local') {
-      role = 'SUPER_ADMIN';
-    } else if (user.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = user.ownedStores[0].storeId.toString();
-    } else if (user.storeStaffs.length > 0) {
-      role = user.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = user.storeStaffs[0].storeId.toString();
-    }
+    const { role, storeId } = this.resolveUserRole(user);
 
     return {
       success: true,
@@ -1215,17 +1205,7 @@ export class AuthService {
       phone: dto.phone !== undefined ? dto.phone.trim() : undefined,
     });
 
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
-    if (updated.email === 'admin@smartorder.local' || updated.username === 'admin') {
-      role = 'SUPER_ADMIN';
-    } else if (updated.ownedStores && updated.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = updated.ownedStores[0].storeId.toString();
-    } else if (updated.storeStaffs && updated.storeStaffs.length > 0) {
-      role = updated.storeStaffs[0].role?.roleCode || 'STORE_STAFF';
-      storeId = updated.storeStaffs[0].storeId.toString();
-    }
+    const { role, storeId } = this.resolveUserRole(updated);
 
     return {
       success: true,

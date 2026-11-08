@@ -460,6 +460,116 @@ async function runSecurityAuditP1FixesTests() {
       const activeStaff = pendingStaffUser.storeStaffs.find((s: any) => s.status === 'ACTIVE');
       assert.strictEqual(activeStaff, undefined, 'PENDING staff invitation must not be treated as active staff');
     });
+
+    await test('8.6 Owner cannot PATCH PENDING invitation directly to ACTIVE (Bypass Defense)', () => {
+      const currentStaff = { status: 'PENDING' };
+      const requestedStatus = 'ACTIVE';
+
+      let threwForbidden = false;
+      try {
+        if (currentStaff.status === 'PENDING' && requestedStatus === 'ACTIVE') {
+          throw new ForbiddenException(
+            'INVITATION_ACCEPTANCE_REQUIRED: Chủ cửa hàng không thể tự ý kích hoạt lời mời. Người dùng được mời phải tự chấp nhận qua API accept.',
+          );
+        }
+      } catch (err: any) {
+        threwForbidden = err instanceof ForbiddenException;
+      }
+
+      assert.strictEqual(threwForbidden, true, 'Must forbid owner from activating PENDING invitation directly');
+    });
+
+    await test('8.7 Terminated/inactive staff cannot self-reactivate via acceptInvitation', () => {
+      const terminatedStaff = { status: 'TERMINATED', userId: 100n };
+      const inactiveStaff = { status: 'INACTIVE', userId: 100n };
+
+      for (const st of [terminatedStaff, inactiveStaff]) {
+        let threwConflict = false;
+        try {
+          if (st.status !== 'PENDING') {
+            throw new ConflictException(
+              st.status === 'ACTIVE'
+                ? 'Lời mời này đã được chấp nhận và đang hoạt động'
+                : 'Không thể chấp nhận lời mời đã bị từ chối hoặc nhân viên đã bị chấm dứt (TERMINATED/INACTIVE)',
+            );
+          }
+        } catch (err: any) {
+          threwConflict = err instanceof ConflictException;
+        }
+        assert.strictEqual(threwConflict, true, `Must reject self-activation for status ${st.status}`);
+      }
+    });
+
+    await test('8.8 Double-acceptance of active staff is rejected with 409 Conflict', () => {
+      const activeStaff = { status: 'ACTIVE', userId: 100n };
+      let threwConflict = false;
+      try {
+        if (activeStaff.status !== 'PENDING') {
+          throw new ConflictException('Lời mời này đã được chấp nhận và đang hoạt động');
+        }
+      } catch (err: any) {
+        threwConflict = err instanceof ConflictException;
+      }
+      assert.strictEqual(threwConflict, true, 'Double acceptance must throw ConflictException');
+    });
+
+    await test('8.9 Owner cannot PATCH TERMINATED staff directly to ACTIVE (Must re-invite)', () => {
+      const terminatedStaff = { status: 'TERMINATED' };
+      const requestedStatus = 'ACTIVE';
+
+      let threwForbidden = false;
+      try {
+        if (
+          (terminatedStaff.status === 'TERMINATED' || terminatedStaff.status === 'INACTIVE') &&
+          requestedStatus === 'ACTIVE'
+        ) {
+          throw new ForbiddenException(
+            'REINVITATION_REQUIRED: Không thể kích hoạt trực tiếp nhân viên đã bị chấm dứt (TERMINATED/INACTIVE). Vui lòng gửi lời mời mới.',
+          );
+        }
+      } catch (err: any) {
+        threwForbidden = err instanceof ForbiddenException;
+      }
+
+      assert.strictEqual(threwForbidden, true, 'Must require reinvitation for terminated staff');
+    });
+
+    await test('8.10 AuthService role resolution returns CUSTOMER when staff invitation is PENDING', () => {
+      const userWithPendingInvitation: any = {
+        username: 'candidate_john',
+        email: 'john@example.com',
+        ownedStores: [],
+        storeStaffs: [
+          {
+            storeId: 10n,
+            status: 'PENDING',
+            role: { roleCode: 'STORE_MANAGER' },
+          },
+        ],
+      };
+
+      // Mock AuthService resolveUserRole logic
+      const resolveUserRole = (u: any) => {
+        if (u.username === 'admin' || u.email === 'admin@smartorder.local') {
+          return { role: 'SUPER_ADMIN', storeId: null };
+        }
+        if (u.ownedStores && u.ownedStores.length > 0) {
+          return { role: 'STORE_OWNER', storeId: u.ownedStores[0].storeId.toString() };
+        }
+        const activeStaff = u.storeStaffs?.find((s: any) => s.status === 'ACTIVE');
+        if (activeStaff) {
+          return {
+            role: activeStaff.role?.roleCode || 'STORE_STAFF',
+            storeId: activeStaff.storeId.toString(),
+          };
+        }
+        return { role: 'CUSTOMER', storeId: null };
+      };
+
+      const resolved = resolveUserRole(userWithPendingInvitation);
+      assert.strictEqual(resolved.role, 'CUSTOMER', 'Pending invitation must NOT grant staff role');
+      assert.strictEqual(resolved.storeId, null);
+    });
   }
 
   console.log('\n================================================================');

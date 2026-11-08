@@ -123,6 +123,27 @@ export class StoreStaffRepository {
     });
   }
 
+  async acceptInvitationAtomic(storeStaffId: bigint, userId: bigint) {
+    const res = await this.prisma.storeStaff.updateMany({
+      where: {
+        storeStaffId,
+        userId,
+        status: 'PENDING',
+      },
+      data: {
+        status: 'ACTIVE',
+        joinedAt: new Date(),
+        leftAt: null,
+      },
+    });
+
+    if (res.count === 0) {
+      return null;
+    }
+
+    return this.findStaffById(storeStaffId);
+  }
+
   async deleteStaff(storeStaffId: bigint) {
     return this.prisma.storeStaff.delete({
       where: { storeStaffId },

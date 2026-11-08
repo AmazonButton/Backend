@@ -217,6 +217,17 @@ async function runStoreStaffManagementSuite() {
       ) {
         createdStaff1Id = body.data.storeStaffId;
 
+        // Lỗ hổng 1: Verify Owner cannot bypass invitation by PATCHing PENDING -> ACTIVE (403 Forbidden)
+        const ownerBypassRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${tokenOwnerA}`,
+          },
+          body: JSON.stringify({ status: 'ACTIVE' }),
+        });
+        const ownerBypassBlocked = ownerBypassRes.status === 403;
+
         // Verify BOLA: Candidate 2 cannot accept Candidate 1's invitation (403)
         const bolaRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
           method: 'POST',
@@ -234,11 +245,18 @@ async function runStoreStaffManagementSuite() {
           (acceptRes.status === 200 || acceptRes.status === 201) &&
           acceptBody.data?.status === 'ACTIVE';
 
-        if (bolaOk && acceptOk) {
-          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', true);
+        // Candidate 1 attempts to accept AGAIN when already ACTIVE -> 409 Conflict
+        const doubleAcceptRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tokenCandidate1}` },
+        });
+        const doubleAcceptBlocked = doubleAcceptRes.status === 409;
+
+        if (ownerBypassBlocked && bolaOk && acceptOk && doubleAcceptBlocked) {
+          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass and double-accept defenses)', true);
           passed++;
         } else {
-          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', false, `bolaOk: ${bolaOk}, acceptOk: ${acceptOk}`);
+          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass and double-accept defenses)', false, `ownerBypassBlocked: ${ownerBypassBlocked}, bolaOk: ${bolaOk}, acceptOk: ${acceptOk}, doubleAcceptBlocked: ${doubleAcceptBlocked}`);
           failed++;
         }
       } else {
@@ -376,17 +394,37 @@ async function runStoreStaffManagementSuite() {
         });
         const body = await res.json();
 
+        // Lỗ hổng 2: Terminated/inactive staff calling /accept cannot self-reactivate -> 409 Conflict
+        const selfReactivateRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tokenCandidate1}` },
+        });
+        const selfReactivateBlocked = selfReactivateRes.status === 409;
+
+        // Owner cannot PATCH a terminated staff directly back to ACTIVE -> 403 Forbidden
+        const directReactivateRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${tokenOwnerA}`,
+          },
+          body: JSON.stringify({ status: 'ACTIVE' }),
+        });
+        const directReactivateBlocked = directReactivateRes.status === 403;
+
         if (
           res.status === 200 &&
           body.success === true &&
           body.data.role.roleCode === 'STAFF_INVENTORY' &&
           (body.data.status === 'TERMINATED' || body.data.status === 'INACTIVE') &&
-          body.data.leftAt !== null
+          body.data.leftAt !== null &&
+          selfReactivateBlocked &&
+          directReactivateBlocked
         ) {
-          logTest('PATCH /store-staff/:id updates role to STAFF_INVENTORY and records leftAt', true);
+          logTest('PATCH /store-staff/:id updates role to STAFF_INVENTORY and records leftAt (blocks self-reactivation & direct reactivation)', true);
           passed++;
         } else {
-          logTest('PATCH /store-staff/:id updates role to STAFF_INVENTORY and records leftAt', false, JSON.stringify(body));
+          logTest('PATCH /store-staff/:id updates role to STAFF_INVENTORY and records leftAt (blocks self-reactivation & direct reactivation)', false, `selfReactivateBlocked: ${selfReactivateBlocked}, directReactivateBlocked: ${directReactivateBlocked}, body: ${JSON.stringify(body)}`);
           failed++;
         }
       } catch (err: any) {
