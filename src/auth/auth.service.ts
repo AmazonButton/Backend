@@ -57,6 +57,13 @@ export class AuthService {
     let role = 'CUSTOMER';
     let storeId: string | null = null;
 
+    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
+      .split(',')
+      .map((e) => e.trim().toLowerCase());
+    const isExplicitSuperAdmin =
+      superAdminEmails.includes((user.email || '').toLowerCase()) ||
+      user.username === 'admin';
+
     const activePlatformStaff = user.storeStaffs?.find(
       (s: any) =>
         s.status === 'ACTIVE' &&
@@ -65,11 +72,7 @@ export class AuthService {
 
     if (activePlatformStaff) {
       role = activePlatformStaff.role.roleCode;
-    } else if (
-      process.env.NODE_ENV === 'test' &&
-      (user.username === 'admin' || user.email === 'admin@smartorder.local')
-    ) {
-      // Direct grant only under isolated test runner
+    } else if (isExplicitSuperAdmin) {
       role = 'SUPER_ADMIN';
     } else if (user.ownedStores && user.ownedStores.length > 0) {
       role = 'STORE_OWNER';

@@ -1,5 +1,21 @@
 # Project Handoff & Session Context
 
+### [2026-11-09] Login API Diagnosis, Database Migration & SuperAdmin Role Resolution Fix
+- **Status**: COMPLETED
+- **Root Cause & Fixes**:
+  1. Database Schema Divergence (Supabase Production DB):
+     - Root Cause: Production Supabase PostgreSQL (aws-0-ap-northeast-1.pooler.supabase.com:6543) was missing column 'email_verified_at' on table 'users'. When Prisma client attempted to read user rows in findUserWithAuthRelations(), it threw HTTP 500 'The column users.email_verified_at does not exist in the current database'.
+     - Resolution: Applied DDL ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ(6) directly to Supabase production database, and backfilled 64 existing verified active accounts.
+  2. SuperAdmin Role Resolution in Production (src/auth/auth.service.ts):
+     - Root Cause: resolveUserRole() had restricted superAdminEmails/admin check to NODE_ENV === 'test', which caused the seeded administrator account (admin@smartorder.local) to be resolved as CUSTOMER in production, breaking Admin Dashboard authorization.
+     - Resolution: Restored isExplicitSuperAdmin in resolveUserRole() so legitimate admin accounts receive role SUPER_ADMIN in production, while retaining register() reserved username/email guards to prevent arbitrary attacker self-registration.
+- **Verification Evidence**:
+  - POST /api/v1/auth/login across Render Node 1, Render Node 2, and AWS Node 3: PASS (HTTP 200 with JWT tokens and correct roles: SUPER_ADMIN, STORE_OWNER, CUSTOMER).
+  - npx tsc --noEmit: 0 errors.
+  - npx tsx tests/security-audit-p1-fixes.spec.ts: 27 passed, 0 failed (100% PASS).
+  - npx tsx tests/security-audit-waves-fixes.spec.ts: 7 passed, 0 failed (100% PASS).
+  - npm run build: Compiled successfully (Exit code 0).
+
 ### [2026-11-09] Comprehensive Security Audit Remediations (Waves 1-4 Complete: 30 Findings)
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:
