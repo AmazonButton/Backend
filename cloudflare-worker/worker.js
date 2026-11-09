@@ -13,9 +13,10 @@
  * 4. Background Keep-Alive: Both Render Nodes pinged every 5-10 minutes via ctx.waitUntil & Cron
  */
 
+// Base origin configurations (Overridable via Worker environment variables)
 const NODE1_RENDER = 'https://backend-fae8.onrender.com';
 const NODE2_RENDER = 'https://backend-node2-ukib.onrender.com';
-const NODE3_AWS    = 'http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaws.com';
+const NODE3_AWS_DEFAULT = 'http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaws.com';
 
 // Dedicated paths for third-party integrations (PayOS, Didit eKYC, Bank Verification)
 const THIRD_PARTY_ROUTES = [
@@ -76,6 +77,7 @@ export default {
     }
 
     // 3. Intelligent Path-Based & Weighted Origin Selection
+    const node3Origin = env?.NODE3_AWS || NODE3_AWS_DEFAULT;
     const isThirdParty = THIRD_PARTY_ROUTES.some((p) => url.pathname.startsWith(p));
     let candidateOrigins;
 
@@ -83,7 +85,7 @@ export default {
       // 100% Third-party traffic (PayOS, Didit, Banks) to Node 1
       candidateOrigins = [
         { url: NODE1_RENDER, node: 'node-1', role: 'third-party-primary (100%)' },
-        { url: NODE3_AWS,    node: 'node-3', role: 'third-party-fallback' },
+        { url: node3Origin,   node: 'node-3', role: 'third-party-fallback' },
         { url: NODE2_RENDER, node: 'node-2', role: 'emergency-standby' },
       ];
     } else {
@@ -95,19 +97,19 @@ export default {
         candidateOrigins = [
           { url: NODE1_RENDER, node: 'node-1', role: 'render-primary-50pct' },
           { url: NODE2_RENDER, node: 'node-2', role: 'render-secondary-fallback' },
-          { url: NODE3_AWS,    node: 'node-3', role: 'aws-fallback' },
+          { url: node3Origin,   node: 'node-3', role: 'aws-fallback' },
         ];
       } else if (rand < 85) {
         // 35% to Node 2 (Render Secondary - High-throughput & low latency)
         candidateOrigins = [
           { url: NODE2_RENDER, node: 'node-2', role: 'render-secondary-35pct' },
           { url: NODE1_RENDER, node: 'node-1', role: 'render-primary-fallback' },
-          { url: NODE3_AWS,    node: 'node-3', role: 'aws-fallback' },
+          { url: node3Origin,   node: 'node-3', role: 'aws-fallback' },
         ];
       } else {
         // 15% to Node 3 (AWS EC2 Sydney - Failover & backup)
         candidateOrigins = [
-          { url: NODE3_AWS,    node: 'node-3', role: 'aws-backup-15pct' },
+          { url: node3Origin,   node: 'node-3', role: 'aws-backup-15pct' },
           { url: NODE1_RENDER, node: 'node-1', role: 'render-primary-fallback' },
           { url: NODE2_RENDER, node: 'node-2', role: 'render-secondary-fallback' },
         ];
@@ -175,7 +177,6 @@ export default {
         // Success or standard HTTP response
         const responseHeaders = new Headers(response.headers);
         responseHeaders.set('X-Cluster-Node', candidate.node);
-        responseHeaders.set('X-Cluster-Origin', currentOrigin);
         responseHeaders.set('X-Cluster-Role', candidate.role);
         responseHeaders.set('X-Cluster-Attempt', String(attempt + 1));
         responseHeaders.set('Access-Control-Allow-Origin', request.headers.get('Origin') || '*');

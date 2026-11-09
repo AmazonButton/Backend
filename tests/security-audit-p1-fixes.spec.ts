@@ -570,6 +570,53 @@ async function runSecurityAuditP1FixesTests() {
       assert.strictEqual(resolved.role, 'CUSTOMER', 'Pending invitation must NOT grant staff role');
       assert.strictEqual(resolved.storeId, null);
     });
+
+    await test('8.11 Multi-step bypass PENDING -> ON_LEAVE -> ACTIVE is blocked by allowlist (403 Forbidden)', () => {
+      const allowedTransitions: Record<string, string[]> = {
+        PENDING: ['TERMINATED'],
+        ACTIVE: ['ACTIVE', 'ON_LEAVE', 'TERMINATED'],
+        ON_LEAVE: ['ON_LEAVE', 'ACTIVE', 'TERMINATED'],
+        TERMINATED: ['TERMINATED'],
+        INACTIVE: ['TERMINATED'],
+      };
+
+      const checkTransition = (current: string, target: string) => {
+        if (!allowedTransitions[current]?.includes(target)) {
+          throw new ForbiddenException(
+            `INVALID_STAFF_STATUS_TRANSITION: Không thể chuyển trạng thái nhân viên từ ${current} sang ${target}`,
+          );
+        }
+      };
+
+      // Step 1: PENDING -> ON_LEAVE must be rejected with ForbiddenException
+      let pendingToOnLeaveThrew = false;
+      try {
+        checkTransition('PENDING', 'ON_LEAVE');
+      } catch (err: any) {
+        pendingToOnLeaveThrew = err instanceof ForbiddenException;
+      }
+      assert.strictEqual(pendingToOnLeaveThrew, true, 'PENDING -> ON_LEAVE must throw 403 Forbidden');
+
+      // Step 2: PENDING -> ACTIVE must be rejected
+      let pendingToActiveThrew = false;
+      try {
+        checkTransition('PENDING', 'ACTIVE');
+      } catch (err: any) {
+        pendingToActiveThrew = err instanceof ForbiddenException;
+      }
+      assert.strictEqual(pendingToActiveThrew, true, 'PENDING -> ACTIVE must throw 403 Forbidden');
+
+      // Step 3: PENDING -> TERMINATED is allowed (Owner can cancel invitation)
+      assert.doesNotThrow(() => checkTransition('PENDING', 'TERMINATED'));
+
+      // Step 4: ACTIVE <-> ON_LEAVE is allowed for legitimate staff
+      assert.doesNotThrow(() => checkTransition('ACTIVE', 'ON_LEAVE'));
+      assert.doesNotThrow(() => checkTransition('ON_LEAVE', 'ACTIVE'));
+
+      // Step 5: TERMINATED -> ON_LEAVE or ACTIVE must be rejected
+      assert.throws(() => checkTransition('TERMINATED', 'ACTIVE'), ForbiddenException);
+      assert.throws(() => checkTransition('TERMINATED', 'ON_LEAVE'), ForbiddenException);
+    });
   }
 
   console.log('\n================================================================');

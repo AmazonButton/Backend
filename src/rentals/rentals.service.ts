@@ -82,7 +82,7 @@ export class RentalsService {
       throw new NotFoundException('Gói thuê nút không tồn tại hoặc đã tạm dừng cung cấp');
     }
 
-    const months = Number(dto.monthsRented ?? 1);
+    const months = Math.max(1, Math.min(12, Math.floor(Number(dto.monthsRented ?? 1))));
     const buttonQuantity = (pkg as any).buttonQuantity ?? 1;
     const pricing = calculateRentalPricing({
       buttonQuantity,

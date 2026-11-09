@@ -149,17 +149,27 @@ export class ProductsService {
     }
 
     // Tenant Isolation (Fail-Closed):
-    // STORE_OWNER va STAFF_INVENTORY chi duoc xem san pham cua cua hang minh.
+    // Store-scoped roles chi duoc xem san pham cua cua hang minh.
     // Thieu storeId -> 403 Forbidden.
     // Khac storeId -> 403 Forbidden.
-    // CUSTOMER va SYSTEM_ADMIN / SUPER_ADMIN duoc phep xem toan bo catalog cong khai.
-    const isStoreScopedRole = user && (user.role === 'STORE_OWNER' || user.role === 'STAFF_INVENTORY');
+    const storeScopedRoles = ['STORE_OWNER', 'STORE_MANAGER', 'STAFF_INVENTORY', 'STAFF_ORDERS', 'STAFF_ORDER', 'STAFF_DELIVERY', 'STORE_STAFF'];
+    const isStoreScopedRole = user && storeScopedRoles.includes(user.role);
     if (isStoreScopedRole) {
       if (!user.storeId) {
         throw new ForbiddenException('Tai khoan quan ly hoac nhan vien chua duoc lien ket voi bat ky cua hang nao');
       }
       if (product.storeId && product.storeId.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Ban khong co quyen truy cap san pham cua cua hang khac');
+      }
+    }
+
+    // Inactive product isolation: Customers & guests can only view ACTIVE products
+    const isPlatformAdmin = user && (user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN' || user.role === 'ADMIN');
+    const isOwnStoreStaff = isStoreScopedRole && product.storeId && user.storeId && product.storeId.toString() === user.storeId.toString();
+
+    if (!isPlatformAdmin && !isOwnStoreStaff) {
+      if (product.status !== 'ACTIVE') {
+        throw new NotFoundException('San pham khong ton tai');
       }
     }
 
@@ -269,6 +279,18 @@ export class ProductsService {
           changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
         }
       : undefined;
+
+    // P2 Invariant Fix (products/update-status-bypasses-subscription-and-max-products):
+    // Bắt buộc trạng thái chỉ được là ACTIVE hoặc INACTIVE.
+    // Khi kích hoạt sản phẩm (status = ACTIVE) từ trạng thái khác, bắt buộc kiểm tra subscription & quota maxProducts!
+    if (status !== undefined) {
+      if (!['ACTIVE', 'INACTIVE'].includes(status)) {
+        throw new BadRequestException('Trạng thái sản phẩm chỉ có thể là ACTIVE hoặc INACTIVE');
+      }
+      if (status === 'ACTIVE' && existing.status !== 'ACTIVE') {
+        await this.subscriptionsService.validateStoreCanListProducts(existing.storeId);
+      }
+    }
 
     const stock = body.stock !== undefined && !isNaN(Number(body.stock)) ? Number(body.stock) : undefined;
     const imageInputs = this.parseImageInputs(body);

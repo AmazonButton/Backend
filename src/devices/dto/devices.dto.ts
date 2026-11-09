@@ -307,6 +307,9 @@ export class UpdateConfigDto {
 
   @IsOptional()
   @IsString()
+  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'RETIRED'], {
+    message: 'Trạng thái phải là một trong: ACTIVE, INACTIVE, MAINTENANCE, RETIRED',
+  })
   status?: string;
 }
 

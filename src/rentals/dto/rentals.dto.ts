@@ -1,10 +1,11 @@
-import { IsNotEmpty, IsNumber, Min } from 'class-validator';
+import { IsNotEmpty, IsInt, Min, Max } from 'class-validator';
 
 export class CreateRentalOrderDto {
   @IsNotEmpty()
   packageId: string | number;
 
-  @IsNumber()
-  @Min(1)
+  @IsInt({ message: 'Số tháng thuê phải là số nguyên' })
+  @Min(1, { message: 'Số tháng thuê tối thiểu là 1 tháng' })
+  @Max(12, { message: 'Thời gian thuê ban đầu tối đa là 12 tháng' })
   monthsRented: number;
 }

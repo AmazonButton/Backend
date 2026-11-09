@@ -300,6 +300,21 @@ export class StoreStaffService {
         );
       }
 
+      // Allowlist chuyển trạng thái do chủ cửa hàng thực hiện (chặn bypass hai bước PENDING -> ON_LEAVE -> ACTIVE).
+      // PENDING chỉ có thể bị hủy; ON_LEAVE chỉ đạt được từ ACTIVE nên không thể dùng để bỏ qua bước accept.
+      const allowedTransitions: Record<string, string[]> = {
+        PENDING: ['TERMINATED'],
+        ACTIVE: ['ACTIVE', 'ON_LEAVE', 'TERMINATED'],
+        ON_LEAVE: ['ON_LEAVE', 'ACTIVE', 'TERMINATED'],
+        TERMINATED: ['TERMINATED'],
+        INACTIVE: ['TERMINATED'],
+      };
+      if (!allowedTransitions[staff.status]?.includes(canonicalStatus)) {
+        throw new ForbiddenException(
+          `INVALID_STAFF_STATUS_TRANSITION: Không thể chuyển trạng thái nhân viên từ ${staff.status} sang ${canonicalStatus}`,
+        );
+      }
+
       updateData.status = canonicalStatus;
       if (canonicalStatus === 'TERMINATED') {
         updateData.leftAt = new Date();

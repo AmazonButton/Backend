@@ -560,6 +560,26 @@ export class AuthRepository {
   }
 
   // --- Dedicated OTP Table Methods (Atomic & Peppered) ---
+  async invalidateUnconsumedOtps(userId: bigint, purpose: string) {
+    return this.prisma.authOtp.updateMany({
+      where: {
+        userId,
+        purpose,
+        consumedAt: null,
+      },
+      data: {
+        consumedAt: new Date(),
+      },
+    });
+  }
+
+  async updatePasswordChangedAt(userId: bigint, date: Date = new Date()) {
+    return this.prisma.user.update({
+      where: { userId },
+      data: { passwordChangedAt: date },
+    });
+  }
+
   async createAuthOtp(data: {
     userId?: bigint;
     email: string;
@@ -812,6 +832,8 @@ export class AuthRepository {
       fullName?: string;
       avatarUrl?: string;
       phone?: string;
+      phoneVerifiedAt?: Date | null;
+      firebaseUid?: string | null;
     },
   ) {
     return this.prisma.user.update({
@@ -820,6 +842,8 @@ export class AuthRepository {
         ...(data.fullName !== undefined ? { fullName: data.fullName } : {}),
         ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
         ...(data.phone !== undefined ? { phone: data.phone } : {}),
+        ...(data.phoneVerifiedAt !== undefined ? { phoneVerifiedAt: data.phoneVerifiedAt } : {}),
+        ...(data.firebaseUid !== undefined ? { firebaseUid: data.firebaseUid } : {}),
       },
       include: {
         customerProfile: { include: { addresses: true } },

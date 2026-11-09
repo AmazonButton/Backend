@@ -524,7 +524,10 @@ export class DevicesService {
       updateData.buttonName = body.name;
     }
     if (body.status) {
-      updateData.status = body.status;
+      const allowedRoles = ['STORE_OWNER', 'STORE_MANAGER', 'ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'];
+      if (allowedRoles.includes(user?.role)) {
+        updateData.status = body.status;
+      }
     }
     if (body.location) {
       DevicesService.deviceLocations.set(existing.deviceId, body.location);

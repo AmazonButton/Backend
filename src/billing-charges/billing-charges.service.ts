@@ -229,12 +229,13 @@ export class BillingChargesService {
     const role = user.role || user.roleCode;
     const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(role);
     if (!isAdmin) {
-      const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STAFF'].includes(role);
       const isStorePayer = charge.payerStoreId != null || charge.lines?.some((l: any) => l.lineType === 'STORE_RENT');
+      const isStoreSubscription = charge.targetType === 'STORE' || charge.targetType === 'STORE_SUBSCRIPTION' || charge.purpose === 'STORE_SUBSCRIPTION';
 
-      if (isStorePayer) {
-        if (!isStoreRole) {
-          throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu dành cho Cửa hàng');
+      if (isStorePayer || isStoreSubscription) {
+        const isStoreFinanceManager = ['STORE_OWNER', 'STORE_MANAGER'].includes(role);
+        if (!isStoreFinanceManager) {
+          throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản lý mới có quyền truy cập hóa đơn tài chính của Cửa hàng');
         }
         const userStoreId = user.storeId ? BigInt(user.storeId) : null;
         if (!userStoreId) {
@@ -244,10 +245,10 @@ export class BillingChargesService {
         if (!activeStore) {
           throw new ForbiddenException('Cửa hàng không tồn tại hoặc chưa được kích hoạt');
         }
-        if (!charge.payerStoreId) {
-          throw new ForbiddenException('Khoản thu thiếu thông tin Cửa hàng chi trả');
+        if (charge.payerStoreId && BigInt(charge.payerStoreId) !== userStoreId) {
+          throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của Cửa hàng khác');
         }
-        if (BigInt(charge.payerStoreId) !== userStoreId) {
+        if (isStoreSubscription && charge.targetId && BigInt(charge.targetId) !== userStoreId) {
           throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của Cửa hàng khác');
         }
         if (charge.targetType === 'RENTAL') {
@@ -261,12 +262,6 @@ export class BillingChargesService {
           if (BigInt(rental.fulfillmentStoreId) !== userStoreId) {
             throw new ForbiddenException('Hợp đồng thuê không thuộc quyền phụ trách của Cửa hàng');
           }
-        } else if (charge.targetType === 'STORE' || charge.targetType === 'STORE_SUBSCRIPTION') {
-          if (!charge.targetId || BigInt(charge.targetId) !== userStoreId) {
-            throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của Cửa hàng khác');
-          }
-        } else {
-          throw new ForbiddenException('Loại đối tượng của khoản thu không được hỗ trợ');
         }
       } else if (charge.targetType === 'RENTAL') {
         const rental = await this.repository.findRentalWithCustomer(charge.targetId);
@@ -280,15 +275,6 @@ export class BillingChargesService {
 
         if (!isMatch) {
           throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu này');
-        }
-      } else if (charge.targetType === 'STORE' || charge.targetType === 'STORE_SUBSCRIPTION') {
-        const userStoreId = user.storeId ? BigInt(user.storeId) : null;
-        if (!userStoreId || BigInt(charge.targetId) !== userStoreId) {
-          throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của cửa hàng khác');
-        }
-        const activeStore = await this.repository.findActiveStoreById(userStoreId);
-        if (!activeStore) {
-          throw new ForbiddenException('Cửa hàng không tồn tại hoặc chưa được kích hoạt');
         }
       } else {
         throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu này');

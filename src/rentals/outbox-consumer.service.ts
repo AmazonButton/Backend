@@ -48,6 +48,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
    * R06: Hỗ trợ lease recovery (locked_until) và claim_token để phục hồi lease hết hạn
    */
   async processPendingEvents(batchSize: number = 10) {
+    const clampedBatchSize = Math.max(1, Math.min(100, Number(batchSize) || 10));
     const results = {
       processed: 0,
       failed: 0,
@@ -66,7 +67,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
          ORDER BY id ASC 
          LIMIT $1 
          FOR UPDATE SKIP LOCKED`,
-        batchSize,
+        clampedBatchSize,
       );
 
       if (pending && pending.length > 0) {
@@ -187,6 +188,42 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     switch (event.event_type) {
       case 'DEPOSIT_REFUND_APPROVED': {
         const refundId = BigInt(payload.refundId);
+
+        // P2 Invariant Guard (rentals/outbox-deposit-refund-payout-no-state-guard):
+        // Lock row FOR UPDATE and enforce status is PENDING_PAYOUT and providerReferenceId is null
+        const lockedRefund = await this.prisma.$transaction(async (tx) => {
+          const rows = await tx.$queryRawUnsafe<any[]>(
+            `SELECT refund_id, status, provider_reference_id, refund_code, amount,
+                    recipient_bin, recipient_account_number_encrypted,
+                    recipient_account_number_hash, recipient_account_holder_name,
+                    recipient_account_number_masked
+             FROM deposit_refunds
+             WHERE refund_id = $1
+             FOR UPDATE`,
+            refundId,
+          );
+          return rows?.[0] || null;
+        });
+
+        if (!lockedRefund) {
+          throw new Error(`Refund #${refundId} not found`);
+        }
+
+        if (lockedRefund.status === 'REFUNDED') {
+          this.logger.log(`[OutboxConsumer] Refund #${refundId} đã ở trạng thái REFUNDED. Bỏ qua payout lặp lại.`);
+          break;
+        }
+
+        if (lockedRefund.status !== 'PENDING_PAYOUT') {
+          this.logger.warn(`[OutboxConsumer] Refund #${refundId} đang ở trạng thái ${lockedRefund.status} (không phải PENDING_PAYOUT). Bỏ qua payout.`);
+          break;
+        }
+
+        if (lockedRefund.provider_reference_id) {
+          this.logger.warn(`[OutboxConsumer] Refund #${refundId} đã có provider_reference_id=${lockedRefund.provider_reference_id}. Bỏ qua tạo payout mới để tránh double-payout.`);
+          break;
+        }
+
         // 1. Kiểm tra yêu cầu hoàn cọc và snapshot bất biến đã được chốt khi Admin duyệt
         const refund = await this.prisma.depositRefund.findUnique({
           where: { refundId },

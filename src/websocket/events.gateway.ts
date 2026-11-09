@@ -164,6 +164,22 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.join(`customer:${payload.customerProfileId}`);
       }
 
+      // Schedule disconnect timer when token expires
+      if (payload.exp) {
+        const expiresInMs = payload.exp * 1000 - Date.now();
+        if (expiresInMs <= 0) {
+          this.logger.warn(`⚠️ [WS] Token already expired for socket: ${client.id}`);
+          client.disconnect(true);
+          return;
+        }
+        const timer = setTimeout(() => {
+          this.logger.warn(`⚠️ [WS] Token expired for socket: ${client.id}, disconnecting`);
+          client.emit('auth:expired', { message: 'Phiên kết nối đã hết hạn, vui lòng kết nối lại' });
+          client.disconnect(true);
+        }, Math.min(expiresInMs, 2147483647));
+        client.data.disconnectTimer = timer;
+      }
+
       this.logger.log(`⚡ [WS] Authenticated socket connected: ${client.id} (User: ${payload.userId}, Role: ${payload.role})`);
     } catch (err: any) {
       this.logger.warn(`⚠️ [WS] Authentication failed for socket ${client.id}: ${err.message}`);
@@ -172,11 +188,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: Socket) {
+    if (client.data?.disconnectTimer) {
+      clearTimeout(client.data.disconnectTimer);
+    }
     this.logger.log(`❌ [WS] Socket disconnected: ${client.id}`);
   }
 
   @SubscribeMessage('subscribe:store')
-  handleSubscribeStore(client: Socket, storeId: string) {
+  async handleSubscribeStore(client: Socket, storeId: string) {
     const user = client.data?.user;
     if (!user) {
       client.emit('error', { code: 'UNAUTHORIZED', message: 'Vui lòng xác thực trước khi tham gia room' });
@@ -184,9 +203,33 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN';
-    const isStoreStaff = user.storeId && user.storeId.toString() === storeId?.toString();
+    let isAuthorized = isSuperAdmin;
 
-    if (isSuperAdmin || isStoreStaff) {
+    if (!isAuthorized && this.prisma && storeId) {
+      try {
+        const uId = BigInt(user.userId);
+        const sId = BigInt(storeId);
+        const [owned, staff] = await Promise.all([
+          this.prisma.store.findFirst({
+            where: { storeId: sId, ownerUserId: uId, status: 'ACTIVE' },
+            select: { storeId: true },
+          }),
+          this.prisma.storeStaff.findFirst({
+            where: { storeId: sId, userId: uId, status: 'ACTIVE' },
+            select: { storeId: true },
+          }),
+        ]);
+        if (owned || staff) {
+          isAuthorized = true;
+        }
+      } catch (err: any) {
+        this.logger.warn(`⚠️ [WS] Error verifying store authority: ${err.message}`);
+      }
+    } else if (!isAuthorized && !this.prisma) {
+      isAuthorized = user.storeId && user.storeId.toString() === storeId?.toString();
+    }
+
+    if (isAuthorized) {
       client.join(`store_${storeId}`);
       client.join(`store:${storeId}`);
       this.logger.log(`🔌 Socket ${client.id} joined store_${storeId} and store:${storeId}`);
@@ -197,7 +240,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('subscribe:customer')
-  handleSubscribeCustomer(client: Socket, customerId: string) {
+  async handleSubscribeCustomer(client: Socket, customerId: string) {
     const user = client.data?.user;
     if (!user) {
       client.emit('error', { code: 'UNAUTHORIZED', message: 'Vui lòng xác thực trước khi tham gia room' });
@@ -205,9 +248,27 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN';
-    const isCustomer = user.customerId && user.customerId.toString() === customerId?.toString();
+    let isAuthorized = isSuperAdmin;
 
-    if (isSuperAdmin || isCustomer) {
+    if (!isAuthorized && this.prisma && customerId) {
+      try {
+        const uId = BigInt(user.userId);
+        const cId = BigInt(customerId);
+        const profile = await this.prisma.customerProfile.findFirst({
+          where: { customerId: cId, userId: uId },
+          select: { customerId: true },
+        });
+        if (profile) {
+          isAuthorized = true;
+        }
+      } catch (err: any) {
+        this.logger.warn(`⚠️ [WS] Error verifying customer authority: ${err.message}`);
+      }
+    } else if (!isAuthorized && !this.prisma) {
+      isAuthorized = user.customerId && user.customerId.toString() === customerId?.toString();
+    }
+
+    if (isAuthorized) {
       client.join(`customer_${customerId}`);
       this.logger.log(`🔌 Socket ${client.id} joined customer_${customerId}`);
     } else {

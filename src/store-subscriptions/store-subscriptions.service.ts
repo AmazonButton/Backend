@@ -69,7 +69,7 @@ export class StoreSubscriptionsService {
     const rawStoreId = BigInt(storeId);
     const currentSub = await this.getCurrentSubscription(rawStoreId);
 
-    if (!currentSub) {
+    if (!currentSub || currentSub.isExpired || currentSub.status !== 'ACTIVE' || new Date(currentSub.endDate) < new Date()) {
       throw new ForbiddenException(
         'Gian hàng đã hết hạn hoặc chưa đăng ký gói duy trì kệ (60.000đ/tháng). Vui lòng thanh toán phí duy trì để tiếp tục đăng bán sản phẩm.',
       );

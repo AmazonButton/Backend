@@ -79,7 +79,7 @@ export class ProductsRepository {
   async findStoreIdOnly(productId: bigint) {
     return this.prisma.product.findUnique({
       where: { productId },
-      select: { storeId: true, basePrice: true },
+      select: { storeId: true, basePrice: true, status: true },
     });
   }
 

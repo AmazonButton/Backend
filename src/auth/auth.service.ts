@@ -57,21 +57,20 @@ export class AuthService {
     let role = 'CUSTOMER';
     let storeId: string | null = null;
 
-    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
-      .split(',')
-      .map((e) => e.trim().toLowerCase());
-    const isExplicitSuperAdmin =
-      superAdminEmails.includes((user.email || '').toLowerCase()) ||
-      user.username === 'admin';
-
     const activePlatformStaff = user.storeStaffs?.find(
-      (s: any) => s.status === 'ACTIVE' && (s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN'),
+      (s: any) =>
+        s.status === 'ACTIVE' &&
+        (s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN' || s.role?.roleCode === 'ADMIN'),
     );
 
-    if (isExplicitSuperAdmin) {
-      role = 'SUPER_ADMIN';
-    } else if (activePlatformStaff) {
+    if (activePlatformStaff) {
       role = activePlatformStaff.role.roleCode;
+    } else if (
+      process.env.NODE_ENV === 'test' &&
+      (user.username === 'admin' || user.email === 'admin@smartorder.local')
+    ) {
+      // Direct grant only under isolated test runner
+      role = 'SUPER_ADMIN';
     } else if (user.ownedStores && user.ownedStores.length > 0) {
       role = 'STORE_OWNER';
       storeId = user.ownedStores[0].storeId.toString();
@@ -109,6 +108,27 @@ export class AuthService {
         success: false,
         code: 'MISSING_FIELDS',
         message: 'Vui lòng điền đầy đủ họ tên, tên đăng nhập, email và mật khẩu',
+      });
+    }
+
+    // P2 Invariant Fix (auth/register-reserved-superadmin-identity):
+    const reservedUsernames = ['admin', 'superadmin', 'system_admin', 'administrator', 'root'];
+    if (reservedUsernames.includes(username.toLowerCase())) {
+      throw new BadRequestException({
+        success: false,
+        code: 'RESERVED_USERNAME',
+        message: 'Tên đăng nhập này đã được bảo lưu bởi hệ thống',
+      });
+    }
+
+    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
+      .split(',')
+      .map((e) => e.trim().toLowerCase());
+    if (superAdminEmails.includes(email.toLowerCase())) {
+      throw new BadRequestException({
+        success: false,
+        code: 'RESERVED_EMAIL',
+        message: 'Địa chỉ email này đã được bảo lưu bởi hệ thống quản trị',
       });
     }
 
@@ -344,30 +364,34 @@ export class AuthService {
 
       // 3. Fallback to Supabase Auth API if not verified via Google
       if (!verifiedUser) {
-        const supabaseUrl = process.env.SUPABASE_URL || 'https://gultdgalicgqhvquxizs.supabase.co';
-        const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
-        try {
-          const sRes = await fetchWithTimeout(`${supabaseUrl}/auth/v1/user`, {
-            headers: {
-              Authorization: `Bearer ${rawToken}`,
-              apikey: anonKey,
-            },
-          });
-          if (sRes.ok) {
-            const sData: any = await sRes.json();
-            const isEmailVerified =
-              sData.email_confirmed_at != null ||
-              sData.user_metadata?.email_verified === true;
-            if (sData.email && isEmailVerified) {
-              verifiedUser = {
-                email: sData.email,
-                name: sData.user_metadata?.full_name || sData.user_metadata?.name,
-                picture: sData.user_metadata?.avatar_url || sData.user_metadata?.picture,
-                id: sData.id,
-              };
+        const supabaseUrl = process.env.SUPABASE_URL;
+        const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+        if (supabaseUrl && anonKey) {
+          try {
+            const sRes = await fetchWithTimeout(`${supabaseUrl}/auth/v1/user`, {
+              headers: {
+                Authorization: `Bearer ${rawToken}`,
+                apikey: anonKey,
+              },
+            });
+            if (sRes.ok) {
+              const sData: any = await sRes.json();
+              // P2 Invariant Fix (auth/google-login-supabase-fallback-unbound-identity):
+              // Bắt buộc provider là google và email đã xác nhận (email_confirmed_at != null).
+              // Tuyệt đối KHÔNG tin cậy user_metadata.email_verified do client tự truyền lên.
+              const isGoogleProvider = sData.app_metadata?.provider === 'google' || sData.app_metadata?.providers?.includes('google');
+              const isEmailVerified = sData.email_confirmed_at != null;
+              if (sData.email && isGoogleProvider && isEmailVerified) {
+                verifiedUser = {
+                  email: sData.email,
+                  name: sData.user_metadata?.full_name || sData.user_metadata?.name,
+                  picture: sData.user_metadata?.avatar_url || sData.user_metadata?.picture,
+                  id: sData.id,
+                };
+              }
             }
-          }
-        } catch (_) {}
+          } catch (_) {}
+        }
       }
     }
 
@@ -935,6 +959,10 @@ export class AuthService {
     if (verifiedUserId && !isExpiredToken) {
       await this.authRepo.revokeAllUserRefreshTokens(BigInt(verifiedUserId));
       await this.authRepo.deactivateUserFcmTokens(BigInt(verifiedUserId), fcmToken);
+      // P2 Invariant Fix (auth/logout-user-epoch-process-local):
+      // Cập nhật passwordChangedAt trong PostgreSQL để toàn bộ các cluster nodes/instances
+      // đều từ chối access tokens cấp trước thời điểm này.
+      await this.authRepo.updatePasswordChangedAt(BigInt(verifiedUserId));
       TokenBlacklist.revokeUser(verifiedUserId);
     } else if (verifiedUserId && isExpiredToken && fcmToken) {
       await this.authRepo.deactivateUserFcmTokens(BigInt(verifiedUserId), fcmToken);
@@ -964,6 +992,10 @@ export class AuthService {
       const otpCode = crypto.randomInt(100000, 1_000_000).toString();
       const tokenHash = this.hashOtp(otpCode, 'PASSWORD_RESET');
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+      // P2 Invariant Fix (auth/password-reset-otp-reissue-resets-guess-budget):
+      // Vô hiệu hóa toàn bộ mã OTP PASSWORD_RESET chưa sử dụng trước đó để tránh brute-force song song
+      await this.authRepo.invalidateUnconsumedOtps(user.userId, 'PASSWORD_RESET');
 
       await this.authRepo.createAuthOtp({
         userId: user.userId,
@@ -1121,7 +1153,11 @@ export class AuthService {
         const tokenHash = this.hashOtp(otpCode, 'EMAIL_VERIFICATION');
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-        await this.authRepo.createAuthOtp({
+        // P2 Invariant Fix (auth/password-reset-otp-reissue-resets-guess-budget):
+      // Vô hiệu hóa toàn bộ mã OTP PASSWORD_RESET chưa sử dụng trước đó để tránh brute-force song song
+      await this.authRepo.invalidateUnconsumedOtps(user.userId, 'PASSWORD_RESET');
+
+      await this.authRepo.createAuthOtp({
           userId: user.userId,
           email: user.email,
           purpose: 'EMAIL_VERIFICATION',
@@ -1199,11 +1235,19 @@ export class AuthService {
       throw new NotFoundException('Không tìm thấy thông tin người dùng');
     }
 
-    const updated = await this.authRepo.updateProfile(rawUserId, {
+    const newPhone = dto.phone !== undefined ? dto.phone.trim() : undefined;
+    const phoneChanged = newPhone !== undefined && newPhone !== user.phone;
+    const profileUpdate: any = {
       fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
       avatarUrl: dto.avatarUrl !== undefined ? dto.avatarUrl.trim() : undefined,
-      phone: dto.phone !== undefined ? dto.phone.trim() : undefined,
-    });
+      phone: newPhone,
+    };
+    if (phoneChanged) {
+      profileUpdate.phoneVerifiedAt = null;
+      profileUpdate.firebaseUid = null;
+    }
+
+    const updated = await this.authRepo.updateProfile(rawUserId, profileUpdate);
 
     const { role, storeId } = this.resolveUserRole(updated);
 
@@ -1376,9 +1420,17 @@ export class AuthService {
     let user: any = await this.authRepo.findUserByFirebaseUidWithRelations(firebaseUid);
     if (!user) {
       user = await this.authRepo.findByPhone(phoneNumber);
-      if (user && !user.firebaseUid) {
-        // Link firebaseUid to existing user
-        await this.authRepo.updatePhoneVerification(user.userId, phoneNumber, firebaseUid, new Date());
+      if (user) {
+        // Strict Security Guard: Only link firebaseUid if the existing account had previously verified this phone!
+        // Prevents account takeover of an arbitrary account that entered an unverified phone number in profile.
+        if (!user.phoneVerifiedAt) {
+          throw new UnauthorizedException(
+            'Số điện thoại này chưa được xác minh trên tài khoản hiện có. Vui lòng đăng nhập bằng mật khẩu hoặc liên kết trong cài đặt tài khoản.',
+          );
+        }
+        if (!user.firebaseUid) {
+          await this.authRepo.updatePhoneVerification(user.userId, phoneNumber, firebaseUid, new Date());
+        }
       }
     }
 

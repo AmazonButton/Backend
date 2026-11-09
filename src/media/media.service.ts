@@ -8,6 +8,7 @@ export interface CloudinarySignatureResponse {
   apiKey: string;
   cloudName: string;
   folder: string;
+  allowedFormats?: string;
 }
 
 export interface UploadResult {
@@ -110,7 +111,9 @@ export class MediaService {
     }
 
     const timestamp = Math.round(new Date().getTime() / 1000);
+    const allowedFormats = 'jpg,png,webp,jpeg';
     const paramsToSign = {
+      allowed_formats: allowedFormats,
       folder,
       timestamp,
     };
@@ -123,6 +126,7 @@ export class MediaService {
       apiKey,
       cloudName,
       folder,
+      allowedFormats,
     };
   }
 

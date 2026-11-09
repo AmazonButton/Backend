@@ -64,8 +64,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
       if (user.passwordChangedAt && payload.iat) {
         const passwordChangedSec = Math.floor(new Date(user.passwordChangedAt).getTime() / 1000);
-        if (payload.iat < passwordChangedSec) {
-          throw new UnauthorizedException('Mật khẩu đã được thay đổi. Vui lòng đăng nhập lại.');
+        if (payload.iat <= passwordChangedSec) {
+          throw new UnauthorizedException('Phiên đăng nhập đã bị thu hồi hoặc mật khẩu đã đổi. Vui lòng đăng nhập lại.');
         }
       }
 
@@ -116,9 +116,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           }
         }
       } else {
-        // Fallback for direct token roles (e.g. system tests, custom driver tokens)
-        role = payload.role || 'CUSTOMER';
-        storeId = payload.storeId || null;
+        // P2 Fix (auth/jwt-strategy-payload-role-fallback):
+        // Khi user không còn membership trong DB, hạ role về CUSTOMER.
+        // Chỉ cho phép fallback từ token payload khi chạy dưới môi trường test độc lập (NODE_ENV === 'test').
+        if (process.env.NODE_ENV === 'test') {
+          role = payload.role || 'CUSTOMER';
+          storeId = payload.storeId || null;
+        } else {
+          role = 'CUSTOMER';
+          storeId = null;
+        }
       }
 
       return {

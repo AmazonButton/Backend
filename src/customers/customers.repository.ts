@@ -1583,11 +1583,15 @@ export class CustomersRepository {
       });
 
       // 3. Insert Refund Obligation (Sổ nghĩa vụ hoàn trả - chỉ ghi nhận khi phân biệt được giao dịch thực nhận)
+      // P2 Invariant Fix (custbank/unmatched-session-auto-refund-obligation):
+      // Khi giao dịch không khớp phiên (UNMATCHED_SESSION) hoặc proofId null, tuyệt đối không tạo PENDING_REFUND
+      // tự động payout. Luôn đặt PENDING_MANUAL_REFUND để kế toán đối soát thủ công.
       const isMissingRef = params.reconciliationFlag === 'FLAGGED_MISSING_PROVIDER_REF';
+      const isUnmatchedOrNoProof = !params.proofId || matchDecision === 'UNMATCHED_SESSION';
       let obligation: any = null;
       if (!isMissingRef) {
         const initialRefundStatus =
-          params.hasSufficientEvidence
+          (params.hasSufficientEvidence && !isUnmatchedOrNoProof)
             ? 'PENDING_REFUND'
             : 'PENDING_MANUAL_REFUND';
         obligation = await tx.customerBankRefundObligation.create({

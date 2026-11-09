@@ -86,9 +86,12 @@ export async function handoverRentalButtonsInTx(
     const initialPaidRentMonths = Number(paidInitialRentCharges?.[0]?.initial_rent_months || 0);
 
     // Nếu có gia hạn trước bàn giao, rental.months_rented đã được cộng thêm extensionMonths
+    // P2 Fix (rentals/store-rent-initial-entitlement-customer-chosen-months):
+    // Nếu chưa thanh toán kỳ thuê (initialPaidRentMonths === 0), giới hạn kỳ cấp ban đầu tối đa 12 tháng
+    const rawGrantedMonths = Math.max(1, Number(rental.months_rented) - extensionMonths);
     const initialGrantedMonths = initialPaidRentMonths > 0
         ? initialPaidRentMonths
-        : Math.max(1, Number(rental.months_rented) - extensionMonths);
+        : Math.min(12, rawGrantedMonths);
 
     const depositPaid = await tx.$queryRawUnsafe<any[]>(
         `SELECT COUNT(*) as count

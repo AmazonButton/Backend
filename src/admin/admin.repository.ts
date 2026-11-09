@@ -274,14 +274,25 @@ export class AdminRepository {
     return role;
   }
 
-  async updateStaffRole(userId: bigint, roleId: bigint) {
-    const staff = await this.prisma.storeStaff.findFirst({ where: { userId } });
-    if (staff) {
-      await this.prisma.storeStaff.update({
-        where: { storeStaffId: staff.storeStaffId },
-        data: { roleId },
+  async updateStaffRole(userId: bigint, roleId: bigint, storeId?: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      if (storeId) {
+        await tx.storeStaff.updateMany({
+          where: { userId, storeId },
+          data: { roleId },
+        });
+      } else {
+        await tx.storeStaff.updateMany({
+          where: { userId },
+          data: { roleId },
+        });
+      }
+      // Invalidate active JWT sessions for this user so old role is revoked
+      await tx.user.update({
+        where: { userId },
+        data: { passwordChangedAt: new Date() },
       });
-    }
+    });
   }
 
   async findSubscriptionPlanByCode(planCode: string) {

@@ -228,6 +228,17 @@ async function runStoreStaffManagementSuite() {
         });
         const ownerBypassBlocked = ownerBypassRes.status === 403;
 
+        // Multi-step bypass defense: Verify Owner cannot PATCH PENDING -> ON_LEAVE (403 Forbidden)
+        const ownerOnLeaveRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${tokenOwnerA}`,
+          },
+          body: JSON.stringify({ status: 'ON_LEAVE' }),
+        });
+        const ownerOnLeaveBlocked = ownerOnLeaveRes.status === 403;
+
         // Verify BOLA: Candidate 2 cannot accept Candidate 1's invitation (403)
         const bolaRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
           method: 'POST',
@@ -252,11 +263,11 @@ async function runStoreStaffManagementSuite() {
         });
         const doubleAcceptBlocked = doubleAcceptRes.status === 409;
 
-        if (ownerBypassBlocked && bolaOk && acceptOk && doubleAcceptBlocked) {
-          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass and double-accept defenses)', true);
+        if (ownerBypassBlocked && ownerOnLeaveBlocked && bolaOk && acceptOk && doubleAcceptBlocked) {
+          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass, on-leave bypass and double-accept defenses)', true);
           passed++;
         } else {
-          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass and double-accept defenses)', false, `ownerBypassBlocked: ${ownerBypassBlocked}, bolaOk: ${bolaOk}, acceptOk: ${acceptOk}, doubleAcceptBlocked: ${doubleAcceptBlocked}`);
+          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass, on-leave bypass and double-accept defenses)', false, `ownerBypassBlocked: ${ownerBypassBlocked}, ownerOnLeaveBlocked: ${ownerOnLeaveBlocked}, bolaOk: ${bolaOk}, acceptOk: ${acceptOk}, doubleAcceptBlocked: ${doubleAcceptBlocked}`);
           failed++;
         }
       } else {

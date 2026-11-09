@@ -131,20 +131,33 @@ export class MediaController {
   @Post('destroy')
   @ApiOperation({ summary: 'Xóa tệp ảnh trên Cloudinary khi thay thế hoặc hủy ảnh' })
   async destroyAsset(@Body('publicId') publicId: string, @Request() req?: any) {
-    if (!publicId) {
-      throw new BadRequestException('publicId không được để trống');
+    if (!publicId || typeof publicId !== 'string') {
+      throw new BadRequestException('publicId không được để trống và phải là chuỗi ký tự');
     }
+    const cleanPublicId = publicId.trim();
+    if (
+      cleanPublicId.includes('..') ||
+      cleanPublicId.includes('\\') ||
+      cleanPublicId.includes('//') ||
+      cleanPublicId.startsWith('/') ||
+      /%2e/i.test(cleanPublicId) ||
+      /%2f/i.test(cleanPublicId) ||
+      /%5c/i.test(cleanPublicId)
+    ) {
+      throw new BadRequestException('publicId chứa ký tự không hợp lệ hoặc đường dẫn không an toàn');
+    }
+
     const user = req?.user;
     if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
       const allowedPrefix = `stores/${user.storeId}/`;
-      if (!publicId.startsWith(allowedPrefix)) {
+      if (!cleanPublicId.startsWith(allowedPrefix)) {
         throw new ForbiddenException('Bạn chỉ có quyền xóa tài nguyên trong thư mục của cửa hàng mình');
       }
     }
-    if (publicId.startsWith('smart-order/') || publicId.startsWith('smart-button/')) {
+    if (cleanPublicId.startsWith('smart-order/') || cleanPublicId.startsWith('smart-button/')) {
       throw new ForbiddenException('Không thể xóa tài nguyên hệ thống dùng chung');
     }
-    const refCount = await this.productsRepo.countImageReferences(publicId);
+    const refCount = await this.productsRepo.countImageReferences(cleanPublicId);
     if (refCount > 0) {
       throw new BadRequestException({
         success: false,
@@ -152,7 +165,7 @@ export class MediaController {
         message: `Hình ảnh vẫn đang được sử dụng bởi ${refCount} sản phẩm, không thể xóa trực tiếp`,
       });
     }
-    const success = await this.mediaService.deleteAsset(publicId);
+    const success = await this.mediaService.deleteAsset(cleanPublicId);
     return {
       success,
       message: success ? 'Xóa tài nguyên trên Cloudinary thành công' : 'Không thể xóa tài nguyên hoặc tệp không tồn tại',

@@ -97,9 +97,13 @@ export class StoreSubscriptionsRepository {
       return upcomingSub;
     }
 
-    // 3. Fallback to most recent subscription
+    // 3. Fallback: Chỉ trả về gói gần nhất nếu nó vẫn ở trạng thái ACTIVE và chưa hết hạn
     return this.prisma.storeSubscription.findFirst({
-      where: { storeId },
+      where: {
+        storeId,
+        status: 'ACTIVE',
+        endDate: { gte: now },
+      },
       include: { plan: true },
       orderBy: { endDate: 'desc' },
     });

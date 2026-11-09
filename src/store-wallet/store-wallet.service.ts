@@ -215,47 +215,11 @@ export class StoreWalletService {
       });
     }
 
-    const isStrict =
-      process.env.BANK_VERIFICATION_STRICT === 'true' ||
-      (process.env.NODE_ENV === 'production' && process.env.BANK_VERIFICATION_STRICT !== 'false');
-
     if (!verifiedAccount) {
-      if (isStrict) {
-        throw new BadRequestException({
-          success: false,
-          message: 'Tài khoản ngân hàng chưa được xác minh chính chủ bằng giao dịch 2.000 VND',
-          errorCode: 'BANK_ACCOUNT_NOT_VERIFIED',
-        });
-      }
-
-      // Legacy test environment compatibility: auto-provision verified bank record
-      const walletRow = await this.prisma.storeWallet.findUnique({
-        where: { storeId: rawStoreId },
-      });
-      const accNum = dto.bankAccountNumber || walletRow?.bankAccountNumber || '970422123456789';
-      const enc = CryptoVaultUtil.encryptAccountNumber(accNum);
-      const hash = CryptoVaultUtil.hashAccountNumber(accNum);
-      verifiedAccount = await this.prisma.storeBankAccount.upsert({
-        where: {
-          uq_store_bank_account_store_acc_hash: {
-            storeId: rawStoreId,
-            accountNumberHash: hash,
-          },
-        },
-        create: {
-          storeId: rawStoreId,
-          bankBin: dto.bankCode || '970422',
-          bankName: dto.bankName || walletRow?.bankName || 'MBBANK',
-          accountNumberEncrypted: enc,
-          accountNumberHash: hash,
-          accountName: dto.bankAccountHolder || walletRow?.bankAccountHolder || 'STORE OWNER',
-          verificationStatus: 'OWNERSHIP_VERIFIED',
-          verifiedAt: new Date(),
-          lastVerifiedAt: new Date(),
-        },
-        update: {
-          verificationStatus: 'OWNERSHIP_VERIFIED',
-        },
+      throw new BadRequestException({
+        success: false,
+        message: 'Tài khoản ngân hàng chưa được xác minh chính chủ bằng giao dịch 2.000 VND',
+        errorCode: 'BANK_ACCOUNT_NOT_VERIFIED',
       });
     }
 
@@ -708,7 +672,14 @@ export class StoreWalletService {
           FOR UPDATE
         `;
 
-        if (!lockedWithdrawal || lockedWithdrawal.status === 'SUCCEEDED') {
+        if (!lockedWithdrawal) {
+          return null;
+        }
+
+        // P2 Fix (store-wallet/sync-status-finalize-missing-terminal-guard):
+        // Chỉ xử lý khi đang ở PROCESSING hoặc PENDING_RECONCILIATION.
+        // Tuyệt đối không ghi đè FAILED, SUCCEEDED hoặc CANCELLED đã hoàn tất đối soát/hoàn tiền.
+        if (lockedWithdrawal.status !== 'PROCESSING' && lockedWithdrawal.status !== 'PENDING_RECONCILIATION') {
           return tx.storeWithdrawal.findUnique({ where: { withdrawalId: rawId } });
         }
 
@@ -724,7 +695,13 @@ export class StoreWalletService {
 
         if (lockedWallet) {
           const currentFrozen = Number(lockedWallet.frozen_balance || 0);
-          const frozenAfter = Math.max(0, currentFrozen - Number(lockedWithdrawal.amount));
+          const withdrawalAmount = Number(lockedWithdrawal.amount);
+          if (currentFrozen < withdrawalAmount) {
+            throw new ConflictException(
+              `Số dư đóng băng không đủ để hoàn tất rút tiền (yêu cầu: ${withdrawalAmount}, hiện có: ${currentFrozen})`,
+            );
+          }
+          const frozenAfter = currentFrozen - withdrawalAmount;
 
           await tx.storeWallet.update({
             where: { walletId: lockedWallet.wallet_id },
@@ -803,7 +780,8 @@ export class StoreWalletService {
 
     if (storeId) {
       const rawStoreId = BigInt(storeId);
-      if (withdrawal.storeId && withdrawal.storeId !== rawStoreId) {
+      const effectiveStoreId = withdrawal.storeId ?? withdrawal.wallet?.storeId;
+      if (effectiveStoreId && effectiveStoreId !== rawStoreId) {
         throw new ForbiddenException({
           success: false,
           code: 'ACCESS_DENIED',

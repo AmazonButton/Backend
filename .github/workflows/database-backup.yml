@@ -35,10 +35,20 @@ jobs:
           echo "BACKUP_FILE=$BACKUP_FILE" >> $GITHUB_ENV
           echo "Backup file created: $BACKUP_FILE ($(du -h $BACKUP_FILE | cut -f1))"
 
-      - name: Upload Backup to GitHub Artifacts (Free 90-day retention)
+      - name: Encrypt Database Dump with OpenSSL AES-256-CBC
+        env:
+          BACKUP_KEY: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE || secrets.JWT_SECRET || 'smart-order-secure-backup-passphrase' }}
+        run: |
+          ENCRYPTED_FILE="${BACKUP_FILE}.enc"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in "$BACKUP_FILE" -out "$ENCRYPTED_FILE" -pass "pass:$BACKUP_KEY"
+          rm -f "$BACKUP_FILE"
+          echo "ENCRYPTED_FILE=$ENCRYPTED_FILE" >> $GITHUB_ENV
+          echo "Encrypted backup ready: $ENCRYPTED_FILE ($(du -h $ENCRYPTED_FILE | cut -f1))"
+
+      - name: Upload Encrypted Backup to GitHub Artifacts (14-day retention)
         uses: actions/upload-artifact@v4
         with:
           name: database-daily-backup
-          path: ${{ env.BACKUP_FILE }}
-          retention-days: 90
+          path: ${{ env.ENCRYPTED_FILE }}
+          retention-days: 14
 

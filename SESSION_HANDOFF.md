@@ -1,5 +1,45 @@
 # Project Handoff & Session Context
 
+### [2026-11-09] Comprehensive Security Audit Remediations (Waves 1-4 Complete: 30 Findings)
+- **Status**: COMPLETED
+- **Objectives & Resolutions**:
+  * **Wave 1: Money & Financial Invariants (9/9 items)**:
+    - rentals/outbox-consumer.service.ts: added SELECT FOR UPDATE on deposit_refunds, verified status === 'PENDING_PAYOUT', confirmed provider_reference_id is null before PayOS payout, and clamped batchSize to 1..100.
+    - store-wallet/store-wallet.service.ts: locked withdrawal with FOR UPDATE; restricted state transitions to PROCESSING and PENDING_RECONCILIATION; replaced Math.max(0, ...) with strict ConflictException if currentFrozen < withdrawalAmount. Removed non-strict auto-verify fallback in requestWithdrawal().
+    - orders/orders.repository.ts: in cancelOrderAtomicTx(), sets paymentStatus = 'REFUND_PENDING' if order.payment_status === 'PAID'.
+    - customers/customers.repository.ts: in recordInboundTransactionAndObligationAtomicTx(), routes unmatched session inbound payments to initialRefundStatus = 'PENDING_MANUAL_REFUND'.
+    - rentals/dto/rentals.dto.ts & rentals.service.ts: validated and clamped rental months to 1..12; capped initialGrantedMonths in handover transaction.
+    - store-subscriptions/store-subscriptions.service.ts: enforced active subscription status check on product listing and creation.
+    - products/products.service.ts: guarded product status activation against expired subscription and max products quota.
+    - orders/orders-lifecycle.worker.ts: excluded unpaid storefront orders from auto-confirm, guarded customer_id null dereference, and auto-cancels unpaid storefront orders older than 15 minutes.
+    - store-wallet/store-wallet.service.ts: fixed withdrawal null storeId BOLA by deriving effectiveStoreId = withdrawal.storeId ?? withdrawal.wallet?.storeId.
+  * **Wave 2: Identity & Authority (12/12 items)**:
+    - auth/auth.service.ts: resolveUserRole() strictly queries database platform roles; rejects reserved superadmin usernames and superadmin emails in register().
+    - auth/jwt.strategy.ts: drops missing staff memberships to role: 'CUSTOMER' and storeId: null in production.
+    - auth/auth.repository.ts & auth.service.ts: in logout(), updates users.passwordChangedAt in PostgreSQL for user-wide token revocation across all instances; JwtStrategy rejects tokens with iat <= passwordChangedSec.
+    - auth/auth.service.ts: in googleLogin(), requires Supabase provider metadata to equal google and verifies email confirmed status.
+    - auth/auth.service.ts: in forgotPassword(), invalidates all prior unconsumed PASSWORD_RESET OTPs via invalidateUnconsumedOtps().
+    - websocket/events.gateway.ts: re-verifies user store ownership and active staff status against DB in handleSubscribeStore(); re-verifies customer profile in handleSubscribeCustomer(); schedules auto-disconnect timer on token exp.
+    - auth/auth.service.ts: in loginByPhone(), strictly requires existing accounts to have phoneVerifiedAt before linking firebaseUid; in updateProfile(), clears phoneVerifiedAt and firebaseUid when phone number changes.
+    - devices/dto/devices.dto.ts & devices.service.ts: added @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'RETIRED']) to UpdateConfigDto; in update(), strictly ignores status if caller role is CUSTOMER.
+    - products/products.service.ts: in getById(), enforces tenant isolation for all store-scoped roles; restricts inactive products to own store staff and platform admins (404 for customers/guests).
+    - media/media.controller.ts: in destroyAsset(), canonicalizes publicId, rejects non-string types, and blocks directory traversal sequences.
+    - media/media.service.ts: in getUploadSignature(), adds allowed_formats: 'jpg,png,webp,jpeg' to signed params.
+  * **Wave 3: Infrastructure & CI (3/3 items)**:
+    - cloudflare-worker/worker.js: dropped X-Cluster-Origin header from client responses; supports env.NODE3_AWS origin override.
+    - src/auth/guards/auth-rate-limit.guard.ts: extracts CF-Connecting-IP, normalizes IPv6 addresses to /64 subnets, and periodically purges expired keys with a 5000-entry capacity limit.
+    - .github/workflows/database-backup.yml: added AES-256-CBC OpenSSL symmetric encryption step for database dumps and decreased artifact retention to 14 days.
+  * **Wave 4: Platform roles, Billing, POD & Buffers (6/6 items)**:
+    - admin/admin.repository.ts: updateStaffRole() uses updateMany() within a transaction and updates passwordChangedAt to revoke prior active sessions.
+    - billing-charges/billing-charges.service.ts: in getChargeById(), restricts store subscription and finance charges exclusively to STORE_OWNER and STORE_MANAGER.
+    - devices/provisioning.service.ts: converted failedAttempts array into a bounded ring buffer (capped at 500 entries).
+    - orders/orders.repository.ts: in completeDeliveryAtomicTx(), enforces HTTPS, verifies res.cloudinary.com host, binds cloud name to process.env.CLOUDINARY_CLOUD_NAME, strips version and transform parameters, canonicalizes POD URLs, and detects duplicate POD usage across orders.
+- **Verification Evidence**:
+  - npx tsc --noEmit: 0 errors.
+  - npx tsx tests/security-audit-p1-fixes.spec.ts: 27 passed, 0 failed (100% PASS).
+  - npx tsx tests/security-audit-waves-fixes.spec.ts: 7 passed, 0 failed (100% PASS).
+  - npm run build: Compiled successfully (Exit code 0).
+
 ### [2026-11-09] Store Staff Invitation Security Hardening & Auth Role Resolution Refinements
 - **Status**: COMPLETED
 - **Objectives & Resolutions**:
@@ -2522,3 +2562,13 @@ When starting a new conversation, prompt the agent with:
       - **Feature Flags Status (Strictly Guarded):**
         * `CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED = false`
         * `FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED = false`
+
+---
+
+## 2026-11-09: Uncommitted fixes (staff status allowlist + email_verified_at corrective migration)
+
+- `src/store-staff/store-staff.service.ts` `updateStaff`: added an owner status-transition allowlist (PENDING->TERMINATED only; ACTIVE<->ON_LEAVE; ->TERMINATED). This blocks the two-step bypass PENDING -> ON_LEAVE -> ACTIVE that skipped invitation acceptance.
+- `prisma/migrations/20261109000000_add_user_email_verified_at/migration.sql`: restored to the content deployed in commit 6046323, because an already-applied migration must not be edited.
+- New `prisma/migrations/20261109120000_correct_email_verified_at_backfill/migration.sql`: sets `email_verified_at = NULL` where it equals `created_at` for phone/Firebase-registered users. This undoes only the over-broad backfill.
+- Verified: `npx tsc --noEmit` exit 0. Suite 73 (`tests/security-audit-p1-fixes.spec.ts`): **27/27 PASS** (including test 8.11 verifying HTTP 403 Forbidden on `PENDING -> ON_LEAVE -> ACTIVE` bypass attempts). Suite 26 (`tests/store-staff-management.spec.ts`) updated with `ON_LEAVE` bypass check. NOT committed (user request).
+- Open audit leads: see `C:/Users/ttphatt_2403/security-audit-skill/backend/run-3/REPORT.md` (run-3, source-only, 38 needs_validation). The 8 P1 items were addressed in commits 2810fc2..65748ff; most P2/P3 items remain open.

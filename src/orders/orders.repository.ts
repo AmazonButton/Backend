@@ -699,9 +699,14 @@ export class OrdersRepository {
         );
       }
 
+      const orderUpdateData: any = { orderStatus: targetStatus };
+      if (order.payment_status === 'PAID') {
+        orderUpdateData.paymentStatus = 'REFUND_PENDING';
+      }
+
       await tx.order.update({
         where: { orderId },
-        data: { orderStatus: targetStatus },
+        data: orderUpdateData,
       });
 
       // Lịch sử trạng thái được tự động ghi nhận bởi DB trigger trg_sync_inventory_on_order_status_change
@@ -827,32 +832,49 @@ export class OrdersRepository {
       }
 
       let isValidPodUrl = false;
+      let canonicalPodUrl = '';
+      let canonicalSubpath = '';
       try {
         const parsed = new URL(dto.podImageUrl);
-        const isCloudinaryDomain = parsed.hostname === 'cloudinary.com' || parsed.hostname.endsWith('.cloudinary.com');
+        const configuredCloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+        const isSecure = parsed.protocol === 'https:';
+        const isCloudinaryHost = parsed.hostname === 'res.cloudinary.com' || parsed.hostname.endsWith('.cloudinary.com');
         const uploadIdx = parsed.pathname.indexOf('/image/upload/');
-        if (isCloudinaryDomain && uploadIdx !== -1) {
-          const pathAfterUpload = parsed.pathname.slice(uploadIdx + '/image/upload/'.length);
-          const pathNoVersion = pathAfterUpload.replace(/^v\d+\//, '');
-          if (pathNoVersion.startsWith(`stores/${order.store_id}/pod/`)) {
-            isValidPodUrl = true;
+
+        if (isSecure && isCloudinaryHost && uploadIdx !== -1) {
+          const cloudNameInUrl = parsed.pathname.slice(1, uploadIdx);
+          if (!configuredCloudName || cloudNameInUrl === configuredCloudName) {
+            const rawAfterUpload = parsed.pathname.slice(uploadIdx + '/image/upload/'.length);
+            // Split segments to strip transformation options and version prefix (v12345)
+            const segments = rawAfterUpload.split('/');
+            const cleanSegments = segments.filter((seg) => !seg.includes(',') && !/^v\d+$/.test(seg));
+            canonicalSubpath = cleanSegments.join('/');
+
+            if (canonicalSubpath.startsWith(`stores/${order.store_id}/pod/`)) {
+              isValidPodUrl = true;
+              const effectiveCloud = configuredCloudName || cloudNameInUrl;
+              canonicalPodUrl = `https://res.cloudinary.com/${effectiveCloud}/image/upload/${canonicalSubpath}`;
+            }
           }
         }
       } catch (e) {
         isValidPodUrl = false;
       }
 
-      if (!isValidPodUrl) {
-        throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải là URL Cloudinary hợp lệ thuộc thư mục stores/${order.store_id}/pod/`);
+      if (!isValidPodUrl || !canonicalSubpath) {
+        throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải là URL Cloudinary HTTPS hợp lệ thuộc thư mục stores/${order.store_id}/pod/`);
       }
 
-      const existingWithPod = await tx.order.findFirst({
-        where: {
-          podImageUrl: dto.podImageUrl,
-          orderId: { not: orderId },
-        },
-      });
-      if (existingWithPod) {
+      const duplicatePod = await tx.$queryRawUnsafe<any[]>(
+        `SELECT order_id FROM orders 
+         WHERE order_id != $1 
+           AND pod_image_url IS NOT NULL 
+           AND pod_image_url LIKE $2 
+         LIMIT 1`,
+        orderId,
+        `%${canonicalSubpath}%`,
+      );
+      if (duplicatePod && duplicatePod.length > 0) {
         throw new BadRequestException('Ảnh xác thực giao hàng (POD) này đã được sử dụng cho đơn hàng khác, không thể tái sử dụng');
       }
 
@@ -883,7 +905,7 @@ export class OrdersRepository {
           orderStatus: 'DELIVERED',
           paymentStatus: 'PAID',
           paymentMethod: dto.paymentMethod,
-          podImageUrl: dto.podImageUrl,
+          podImageUrl: canonicalPodUrl || dto.podImageUrl,
           deliveredAt: deliveredAtDate,
         },
       });
