@@ -2,6 +2,7 @@
 import { IotService } from './iot.service';
 import { HmacAuthGuard } from '../common/guards/hmac-auth.guard';
 import { IotEventDto } from './dto/iot-event.dto';
+import { IotTelemetryDto } from './dto/iot-telemetry.dto';
 
 @UseGuards(HmacAuthGuard)
 @Controller('iot')
@@ -15,7 +16,7 @@ export class IotController {
   }
 
   @Post('telemetry')
-  handleTelemetry(@Request() req: any, @Body() body: any) {
+  handleTelemetry(@Request() req: any, @Body() body: IotTelemetryDto) {
     return this.iotService.handleTelemetry(req.device, body);
   }
 

@@ -364,6 +364,16 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'vietqr-credential-isolation.spec.ts')],
   },
+  {
+    name: '73. Security Audit P1 Fixes (8 Critical Findings Regression)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'security-audit-p1-fixes.spec.ts')],
+  },
+  {
+    name: '74. Security Audit Waves 1-4 Fixes (30 Findings Regression)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'security-audit-waves-fixes.spec.ts')],
+  },
 ];
 
 async function main() {

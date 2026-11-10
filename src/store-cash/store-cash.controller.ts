@@ -23,6 +23,9 @@ import {
   collectCashBodySchema,
   validateZod,
   validatePathId,
+  IssueCashVoucherDto,
+  CollectCashBodyDto,
+  CollectCashDto,
 } from './dto/store-cash.dto';
 
 @ApiTags('Rentals - Cash Vouchers')
@@ -39,7 +42,7 @@ export class CustomerRentalsCashVoucherController {
   @Post(':rentalId/cash-vouchers')
   async issueCashVoucher(
     @Param('rentalId') rentalId: string,
-    @Body() body: any,
+    @Body() body: IssueCashVoucherDto,
     @Request() req: any,
   ) {
     validatePathId(rentalId, 'rentalId');
@@ -62,7 +65,7 @@ export class StoreCashReceiptsController {
   @Post('cash-receipts')
   async collectCashWithBody(
     @Param('storeId') storeId: string,
-    @Body() body: any,
+    @Body() body: CollectCashBodyDto,
     @Request() req: any,
   ) {
     validatePathId(storeId, 'storeId');
@@ -79,7 +82,7 @@ export class StoreCashReceiptsController {
   async confirmCashCollection(
     @Param('storeId') storeId: string,
     @Param('rentalId') rentalId: string,
-    @Body() body: any,
+    @Body() body: CollectCashDto,
     @Request() req: any,
   ) {
     validatePathId(storeId, 'storeId');

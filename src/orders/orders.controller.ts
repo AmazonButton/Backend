@@ -18,6 +18,7 @@ import { DeliverOrderDto } from './dto/deliver-order.dto';
 import { DeliveryFailureDto } from './dto/delivery-failure.dto';
 import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
+import { SimulateButtonPressDto } from './dto/simulate-button-press.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -108,7 +109,7 @@ export class OrdersController {
   }
 
   @Post('simulate-button-press')
-  async simulateButtonPress(@Request() req: any, @Body() body: any) {
+  async simulateButtonPress(@Request() req: any, @Body() body: SimulateButtonPressDto) {
     return this.ordersService.simulateButtonPress(body, req.user);
   }
 

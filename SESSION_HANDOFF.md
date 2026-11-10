@@ -1,5 +1,27 @@
 # Project Handoff & Session Context
 
+### [2026-11-10] Full System Security Audit & Controller DTO Hardening
+- **Status**: COMPLETED & VERIFIED
+- **Audit Scope & Analysis**:
+  - Scanned full codebase against Security-by-Design and OWASP API Security Top 10 rules.
+  - Verified 0 SQL injection vulnerabilities (all raw SQL parameterized with placeholders).
+  - Verified 0 Plaintext Financial Storage violations (Rule 13 AES-256-GCM encryption & SHA-256 hashing strictly enforced).
+  - Verified 0 Timing attack vulnerabilities on webhook/device signatures.
+  - Verified Cloudflare Worker edge-caching whitelist: never caches authenticated requests or private tenant routes.
+- **Remediations / Hardening**:
+  - Created `src/orders/dto/simulate-button-press.dto.ts` and strongly typed `OrdersController.simulateButtonPress`, eliminating untyped `@Body() body: any`.
+  - Created `src/iot/dto/iot-telemetry.dto.ts` and strongly typed `IotController.handleTelemetry`, eliminating untyped `@Body() body: any`.
+  - Created `src/customers/dto/payos-webhook-payload.dto.ts` and strongly typed `CustomerBankWebhookController.handleCustomerBankVerificationWebhook`.
+  - Strongly typed `StoreCashReceiptsController` and `CustomerRentalsCashVoucherController` with `IssueCashVoucherDto`, `CollectCashBodyDto`, `CollectCashDto`.
+  - Registered Suite 73 (`security-audit-p1-fixes.spec.ts`, 27 tests) and Suite 74 (`security-audit-waves-fixes.spec.ts`) into `tests/run_all_suites.ts`.
+- **Verification**:
+  - `npx tsx tests/vietqr-credential-isolation.spec.ts` (Suite 72) — PASS (4 scenarios).
+  - `npx tsx tests/security-audit-p1-fixes.spec.ts` (Suite 73) — PASS (27 passed, 0 failed).
+  - `npx tsx tests/security-audit-waves-fixes.spec.ts` (Suite 74) — PASS (All Waves Passed).
+  - `npx tsc --noEmit --incremental false` — PASS (exit 0).
+  - `npm run build` — PASS (exit 0).
+  - `git diff --check` — PASS.
+
 ### [2026-11-10] VietQR Credential Isolation & Lookup Configuration Hardening
 - **Status**: DEPLOYED & VERIFIED (Commit `dd7bb02` live across Render Node 1, Node 2, and AWS Node 3)
 - **Changes**:
