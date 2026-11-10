@@ -1016,13 +1016,29 @@ async function runDeepFixesTestSuite() {
 
     const mockPrismaR02: any = {
       $transaction: async (cb: any) => cb({
-        $queryRawUnsafe: async () => [{
-          id: BigInt(201),
-          event_type: 'DEPOSIT_REFUND_APPROVED',
-          payload: { refundId: '201' },
-          attempts: 0,
-          status: 'PENDING',
-        }],
+        $queryRawUnsafe: async (sql?: string) => {
+          if (sql && sql.includes('FROM deposit_refunds')) {
+            return [{
+              refund_id: BigInt(201),
+              status: 'PENDING_PAYOUT',
+              provider_reference_id: null,
+              refund_code: 'REF-201',
+              amount: new Decimal(200000),
+              recipient_bin: '970422',
+              recipient_account_number_encrypted: CryptoVaultUtil.encryptAccountNumber('9876543210'),
+              recipient_account_number_hash: CryptoVaultUtil.computeDeterministicAccountHash('9876543210'),
+              recipient_account_holder_name: 'TEST HOLDER',
+              recipient_account_number_masked: '******3210',
+            }];
+          }
+          return [{
+            id: BigInt(201),
+            event_type: 'DEPOSIT_REFUND_APPROVED',
+            payload: { refundId: '201' },
+            attempts: 0,
+            status: 'PENDING',
+          }];
+        },
         $executeRawUnsafe: async () => 1,
         outboxEvent: {
           updateMany: async () => ({ count: 1 }),

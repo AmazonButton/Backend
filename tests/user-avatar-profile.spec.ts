@@ -243,6 +243,7 @@ async function runUserAvatarTestSuite() {
               id: googleAuthId,
               email: googleEmail,
               email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'google' },
               identities: [{ provider: 'google' }],
               user_metadata: {
                 full_name: 'Google Avatar Test User',

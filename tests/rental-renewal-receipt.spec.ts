@@ -427,7 +427,7 @@ async function main() {
   // 1. Customer accessing store charge -> 403 Forbidden
   await assert.rejects(
     () => billingService.getChargeById(555n, { userId: 99n, role: 'CUSTOMER', customerProfileId: 7n }),
-    /Bạn không có quyền truy cập vào khoản thu dành cho Cửa hàng/,
+    /Chỉ chủ cửa hàng hoặc quản lý mới có quyền truy cập/,
   );
 
   // 2. Store Owner of different store 20 -> 403 Forbidden

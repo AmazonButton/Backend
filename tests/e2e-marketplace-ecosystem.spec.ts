@@ -5,6 +5,7 @@ import { RentalsService } from '../src/rentals/rentals.service';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
 import { StoreSubscriptionsService } from '../src/store-subscriptions/store-subscriptions.service';
 import { StoreSubscriptionsRepository } from '../src/store-subscriptions/store-subscriptions.repository';
+import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
 
 import { PayOSPayoutService } from '../src/payments/payos-payout.service';
 
@@ -177,11 +178,26 @@ async function testFullMarketplaceE2E() {
     // STAGE 6: STORE WITHDRAWAL & ADMIN CONFIRMATION
     // ----------------------------------------------------
     console.log('\n[STAGE 6] Store Withdrawal & Admin Payout:');
+    const withdrawAccNum = '19034567890123';
+    await prisma.storeBankAccount.create({
+      data: {
+        storeId: store.storeId,
+        bankBin: '970407',
+        bankCode: 'TCB',
+        bankName: 'Techcombank',
+        accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(withdrawAccNum),
+        accountNumberHash: CryptoVaultUtil.hashAccountNumber(withdrawAccNum),
+        accountName: 'NGUYEN VAN E2E',
+        verificationStatus: 'OWNERSHIP_VERIFIED',
+        isDefault: true,
+      },
+    });
+
     const withdrawAmount = 700000;
     const withdrawal = await walletService.requestWithdrawal(store.storeId, {
       amount: withdrawAmount,
       bankName: 'Techcombank',
-      bankAccountNumber: '19034567890123',
+      bankAccountNumber: withdrawAccNum,
       bankAccountHolder: 'NGUYEN VAN E2E',
     });
 

@@ -245,6 +245,9 @@ export class BillingChargesService {
         if (!activeStore) {
           throw new ForbiddenException('Cửa hàng không tồn tại hoặc chưa được kích hoạt');
         }
+        if (!charge.payerStoreId && !isStoreSubscription) {
+          throw new ForbiddenException('Khoản thu thiếu thông tin Cửa hàng chi trả');
+        }
         if (charge.payerStoreId && BigInt(charge.payerStoreId) !== userStoreId) {
           throw new ForbiddenException('Bạn không có quyền truy cập vào khoản thu của Cửa hàng khác');
         }

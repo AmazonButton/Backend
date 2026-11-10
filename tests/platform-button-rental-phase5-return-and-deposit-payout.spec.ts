@@ -465,6 +465,26 @@ async function runPhase5ReturnAndDepositPayoutSuite() {
 
     let snapshotUpdated = false;
     const mockPrismaWorker: any = {
+      $transaction: async (cb: any) => cb(mockPrismaWorker),
+      $queryRawUnsafe: async (sql: string, ...params: any[]) => {
+        if (sql.includes('FROM deposit_refunds')) {
+          const r = refundsMap.get(params[0]?.toString() || '503');
+          if (!r) return [];
+          return [{
+            refund_id: r.refundId,
+            status: r.status,
+            provider_reference_id: r.providerReferenceId,
+            refund_code: r.refundCode,
+            amount: r.amount,
+            recipient_bin: r.recipientBin,
+            recipient_account_number_encrypted: r.recipientAccountNumberEncrypted,
+            recipient_account_number_hash: r.recipientAccountNumberHash,
+            recipient_account_holder_name: r.recipientAccountHolderName,
+            recipient_account_number_masked: r.recipientAccountNumberMasked,
+          }];
+        }
+        return [];
+      },
       depositRefund: {
         findUnique: async () => refundsMap.get('503'),
         update: async () => {
@@ -637,6 +657,26 @@ async function runPhase5ReturnAndDepositPayoutSuite() {
 
     let refund506UpdatedWithProviderRef = false;
     const mockPrismaWorkerForMissingId: any = {
+      $transaction: async (cb: any) => cb(mockPrismaWorkerForMissingId),
+      $queryRawUnsafe: async (sql: string, ...params: any[]) => {
+        if (sql.includes('FROM deposit_refunds')) {
+          const r = refundsMap.get(params[0]?.toString() || '506');
+          if (!r) return [];
+          return [{
+            refund_id: r.refundId,
+            status: r.status,
+            provider_reference_id: r.providerReferenceId,
+            refund_code: r.refundCode,
+            amount: r.amount,
+            recipient_bin: r.recipientBin,
+            recipient_account_number_encrypted: r.recipientAccountNumberEncrypted,
+            recipient_account_number_hash: r.recipientAccountNumberHash,
+            recipient_account_holder_name: r.recipientAccountHolderName,
+            recipient_account_number_masked: r.recipientAccountNumberMasked,
+          }];
+        }
+        return [];
+      },
       depositRefund: {
         findUnique: async () => refundsMap.get('506'),
         update: async (args: any) => {
@@ -728,6 +768,13 @@ async function runPhase5ReturnAndDepositPayoutSuite() {
       '5.17b [Admin Manual Payout ID] Admin đối soát thành công khi nhập payout ID tra cứu từ PayOS, gắn ID thật và hoàn tất hoàn cọc an toàn',
     );
 
+    // Reset refund 506 back to PENDING_PAYOUT for test 18 outbox retry testing
+    refundsMap.set('506', {
+      ...refundsMap.get('506'),
+      status: 'PENDING_PAYOUT',
+      providerReferenceId: null,
+    });
+
     // Test 18: Outbox processor lifecycle via processPendingEvents (Full 3-Step Retry & Backoff to DLQ Lifecycle)
     // When PayOS createPayout response lacks data.id:
     // Uses a simulated clock to test the natural 3-step lifecycle without manual attempt mutation:
@@ -770,6 +817,22 @@ async function runPhase5ReturnAndDepositPayoutSuite() {
               return [ev];
             }
             return [];
+          }
+          if (sql.includes('FROM deposit_refunds')) {
+            const r = refundsMap.get(params[0]?.toString() || '506');
+            if (!r) return [];
+            return [{
+              refund_id: r.refundId,
+              status: r.status,
+              provider_reference_id: r.providerReferenceId,
+              refund_code: r.refundCode,
+              amount: r.amount,
+              recipient_bin: r.recipientBin,
+              recipient_account_number_encrypted: r.recipientAccountNumberEncrypted,
+              recipient_account_number_hash: r.recipientAccountNumberHash,
+              recipient_account_holder_name: r.recipientAccountHolderName,
+              recipient_account_number_masked: r.recipientAccountNumberMasked,
+            }];
           }
           return [];
         },
