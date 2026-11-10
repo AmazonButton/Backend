@@ -1,5 +1,31 @@
 # Project Handoff & Session Context
 
+### [2026-11-10] Live Multi-Cluster API E2E Verification & Database Migration Fix (25/25 PASS)
+- **Status**: COMPLETED & VERIFIED (25/25 assertions passed on Render Node 1 and AWS Node 3)
+- **Scope & Objectives**:
+  - Comprehensive live API audit across all 7 operational categories:
+    1. Infrastructure & Probes: `/healthz` (200 UP), `/readyz` (200 READY: DB + Queue UP), `/api/v1/banks` (200, 22 banks), `/api/v1/rentals/packages` (200), `/api/v1/stores` (200).
+    2. Authentication & Identity: `/api/v1/auth/login` (SUPER_ADMIN, STORE_OWNER, CUSTOMER), 401 invalid credentials rejection, `/api/v1/auth/me` profile retrieval, unauthenticated route 401 guard.
+    3. RBAC & Defense-in-Depth: Customer access to Admin Dashboard strictly blocked (403), Store Owner access strictly blocked (403), SuperAdmin granted access (200), Admin store directory (200).
+    4. Store Tenant Isolation & Bank Verification: `/api/v1/stores/me` (200), VietQR credential isolation fail-closed protection on `/api/v1/stores/bank-accounts/lookup` (503 Service Unavailable when credentials unset).
+    5. Customer Portal: `/api/v1/customers/me/dashboard` (200), `/api/v1/customers/me/bank-accounts` (200), `/api/v1/customers/me/bank-accounts/verification-history` (200).
+    6. Contract Hardening & Hardware Security: PayOS webhook accepting `success: true` and validating HMAC (400), Simulate button press rejecting client shippingFee manipulation (400), IoT telemetry enforcing hardware signature headers (401).
+    7. Data Security & Sensitive Leakage: Zero leaks of `password_hash`, `passwordHash`, or `refresh_token` across response payloads.
+- **Root Cause & Production Database Fix**:
+  - **Issue Discovered**: During live testing of `GET /api/v1/rentals/my-rentals`, the endpoint returned HTTP 500: `The column button_rentals.billing_policy does not exist in the current database`.
+  - **Root Cause**: Supabase production PostgreSQL (`aws-0-ap-northeast-1.pooler.supabase.com:6543`) had not applied migration `20261106213000_rental_billing_policy_snapshot` because Prisma CLI's prepared statements are unsupported by PgBouncer transaction mode.
+  - **Remediation**: Executed `scripts/apply_pending_migration.js` directly against the database via Prisma raw execution:
+    * Added `billing_policy` VARCHAR(50) NOT NULL DEFAULT 'STORE_RENT_CUSTOMER_DEPOSIT' to `button_rentals`.
+    * Added `billing_policy_review_required` BOOLEAN NOT NULL DEFAULT false to `button_rentals`.
+    * Added check constraint `chk_button_rentals_billing_policy` and indexes `idx_button_rentals_billing_policy`, `idx_button_rentals_policy_review`.
+    * Added `payer_store_id` BIGINT and foreign key / index to `billing_charges`.
+    * Created immutability trigger `trg_button_rental_policy_immutable`.
+    * Recorded migration in `_prisma_migrations`.
+  - **Result**: `GET /api/v1/rentals/my-rentals` immediately recovered to HTTP 200 `{"success":true,"data":[]}` across all nodes.
+- **Verification Evidence**:
+  - `node scripts/live_api_comprehensive_test.js` against Render Node 1: 25/25 PASSED (0 FAILED).
+  - `node scripts/live_api_comprehensive_test.js` against AWS Node 3: 25/25 PASSED (0 FAILED).
+
 ### [2026-11-10] CI/CD Pipeline Audit & Multi-Node Cluster Parity Deployment (Commit ea18b01)
 - **Status**: COMPLETED & VERIFIED
 - **Commit**: `ea18b012f1ce5cd7a253ec5da11966ba9635b968` (pushed to `origin/main`)
