@@ -19,6 +19,8 @@ export class AppController {
     return {
       status: 'UP',
       uptimeSeconds: Math.floor(process.uptime()),
+      commitSha: process.env.RENDER_GIT_COMMIT || process.env.GITHUB_SHA || process.env.COMMIT_SHA || 'unknown',
+      version: process.env.npm_package_version || '2.0.0',
       timestamp: new Date().toISOString(),
     };
   }
@@ -77,6 +79,8 @@ export class AppController {
     return {
       status: 'READY',
       checks,
+      commitSha: process.env.RENDER_GIT_COMMIT || process.env.GITHUB_SHA || process.env.COMMIT_SHA || 'unknown',
+      version: process.env.npm_package_version || '2.0.0',
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     };

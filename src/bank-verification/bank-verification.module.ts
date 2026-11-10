@@ -11,6 +11,7 @@ import { BankVerificationWebhookGuard } from './guards/bank-verification-webhook
 import { BankLookupRateLimitGuard } from './guards/bank-lookup-rate-limit.guard';
 import { PayOSBankVerificationProvider } from './providers/payos-bank-verification.provider';
 import { BANK_VERIFICATION_PROVIDER_TOKEN } from './providers/bank-verification.provider.interface';
+import { StoreBankRefundWorker } from './store-bank-refund.worker';
 
 @Module({
   imports: [PrismaModule, PaymentsModule],
@@ -26,6 +27,7 @@ import { BANK_VERIFICATION_PROVIDER_TOKEN } from './providers/bank-verification.
     BankVerificationWebhookGuard,
     BankLookupRateLimitGuard,
     PayOSBankVerificationProvider,
+    StoreBankRefundWorker,
     {
       provide: BANK_VERIFICATION_PROVIDER_TOKEN,
       useClass: PayOSBankVerificationProvider,

@@ -161,7 +161,7 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
         this.logger.log(`[BankVerification Mock] Simulating refund payout for ref: ${params.referenceId}`);
         return {
           refundTransactionId: `mock_refund_${Date.now()}`,
-          status: 'SUCCESS',
+          status: 'PENDING_RECONCILIATION',
         };
       }
       throw new ServiceUnavailableException('Dịch vụ hoàn tiền Payout chưa được cấu hình');
@@ -178,8 +178,8 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
 
       if (result.code === '00') {
         return {
-          refundTransactionId: result.data?.id || result.data?.referenceId || params.referenceId,
-          status: 'SUCCESS',
+          refundTransactionId: result.data?.id ? String(result.data.id).trim() : params.referenceId,
+          status: 'PENDING_RECONCILIATION',
         };
       }
 
@@ -192,11 +192,11 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
       };
     } catch (error: any) {
       this.logger.error(
-        `[PayOSBankVerificationProvider] createRefund failed for referenceId: ${params.referenceId}`,
+        `[PayOSBankVerificationProvider] createRefund failed for referenceId: ${params.referenceId}: ${error?.message}`,
       );
       return {
         refundTransactionId: '',
-        status: 'FAILED',
+        status: 'PENDING_RECONCILIATION',
       };
     }
   }

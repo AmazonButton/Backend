@@ -4,6 +4,11 @@ import { Injectable, NotFoundException, BadRequestException, Optional, Inject, L
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { AdminRepository } from './admin.repository';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
+import {
+  verifyPayosPayoutEvidence,
+  verifyPayosPayoutRejectionEvidence,
+  PayosPayoutExpectedCriteria,
+} from '../payments/payos-payout-verifier';
 import { WalletMapper } from '../store-wallet/mappers/wallet.mapper';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { buildAnalyticsDateRange } from '../analytics/utils/analytics-date-range.util';
@@ -34,6 +39,9 @@ export class AdminService {
         this.cacheService.invalidatePrefix('admin:revenue:'),
         this.cacheService.invalidatePrefix('admin:growth:'),
         this.cacheService.invalidatePrefix('admin:stores-leaderboard:'),
+        this.cacheService.invalidatePrefix('stores:'),
+        this.cacheService.invalidateKey('stores:active_page1_20'),
+        this.cacheService.invalidateKey('rentals:available_packages'),
       ];
       if (storeId) {
         promises.push(this.cacheService.invalidatePrefix(`dash:store:${storeId.toString()}:`));
@@ -226,7 +234,7 @@ export class AdminService {
       throw new BadRequestException('Mã gói thuê thiết bị đã tồn tại');
     }
 
-    return this.adminRepo.createRentalPackage({
+    const created = await this.adminRepo.createRentalPackage({
       packageCode,
       packageName,
       description,
@@ -237,6 +245,8 @@ export class AdminService {
       features: features || [],
       status: 'ACTIVE',
     });
+    await this.invalidateAdminAndStoreCaches();
+    return created;
   }
 
   async listRentalPackages() {
@@ -247,7 +257,9 @@ export class AdminService {
     const packageId = BigInt(id);
     const existing = await this.adminRepo.findRentalPackageById(packageId);
     if (!existing) throw new NotFoundException('Không tìm thấy gói thuê');
-    return this.adminRepo.updateRentalPackage(packageId, body);
+    const updated = await this.adminRepo.updateRentalPackage(packageId, body);
+    await this.invalidateAdminAndStoreCaches();
+    return updated;
   }
 
   async listAllWithdrawals(query?: any) {
@@ -346,32 +358,53 @@ export class AdminService {
     // Provider reference must be stable and idempotent (NO Date.now() suffix!)
     const providerReferenceId = withdrawal.providerReferenceId || withdrawal.withdrawalCode;
 
+    if (!withdrawal.bankAccountEncrypted || !withdrawal.bankAccountHash || !withdrawal.bankBinSnapshot) {
+      throw new BadRequestException('Thiếu snapshot tài khoản ngân hàng đã mã hóa hoặc mã BIN (Fail-Closed)');
+    }
+
     let toAccountNumber = '';
-    if (withdrawal.bankAccountEncrypted) {
-      toAccountNumber = CryptoVaultUtil.decryptAccountNumber(withdrawal.bankAccountEncrypted);
-    } else if (withdrawal.bankAccountNumber) {
-      toAccountNumber = withdrawal.bankAccountNumber;
+    try {
+      toAccountNumber = CryptoVaultUtil.decryptAccountNumber(withdrawal.bankAccountEncrypted).trim();
+    } catch (err: any) {
+      this.logger.error(`Lỗi giải mã tài khoản cho withdrawal #${rawWithdrawalId}: ${err?.message}`);
+      throw new BadRequestException('Lỗi giải mã tài khoản nhận tiền (Fail-Closed)');
+    }
+
+    if (!toAccountNumber) {
+      throw new BadRequestException('Số tài khoản nhận tiền sau giải mã rỗng (Fail-Closed)');
+    }
+
+    // Xác minh hash trước khi gửi tiền
+    const computedHash = CryptoVaultUtil.hashAccountNumber(toAccountNumber);
+    if (computedHash !== withdrawal.bankAccountHash) {
+      throw new BadRequestException('Tính toàn vẹn của tài khoản nhận tiền bị vi phạm (Hash Mismatch)');
+    }
+
+    // Số tiền PayOS thực chuyển bắt buộc là netAmount (amount - fee)
+    const payoutAmount = withdrawal.netAmount ? Number(withdrawal.netAmount) : Number(withdrawal.amount) - Number(withdrawal.fee || 0);
+    if (!Number.isInteger(payoutAmount) || payoutAmount <= 0) {
+      throw new BadRequestException('Số tiền chi hộ thực chuyển (netAmount) không hợp lệ');
     }
 
     const payoutPayload = {
       referenceId: providerReferenceId,
-      amount: Number(withdrawal.amount),
+      amount: payoutAmount,
       description: ('Chi ho SOB ' + withdrawal.withdrawalCode).slice(0, 25),
-      toBin: withdrawal.bankBinSnapshot || (withdrawal.wallet as any)?.bankBin || withdrawal.bankCode || '970422',
+      toBin: withdrawal.bankBinSnapshot.trim(),
       toAccountNumber,
     };
 
     try {
       const payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
-      const providerPayoutId = payoutResult?.data?.id || `payout_${providerReferenceId}`;
+      const providerPayoutId = payoutResult?.data?.id ? String(payoutResult.data.id).trim() : null;
 
-      const updated = await this.adminRepo.updateWithdrawal(rawWithdrawalId, {
-        status: 'PROCESSING',
+      await this.adminRepo.supplementPayoutIdIfAllowed(
+        rawWithdrawalId,
         providerReferenceId,
         providerPayoutId,
-        approvedByUserId: adminUser?.userId ? BigInt(adminUser.userId) : null,
-        processedAt: new Date(),
-      });
+        adminUser?.userId ? BigInt(adminUser.userId) : null,
+      );
+      const updated = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
       await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
       return updated;
     } catch (err: any) {
@@ -524,7 +557,6 @@ export class AdminService {
       );
     }
 
-    // 1. Verify detail payout ID matches expected lookup ID
     const verifiedPayoutId = String(targetPayout.id || '').trim();
     if (!verifiedPayoutId) {
       return formatResponse(
@@ -535,251 +567,59 @@ export class AdminService {
         'Thiếu thông tin payout ID từ cổng thanh toán. Giữ trạng thái chờ đối soát.',
       );
     }
-    if (expectedPayoutId && verifiedPayoutId !== expectedPayoutId) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'PAYOUT_ID_MISMATCH',
-        verifiedPayoutId,
-        `ID chi tiết payout (${verifiedPayoutId}) không khớp với ID đã yêu cầu tra cứu (${expectedPayoutId}). Giữ trạng thái chờ đối soát.`,
-      );
-    }
 
-    // 2. Select exact transaction inside payout without arbitrary fallback
-    if (!Array.isArray(targetPayout.transactions) || targetPayout.transactions.length === 0) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'EMPTY_TRANSACTIONS',
-        verifiedPayoutId,
-        'Chi tiết payout thiếu danh sách giao dịch (transactions). Không thể xác thực giao dịch, giữ trạng thái chờ đối soát.',
-      );
-    }
+    const netAmount = withdrawal.netAmount !== null && withdrawal.netAmount !== undefined
+      ? Math.round(Number(withdrawal.netAmount))
+      : Math.round(Number(withdrawal.amount) - Number(withdrawal.fee || 0));
 
-    const matchedCandidates = targetPayout.transactions.filter((tx: any) => {
-      const refMatches =
-        (withdrawal.providerReferenceId && tx.referenceId === withdrawal.providerReferenceId) ||
-        (withdrawal.withdrawalCode && tx.referenceId === withdrawal.withdrawalCode);
-      return Boolean(refMatches);
-    });
+    const criteria: PayosPayoutExpectedCriteria = {
+      amount: netAmount,
+      payoutReference: withdrawal.providerReferenceId || withdrawal.withdrawalCode,
+      targetBankBin: withdrawal.bankBinSnapshot || withdrawal.bankCode,
+      targetAccountHash: withdrawal.bankAccountHash,
+      expectedPayoutId: expectedPayoutId || undefined,
+    };
 
-    if (matchedCandidates.length === 0) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'NO_MATCHED_TRANSACTION',
-        verifiedPayoutId,
-        'Không tìm thấy giao dịch nào khớp với reference của yêu cầu rút tiền trong chi tiết payout. Giữ trạng thái chờ đối soát.',
-      );
-    }
-
-    if (matchedCandidates.length > 1) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'MULTIPLE_MATCHED_TRANSACTIONS',
-        verifiedPayoutId,
-        'Có nhiều hơn một giao dịch trùng reference trong chi tiết payout. Dừng đối soát, giữ trạng thái chờ đối soát thủ công.',
-      );
-    }
-
-    const matchedTx = matchedCandidates[0];
-
-    // 3. Must use terminal state of verified transaction - do NOT infer from overall payout state
-    const txState = String(matchedTx.state || '').trim().toUpperCase();
-    if (!txState) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'MISSING_TRANSACTION_STATE',
-        verifiedPayoutId,
-        'Giao dịch trong chi tiết payout thiếu trạng thái (state). Không suy diễn từ trạng thái tổng, giữ trạng thái chờ đối soát.',
-      );
-    }
-
-    // 4. Strict amount validation: finite, strictly positive, integer VND, and exact match
-    const reportedAmount = Number(matchedTx.amount);
-    const expectedAmount = Number(withdrawal.amount);
-
-    if (
-      matchedTx.amount === undefined ||
-      matchedTx.amount === null ||
-      !Number.isFinite(reportedAmount) ||
-      !Number.isInteger(reportedAmount) ||
-      reportedAmount <= 0
-    ) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'INVALID_TRANSACTION_AMOUNT',
-        verifiedPayoutId,
-        `Số tiền giao dịch trên cổng thanh toán không hợp lệ (nhận được: ${matchedTx.amount}). Giữ trạng thái chờ đối soát.`,
-      );
-    }
-
-    if (reportedAmount !== expectedAmount) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'AMOUNT_MISMATCH',
-        verifiedPayoutId,
-        `Số tiền giao dịch trên cổng thanh toán (${reportedAmount}) không khớp chính xác với yêu cầu rút tiền (${expectedAmount}). Giữ trạng thái chờ đối soát.`,
-      );
-    }
-
-    // 5. Strict recipient evidence matching: BIN and account number identity
-    const reportedBin = String(matchedTx.toBin || '').trim();
-    const expectedBin = String(withdrawal.bankBinSnapshot || withdrawal.bankCode || '').trim();
-
-    if (!reportedBin || !expectedBin || reportedBin !== expectedBin) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'RECIPIENT_BIN_MISMATCH',
-        verifiedPayoutId,
-        `Mã ngân hàng (BIN) người nhận (${reportedBin || 'thiếu'}) không khớp hoặc thiếu so với snapshot (${expectedBin || 'thiếu'}). Không cập nhật tài chính, giữ trạng thái chờ đối soát.`,
-      );
-    }
-
-    const reportedAcc = String(matchedTx.toAccountNumber || '').trim();
-    if (!reportedAcc) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'MISSING_RECIPIENT_ACCOUNT',
-        verifiedPayoutId,
-        'Thiếu định danh số tài khoản thụ hưởng từ cổng thanh toán. Không cập nhật tài chính, giữ trạng thái chờ đối soát.',
-      );
-    }
-
-    const expectedHash = withdrawal.bankAccountHash;
-    const expectedEncrypted = withdrawal.bankAccountEncrypted;
-
-    // Strict snapshot requirement: MUST have hash or encrypted. Plaintext bankAccountNumber is completely eliminated!
-    if (!expectedHash && !expectedEncrypted) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'MISSING_SNAPSHOT',
-        verifiedPayoutId,
-        'Yêu cầu rút tiền thiếu snapshot định danh tài khoản ngân hàng. Chờ xử lý có kiểm chứng.',
-      );
-    }
-
-    let decryptedAccount: string | null = null;
-    if (expectedEncrypted) {
-      try {
-        decryptedAccount = CryptoVaultUtil.decryptAccountNumber(expectedEncrypted).replace(/\s+/g, '').toUpperCase();
-      } catch {
-        return formatResponse(
-          withdrawal,
-          'PENDING',
-          'INCONSISTENT_SNAPSHOT',
-          verifiedPayoutId,
-          'Snapshot mã hóa tài khoản ngân hàng không thể giải mã hợp lệ. Nghi ngờ snapshot bị hỏng, dừng đối soát.',
-        );
-      }
-    }
-
-    // Consistency check between snapshot hash and snapshot encrypted account:
-    if (expectedHash && decryptedAccount) {
-      const decryptedSha256 = CryptoVaultUtil.computeDeterministicAccountHash(decryptedAccount);
-      let decryptedHmac = '';
-      try {
-        decryptedHmac = CryptoVaultUtil.hashAccountNumber(decryptedAccount);
-      } catch {}
-
-      const isConsistent = expectedHash === decryptedSha256 || (decryptedHmac && expectedHash === decryptedHmac);
-      if (!isConsistent) {
-        return formatResponse(
-          withdrawal,
-          'PENDING',
-          'INCONSISTENT_SNAPSHOT',
-          verifiedPayoutId,
-          'Snapshot tài khoản ngân hàng không nhất quán giữa hash và dữ liệu mã hóa. Dừng đối soát để bảo vệ an toàn.',
-        );
-      }
-    }
-
-    const cleanReportedAcc = reportedAcc.replace(/\s+/g, '').toUpperCase();
-    const reportedSha256 = CryptoVaultUtil.computeDeterministicAccountHash(cleanReportedAcc);
-    let reportedHmac = '';
-    try {
-      reportedHmac = CryptoVaultUtil.hashAccountNumber(cleanReportedAcc);
-    } catch {}
-
-    let accMatches = false;
-    if (expectedHash) {
-      accMatches = (expectedHash === reportedSha256 || (reportedHmac && expectedHash === reportedHmac));
-    } else if (decryptedAccount) {
-      accMatches = (decryptedAccount === cleanReportedAcc);
-    }
-
-    if (!accMatches) {
-      return formatResponse(
-        withdrawal,
-        'PENDING',
-        'RECIPIENT_ACCOUNT_MISMATCH',
-        verifiedPayoutId,
-        'Định danh số tài khoản thụ hưởng trên cổng thanh toán không khớp với snapshot yêu cầu rút tiền. Không cập nhật tài chính, giữ trạng thái chờ đối soát.',
-      );
-    }
-
-    const normalizeText = (s: string) =>
-      (s || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/đ/g, 'd')
-        .replace(/Đ/g, 'D')
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, '')
-        .trim();
-
-    const reportedName = String(matchedTx.toAccountName || '').trim();
-    const expectedName = String(withdrawal.bankAccountNameSnapshot || withdrawal.bankAccountHolder || '').trim();
-    if (expectedName) {
-      if (!reportedName || normalizeText(reportedName) !== normalizeText(expectedName)) {
-        return formatResponse(
-          withdrawal,
-          'PENDING',
-          'RECIPIENT_NAME_MISMATCH',
-          verifiedPayoutId,
-          `Tên người thụ hưởng (${reportedName || 'thiếu'}) không khớp với snapshot yêu cầu rút tiền (${expectedName}). Không cập nhật tài chính, giữ trạng thái chờ đối soát.`,
-        );
-      }
-    }
-
-    // 6. Finalize or refund strictly based on transaction state
-    let finalOutcome: 'SUCCESS' | 'FAILED' | 'PENDING' = 'PENDING';
-    let finalReasonCode = 'PENDING_TERMINAL_CONFIRMATION';
-    let finalMessage = 'Giao dịch payout đang ở trạng thái trung gian, tiếp tục chờ đối soát.';
-
-    if (['COMPLETED', 'PAID', 'SUCCEEDED'].includes(txState)) {
+    const successVerif = verifyPayosPayoutEvidence(targetPayout, criteria);
+    if (successVerif.isVerified) {
       await this.adminRepo.finalizeSucceededWithdrawalTransaction(
         rawWithdrawalId,
-        verifiedPayoutId,
+        successVerif.providerPayoutId,
       );
-      finalOutcome = 'SUCCESS';
-      finalReasonCode = 'PAYOUT_VERIFIED_SUCCESS';
-      finalMessage = 'Xác thực payout thành công, đã khấu trừ số dư đóng băng và hoàn tất giao dịch rút tiền.';
-    } else if (['REJECTED', 'FAILED', 'CANCELLED'].includes(txState)) {
-      await this.adminRepo.refundFailedWithdrawalTransaction(
-        rawWithdrawalId,
-        `PayOS xác nhận chi hộ thất bại (${txState})`,
+      await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+      const fresh = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+      return formatResponse(
+        fresh || withdrawal,
+        'SUCCESS',
+        'PAYOUT_VERIFIED_SUCCESS',
+        successVerif.providerPayoutId,
+        'Xác thực payout thành công, đã khấu trừ số dư đóng băng và hoàn tất giao dịch rút tiền.',
       );
-      finalOutcome = 'FAILED';
-      finalReasonCode = 'PAYOUT_TERMINAL_FAILURE';
-      finalMessage = `PayOS xác nhận chi hộ thất bại (${txState}), đã hoàn tiền về ví cửa hàng thành công.`;
     }
 
-    await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
-    const fresh = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    const rejectionVerif = verifyPayosPayoutRejectionEvidence(targetPayout, criteria);
+    if (rejectionVerif.isVerified) {
+      await this.adminRepo.refundFailedWithdrawalTransaction(
+        rawWithdrawalId,
+        `PayOS xác nhận chi hộ thất bại: ${rejectionVerif.reason || 'REJECTED'}`,
+      );
+      await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+      const fresh = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+      return formatResponse(
+        fresh || withdrawal,
+        'FAILED',
+        'PAYOUT_TERMINAL_FAILURE',
+        rejectionVerif.providerPayoutId,
+        'PayOS xác nhận chi hộ thất bại, đã hoàn tiền về ví cửa hàng thành công.',
+      );
+    }
+
     return formatResponse(
-      fresh || withdrawal,
-      finalOutcome,
-      finalReasonCode,
+      withdrawal,
+      'PENDING',
+      'PENDING_TERMINAL_CONFIRMATION',
       verifiedPayoutId,
-      finalMessage,
+      successVerif.reason || rejectionVerif.reason || 'Giao dịch payout đang ở trạng thái trung gian, tiếp tục chờ đối soát.',
     );
   }
 

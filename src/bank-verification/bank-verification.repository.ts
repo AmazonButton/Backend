@@ -6,9 +6,11 @@ import { runWithTransactionRetry } from '../common/utils/transaction-retry.util'
 export interface AtomicWebhookVerificationResult {
   success: boolean;
   alreadyProcessed?: boolean;
+  needsRefund?: boolean;
   reason?: string;
   transaction?: any;
   bankAccount?: any;
+  refundReference?: string;
 }
 
 @Injectable()
@@ -281,9 +283,10 @@ export class BankVerificationRepository {
           bank_name: string;
           account_number_encrypted: string;
           account_name: string;
+          account_number_hash: string | null;
         }>
       >`
-        SELECT id, store_id, bank_bin, bank_name, account_number_encrypted, account_name
+        SELECT id, store_id, bank_bin, bank_name, account_number_encrypted, account_name, account_number_hash
         FROM store_bank_accounts
         WHERE id = ${lockedTx.bank_account_id}
         FOR UPDATE
@@ -305,6 +308,7 @@ export class BankVerificationRepository {
         return {
           success: true,
           alreadyProcessed: true,
+          needsRefund: false,
           transaction: lockedTx,
           bankAccount: lockedAccount,
         };
@@ -596,12 +600,45 @@ export class BankVerificationRepository {
         };
       }
 
-      // 9. Cập nhật trạng thái transaction thành VERIFIED
+      // 9. Lưu biên lai thực nhận (store_bank_inbound_receipts) và tạo nghĩa vụ hoàn tiền (store_bank_refund_obligations)
+      let refundReference = `REF_ST_${lockedTx.id}`;
+      try {
+        const [receipt] = await tx.$queryRaw<Array<{ id: bigint }>>`
+          INSERT INTO store_bank_inbound_receipts (
+            verification_tx_id, provider_transaction_id, amount,
+            sender_account_number_encrypted, sender_account_hash, sender_bank_bin,
+            match_status, received_at, created_at
+          ) VALUES (
+            ${lockedTx.id}, ${params.providerTransactionId}, ${params.receivedAmount},
+            ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash}, ${params.senderBankBin || lockedAccount.bank_bin},
+            'MATCHED', NOW(), NOW()
+          ) RETURNING id
+        `;
+
+        if (receipt?.id) {
+          refundReference = `REF_ST_${receipt.id}`;
+          await tx.$executeRaw`
+            INSERT INTO store_bank_refund_obligations (
+              receipt_id, refund_amount, refund_status, refund_reference,
+              target_bank_bin, target_account_encrypted, target_account_hash,
+              created_at, updated_at
+            ) VALUES (
+              ${receipt.id}, ${params.receivedAmount}, 'PENDING_REFUND', ${refundReference},
+              ${lockedAccount.bank_bin}, ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash},
+              NOW(), NOW()
+            )
+          `;
+        }
+      } catch (receiptErr: any) {
+        this.logger.warn(`Could not insert store bank receipt: ${receiptErr.message}`);
+      }
+
       await tx.$executeRaw`
         UPDATE bank_account_verification_transactions
         SET status = 'VERIFIED',
             received_amount = ${params.receivedAmount},
             provider_transaction_id = ${params.providerTransactionId},
+            refund_status = 'PENDING_REFUND',
             verified_at = NOW(),
             updated_at = NOW()
         WHERE id = ${lockedTx.id}
@@ -629,6 +666,8 @@ export class BankVerificationRepository {
       return {
         success: true,
         alreadyProcessed: false,
+        needsRefund: true,
+        refundReference,
         transaction: {
           ...lockedTx,
           status: 'VERIFIED',
@@ -638,5 +677,135 @@ export class BankVerificationRepository {
         bankAccount: lockedAccount,
       };
     });
+  }
+
+  async findPendingStoreRefundObligations(limit = 10): Promise<any[]> {
+    return this.prisma.$queryRaw<any[]>`
+      SELECT id, receipt_id, refund_amount, refund_status, refund_reference,
+             target_bank_bin, target_account_encrypted, target_account_hash,
+             attempt_count, provider_payout_id
+      FROM store_bank_refund_obligations
+      WHERE refund_status IN ('PENDING_REFUND', 'PROCESSING')
+        AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at < NOW())
+      ORDER BY id ASC
+      LIMIT ${limit}
+    `;
+  }
+
+  async claimRefundObligationForDispatch(
+    obligationId: bigint,
+    leaseToken: string,
+    leaseDurationMs = 60000,
+  ): Promise<boolean> {
+    const expiresAt = new Date(Date.now() + leaseDurationMs);
+    const count = await this.prisma.$executeRaw`
+      UPDATE store_bank_refund_obligations
+      SET lease_token = ${leaseToken},
+          lease_expires_at = ${expiresAt},
+          attempt_count = attempt_count + 1,
+          refund_status = 'PROCESSING',
+          updated_at = NOW()
+      WHERE id = ${obligationId}
+        AND refund_status IN ('PENDING_REFUND', 'PROCESSING')
+        AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at < NOW())
+    `;
+    return count === 1;
+  }
+
+  async finalizeObligationSuccessTx(
+    obligationId: bigint,
+    leaseToken: string,
+    providerPayoutId: string,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const count = await tx.$executeRaw`
+        UPDATE store_bank_refund_obligations
+        SET refund_status = 'REFUNDED',
+            provider_payout_id = ${providerPayoutId},
+            refunded_at = NOW(),
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            updated_at = NOW()
+        WHERE id = ${obligationId}
+          AND lease_token = ${leaseToken}
+          AND refund_status = 'PROCESSING'
+      `;
+      if (count !== 1) return false;
+
+      // Đồng bộ cập nhật giao dịch xác minh gốc sang REFUNDED
+      await tx.$executeRaw`
+        UPDATE bank_account_verification_transactions
+        SET status = 'REFUNDED',
+            refund_status = 'SUCCESS',
+            refund_transaction_id = ${providerPayoutId},
+            refunded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = (
+          SELECT r.verification_tx_id 
+          FROM store_bank_inbound_receipts r
+          JOIN store_bank_refund_obligations o ON o.receipt_id = r.id
+          WHERE o.id = ${obligationId}
+        )
+      `;
+      return true;
+    });
+  }
+
+  async recordObligationReconciliationPending(
+    obligationId: bigint,
+    leaseToken: string,
+    providerPayoutId: string | null,
+    reason: string,
+    backoffMs = 60000,
+  ): Promise<boolean> {
+    const nextReconcileAt = new Date(Date.now() + backoffMs);
+    const count = await this.prisma.$executeRaw`
+      UPDATE store_bank_refund_obligations
+      SET refund_status = 'PENDING_RECONCILIATION',
+          provider_payout_id = COALESCE(${providerPayoutId}, provider_payout_id),
+          failure_reason = ${reason.slice(0, 255)},
+          next_reconcile_at = ${nextReconcileAt},
+          lease_token = NULL,
+          lease_expires_at = NULL,
+          updated_at = NOW()
+      WHERE id = ${obligationId}
+        AND lease_token = ${leaseToken}
+        AND refund_status = 'PROCESSING'
+    `;
+    return count === 1;
+  }
+
+  async recordObligationTerminalFailure(
+    obligationId: bigint,
+    leaseToken: string,
+    providerPayoutId: string | null,
+    reason: string,
+  ): Promise<boolean> {
+    const count = await this.prisma.$executeRaw`
+      UPDATE store_bank_refund_obligations
+      SET refund_status = 'FAILED',
+          provider_payout_id = COALESCE(${providerPayoutId}, provider_payout_id),
+          failure_reason = ${reason.slice(0, 255)},
+          lease_token = NULL,
+          lease_expires_at = NULL,
+          updated_at = NOW()
+      WHERE id = ${obligationId}
+        AND lease_token = ${leaseToken}
+        AND refund_status = 'PROCESSING'
+    `;
+    return count === 1;
+  }
+
+  async findPendingStoreReconciliations(limit = 10): Promise<any[]> {
+    return this.prisma.$queryRaw<any[]>`
+      SELECT id, receipt_id, refund_amount, refund_status, refund_reference,
+             provider_payout_id, target_bank_bin, target_account_encrypted, target_account_hash,
+             attempt_count
+      FROM store_bank_refund_obligations
+      WHERE (refund_status = 'PENDING_RECONCILIATION' AND (next_reconcile_at IS NULL OR next_reconcile_at <= NOW()))
+         OR (refund_status = 'PROCESSING' AND lease_expires_at < NOW())
+      ORDER BY next_reconcile_at ASC NULLS FIRST, id ASC
+      LIMIT ${limit}
+    `;
   }
 }

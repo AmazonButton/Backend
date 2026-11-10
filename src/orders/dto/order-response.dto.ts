@@ -23,6 +23,10 @@ export interface OrderResponseDto {
   netAmount?: number;
   shippingAddress?: string | null;
   deliveryAddress?: string | null;
+  shippingRecipientName?: string | null;
+  shippingPhone?: string | null;
+  customerPhone?: string | null;
+  recipientPhone?: string | null;
   shippingLatitude?: number | null;
   shippingLongitude?: number | null;
   assignedDriverId?: string | null;
@@ -38,6 +42,7 @@ export interface OrderResponseDto {
     customerId: string;
     fullName?: string;
     phoneNumber?: string;
+    phone?: string;
     email?: string;
   };
   button?: {
@@ -52,6 +57,11 @@ export interface OrderResponseDto {
     code?: string;
     phone?: string;
     address?: string;
+  };
+  driver?: {
+    driverId: string;
+    fullName?: string;
+    phone?: string;
   };
   items?: Array<{
     orderItemId: string;
@@ -102,6 +112,10 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
     netAmount: raw.netAmount != null ? Number(raw.netAmount) : undefined,
     shippingAddress: raw.shippingAddress || raw.deliveryAddress || null,
     deliveryAddress: raw.deliveryAddress || raw.shippingAddress || null,
+    shippingRecipientName: raw.shippingRecipientName || raw.shipping_recipient_name || raw.customer?.fullName || raw.customer?.user?.fullName || null,
+    shippingPhone: raw.shippingPhone || raw.shipping_phone || null,
+    customerPhone: raw.customer?.phone || raw.customer?.user?.phone || raw.shippingPhone || raw.shipping_phone || raw.customerPhone || null,
+    recipientPhone: raw.shippingPhone || raw.shipping_phone || raw.customer?.phone || raw.customer?.user?.phone || null,
     shippingLatitude: raw.shippingLatitude != null ? Number(raw.shippingLatitude) : (raw.shipping_latitude != null ? Number(raw.shipping_latitude) : null),
     shippingLongitude: raw.shippingLongitude != null ? Number(raw.shippingLongitude) : (raw.shipping_longitude != null ? Number(raw.shipping_longitude) : null),
     assignedDriverId: raw.assignedDriverId ? raw.assignedDriverId.toString() : (raw.assigned_driver_id ? raw.assigned_driver_id.toString() : null),
@@ -116,12 +130,22 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
   };
 
   // Safe Customer mapping - NEVER leak raw User entity fields (passwordHash, authId, hmacSecret, etc.)
+  const resolvedPhone = raw.customer?.user?.phone || raw.customer?.phone || raw.customer?.phoneNumber || raw.shippingPhone || raw.shipping_phone || raw.customerPhone || null;
+
   if (raw.customer) {
     dto.customer = {
       customerId: raw.customer.customerId ? raw.customer.customerId.toString() : raw.customerId?.toString(),
       fullName: raw.customer.user?.fullName || raw.customer.fullName || raw.customerName,
-      phoneNumber: raw.customer.user?.phone || raw.customer.phoneNumber || raw.customerPhone,
+      phoneNumber: resolvedPhone || undefined,
+      phone: resolvedPhone || undefined,
       email: raw.customer.user?.email || raw.customer.email,
+    };
+  } else if (resolvedPhone || raw.customerName || raw.shippingRecipientName || raw.shipping_recipient_name) {
+    dto.customer = {
+      customerId: raw.customerId ? raw.customerId.toString() : '',
+      fullName: raw.shippingRecipientName || raw.shipping_recipient_name || raw.customerName,
+      phoneNumber: resolvedPhone || undefined,
+      phone: resolvedPhone || undefined,
     };
   }
 
@@ -133,6 +157,16 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
       code: raw.store.code,
       phone: raw.store.phone,
       address: raw.store.address,
+    };
+  }
+
+  // Safe Driver mapping
+  const driverObj = raw.assignedDriver || raw.driver;
+  if (driverObj) {
+    dto.driver = {
+      driverId: driverObj.userId ? driverObj.userId.toString() : (driverObj.id ? driverObj.id.toString() : (raw.assignedDriverId ? raw.assignedDriverId.toString() : '')),
+      fullName: driverObj.fullName || driverObj.name || '',
+      phone: driverObj.phone || driverObj.phoneNumber || '',
     };
   }
 

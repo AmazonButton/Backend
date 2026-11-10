@@ -231,22 +231,40 @@ jobs:
           fi
           echo "✅ Render deployment successfully triggered."
 
-      - name: Wait & Verify Live Production Health (/healthz)
+      - name: Wait & Verify Live Production Deployment & Health (/readyz)
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
-          echo "Polling live Render production /healthz endpoint..."
-          LIVE_URL="${{ vars.RENDER_HEALTH_CHECK_URL || 'https://backend-fae8.onrender.com/healthz' }}"
-          MAX_ATTEMPTS=30
+          echo "Polling live Render production deployment and /readyz readiness endpoint..."
+          BASE_LIVE_URL="${{ vars.RENDER_BASE_URL || 'https://backend-fae8.onrender.com' }}"
+          READYZ_URL="${BASE_LIVE_URL%/}/readyz"
+          MAX_ATTEMPTS=45
           SLEEP_SECONDS=10
+          SHORT_SHA="${EXPECTED_SHA:0:7}"
+
+          echo "Target commit SHA to verify: $EXPECTED_SHA (short: $SHORT_SHA)"
 
           for ((i=1; i<=MAX_ATTEMPTS; i++)); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$LIVE_URL" || true)
-            echo "Attempt $i/$MAX_ATTEMPTS - $LIVE_URL returned HTTP $STATUS"
-            if [ "$STATUS" -eq 200 ]; then
-              echo "✅ Production deployment is LIVE and HEALTHY (HTTP 200)!"
-              exit 0
+            RESPONSE=$(curl -s -w "\n%{http_code}" "$READYZ_URL" || true)
+            HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            echo "Attempt $i/$MAX_ATTEMPTS - HTTP Status: $HTTP_STATUS"
+
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              RUNNING_SHA=$(echo "$BODY" | grep -o '"commitSha":"[^"]*"' | cut -d':' -f2 | tr -d '"' || true)
+              echo "Server returned running commitSha: $RUNNING_SHA"
+
+              # Verify if the running version matches the newly deployed commit
+              if [ "$RUNNING_SHA" = "$EXPECTED_SHA" ] || [[ "$RUNNING_SHA" == "$SHORT_SHA"* ]] || [[ "$EXPECTED_SHA" == "$RUNNING_SHA"* ]]; then
+                echo "✅ VERIFIED: Production deployment is LIVE, HEALTHY, and running commit $RUNNING_SHA!"
+                exit 0
+              else
+                echo "⏳ Live instance is responding, but still running previous build ($RUNNING_SHA). Waiting for Render rollout..."
+              fi
             fi
             sleep $SLEEP_SECONDS
           done
 
-          echo "::error::Production health check timed out after $((MAX_ATTEMPTS * SLEEP_SECONDS)) seconds!"
+          echo "::error::[DEPLOYMENT TIMEOUT] Production rollout verification timed out! The new version ($EXPECTED_SHA) was not confirmed running within $((MAX_ATTEMPTS * SLEEP_SECONDS)) seconds."
           exit 1

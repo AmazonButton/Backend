@@ -91,9 +91,12 @@ export function verifyPayosPayoutEvidence(
     };
   }
 
-  // 4. Mảng transactions chi tiết
-  const transactions = payoutData?.transactions;
-  if (!Array.isArray(transactions) || transactions.length === 0) {
+  // 4. Mảng transactions chi tiết (Bắt buộc danh sách giao dịch chi tiết, không dùng summary thay thế)
+  const transactions =
+    Array.isArray(payoutData?.transactions) && payoutData.transactions.length > 0
+      ? payoutData.transactions
+      : [];
+  if (transactions.length === 0) {
     return {
       isVerified: false,
       providerPayoutId: payoutId,
@@ -196,12 +199,11 @@ export function verifyPayosPayoutEvidence(
     };
   }
 
-  // 9. So khớp Hash số tài khoản nhận (Fail-Closed: bắt buộc có từ provider và khớp chính xác)
-  let reportedHash = (matchedTxn.accountNumberHash || matchedTxn.recipientAccountNumberHash)?.toString().trim();
-  if (!reportedHash && matchedTxn.toAccountNumber) {
-    reportedHash = CryptoVaultUtil.computeDeterministicAccountHash(String(matchedTxn.toAccountNumber).trim());
-  }
-  if (!reportedHash) {
+  // 9. So khớp Hash số tài khoản nhận (Fail-Closed: bắt buộc có từ provider, từ chối mọi dữ liệu mâu thuẫn)
+  const reportedHash = (matchedTxn.accountNumberHash || matchedTxn.recipientAccountNumberHash)?.toString().trim();
+  const cleanReportedAcc = matchedTxn.toAccountNumber ? String(matchedTxn.toAccountNumber).replace(/\s+/g, '').toUpperCase() : '';
+
+  if (!reportedHash && !cleanReportedAcc) {
     return {
       isVerified: false,
       providerPayoutId: payoutId,
@@ -209,13 +211,49 @@ export function verifyPayosPayoutEvidence(
       reason: 'Giao dịch chi tiết từ PayOS thiếu thông tin số tài khoản nhận để đối soát (fail-closed)',
     };
   }
-  if (reportedHash !== expectedHash) {
+
+  let accHashFromCleanAcc: string | null = null;
+  let hmacHashFromCleanAcc = '';
+  if (cleanReportedAcc) {
+    accHashFromCleanAcc = CryptoVaultUtil.computeDeterministicAccountHash(cleanReportedAcc);
+    try {
+      hmacHashFromCleanAcc = CryptoVaultUtil.hashAccountNumber(cleanReportedAcc);
+    } catch {}
+  }
+
+  // Nếu cả số tài khoản và hash đều có nhưng mâu thuẫn nhau -> REJECT ngay
+  if (reportedHash && cleanReportedAcc && accHashFromCleanAcc) {
+    const internalMatch = (reportedHash === accHashFromCleanAcc || (hmacHashFromCleanAcc && reportedHash === hmacHashFromCleanAcc));
+    if (!internalMatch) {
+      return {
+        isVerified: false,
+        providerPayoutId: payoutId,
+        reportedAmount,
+        reason: 'Dữ liệu số tài khoản nhận và hash số tài khoản mâu thuẫn nhau trong cùng transaction (fail-closed)',
+      };
+    }
+  }
+
+  // Kiểm tra tính nhất quán với expectedHash (cả 2 nếu có đều phải khớp, không được một cái lệch)
+  if (reportedHash && reportedHash !== expectedHash) {
     return {
       isVerified: false,
       providerPayoutId: payoutId,
       reportedAmount,
-      reason: 'Số tài khoản nhận thực tế không khớp với snapshot tài khoản thụ hưởng',
+      reason: 'Mã băm số tài khoản nhận từ PayOS không khớp với snapshot đích',
     };
+  }
+
+  if (cleanReportedAcc && accHashFromCleanAcc) {
+    const matchesExpected = (accHashFromCleanAcc === expectedHash || (hmacHashFromCleanAcc && hmacHashFromCleanAcc === expectedHash));
+    if (!matchesExpected) {
+      return {
+        isVerified: false,
+        providerPayoutId: payoutId,
+        reportedAmount,
+        reason: 'Số tài khoản nhận thực tế không khớp với snapshot tài khoản thụ hưởng',
+      };
+    }
   }
 
   return {
@@ -279,9 +317,12 @@ export function verifyPayosPayoutRejectionEvidence(
     };
   }
 
-  // 3. BẮT BUỘC có mảng transactions chi tiết (Loại bỏ hoàn toàn nhánh xác nhận chỉ từ summary)
-  const transactions = payoutData?.transactions;
-  if (!Array.isArray(transactions) || transactions.length === 0) {
+  // 3. BẮT BUỘC có mảng transactions chi tiết (không dùng summary thay thế)
+  const transactions =
+    Array.isArray(payoutData?.transactions) && payoutData.transactions.length > 0
+      ? payoutData.transactions
+      : [];
+  if (transactions.length === 0) {
     return {
       isVerified: false,
       providerPayoutId: payoutId,
@@ -402,12 +443,11 @@ export function verifyPayosPayoutRejectionEvidence(
     };
   }
 
-  // 9. So khớp Hash số tài khoản nhận (Fail-Closed: bắt buộc có từ provider và khớp chính xác)
-  let reportedHash = (matchedTxn.accountNumberHash || matchedTxn.recipientAccountNumberHash)?.toString().trim();
-  if (!reportedHash && matchedTxn.toAccountNumber) {
-    reportedHash = CryptoVaultUtil.computeDeterministicAccountHash(String(matchedTxn.toAccountNumber).trim());
-  }
-  if (!reportedHash) {
+  // 9. So khớp Hash số tài khoản nhận (Fail-Closed: bắt buộc có từ provider, từ chối mọi dữ liệu mâu thuẫn)
+  const reportedHash = (matchedTxn.accountNumberHash || matchedTxn.recipientAccountNumberHash)?.toString().trim();
+  const cleanReportedAcc = matchedTxn.toAccountNumber ? String(matchedTxn.toAccountNumber).replace(/\s+/g, '').toUpperCase() : '';
+
+  if (!reportedHash && !cleanReportedAcc) {
     return {
       isVerified: false,
       providerPayoutId: payoutId,
@@ -415,13 +455,49 @@ export function verifyPayosPayoutRejectionEvidence(
       reason: 'Giao dịch chi tiết từ PayOS thiếu thông tin số tài khoản nhận để đối soát (fail-closed)',
     };
   }
-  if (reportedHash !== expectedHash) {
+
+  let accHashFromCleanAcc: string | null = null;
+  let hmacHashFromCleanAcc = '';
+  if (cleanReportedAcc) {
+    accHashFromCleanAcc = CryptoVaultUtil.computeDeterministicAccountHash(cleanReportedAcc);
+    try {
+      hmacHashFromCleanAcc = CryptoVaultUtil.hashAccountNumber(cleanReportedAcc);
+    } catch {}
+  }
+
+  // Nếu cả số tài khoản và hash đều có nhưng mâu thuẫn nhau -> REJECT ngay
+  if (reportedHash && cleanReportedAcc && accHashFromCleanAcc) {
+    const internalMatch = (reportedHash === accHashFromCleanAcc || (hmacHashFromCleanAcc && reportedHash === hmacHashFromCleanAcc));
+    if (!internalMatch) {
+      return {
+        isVerified: false,
+        providerPayoutId: payoutId,
+        reportedAmount,
+        reason: 'Dữ liệu số tài khoản nhận và hash số tài khoản mâu thuẫn nhau trong cùng transaction (fail-closed)',
+      };
+    }
+  }
+
+  // Kiểm tra tính nhất quán với expectedHash (cả 2 nếu có đều phải khớp, không được một cái lệch)
+  if (reportedHash && reportedHash !== expectedHash) {
     return {
       isVerified: false,
       providerPayoutId: payoutId,
       reportedAmount,
-      reason: 'Số tài khoản nhận thực tế không khớp với snapshot tài khoản thụ hưởng',
+      reason: 'Mã băm số tài khoản nhận từ PayOS không khớp với snapshot đích',
     };
+  }
+
+  if (cleanReportedAcc && accHashFromCleanAcc) {
+    const matchesExpected = (accHashFromCleanAcc === expectedHash || (hmacHashFromCleanAcc && hmacHashFromCleanAcc === expectedHash));
+    if (!matchesExpected) {
+      return {
+        isVerified: false,
+        providerPayoutId: payoutId,
+        reportedAmount,
+        reason: 'Số tài khoản nhận thực tế không khớp với snapshot tài khoản thụ hưởng',
+      };
+    }
   }
 
   return {

@@ -70,7 +70,23 @@ export class RentalsService {
   }
 
   async listAvailablePackages() {
-    return this.rentalsRepo.listAvailablePackages();
+    if (this.cacheService) {
+      try {
+        const cached = await this.cacheService.get('rentals:available_packages');
+        if (cached) return cached;
+      } catch {
+        // Fallback to repository
+      }
+    }
+    const data = await this.rentalsRepo.listAvailablePackages();
+    if (this.cacheService && data) {
+      try {
+        await this.cacheService.set('rentals:available_packages', data, 60); // 60s TTL
+      } catch {
+        // Best effort caching
+      }
+    }
+    return data;
   }
 
   async createRentalContract(customerId: string | number | bigint, dto: CreateRentalOrderDto) {

@@ -85,6 +85,37 @@ async function bootstrap() {
     }),
   );
 
+  const isTestEnv = process.env.NODE_ENV === 'test';
+
+  // Tiered Rate Limiters: Defend sensitive authentication & order simulation endpoints against brute-force & spam
+  const authLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute window
+    max: isTestEnv ? 1000 : 15, // 15 requests / min / IP across auth mutations
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.method === 'GET', // Exempt read-only endpoints like GET /auth/me from brute-force throttling
+    message: {
+      success: false,
+      message: 'Quá nhiều yêu cầu xác thực từ IP của bạn. Vui lòng thử lại sau 1 phút.',
+      errorCode: 'AUTH_RATE_LIMIT_EXCEEDED',
+    },
+  });
+
+  const orderSimLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute window
+    max: isTestEnv ? 1000 : 15, // 15 requests / min / IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      success: false,
+      message: 'Quá nhiều yêu cầu mô phỏng bấm nút từ IP của bạn. Vui lòng thử lại sau 1 phút.',
+      errorCode: 'ORDER_SIM_RATE_LIMIT_EXCEEDED',
+    },
+  });
+
+  app.use('/api/v1/auth', authLimiter);
+  app.use('/api/v1/orders/simulate-button-press', orderSimLimiter);
+
   // Enable global validation pipeline — activates all class-validator DTOs
   app.useGlobalPipes(
     new ValidationPipe({

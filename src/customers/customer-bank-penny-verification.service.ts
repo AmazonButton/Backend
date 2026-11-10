@@ -884,9 +884,11 @@ export class CustomerBankPennyVerificationService {
                 this.logger.warn(
                   `Phát hiện nhiều hơn 1 payout (${matchingPayouts.length}) khớp reference ${attempt.payoutReference}. Giữ PENDING_RECONCILIATION.`,
                 );
+                await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), 'Nhiều payout trùng reference');
                 continue;
               } else {
                 // matchingPayouts.length === 0 -> Chưa có payout từ provider, tiếp tục giữ chờ đối soát
+                await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), 'Chưa tìm thấy payout từ cổng thanh toán');
                 continue;
               }
             }
@@ -895,11 +897,13 @@ export class CustomerBankPennyVerificationService {
           // Mọi lỗi tra cứu (network timeout, 403, 404, gián đoạn) KHÔNG được hiểu thành "chưa chuyển tiền".
           // Giữ nguyên chờ đối soát trong PENDING_RECONCILIATION, tuyệt đối không suy diễn FAILED.
           this.logger.warn(`Lỗi tra cứu PayOS cho attempt #${attempt.id}: ${err.message}. Giữ chờ đối soát.`);
+          await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), err.message);
           continue;
         }
 
         if (!payoutDetailData) {
           // Chưa có detail đầy đủ từ provider -> tiếp tục giữ chờ đối soát
+          await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), 'Chưa có detail đầy đủ từ provider');
           continue;
         }
 
@@ -950,13 +954,35 @@ export class CustomerBankPennyVerificationService {
           continue;
         }
 
-        // 3. Nếu chưa đủ bằng chứng cho cả 2 quyết định -> Giữ nguyên PENDING_RECONCILIATION
+        // 3. Nếu chưa đủ bằng chứng cho cả 2 quyết định (đang PROCESSING) -> Cập nhật next_reconcile_at chống nghẽn hàng đợi (Anti-HoL)
+        await this.customersRepo.updateAttemptReconcileBackoff(
+          attempt.id,
+          this.computeBackoffMs(attempt.reconcileAttempts || 0),
+          `Đang xử lý tại cổng chi tiền (${payoutDetailData?.desc || payoutDetailData?.state || 'PROCESSING'})`,
+        );
       } catch (e: any) {
         this.logger.error(`Lỗi đối soát payout attempt #${attempt.id}: ${e.message}`);
+        await this.customersRepo.updateAttemptReconcileBackoff(
+          attempt.id,
+          this.computeBackoffMs(attempt.reconcileAttempts || 0),
+          e.message,
+        ).catch(() => {});
       }
     }
 
     return { reconciled };
+  }
+
+  private computeBackoffMs(attempts: number): number {
+    const schedule = [
+      60 * 1000,        // 1m
+      2 * 60 * 1000,    // 2m
+      5 * 60 * 1000,    // 5m
+      15 * 60 * 1000,   // 15m
+      30 * 60 * 1000,   // 30m
+      60 * 60 * 1000,   // 1h
+    ];
+    return schedule[Math.min(attempts, schedule.length - 1)];
   }
 
   /**

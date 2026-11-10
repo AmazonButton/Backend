@@ -122,7 +122,7 @@ export class StoreWalletRepository {
     });
   }
 
-  async finalizePayoutSuccessTx(withdrawalId: bigint) {
+  async finalizePayoutSuccessTx(withdrawalId: bigint, providerPayoutId?: string) {
     return runWithTransactionRetry(async () => {
       return this.prisma.$transaction(async (tx) => {
       const [lockedWithdrawal] = await tx.$queryRaw<Array<{
@@ -176,6 +176,7 @@ export class StoreWalletRepository {
         where: { withdrawalId },
         data: {
           status: 'SUCCEEDED',
+          providerPayoutId: providerPayoutId || undefined,
           processedAt: new Date(),
         },
       });

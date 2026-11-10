@@ -910,10 +910,54 @@ model BankAccountVerificationTransaction {
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  inboundReceipts       StoreBankInboundReceipt[]
+
   @@unique([bankAccountId, referenceCode], name: "uq_bank_verify_acc_ref")
   @@index([referenceCode], map: "idx_bank_verify_tx_ref_code")
   @@index([status], map: "idx_bank_verify_tx_status")
   @@map("bank_account_verification_transactions")
+}
+
+model StoreBankInboundReceipt {
+  id                           BigInt                              @id @default(autoincrement()) @map("id")
+  verificationTxId             BigInt?                             @map("verification_tx_id")
+  verificationTx               BankAccountVerificationTransaction? @relation(fields: [verificationTxId], references: [id], onDelete: SetNull)
+  providerTransactionId        String                              @unique(map: "uq_store_bank_receipt_provider_tx_id") @map("provider_transaction_id") @db.VarChar(128)
+  amount                       Decimal                             @map("amount") @db.Decimal(15, 2)
+  senderAccountNumberEncrypted String?                             @map("sender_account_number_encrypted") @db.Text
+  senderAccountHash            String?                             @map("sender_account_hash") @db.VarChar(64)
+  senderBankBin                String?                             @map("sender_bank_bin") @db.VarChar(10)
+  matchStatus                  String                              @default("MATCHED") @map("match_status") @db.VarChar(32)
+  receivedAt                   DateTime                            @default(now()) @map("received_at") @db.Timestamptz(6)
+  createdAt                    DateTime                            @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  refundObligation             StoreBankRefundObligation?
+
+  @@map("store_bank_inbound_receipts")
+}
+
+model StoreBankRefundObligation {
+  id                     BigInt                  @id @default(autoincrement()) @map("id")
+  receiptId              BigInt                  @unique(map: "uq_store_bank_refund_receipt_id") @map("receipt_id")
+  receipt                StoreBankInboundReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  refundAmount           Decimal                 @map("refund_amount") @db.Decimal(15, 2)
+  refundStatus           String                  @default("PENDING_REFUND") @map("refund_status") @db.VarChar(32)
+  refundReference        String                  @unique @map("refund_reference") @db.VarChar(128)
+  providerPayoutId       String?                 @map("provider_payout_id") @db.VarChar(128)
+  targetBankBin          String?                 @map("target_bank_bin") @db.VarChar(10)
+  targetAccountEncrypted  String?                 @map("target_account_encrypted") @db.Text
+  targetAccountHash      String?                 @map("target_account_hash") @db.VarChar(64)
+  leaseToken             String?                 @map("lease_token") @db.VarChar(64)
+  leaseExpiresAt         DateTime?               @map("lease_expires_at") @db.Timestamptz(6)
+  nextReconcileAt        DateTime?               @map("next_reconcile_at") @db.Timestamptz(6)
+  attemptCount           Int                     @default(0) @map("attempt_count")
+  failureReason          String?                 @map("failure_reason") @db.VarChar(255)
+  refundedAt             DateTime?               @map("refunded_at") @db.Timestamptz(6)
+  createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([refundStatus], map: "idx_store_bank_refund_status")
+  @@map("store_bank_refund_obligations")
 }
 
 model Notification {
@@ -1363,6 +1407,8 @@ model CustomerBankRefundPayoutAttempt {
   status           String                       @default("PREPARING") @map("status") @db.VarChar(32)
   dispatchedAt     DateTime?                    @map("dispatched_at") @db.Timestamptz(6)
   reconciledAt     DateTime?                    @map("reconciled_at") @db.Timestamptz(6)
+  nextReconcileAt  DateTime?                    @map("next_reconcile_at") @db.Timestamptz(6)
+  reconcileAttempts Int                         @default(0) @map("reconcile_attempts")
   responseCode     String?                      @map("response_code") @db.VarChar(32)
   failureReason    String?                      @map("failure_reason") @db.Text
   createdAt        DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)

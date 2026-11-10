@@ -321,15 +321,27 @@ async function runWithdrawalConcurrencyIdempotencyTests() {
     }
     assert(forgedRejected, '4.1 Webhook HMAC Guard: Forged or invalid signature rejected with 400 Bad Request');
 
-    // Test 4.2: Valid SUCCEEDED webhook
+    // Test 4.2: Valid SUCCEEDED webhook with structured transactions contract
     const validWebhookData = {
       amount: 60000,
       description: 'Rut tien',
       id: 'payout_wh_123',
       referenceId: wdrWebhook.withdrawalCode,
+      approvalState: 'COMPLETED',
       state: 'SUCCEEDED',
       toAccountNumber: rawAccNum,
       toBin: '970422',
+      transactions: [
+        {
+          id: 'txn_wh_123',
+          referenceId: wdrWebhook.withdrawalCode,
+          amount: 60000,
+          description: 'Rut tien',
+          toBin: '970422',
+          toAccountNumber: rawAccNum,
+          state: 'SUCCEEDED',
+        },
+      ],
     };
     const validSignature = signPayoutRequest(validWebhookData, process.env.PAYOS_PAYOUT_CHECKSUM_KEY!);
 
@@ -367,6 +379,18 @@ async function runWithdrawalConcurrencyIdempotencyTests() {
       id: 'payout_wh_123',
       description: 'Rut tien',
       amount: 60000,
+      approvalState: 'COMPLETED',
+      transactions: [
+        {
+          id: 'txn_wh_123',
+          referenceId: wdrWebhook.withdrawalCode,
+          amount: 60000,
+          description: 'Rut tien',
+          toBin: '970422',
+          toAccountNumber: rawAccNum,
+          state: 'SUCCEEDED',
+        },
+      ],
     };
     const isPermutedValid = verifyPayoutSignature(
       permutedData,

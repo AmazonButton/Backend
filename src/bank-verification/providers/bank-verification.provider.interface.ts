@@ -16,7 +16,7 @@ export interface BankRefundParams {
 
 export interface BankRefundResult {
   refundTransactionId: string;
-  status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'PENDING_RECONCILIATION';
   rawResponse?: any;
 }
 

@@ -1683,14 +1683,34 @@ export class CustomersRepository {
   }
 
   async findPendingReconciliationAttempts(limit = 20) {
+    const now = new Date();
     return this.prisma.customerBankRefundPayoutAttempt.findMany({
       where: {
-        status: { in: ['PREPARING', 'SUBMITTED', 'PENDING_RECONCILIATION'] },
+        status: { in: ['PREPARING', 'SUBMITTED', 'PENDING_RECONCILIATION', 'PROCESSING'] },
+        OR: [
+          { nextReconcileAt: null },
+          { nextReconcileAt: { lte: now } },
+        ],
       },
       take: limit,
-      orderBy: { createdAt: 'asc' },
+      orderBy: [
+        { nextReconcileAt: 'asc' },
+        { createdAt: 'asc' },
+      ],
       include: {
         obligation: true,
+      },
+    });
+  }
+
+  async updateAttemptReconcileBackoff(attemptId: bigint, backoffMs: number, reason?: string) {
+    const nextReconcileAt = new Date(Date.now() + backoffMs);
+    return this.prisma.customerBankRefundPayoutAttempt.update({
+      where: { id: attemptId },
+      data: {
+        nextReconcileAt,
+        reconcileAttempts: { increment: 1 },
+        failureReason: reason ? reason.slice(0, 255) : undefined,
       },
     });
   }

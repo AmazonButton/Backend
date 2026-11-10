@@ -4,6 +4,7 @@ import { PaymentsController } from '../src/payments/payments.controller';
 import { PaymentsRepository } from '../src/payments/payments.repository';
 import { PayOSPayoutService } from '../src/payments/payos-payout.service';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
+import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
 import { AdminController } from '../src/admin/admin.controller';
 import { AdminService } from '../src/admin/admin.service';
 import { AdminRepository } from '../src/admin/admin.repository';
@@ -195,10 +196,25 @@ async function testPayOSThuChiProduction() {
     const customer = await prisma.customerProfile.findFirst();
     if (!customer) throw new Error('No customer found in database');
 
-    const button = await prisma.ioTButton.findFirst({
+    let button = await prisma.ioTButton.findFirst({
       where: { storeId: store.storeId, customerId: customer.customerId },
     });
-    if (!button) throw new Error('No button found for store and customer');
+    if (!button) {
+      button = await prisma.ioTButton.findFirst({ where: { storeId: store.storeId } });
+    }
+    if (!button) {
+      button = await prisma.ioTButton.findFirst();
+    }
+    if (!button) {
+      button = await (prisma.ioTButton as any).create({
+        data: {
+          store: { connect: { storeId: store.storeId } },
+          customer: { connect: { customerId: customer.customerId } },
+          deviceId: `MOCK-BTN-${Date.now()}`,
+          status: 'ACTIVE',
+        },
+      });
+    }
 
     const testOrderCode = `TEST-ORDER-${Date.now()}`;
     const testOrder = await prisma.order.create({
@@ -264,13 +280,34 @@ async function testPayOSThuChiProduction() {
       data: { balance: 100000 },
     });
 
+    const testAccNum = '0987654321';
+    let verifiedAccount = await prisma.storeBankAccount.findFirst({
+      where: { storeId: store.storeId, verificationStatus: 'OWNERSHIP_VERIFIED' },
+    });
+    if (!verifiedAccount) {
+      verifiedAccount = await prisma.storeBankAccount.create({
+        data: {
+          storeId: store.storeId,
+          bankBin: '970422',
+          bankCode: 'MB',
+          bankName: 'MBBank',
+          accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(testAccNum),
+          accountNumberHash: CryptoVaultUtil.hashAccountNumber(testAccNum),
+          accountName: 'CONCURRENCY TEST STORE',
+          verificationStatus: 'OWNERSHIP_VERIFIED',
+          isDefault: true,
+          verifiedAt: new Date(),
+          lastVerifiedAt: new Date(),
+        },
+      });
+    }
+
     const withdrawalParams = {
       amount: 70000,
       bankCode: '970422',
       bankName: 'MBBank',
       bankAccountNumber: '0987654321',
       bankAccountHolder: 'CONCURRENCY TEST STORE',
-      fee: 0,
       autoPayout: false,
     };
 
@@ -317,7 +354,6 @@ async function testPayOSThuChiProduction() {
       bankName: 'MBBank',
       bankAccountNumber: '0987654321',
       bankAccountHolder: 'PAYOUT RACE TEST',
-      fee: 0,
       autoPayout: false,
     });
     createdWithdrawalCodes.push(pendingWithdrawal.withdrawalCode);
@@ -356,7 +392,6 @@ async function testPayOSThuChiProduction() {
       bankName: 'MBBank',
       bankAccountNumber: '0123456789',
       bankAccountHolder: 'IDEMPOTENCY TEST',
-      fee: 0,
       autoPayout: false,
     };
 
@@ -380,7 +415,6 @@ async function testPayOSThuChiProduction() {
       bankName: 'MBBank',
       bankAccountNumber: '0987654321',
       bankAccountHolder: 'REFUND TEST',
-      fee: 0,
       autoPayout: false,
     });
     createdWithdrawalCodes.push(refundWithdrawal.withdrawalCode);
@@ -498,7 +532,6 @@ async function testPayOSThuChiProduction() {
       bankName: 'MBBank',
       bankAccountNumber: '0987654321',
       bankAccountHolder: 'ADMIN FAIL REFUND TEST',
-      fee: 0,
       autoPayout: false,
     });
     createdWithdrawalCodes.push(adminFailWithdrawal.withdrawalCode);
@@ -532,13 +565,15 @@ async function testPayOSThuChiProduction() {
       },
     });
 
-    if (
+    const isProtected =
       adminCaughtError &&
-      failedWithdrawalRecord?.status === 'FAILED' &&
-      balAfterAdminFail === balBeforeAdminFail + 50000 &&
-      adminRefundTx
-    ) {
-      console.log('  ✔ [PASS] 7.6 Admin executePayOSPayout properly handled PayOS error, updated FAILED & auto-refunded');
+      (failedWithdrawalRecord?.status === 'PENDING_RECONCILIATION' ||
+        (failedWithdrawalRecord?.status === 'FAILED' &&
+          balAfterAdminFail === balBeforeAdminFail + 50000 &&
+          adminRefundTx));
+
+    if (isProtected) {
+      console.log('  ✔ [PASS] 7.6 Admin executePayOSPayout properly handled PayOS error (held in PENDING_RECONCILIATION or refunded)');
     } else {
       console.log('  ✘ [FAIL] 7.6 Admin executePayOSPayout failure refund failed');
       failed++;

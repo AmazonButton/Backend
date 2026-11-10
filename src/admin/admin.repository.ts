@@ -403,6 +403,26 @@ export class AdminRepository {
     return this.prisma.storeWithdrawal.update({ where: { withdrawalId }, data });
   }
 
+  async supplementPayoutIdIfAllowed(
+    withdrawalId: bigint,
+    providerReferenceId: string,
+    providerPayoutId: string | null,
+    adminUserId?: bigint | null,
+  ): Promise<boolean> {
+    const count = await this.prisma.$executeRaw`
+      UPDATE store_withdrawals
+      SET provider_payout_id = COALESCE(${providerPayoutId}, provider_payout_id),
+          provider_reference_id = ${providerReferenceId},
+          approved_by_user_id = COALESCE(${adminUserId}, approved_by_user_id),
+          processed_at = COALESCE(processed_at, NOW()),
+          updated_at = NOW()
+      WHERE withdrawal_id = ${withdrawalId}
+        AND (provider_reference_id = ${providerReferenceId} OR provider_reference_id IS NULL)
+        AND status IN ('PENDING', 'PROCESSING')
+    `;
+    return count > 0;
+  }
+
   async rejectWithdrawalTransaction(withdrawal: any, reason: string, adminUserId?: bigint) {
     return this.prisma.$transaction(async (tx) => {
       // Lock withdrawal row exclusively first to prevent concurrent payout / claim race condition

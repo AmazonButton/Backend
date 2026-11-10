@@ -1,5 +1,68 @@
 # Project Handoff & Session Context
 
+### [2026-11-11] Code Review Hardening: Test Isolation, Strict Verifier Invariant, Scenario Proofs, Fail-Closed Backup & Deploy Verification (COMPLETED)
+- **Status**: COMPLETED & VERIFIED (Zero regressions, 10/10 Acceptance Tests PASS, Suite 13 40/40 PASS, Suite 14 16/16 PASS, Suite 74 ALL PASS)
+- **Remediated Review Blockers**:
+  1. **Blocker 1 (Suite 77 Test Isolation & Zero Broad Cleanup)**:
+     - Added strict database guard: checks that connection string or environment points to explicit test database (`DATABASE_URL.includes('_test') || NODE_ENV === 'test'`); aborts immediately if non-test DB detected.
+     - Replaced all unconditional `deleteMany()` in `TC-08` and teardown with strictly scoped deletes targeting ONLY specifically created fixture IDs (`{ where: { id: { in: created[...] } } }`).
+     - Wrapped cleanup in `finally` without swallowing errors; throws on cleanup failures.
+  2. **Blocker 2 (PayOS Payout Evidence Verifier Invariants)**:
+     - Eliminated fallback `[payoutData]` summary coercion in `src/payments/payos-payout-verifier.ts` (`verifyPayosPayoutEvidence` and `verifyPayosPayoutRejectionEvidence`). Strictly mandates non-empty `transactions` array.
+     - Enforced contradiction defense: if both `cleanReportedAcc` and `reportedHash` are provided in payout data, they must agree with each other AND both match `expectedHash`. Contradictory evidence is rejected fail-closed.
+     - Updated fixtures in Suites 13, 14, 77 to structured contracts with detailed `transactions` array rather than relaxing source verifiers.
+  3. **Blocker 3 (Test Scenario Concurrency & Proof Completeness)**:
+     - **TC-01 & TC-07**: Executed concurrent operations across independent `PrismaService` instances over PostgreSQL pool, verifying atomic row-level CAS and lease locking without shared client state.
+     - **TC-04**: Verified detailed transactions array requirements, tampered amount/BIN rejections, and contradictory hash rejections.
+     - **TC-05**: Proved race where webhook arrives first (sets `COMPLETED`), and delayed gateway response attempting CAS update is safely rejected without reverting status or corrupting stored payout ID.
+     - **TC-08**: Proved true crash recovery before saving payout ID: worker picks up expired lease in `PROCESSING`, queries PayOS by `referenceId`, verifies terminal transactions, records 0 duplicate `createRefund` calls, and reconciles to `REFUNDED`.
+     - **TC-10**: Proved Anti-Head-of-Line queueing: Item 1 encounters `PROCESSING` and receives future `nextReconcileAt` backoff; Item 2 queued behind successfully processes to terminal `SUCCESS`.
+  4. **Blocker 4 (Fail-Closed Backup Encryption & Verification)**:
+     - Removed fallback to `JWT_SECRET` or hardcoded passphrases in `.github/workflows/database-backup.yml`.
+     - If `BACKUP_ENCRYPTION_PASSPHRASE` secret is missing in GitHub Repository Secrets, the workflow halts immediately (`fail-closed`).
+     - Added smoke test decrypting with `openssl enc -d -aes-256-cbc | gzip -t` to verify archive integrity before uploading to GitHub Artifacts.
+  5. **Blocker 5 (Deployment Version Verification & Commit Integrity)**:
+     - Added `commitSha` (from `RENDER_GIT_COMMIT` / `GITHUB_SHA`) and `version` into `/healthz` and `/readyz` responses in `src/app.controller.ts`.
+     - In `.github/workflows/ci-cd.yml`, replaced basic HTTP 200 polling with SHA verification: polls `/readyz` and confirms `commitSha` matches newly deployed GitHub commit SHA before declaring release live.
+
+### [2026-11-11] Financial Payout, Penny Verification, Rental Deposit & Anti-HoL Outbox Hardening (Stages 1-5 COMPLETED)
+- **Status**: COMPLETED & VERIFIED (10/10 Acceptance Tests PASS, Suite 13 40/40 PASS, Suite 14 16/16 PASS, Suite 74 ALL PASS)
+- **CI/CD & GitHub Secrets Synchronization**:
+  - `RENDER_DEPLOY_HOOK_URL`: Integrated into `.github/workflows/ci-cd.yml` Job 3 (`deploy-production`). Triggers automated deployment to Render on push to `main` when quality/test gates pass.
+  - `SUPABASE_DB_URL`: Integrated into `.github/workflows/database-backup.yml`. Daily logical `pg_dump` with AES-256 encryption now reads `secrets.SUPABASE_DB_URL`. (Requirement: must use port 5432 Session mode/direct connection for session locks).
+  - Suite 77 (`tests/financial-payout-verification-hardening.spec.ts`) registered into `tests/run_all_suites.ts`.
+- **Scope & Architectural Invariants Delivered**:
+  1. **Stage 1 (Server Fee Authority & Withdrawal Integrity)**: Client-supplied `fee` completely stripped from `RequestWithdrawalDto`. Server enforces fee authority ($0 \le fee < amount$, integer VND) and computes integer `netAmount = amount - fee`. Bank account integrity strictly validated against decrypted AES-256-GCM ciphertext and SHA-256 hash before issuing payout.
+  2. **Stage 2 (CAS & Unified Evidence Verifiers for Withdrawals)**: Separated pre-dispatch claim (`WHERE status = 'PENDING' -> SET status = 'PROCESSING'`) from post-dispatch CAS response (`WHERE status = 'PROCESSING' AND provider_reference_id = :ref`), ensuring the payout ID is supplemented without overwriting terminal or in-flight reconciliation states. Eliminated fake payout ID synthesis (`payout_${referenceId}`). Network timeouts fail-closed to `PENDING_RECONCILIATION` without releasing wallet frozen balances.
+  3. **Stage 3 (Store Bank Penny Verification Atomic Outbox & Receipts)**: Webhooks persist discrete receipts to `store_bank_inbound_receipts` (unique `provider_transaction_id`) and create refund obligations in `store_bank_refund_obligations` within the SAME atomic database transaction. Response `code === '00'` holds in `PENDING_RECONCILIATION`; `REFUNDED` status is strictly forbidden until verified by terminal evidence via unified verifier (`verifyPayosPayoutEvidence`). Background worker (`StoreBankRefundWorker`) scans outbox with lease claiming (`affectedRows === 1`).
+  4. **Stage 4 (Rental Deposit Integrity & Anti-HoL Exponential Backoff)**:
+     - Rental return and deposit refund track button items individually (`RentalReturn.buttonId`). Reconciling 1 returned button refunds only its allocated deposit in `RentalDeposit` (`refunded_amount`) without closing or terminating the parent `ButtonRental` contract when remaining buttons are still active.
+     - Anti-Head-of-Line (Anti-HoL) blocking implemented across both Customer (`CustomerBankRefundPayoutAttempt`) and Store (`StoreBankRefundObligation`) reconcilers. Added `next_reconcile_at` column with exponential backoff ($1\text{m}, 2\text{m}, 5\text{m}, 15\text{m}, 30\text{m}, 1\text{h}$) triggered whenever PayOS returns `PROCESSING`, empty details, or uncertain network states, allowing unblocked items behind to be processed immediately.
+  5. **Stage 5 (Master Test Suite TC-01 to TC-10)**: Created `tests/financial-payout-verification-hardening.spec.ts` testing multi-node concurrency, CAS lease safety, fee tampering defense, crash recovery, contract isolation, and queue backoff against real PostgreSQL.
+- **Verification Evidence**:
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: PASS (10/10 test cases, 0 failed).
+  - `npx tsx tests/bank-account-verification.spec.ts`: PASS (40/40 assertions, Suite 13).
+  - `npx tsx tests/withdrawal-concurrency-idempotency.spec.ts`: PASS (16/16 assertions, Suite 14).
+  - `npx tsx tests/payos-thu-chi.spec.ts`: PASS (ALL assertions, Suite 74).
+  - `npx tsc --noEmit`: PASS (exit code 0, 0 compiler errors).
+- **Migration & Schema Status**:
+  - Migration script: `prisma/migrations/20261111000000_financial_verification_and_outbox_hardening/migration.sql`.
+  - Applied and verified against PostgreSQL: tables `store_bank_inbound_receipts`, `store_bank_refund_obligations`, columns `next_reconcile_at`, `reconcile_attempts`. Feature flags remain in mock mode locally (`BANK_VERIFICATION_MOCK=true`, `PAYOS_MOCK_PAYOUT=true`); production remains safe and unmodified until deliberate manual deployment.
+
+### [2026-11-10] Rate Limiter Routing, Dynamic Cache Invalidation & Connection-Level Timeout (5 Fixes)
+- **Status**: COMPLETED & VERIFIED
+- **Scope & Objectives**:
+  1. **Fix 1 (P1 - Route Matching)**: Corrected `orderSimLimiter` mounting in `src/main.ts` from `/api/v1/orders/simulate-button` to `/api/v1/orders/simulate-button-press` matching `OrdersController.simulateButtonPress`.
+  2. **Fix 2 (P1 - Auth Rate Limiting Cluster)**: Replaced fragmented auth route bindings with `app.use('/api/v1/auth', authLimiter)` equipped with `skip: (req) => req.method === 'GET'`. Defends all auth mutations (`login-by-phone`, `register-by-phone`, `phone/verify`, `resend-verification`, `verify-email`, `google`, `google-login`, `refresh`, `change-password`) against brute force and SMS/Email flooding, while exempting read routes like `/auth/me`.
+  3. **Fix 3 (P2 - Pricing & Package Cache Invalidation)**: Added `invalidateKey('rentals:available_packages')` to `AdminService.invalidateAdminAndStoreCaches()`, invoked on `createRentalPackage` and `updateRentalPackage`. Prevents pricing/status desync when admin modifies rental plans.
+  4. **Fix 4 (P2 - Store Directory Cache Invalidation)**: Added `invalidateKey('stores:active_page1_20')` and `invalidatePrefix('stores:')` to `AdminService.invalidateAdminAndStoreCaches()`, invoked on `updateStoreById`, `approveStore`, and `rejectStore`. Guarantees banned/modified stores immediately drop from the landing page directory.
+  5. **Fix 5 (P3 - Connection-Level Statement Timeout)**: Injected `options=-c%20statement_timeout=5000` into `DATABASE_URL` startup parameters in `src/prisma/prisma.service.ts` ensuring PostgreSQL enforces 5s timeout across ALL pooled connections, and eliminated deceptive single-connection raw `SET statement_timeout` in `onModuleInit()`.
+- **Verification Evidence**:
+  - `npx tsx tests/verify_db_scaling_and_caching.spec.ts`: PASS (6/6 assertions, Suite 76).
+  - `npx tsx tests/http-contract-validation.spec.ts`: PASS (20/20 assertions, Suite 75).
+  - `npx tsc --noEmit`: PASS (exit code 0, 0 compiler errors).
+  - `git diff --check`: PASS (0 errors/warnings).
+
 ### [2026-11-10] CI/CD Failure Root Cause Investigation & Legacy Test Suites Remediation
 - **Status**: COMPLETED & VERIFIED
 - **User Problem**: User received automated failure alert emails from GitHub in their Gmail inbox.
@@ -2763,3 +2826,31 @@ When starting a new conversation, prompt the agent with:
 - New `prisma/migrations/20261109120000_correct_email_verified_at_backfill/migration.sql`: sets `email_verified_at = NULL` where it equals `created_at` for phone/Firebase-registered users. This undoes only the over-broad backfill.
 - Verified: `npx tsc --noEmit` exit 0. Suite 73 (`tests/security-audit-p1-fixes.spec.ts`): **27/27 PASS** (including test 8.11 verifying HTTP 403 Forbidden on `PENDING -> ON_LEAVE -> ACTIVE` bypass attempts). Suite 26 (`tests/store-staff-management.spec.ts`) updated with `ON_LEAVE` bypass check. NOT committed (user request).
 - Open audit leads: see `C:/Users/ttphatt_2403/security-audit-skill/backend/run-3/REPORT.md` (run-3, source-only, 38 needs_validation). The 8 P1 items were addressed in commits 2810fc2..65748ff; most P2/P3 items remain open.
+
+---
+
+## 2026-11-11: Financial Verification Hardening, Store Order Details & Multi-Cloud Deployment Verification
+
+1. **Financial Payout, Verification & Outbox Hardening (V2 Spec Implementation):**
+   - **Withdrawal CAS**: Distinct claim (`PENDING` -> `CLAIMED_FOR_PAYOUT`) and conditional response complement (`WHERE status IN ('CLAIMED_FOR_PAYOUT', 'PENDING_RECONCILIATION')`), never reverting terminal status or overwriting webhook results.
+   - **Server Fee Authority**: Ignores client fee payload, strictly computes server-authoritative integer fee and netAmount.
+   - **PayOS Network Timeout**: Transitions to `PENDING_RECONCILIATION`, zero balance leakage.
+   - **Strict Payout Verifier**: Eliminates summary fallback `[payoutData]`, requires non-empty `transactions` array, enforces account number hash matching against `toAccountNumber`.
+   - **Store Penny Verification Outbox**: Atomic DB transaction inserting `StoreBankInboundReceipt` and `StoreBankRefundObligation` with unique constraint `uq_store_bank_refund_inbound_id`.
+   - **Lease Lock Background Worker** (`StoreBankRefundWorker`): Concurrency lease via `claimed_by_token` and `lease_expires_at`, checks PayOS by reference before dispatching to prevent duplicate payouts after timeouts or crashes.
+   - **Rental Return Deposit Safety**: Reconciles individual button refund without closing parent rental contract; maintains child ledger integrity.
+   - **Anti-Head-of-Line Blocking**: Implements exponential backoff on `nextReconcileAt` when provider is processing or lacks terminal evidence.
+
+2. **Order Detail View Enhancements for Stores:**
+   - **Recipient & Customer Contact**: Exposed top-level `shippingPhone`, `customerPhone`, `recipientPhone`, `shippingRecipientName` in `OrderResponseDto`.
+   - **Customer Phone Mapping**: Added fallback chain `customer.user.phone` -> `customer.phone` -> `order.shippingPhone`.
+   - **Assigned Driver Relation**: `OrdersRepository.findOrderById` and `findOrders` include `assignedDriver { userId, fullName, phone }`, mapped to `driver` in `OrderResponseDto`.
+   - **Proof of Delivery (POD)**: Documented and verified 2-step flow (`POST /api/v1/media/upload-pod` + `POST /api/v1/orders/:id/deliver` with anti-replay duplicate checks).
+
+3. **Verified Test Suites (100% Green, Zero Failures):**
+   - `tests/financial-payout-verification-hardening.spec.ts`: **10/10 PASSED (0 FAILED)**
+   - `tests/bank-account-verification.spec.ts`: **40/40 PASSED (0 FAILED)**
+   - `tests/withdrawal-concurrency-idempotency.spec.ts`: **16/16 PASSED (0 FAILED)**
+   - `tests/order-lifecycle.spec.ts`: **7/7 PASSED (0 FAILED)**
+   - `npx tsc --noEmit` & `npm run build`: **0 ERRORS, EXIT CODE 0**
+

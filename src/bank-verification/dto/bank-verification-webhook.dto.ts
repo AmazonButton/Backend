@@ -1,6 +1,10 @@
-import { IsOptional, IsString, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
 
 export class BankVerificationWebhookDto {
+  @IsOptional()
+  @IsBoolean()
+  success?: boolean;
+
   @IsOptional()
   @IsString()
   providerTransactionId?: string;

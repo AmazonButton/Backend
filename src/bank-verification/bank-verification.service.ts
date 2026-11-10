@@ -2,12 +2,14 @@ import {
   Injectable,
   Logger,
   Inject,
+  Optional,
   BadRequestException,
   ForbiddenException,
   NotFoundException,
   HttpException,
   OnModuleInit,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { BankVerificationRepository } from './bank-verification.repository';
 import {
@@ -19,6 +21,12 @@ import { CreateVerificationRequestDto } from './dto/create-verification-request.
 import { BankVerificationWebhookDto } from './dto/bank-verification-webhook.dto';
 import { VIETNAM_BANKS } from './constants/vietnam-banks.constant';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
+import { PayOSPayoutService } from '../payments/payos-payout.service';
+import {
+  verifyPayosPayoutEvidence,
+  verifyPayosPayoutRejectionEvidence,
+  PayosPayoutExpectedCriteria,
+} from '../payments/payos-payout-verifier';
 
 @Injectable()
 export class BankVerificationService implements OnModuleInit {
@@ -29,6 +37,9 @@ export class BankVerificationService implements OnModuleInit {
     private readonly repository: BankVerificationRepository,
     @Inject(BANK_VERIFICATION_PROVIDER_TOKEN)
     private readonly provider: BankVerificationProvider,
+    @Optional()
+    @Inject(PayOSPayoutService)
+    private readonly payosPayoutService?: PayOSPayoutService,
   ) {}
 
   onModuleInit() {
@@ -431,21 +442,26 @@ export class BankVerificationService implements OnModuleInit {
       };
     }
 
-    if (txResult.alreadyProcessed) {
+    if (txResult.alreadyProcessed && !txResult.needsRefund) {
       return {
         success: true,
         message: 'Giao dịch đã được xác minh trước đó (Idempotent)',
       };
     }
 
-    // Hoàn tiền tự động ngay sau khi VERIFIED, lấy đúng số tiền từ transaction
-    if (txResult.bankAccount) {
+    // Hoàn tiền tự động ngay sau khi VERIFIED, hoặc khi retry mà nghĩa vụ chưa hoàn tất
+    if (txResult.bankAccount && (txResult.needsRefund || !txResult.alreadyProcessed)) {
       const refundAmount = Number(
         (txResult.transaction as any)?.expected_amount ||
         (txResult.transaction as any)?.expectedAmount ||
         2000,
       );
-      await this.triggerAutomatedRefund(txResult.transaction.id, txResult.bankAccount, refundAmount);
+      await this.triggerAutomatedRefund(
+        txResult.transaction.id,
+        txResult.bankAccount,
+        refundAmount,
+        txResult.refundReference,
+      );
     }
 
     return {
@@ -455,55 +471,324 @@ export class BankVerificationService implements OnModuleInit {
   }
 
   /**
-   * Kích hoạt lệnh hoàn tiền tự động theo số tiền đã xác minh
+   * Kích hoạt lệnh hoàn tiền tự động theo số tiền đã xác minh (Không ghi nhận REFUNDED sớm)
    */
-  async triggerAutomatedRefund(transactionId: bigint, bankAccount: any, refundAmount?: number) {
+  async triggerAutomatedRefund(
+    transactionId: bigint,
+    bankAccount: any,
+    refundAmount?: number,
+    customRefundReference?: string,
+  ) {
     const amountToRefund = refundAmount || Number(process.env.BANK_VERIFICATION_AMOUNT_VND || 2000);
+    const refundRef = customRefundReference || `REF_ST_${transactionId}`;
+
     try {
       await this.repository.updateTransactionRefundStatus({
         transactionId,
         status: 'REFUND_PENDING',
-        refundStatus: 'PENDING',
+        refundStatus: 'PROCESSING',
       });
 
       const plainAccountNumber = CryptoVaultUtil.decryptAccountNumber(
         bankAccount.account_number_encrypted,
-      );
+      ).trim();
 
       const refundResult = await this.provider.createRefund({
         bankBin: bankAccount.bank_bin,
         accountNumber: plainAccountNumber,
         accountName: bankAccount.account_name,
         amount: amountToRefund,
-        referenceId: `REFUND_${transactionId}`,
+        referenceId: refundRef,
         description: `Hoan tien xac minh tai khoan ${amountToRefund} VND`,
       });
 
-      if (refundResult.status === 'SUCCESS') {
+      if (refundResult.status === 'SUCCESS' || refundResult.status === 'PENDING_RECONCILIATION') {
         await this.repository.updateTransactionRefundStatus({
           transactionId,
-          status: 'REFUNDED',
-          refundStatus: 'SUCCESS',
+          status: 'REFUND_PENDING',
+          refundStatus: 'PROCESSING',
           refundTransactionId: refundResult.refundTransactionId,
-          refundedAt: new Date(),
         });
-        this.logger.log(`Hoàn tiền ${amountToRefund} VND thành công cho verificationId #${transactionId}`);
+        this.logger.log(`Lệnh hoàn tiền ${amountToRefund} VND đã gửi cho verificationId #${transactionId}, trạng thái PROCESSING/PENDING_RECONCILIATION`);
       } else {
         await this.repository.updateTransactionRefundStatus({
           transactionId,
           status: 'REFUND_PENDING',
           refundStatus: 'FAILED',
         });
-        this.logger.error(`Hoan tien khong thanh cong [verificationId: #${transactionId}] [operation: createRefund]`);
+        this.logger.error(`Hoàn tiền không thành công [verificationId: #${transactionId}]`);
       }
     } catch (error: any) {
-      this.logger.error(`Hoan tien that bai [verificationId: #${transactionId}] [operation: createRefund]`);
+      this.logger.error(`Hoàn tiền thất bại [verificationId: #${transactionId}]: ${error?.message}`);
       await this.repository.updateTransactionRefundStatus({
         transactionId,
         status: 'REFUND_PENDING',
         refundStatus: 'FAILED',
       });
     }
+  }
+
+  /**
+   * Worker xử lý các nghĩa vụ hoàn tiền xác minh Store đang chờ (Outbox Processor)
+   */
+  async processStoreRefundWorkerBatch(limit = 10): Promise<{ processed: number; succeeded: number; failed: number }> {
+    const obligations = await this.repository.findPendingStoreRefundObligations(limit);
+    let processed = 0;
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const obligation of obligations) {
+      processed++;
+      const leaseToken = crypto.randomUUID();
+      const claimed = await this.repository.claimRefundObligationForDispatch(obligation.id, leaseToken, 60000);
+      if (!claimed) continue;
+
+      try {
+        let plainAcc = '';
+        if (obligation.target_account_encrypted) {
+          plainAcc = CryptoVaultUtil.decryptAccountNumber(obligation.target_account_encrypted).trim();
+        }
+
+        if (!plainAcc || !obligation.target_bank_bin) {
+          await this.repository.recordObligationTerminalFailure(
+            obligation.id,
+            leaseToken,
+            null,
+            'Thiếu số tài khoản hoặc BIN nhận tiền',
+          );
+          failed++;
+          continue;
+        }
+
+        // Invariant: Nếu obligation đã có attempt trước hoặc có payout_id/reference cũ,
+        // BẮT BUỘC tra cứu trước trên PayOS, không được tạo mới để chống chi kép (Double Payout)
+        if (Number(obligation.attempt_count) > 0 || obligation.provider_payout_id) {
+          let existingPayout: any = null;
+          let concretePayoutId = obligation.provider_payout_id ? String(obligation.provider_payout_id).trim() : null;
+          if (this.payosPayoutService) {
+            try {
+              if (concretePayoutId) {
+                const pRes = await this.payosPayoutService.getPayout(concretePayoutId);
+                if (pRes?.data) existingPayout = pRes.data;
+              } else if (obligation.refund_reference) {
+                const listRes = await this.payosPayoutService.getPayouts({ referenceId: obligation.refund_reference });
+                const rawList = listRes?.data?.payouts || listRes?.data || [];
+                const matched = Array.isArray(rawList)
+                  ? rawList.filter((p: any) => p?.referenceId === obligation.refund_reference || p?.id === obligation.refund_reference)
+                  : [];
+                if (matched.length === 1 && matched[0]?.id) {
+                  concretePayoutId = String(matched[0].id).trim();
+                  const pRes = await this.payosPayoutService.getPayout(concretePayoutId);
+                  if (pRes?.data) existingPayout = pRes.data;
+                }
+              }
+            } catch (e: any) {
+              this.logger.warn(`Lỗi tra cứu attempt trước cho obligation #${obligation.id}: ${e.message}`);
+            }
+          }
+
+          if (existingPayout) {
+            const targetAccountHash =
+              obligation.target_account_hash ||
+              CryptoVaultUtil.computeDeterministicAccountHash(plainAcc);
+            const criteria: PayosPayoutExpectedCriteria = {
+              amount: Number(obligation.refund_amount),
+              payoutReference: obligation.refund_reference,
+              targetBankBin: obligation.target_bank_bin,
+              targetAccountHash,
+              expectedPayoutId: concretePayoutId || undefined,
+            };
+
+            const successVerif = verifyPayosPayoutEvidence(existingPayout, criteria);
+            if (successVerif.isVerified) {
+              await this.repository.finalizeObligationSuccessTx(obligation.id, leaseToken, successVerif.providerPayoutId);
+              succeeded++;
+              continue;
+            }
+
+            const rejectionVerif = verifyPayosPayoutRejectionEvidence(existingPayout, criteria);
+            if (rejectionVerif.isVerified) {
+              await this.repository.recordObligationTerminalFailure(
+                obligation.id,
+                leaseToken,
+                rejectionVerif.providerPayoutId,
+                rejectionVerif.reason || 'PayOS xác nhận chi hoàn tiền thất bại',
+              );
+              failed++;
+              continue;
+            }
+
+            // Đang xử lý hoặc chưa rõ kết quả -> Chuyển chờ đối soát kèm backoff
+            await this.repository.recordObligationReconciliationPending(
+              obligation.id,
+              leaseToken,
+              concretePayoutId,
+              'Cổng đang xử lý lệnh hoàn tiền (PROCESSING)',
+              60000,
+            );
+            failed++;
+            continue;
+          }
+        }
+
+        const refundResult = await this.provider.createRefund({
+          bankBin: obligation.target_bank_bin,
+          accountNumber: plainAcc,
+          amount: Number(obligation.refund_amount),
+          referenceId: obligation.refund_reference,
+          description: `Hoan tien xac minh ${obligation.id}`.slice(0, 50),
+        });
+
+        // Bất kể code=00 hay nhận lệnh thành công, KHÔNG ghi nhận REFUNDED ngay
+        // Ghi nhận PENDING_RECONCILIATION để reconciler kiểm tra terminal evidence ngay lập tức
+        await this.repository.recordObligationReconciliationPending(
+          obligation.id,
+          leaseToken,
+          refundResult.refundTransactionId || null,
+          'PENDING_TERMINAL_RECONCILIATION',
+          0,
+        );
+        succeeded++;
+      } catch (err: any) {
+        this.logger.error(`Lỗi xử lý store refund obligation #${obligation.id}: ${err.message}`);
+        await this.repository.recordObligationReconciliationPending(
+          obligation.id,
+          leaseToken,
+          null,
+          err.message || 'Lỗi gửi lệnh hoàn tiền',
+        );
+        failed++;
+      }
+    }
+
+    return { processed, succeeded, failed };
+  }
+
+  /**
+   * Worker đối soát các nghĩa vụ hoàn tiền xác minh Store đang dở dang (Reconciler)
+   */
+  async reconcilePendingStoreRefunds(limit = 10): Promise<{ reconciled: number }> {
+    if (!this.payosPayoutService) return { reconciled: 0 };
+    const obligations = await this.repository.findPendingStoreReconciliations(limit);
+    let reconciled = 0;
+
+    for (const obligation of obligations) {
+      try {
+        let detailData: any = null;
+        let concretePayoutId = obligation.provider_payout_id ? String(obligation.provider_payout_id).trim() : null;
+
+        if (concretePayoutId) {
+          try {
+            const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
+            if (detailRes?.data) detailData = detailRes.data;
+          } catch (e: any) {
+            continue;
+          }
+        } else if (obligation.refund_reference) {
+          try {
+            const listRes = await this.payosPayoutService.getPayouts({ referenceId: obligation.refund_reference });
+            const rawList = listRes?.data?.payouts || listRes?.data || [];
+            const matched = Array.isArray(rawList)
+              ? rawList.filter((p: any) => p?.referenceId === obligation.refund_reference || p?.id === obligation.refund_reference)
+              : [];
+            if (matched.length === 1 && matched[0]?.id) {
+              concretePayoutId = String(matched[0].id).trim();
+              const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
+              if (detailRes?.data) detailData = detailRes.data;
+            } else {
+              continue;
+            }
+          } catch (e: any) {
+            continue;
+          }
+        }
+
+        if (!detailData) continue;
+
+        let plainAcc = '';
+        if (obligation.target_account_encrypted) {
+          try {
+            plainAcc = CryptoVaultUtil.decryptAccountNumber(obligation.target_account_encrypted).trim();
+          } catch {}
+        }
+
+        const targetAccountHash =
+          obligation.target_account_hash ||
+          (plainAcc ? CryptoVaultUtil.computeDeterministicAccountHash(plainAcc) : null);
+
+        const criteria: PayosPayoutExpectedCriteria = {
+          amount: Number(obligation.refund_amount),
+          payoutReference: obligation.refund_reference,
+          targetBankBin: obligation.target_bank_bin,
+          targetAccountHash,
+          expectedPayoutId: concretePayoutId || undefined,
+        };
+
+        const successVerif = verifyPayosPayoutEvidence(detailData, criteria);
+        if (successVerif.isVerified) {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`
+              UPDATE store_bank_refund_obligations
+              SET refund_status = 'REFUNDED',
+                  provider_payout_id = ${successVerif.providerPayoutId},
+                  refunded_at = NOW(),
+                  updated_at = NOW()
+              WHERE id = ${obligation.id}
+            `;
+            await tx.$executeRaw`
+              UPDATE bank_account_verification_transactions
+              SET status = 'REFUNDED',
+                  refund_status = 'SUCCESS',
+                  refund_transaction_id = ${successVerif.providerPayoutId},
+                  refunded_at = NOW(),
+                  updated_at = NOW()
+              WHERE id = (
+                SELECT r.verification_tx_id 
+                FROM store_bank_inbound_receipts r 
+                WHERE r.id = ${obligation.receipt_id}
+              )
+            `;
+          });
+          reconciled++;
+          continue;
+        }
+
+        const rejectionVerif = verifyPayosPayoutRejectionEvidence(detailData, criteria);
+        if (rejectionVerif.isVerified) {
+          await this.prisma.$executeRaw`
+            UPDATE store_bank_refund_obligations
+            SET refund_status = 'FAILED',
+                failure_reason = ${rejectionVerif.reason || 'REJECTED'},
+                updated_at = NOW()
+            WHERE id = ${obligation.id}
+          `;
+          reconciled++;
+          continue;
+        }
+
+        // Chưa terminal (đang PROCESSING tại cổng) -> Cập nhật next_reconcile_at chống nghẽn hàng đợi (Anti-HoL)
+        const backoffMs = [60000, 120000, 300000, 900000, 1800000, 3600000][
+          Math.min(Number(obligation.attempt_count || 0), 5)
+        ];
+        await this.prisma.$executeRaw`
+          UPDATE store_bank_refund_obligations
+          SET next_reconcile_at = NOW() + (${backoffMs}::int * interval '1 millisecond'),
+              updated_at = NOW()
+          WHERE id = ${obligation.id}
+        `;
+      } catch (err: any) {
+        this.logger.warn(`Lỗi đối soát store refund obligation #${obligation.id}: ${err.message}`);
+        const backoffMs = 60000;
+        await this.prisma.$executeRaw`
+          UPDATE store_bank_refund_obligations
+          SET next_reconcile_at = NOW() + (${backoffMs}::int * interval '1 millisecond'),
+              updated_at = NOW()
+          WHERE id = ${obligation.id}
+        `.catch(() => {});
+      }
+    }
+
+    return { reconciled };
   }
 
   private async verifyStoreOwnership(userId: bigint, storeId: bigint, userRole?: string) {

@@ -18,8 +18,12 @@ jobs:
 
       - name: Perform Logical Database Backup (pg_dump)
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL || secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
         run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::[SECURITY FATAL] SUPABASE_DB_URL is not configured in GitHub repository secrets! Backup aborted."
+            exit 1
+          fi
           BACKUP_DATE=$(date +'%Y-%m-%d_%H%M%S')
           BACKUP_FILE="smart_order_backup_${BACKUP_DATE}.sql.gz"
           echo "Starting backup at $(date)..."
@@ -35,15 +39,30 @@ jobs:
           echo "BACKUP_FILE=$BACKUP_FILE" >> $GITHUB_ENV
           echo "Backup file created: $BACKUP_FILE ($(du -h $BACKUP_FILE | cut -f1))"
 
+      - name: Validate Encryption Key (Fail-Closed)
+        run: |
+          if [ -z "${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}" ]; then
+            echo "::error::[SECURITY FATAL] BACKUP_ENCRYPTION_PASSPHRASE secret is not configured in GitHub repository secrets! Backup aborted fail-closed."
+            exit 1
+          fi
+
       - name: Encrypt Database Dump with OpenSSL AES-256-CBC
         env:
-          BACKUP_KEY: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE || secrets.JWT_SECRET || 'smart-order-secure-backup-passphrase' }}
+          BACKUP_KEY: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
         run: |
           ENCRYPTED_FILE="${BACKUP_FILE}.enc"
           openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in "$BACKUP_FILE" -out "$ENCRYPTED_FILE" -pass "pass:$BACKUP_KEY"
           rm -f "$BACKUP_FILE"
           echo "ENCRYPTED_FILE=$ENCRYPTED_FILE" >> $GITHUB_ENV
           echo "Encrypted backup ready: $ENCRYPTED_FILE ($(du -h $ENCRYPTED_FILE | cut -f1))"
+
+      - name: Verify Backup Decryptability (Isolated Smoke Test)
+        env:
+          BACKUP_KEY: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+        run: |
+          echo "Verifying encrypted archive can be decrypted and unpacked cleanly..."
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in "$ENCRYPTED_FILE" -pass "pass:$BACKUP_KEY" | gzip -t
+          echo "✅ Backup decryptability verified successfully."
 
       - name: Upload Encrypted Backup to GitHub Artifacts (14-day retention)
         uses: actions/upload-artifact@v4

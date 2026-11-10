@@ -297,6 +297,9 @@ export class OrdersRepository {
         button: true,
         customer: { include: { user: true } },
         store: true,
+        assignedDriver: {
+          select: { userId: true, fullName: true, phone: true },
+        },
         statusHistories: true,
         paymentTransactions: true,
       },
@@ -311,6 +314,9 @@ export class OrdersRepository {
         button: true,
         customer: { include: { user: true } },
         store: true,
+        assignedDriver: {
+          select: { userId: true, fullName: true, phone: true },
+        },
         paymentTransactions: {
           select: { status: true, paymentMethod: true, paidAt: true },
         },

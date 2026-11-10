@@ -1,14 +1,16 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoresRepository } from './stores.repository';
 import { UpdateStoreMeDto } from './dto/update-store-me.dto';
 import { StoreMeResponseDto } from './dto/store-me-response.dto';
+import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 
 @Injectable()
 export class StoresService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storesRepo: StoresRepository,
+    @Optional() private readonly cacheService?: DashboardCacheService,
   ) {}
 
   async resolveStoreId(user: any): Promise<bigint> {
@@ -38,6 +40,13 @@ export class StoresService {
     const storeId = await this.resolveStoreId(user);
     await this.storesRepo.updateStore(storeId, dto);
     const updated = await this.storesRepo.findStoreForMe(storeId);
+    if (this.cacheService) {
+      try {
+        await this.cacheService.invalidateKey('stores:active_page1_20');
+      } catch {
+        // Best effort cache invalidation
+      }
+    }
     return StoreMeResponseDto.fromEntity(updated, user?.role);
   }
 
@@ -46,6 +55,18 @@ export class StoresService {
     const rawPageSize = query.pageSize !== undefined ? query.pageSize : query.limit;
     const pageSize = Math.max(1, Math.min(100, Number(rawPageSize) || 20));
     const skip = (page - 1) * pageSize;
+
+    const isDefaultQuery = !query.search && page === 1 && pageSize === 20;
+    const cacheKey = 'stores:active_page1_20';
+
+    if (isDefaultQuery && this.cacheService) {
+      try {
+        const cached = await this.cacheService.get(cacheKey);
+        if (cached) return cached;
+      } catch {
+        // Fallback to database
+      }
+    }
 
     const where: any = {
       status: 'ACTIVE',
@@ -74,7 +95,7 @@ export class StoresService {
       }),
     ]);
 
-    return {
+    const result = {
       items: stores.map((s) => ({
         storeId: s.storeId.toString(),
         name: s.name,
@@ -92,6 +113,16 @@ export class StoresService {
       pageSize,
       totalPages: Math.ceil(total / pageSize),
     };
+
+    if (isDefaultQuery && this.cacheService) {
+      try {
+        await this.cacheService.set(cacheKey, result, 30); // 30s TTL
+      } catch {
+        // Best effort
+      }
+    }
+
+    return result;
   }
 
   async getStoreById(id: string | number | bigint) {

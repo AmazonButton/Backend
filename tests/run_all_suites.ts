@@ -379,6 +379,16 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'http-contract-validation.spec.ts')],
   },
+  {
+    name: '76. Database Scaling & In-Memory Caching Verification',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'verify_db_scaling_and_caching.spec.ts')],
+  },
+  {
+    name: '77. Financial Payout, Penny Verification & Refund Hardening (TC-01..TC-10)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'financial-payout-verification-hardening.spec.ts')],
+  },
 ];
 
 async function main() {
