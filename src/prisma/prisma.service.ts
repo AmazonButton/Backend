@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Optional } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 // Configure JSON.stringify to convert BigInt values to numbers or strings
@@ -11,7 +11,7 @@ import { PrismaClient } from '@prisma/client';
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
 
-  constructor(options?: any) {
+  constructor(@Optional() options?: any) {
     const rawUrl = options?.datasources?.db?.url || process.env.DATABASE_URL;
     let effectiveUrl = rawUrl;
 
