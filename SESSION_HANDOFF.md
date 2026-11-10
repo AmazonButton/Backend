@@ -1,7 +1,7 @@
 # Project Handoff & Session Context
 
 ### [2026-11-10] VietQR Credential Isolation & Lookup Configuration Hardening
-- **Status**: PARTIAL (source fix complete; live provider/deployment verification pending)
+- **Status**: DEPLOYED & VERIFIED (Commit `dd7bb02` live across Render Node 1, Node 2, and AWS Node 3)
 - **Changes**:
   - `src/bank-verification/providers/payos-bank-verification.provider.ts`: VietQR lookup now reads only `VIETQR_CLIENT_ID` and `VIETQR_API_KEY`, trims both values, and fails closed if either is missing. It no longer sends PayOS payment credentials to VietQR.
   - Added offline regression coverage for whitespace trimming, missing credentials despite configured PayOS credentials, and partial VietQR credential pairs (both client-ID-only and API-key-only); registered as Suite 72 in `tests/run_all_suites.ts`.
@@ -10,9 +10,11 @@
   - `npx tsc --noEmit --incremental false` — PASS (exit 0).
   - `git diff --check` — PASS (only LF-to-CRLF warning on the modified provider file).
   - `npm run build` — PASS (exit 0; Nest CLI build completed successfully with dist artifacts generated).
-- **Deployment evidence / limits**:
-  - The user-provided Render/AWS diagnostic reports that dedicated VietQR credentials are absent and that the lookup was using PayOS fallback credentials. This report was not independently re-queried in this task.
-  - No environment values were changed, no deployment or live provider call was made, and no payment feature flag was enabled.
+- **Deployment evidence & Live Cluster Verification**:
+  - Render Node 1 (`srv-dbdom8gm7kps73ebg5fg`), Node 2 (`srv-dbgqpgugekts738lbreg`), and AWS Node 3 deployed and running commit `dd7bb02`.
+  - Tested `POST /api/v1/stores/bank-accounts/lookup` with store authentication across all 3 nodes:
+    * Previously (on AWS Node 3): Sent PayOS credentials to VietQR -> upstream 401/403 -> `BANK_LOOKUP_SERVICE_UNAVAILABLE` ("xác thực dịch vụ thất bại").
+    * Now: All 3 nodes fail closed cleanly before network call with HTTP 503 `Dịch vụ tra cứu tài khoản ngân hàng chưa được cấu hình (thiếu VIETQR_CLIENT_ID / VIETQR_API_KEY)`.
 - **Remaining / Next**:
   - Configure the dedicated VietQR credential pair through the secret manager on each intended node, then verify lookup against the provider-approved contract and a permitted test account.
   - Customer penny-verification collection remains fail-closed until PayOS payment credentials and the complete webhook/reconciliation/refund path are separately certified.
