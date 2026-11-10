@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Req,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { CustomerBankPennyVerificationService } from './customer-bank-penny-verification.service';
@@ -17,6 +18,7 @@ export class CustomerBankWebhookController {
   private readonly logger = new Logger(CustomerBankWebhookController.name);
 
   constructor(
+    @Inject(CustomerBankPennyVerificationService)
     private readonly pennyVerificationService: CustomerBankPennyVerificationService,
   ) {}
 

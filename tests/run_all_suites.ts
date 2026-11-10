@@ -374,6 +374,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'security-audit-waves-fixes.spec.ts')],
   },
+  {
+    name: '75. HTTP Contract Validation & DTO Regression Tests',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'http-contract-validation.spec.ts')],
+  },
 ];
 
 async function main() {

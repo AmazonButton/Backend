@@ -1,5 +1,53 @@
 # Project Handoff & Session Context
 
+### [2026-11-10] Contract Regressions Hardening & HTTP Validation Pipeline (Suite 75)
+- **Status**: COMPLETED & VERIFIED
+- **Scope & Objectives**:
+  - Remediate contract regressions and validation boundaries introduced in commit `5ea5207`:
+    1. **PayOS Webhook Payload Contract (`src/customers/dto/payos-webhook-payload.dto.ts`)**:
+       - Added `@ApiProperty({ description: 'Trạng thái thành công theo contract PayOS', example: true })` and `@IsBoolean() success!: boolean;` conforming to PayOS official webhook specification.
+       - Fixed HTTP 400 rejection in global `ValidationPipe({ forbidNonWhitelisted: true })`.
+       - Preserved raw transaction `data` without field truncation or normalization prior to HMAC-SHA256 signature verification.
+    2. **Simulate Button Press Contract & Shipping Fee Integrity (`src/orders/dto/simulate-button-press.dto.ts` & `src/orders/orders.service.ts`)**:
+       - Expanded `SimulateButtonPressDto` supported contract to include optional `eventType` (`@IsEnum(IotEventType)`), `requestId` (`@IsString()`), and `paymentMethod` (`@IsEnum(IotPaymentMethod)`).
+       - Confirmed and documented the **Fixed Platform Zero-Fee Policy**: In the Smart Order architecture (BRD, DB schema `shipping_fee DEFAULT 0.00`, and stored procedure `sp_create_order_from_button(..., p_shipping_fee numeric DEFAULT 0)`), all IoT button orders carry a fixed 0đ shipping fee. Neither `Store` nor `IoTButton` schema has a shipping fee column.
+       - Client-supplied `shippingFee` is strictly prohibited from DTO whitelist (rejected by `forbidNonWhitelisted: true`), preventing client fee manipulation and unauthorized mutations to production orders.
+    3. **IoT Telemetry Bounds & Integer Validation (`src/iot/dto/iot-telemetry.dto.ts`)**:
+       - Tightened validation from general numbers to integers with strict hardware bounds:
+         * `battery`: `@IsInt({ message: 'battery phải là số nguyên' })`, `@Min(0)`, `@Max(100)`.
+         * `rssi`: `@IsInt({ message: 'rssi phải là số nguyên' })`, `@Min(-150)`, `@Max(0)`.
+    4. **Git Hygiene & Clean Diff**:
+       - Removed UTF BOM from `src/iot/iot.controller.ts`.
+       - Added `@Inject(CustomerBankPennyVerificationService)` to `CustomerBankWebhookController`.
+       - Stripped extraneous trailing blank lines at EOF across all modified DTOs (`git diff --check` exits with code 0).
+    5. **Automated HTTP Pipeline Integration & DTO Regression Test Suite (`tests/http-contract-validation.spec.ts`, Suite 75)**:
+       - Configured real Nest HTTP application (`NestFactory.create`) listening on localhost with global `ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })` and `AllExceptionsFilter`.
+       - Replaced generic mock side-effects with exact spies on actual repository methods: `customersRepo.findVerificationSessionByOrderCode`, `customersRepo.recordInboundTransactionAndObligationAtomicTx`, `ordersRepo.findButtonByIdentifier`, and `ordersRepo.executeSpCreateOrder`.
+       - Executed 20 assertions across 4 sections:
+         * Section 1: PayOS webhook DTO unit tests (valid payload passes, missing success fails, non-whitelisted properties fail, HMAC data preserved, service rejects bad sig without calling `findVerificationSessionByOrderCode` or `recordInboundTransactionAndObligationAtomicTx`).
+         * Section 2: Simulate button press DTO unit tests (accepts supported fields, string enum variants, rejects client-dictated shippingFee, enforces 0đ server shipping fee).
+         * Section 3: IoT telemetry unit tests (valid boundary numbers, rejects floats 50.5 and -55.2, rejects out-of-range values, rejects non-whitelisted attributes).
+         * Section 4: Real HTTP integration tests against live Nest app:
+           - 4.1: Authentic PayOS webhook with valid HMAC signature returns HTTP 200 and triggers atomic obligation recording.
+           - 4.2: PayOS webhook with invalid HMAC signature returns HTTP 400 and calls 0 repository methods.
+           - 4.3: PayOS webhook with invalid DTO returns HTTP 400 with 0 service/repository calls.
+           - 4.4: Simulation with client-supplied `shippingFee` returns HTTP 400 (Zero Order Mutation).
+           - 4.5: Simulation with valid body returns HTTP 201 and enforces 0đ shipping policy.
+           - 4.6: Telemetry with floats/out-of-bounds numbers returns HTTP 400 and calls 0 service handlers.
+           - 4.7: Telemetry with boundary integers returns HTTP 201 and records telemetry.
+       - Registered Suite 75 into `tests/run_all_suites.ts`.
+- **Verification Evidence**:
+  - `npx tsx tests/http-contract-validation.spec.ts` (Suite 75): PASS (20 passed, 0 failed across 20 assertions).
+  - `npx tsx tests/vietqr-credential-isolation.spec.ts` (Suite 72): PASS (4 scenarios).
+  - `npx tsx tests/security-audit-p1-fixes.spec.ts` (Suite 73): PASS (27 passed, 0 failed).
+  - `npx tsx tests/security-audit-waves-fixes.spec.ts` (Suite 74): PASS (All Waves Passed).
+  - `npx tsc --noEmit --incremental false`: PASS (exit code 0).
+  - `npm run build`: PASS (exit code 0; Nest CLI build completed).
+  - `git diff --check`: PASS (clean diff, 0 errors/warnings).
+- **Environment Invariants & Next Operational Steps**:
+  - Customer penny-verification collection flag (`CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED`) remains fail-closed (false).
+  - Deploy, environment variables modification, and live cluster activation were not executed in this local remediation pass.
+
 ### [2026-11-10] Full System Security Audit & Controller DTO Hardening
 - **Status**: COMPLETED & VERIFIED
 - **Audit Scope & Analysis**:

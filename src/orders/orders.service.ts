@@ -21,6 +21,7 @@ import { DeliverOrderDto } from './dto/deliver-order.dto';
 import { DeliveryFailureDto } from './dto/delivery-failure.dto';
 import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
 import { CreateStorefrontOrderDto } from './dto/create-storefront-order.dto';
+import { SimulateButtonPressDto } from './dto/simulate-button-press.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { OrderTimelineResponseDto } from './dto/order-timeline-response.dto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
@@ -272,9 +273,20 @@ export class OrdersService {
   }
 
   /**
+   * Tính phí vận chuyển do server quản lý cho đơn hàng từ nút bấm IoT.
+   * Chính sách nền tảng cố định (Fixed Platform Policy):
+   * Theo đặc tả hệ thống Smart Order (BRD & CSDL p_shipping_fee DEFAULT 0.00), toàn bộ đơn hàng
+   * phát sinh từ nút bấm IoT đều áp dụng chính sách cố định miễn phí giao hàng (0 VND).
+   * Server quản lý và ấn định mức phí này, tuyệt đối không chấp nhận client ghi đè phí (chống Tampering).
+   */
+  private calculateServerShippingFee(_button: any): number {
+    return 0;
+  }
+
+  /**
    * Mô phỏng tín hiệu bấm nút từ UI để kiểm thử (Sandbox Simulation)
    */
-  async simulateButtonPress(body: any, user: any) {
+  async simulateButtonPress(body: SimulateButtonPressDto, user: any) {
     const targetIdentifier = body.deviceId || body.buttonCode || body.buttonId;
     if (!targetIdentifier) {
       throw new BadRequestException('Thiếu thông tin nhận diện nút (deviceId, buttonCode hoặc buttonId)');
@@ -321,11 +333,14 @@ export class OrdersService {
       throw new ForbiddenException('Không có quyền mô phỏng nút bấm này');
     }
 
+    // Phí giao hàng bắt buộc tính từ logic server, không tin cậy client để chống tampering
+    const serverShippingFee = this.calculateServerShippingFee(button);
+
     const result = await this.handleButtonEvent(button, {
       eventType: body.eventType || 'SINGLE_PRESS',
       requestId: body.requestId || `sim_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       paymentMethod: body.paymentMethod || 'COD',
-      shippingFee: body.shippingFee || 0,
+      shippingFee: serverShippingFee,
     });
 
     return {
