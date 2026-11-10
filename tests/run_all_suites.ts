@@ -359,6 +359,11 @@ const suites: TestSuite[] = [
     name: '71. Rental Closeout Real PostgreSQL (Explicit Disposable Test DB Required)', command: 'npx',
     args: ['tsx', path.join(__dirname, 'rental-closeout-postgres.spec.ts')],
   },
+  {
+    name: '72. VietQR Credential Isolation & Trimming (Offline Provider Unit)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'vietqr-credential-isolation.spec.ts')],
+  },
 ];
 
 async function main() {

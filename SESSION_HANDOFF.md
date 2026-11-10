@@ -1,5 +1,22 @@
 # Project Handoff & Session Context
 
+### [2026-11-10] VietQR Credential Isolation & Lookup Configuration Hardening
+- **Status**: PARTIAL (source fix complete; live provider/deployment verification pending)
+- **Changes**:
+  - `src/bank-verification/providers/payos-bank-verification.provider.ts`: VietQR lookup now reads only `VIETQR_CLIENT_ID` and `VIETQR_API_KEY`, trims both values, and fails closed if either is missing. It no longer sends PayOS payment credentials to VietQR.
+  - Added offline regression coverage for whitespace trimming, missing credentials despite configured PayOS credentials, and partial VietQR credential pairs (both client-ID-only and API-key-only); registered as Suite 72 in `tests/run_all_suites.ts`.
+- **Verification**:
+  - `npx tsx tests/vietqr-credential-isolation.spec.ts` — PASS (4 scenarios; mocked fetch, no live provider request).
+  - `npx tsc --noEmit --incremental false` — PASS (exit 0).
+  - `git diff --check` — PASS (only LF-to-CRLF warning on the modified provider file).
+  - `npm run build` — PASS (exit 0; Nest CLI build completed successfully with dist artifacts generated).
+- **Deployment evidence / limits**:
+  - The user-provided Render/AWS diagnostic reports that dedicated VietQR credentials are absent and that the lookup was using PayOS fallback credentials. This report was not independently re-queried in this task.
+  - No environment values were changed, no deployment or live provider call was made, and no payment feature flag was enabled.
+- **Remaining / Next**:
+  - Configure the dedicated VietQR credential pair through the secret manager on each intended node, then verify lookup against the provider-approved contract and a permitted test account.
+  - Customer penny-verification collection remains fail-closed until PayOS payment credentials and the complete webhook/reconciliation/refund path are separately certified.
+
 ### [2026-11-09] Login API Diagnosis, Database Migration & SuperAdmin Role Resolution Fix
 - **Status**: COMPLETED
 - **Root Cause & Fixes**:

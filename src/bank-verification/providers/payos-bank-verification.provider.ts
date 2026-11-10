@@ -54,8 +54,10 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
       };
     }
 
-    const vietqrClientId = process.env.VIETQR_CLIENT_ID || process.env.PAYOS_CLIENT_ID || '';
-    const vietqrApiKey = process.env.VIETQR_API_KEY || process.env.PAYOS_API_KEY || '';
+    // VietQR credentials belong to a different provider contract than PayOS;
+    // never send PayOS credentials to VietQR as an implicit fallback.
+    const vietqrClientId = process.env.VIETQR_CLIENT_ID?.trim() || '';
+    const vietqrApiKey = process.env.VIETQR_API_KEY?.trim() || '';
 
     if (!vietqrClientId || !vietqrApiKey) {
       this.logger.warn('[PayOSBankVerificationProvider] VietQR API credentials are not configured');
