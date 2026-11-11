@@ -230,6 +230,11 @@ async function runUserAvatarTestSuite() {
     // -------------------------------------------------------------------------
     console.log('\n[Phase 6: Google OAuth Avatar Synchronization]');
     const originalFetch = global.fetch;
+    const prevSupabaseUrl = process.env.SUPABASE_URL;
+    const prevSupabaseKey = process.env.SUPABASE_ANON_KEY;
+    process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://mock-supabase.test';
+    process.env.SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'mock-anon-key';
+
     const googleAuthId = `11111111-2222-3333-4444-${ts.toString().slice(-12).padStart(12, '0')}`;
     const googleEmail = `google_avatar_${ts}@smartorder.test`;
     const googleAvatar = 'https://lh3.googleusercontent.com/a/ACg8ocL_test_avatar_image=s96-c';
@@ -299,6 +304,8 @@ async function runUserAvatarTestSuite() {
       );
     } finally {
       global.fetch = originalFetch;
+      process.env.SUPABASE_URL = prevSupabaseUrl;
+      process.env.SUPABASE_ANON_KEY = prevSupabaseKey;
     }
 
     // -------------------------------------------------------------------------

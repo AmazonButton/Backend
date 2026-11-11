@@ -8,10 +8,12 @@
      - Aligned hash algorithm usage with `CryptoVaultUtil`: `computeDeterministicAccountHash` (standard SHA-256) and `hashAccountNumber` (HMAC-SHA256).
      - Aligned mock payout provider responses in `tests/admin_payout_invariants.spec.ts` to supply `approvalState: 'COMPLETED'` required by unified verifier.
      - Verified: `npx tsx tests/admin_payout_invariants.spec.ts` outputs `✅ Task 3 Payout invariant tests PASSED!`.
-  2. **Suite 77 Unique Constraint Isolation (`tests/financial-payout-verification-hardening.spec.ts:427`)**:
+  2. **Suite 77 Unique Constraint & FK Cascade Isolation (`tests/financial-payout-verification-hardening.spec.ts`)**:
      - Fixed `prisma.storeBankAccount.create()` in TC-06 by explicitly passing `isDefault: false`, preventing violation of partial unique index `uq_default_bank_account_per_store`.
+     - In teardown cleanup: nullified `activePayoutAttemptId` on `customerBankRefundObligation` prior to deleting `customerBankRefundPayoutAttempt`. This prevents PostgreSQL composite foreign key constraint `fk_cust_bank_obligation_active_attempt` (`ON DELETE SET NULL`) from setting not-null primary key `customer_bank_refund_obligations.id` to NULL.
      - Verified: `npx tsx tests/financial-payout-verification-hardening.spec.ts` outputs `10 PASSED, 0 FAILED`.
-  3. **Suite 10 Avatar & Profile Lifecycle (`tests/user-avatar-profile.spec.ts`)**:
+  3. **Suite 10 Avatar & Profile Lifecycle CI Isolation (`tests/user-avatar-profile.spec.ts`)**:
+     - Mocked fallback Supabase environment variables (`process.env.SUPABASE_URL`, `process.env.SUPABASE_ANON_KEY`) in Phase 6 so `authService.googleLogin` executes the Supabase OAuth fallback route when running in headless CI environments without live Supabase credentials.
      - Verified: `npx tsx tests/user-avatar-profile.spec.ts` passes 25/25 tests with zero database residue.
 - **Verification Commands & Evidence**:
   - `npx tsc --noEmit`: Exit code 0 (0 type errors).

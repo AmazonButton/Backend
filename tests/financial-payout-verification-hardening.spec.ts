@@ -985,6 +985,12 @@ async function run() {
       if (created.customerProfileIds.length > 0) {
         await prisma.customerProfile.deleteMany({ where: { customerId: { in: created.customerProfileIds } } });
       }
+      if (created.customerObligationIds.length > 0) {
+        await prisma.customerBankRefundObligation.updateMany({
+          where: { id: { in: created.customerObligationIds } },
+          data: { activePayoutAttemptId: null },
+        });
+      }
       if (created.customerAttemptIds.length > 0) {
         await prisma.customerBankRefundPayoutAttempt.deleteMany({ where: { id: { in: created.customerAttemptIds } } });
       }
