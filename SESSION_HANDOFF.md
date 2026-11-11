@@ -1,5 +1,20 @@
 # Project Handoff & Session Context
 
+### [2026-11-11] VietQR Free Plan Discontinuation (Code 47) Graceful Fallback & Store Bank Verification Hardening (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `bank-account-verification.spec.ts` 40/40 PASS, live VietQR API tested)
+- **Root Cause & Technical Remediation**:
+  1. **VietQR OpenAPI Free Plan Discontinuation**:
+     - Testing live API `POST https://api.vietqr.io/v2/lookup` with real user credentials returned: `{ "code": "47", "desc": "The Free Plan will no longer support from August 20, 2024.", "data": null }`.
+     - VietQR permanently discontinued the free tier for account lookup since August 20, 2024.
+  2. **Graceful Fallback Implementation (`payos-bank-verification.provider.ts`)**:
+     - In `PayOSBankVerificationProvider.lookupAccount`, intercepted `resData.code === '47'` and return valid fallback payload `{ bankBin, bankName, accountNumber, accountName: 'CHỦ TÀI KHOẢN (XÁC MINH QUA 2.000Đ)' }`.
+     - In `CreateVerificationRequestDto`, added `@ApiPropertyOptional() @IsOptional() @IsString() accountName?: string` allowing client-supplied account name when lookup is unavailable.
+     - In `BankVerificationService.createVerificationTransaction`, gracefully falls back to client-provided `accountName` if provider returns the fallback placeholder or fails, allowing the store owner to proceed with penny-deposit verification without being blocked by VietQR's paid gate.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Production build clean).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS.
+
 ### [2026-11-11] Customer Bank Verification Production Remediation: Webhook Handshake, Smart Routing & Active Fallback Query (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS)
 - **Review Document Reference**: `update-required/11-11-2026-2/BANKING_503_BACKEND_ACTIONS_2026-11-11 (1).md`

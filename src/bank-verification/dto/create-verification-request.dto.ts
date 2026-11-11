@@ -1,11 +1,12 @@
 import {
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MinLength,
   MaxLength,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateVerificationRequestDto {
   @ApiProperty({
@@ -36,4 +37,12 @@ export class CreateVerificationRequestDto {
   @MaxLength(30, { message: 'Số tài khoản tối đa 30 ký tự' })
   @Matches(/^[0-9a-zA-Z]+$/, { message: 'Số tài khoản chỉ chứa chữ và số' })
   accountNumber: string;
+
+  @ApiPropertyOptional({
+    description: 'Tên chủ tài khoản ngân hàng (tự nhập khi tra cứu tự động không khả dụng)',
+    example: 'NGUYEN VAN A',
+  })
+  @IsOptional()
+  @IsString({ message: 'Tên chủ tài khoản phải là chuỗi' })
+  accountName?: string;
 }

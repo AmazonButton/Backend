@@ -133,6 +133,18 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
         });
       }
 
+      if (resData.code === '47') {
+        this.logger.warn(
+          `[PayOSBankVerificationProvider] VietQR API thông báo: Gói Free tra cứu STK đã dừng từ 20/08/2024 (code 47). Kích hoạt Graceful Fallback để tiếp tục xác minh qua chuyển khoản 2.000đ.`,
+        );
+        return {
+          bankBin,
+          bankName: bank?.shortName || bankName,
+          accountNumber,
+          accountName: 'CHỦ TÀI KHOẢN (XÁC MINH QUA 2.000Đ)',
+        };
+      }
+
       throw new BadRequestException({
         success: false,
         errorCode: 'BANK_LOOKUP_FAILED',

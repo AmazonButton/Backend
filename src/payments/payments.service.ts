@@ -1,4 +1,4 @@
-﻿import { EventsGateway } from '../websocket/events.gateway';
+import { EventsGateway } from '../websocket/events.gateway';
 import {
   Injectable,
   HttpException,

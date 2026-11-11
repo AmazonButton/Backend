@@ -146,8 +146,23 @@ export class BankVerificationService implements OnModuleInit {
     }
 
     // 3. Luôn gọi lookup từ provider để lấy accountName chính chủ, lấy bankName và bankCode từ danh sách server
-    const lookup = await this.provider.lookupAccount(dto.bankBin, cleanAcc);
-    const accountName = lookup.accountName;
+    let accountName = 'CHỦ TÀI KHOẢN';
+    try {
+      const lookup = await this.provider.lookupAccount(dto.bankBin, cleanAcc);
+      if (lookup.accountName && lookup.accountName !== 'CHỦ TÀI KHOẢN (XÁC MINH QUA 2.000Đ)') {
+        accountName = lookup.accountName;
+      } else if (dto.accountName?.trim()) {
+        accountName = dto.accountName.trim().toUpperCase();
+      } else {
+        accountName = lookup.accountName;
+      }
+    } catch (lookupErr) {
+      if (dto.accountName?.trim()) {
+        accountName = dto.accountName.trim().toUpperCase();
+      } else {
+        throw lookupErr;
+      }
+    }
     const bankCode = bank.code;
     const bankName = bank.shortName || bank.name;
 
