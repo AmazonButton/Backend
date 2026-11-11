@@ -27,6 +27,7 @@ import {
   verifyPayosPayoutRejectionEvidence,
   PayosPayoutExpectedCriteria,
 } from '../payments/payos-payout-verifier';
+import { signPaymentRequest, parsePayosDateTime } from '../payments/payos.helper';
 
 @Injectable()
 export class BankVerificationService implements OnModuleInit {
@@ -186,12 +187,75 @@ export class BankVerificationService implements OnModuleInit {
     const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
     const referenceCode = CryptoVaultUtil.generateReferenceCode('VERIFY_');
 
+    // 5.1 Khởi tạo cổng thanh toán PayOS Payment Request nếu có cấu hình (Option 1)
+    const clientId = process.env.PAYOS_CLIENT_ID?.trim();
+    const apiKey = process.env.PAYOS_API_KEY?.trim();
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
+
+    let payosOrderCode: number | null = null;
+    let payosCheckoutUrl: string | null = null;
+    let payosQrCode: string | null = null;
+
+    if (clientId && apiKey && checksumKey) {
+      try {
+        const orderCodeNum = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+        const frontendOrigin = process.env.FRONTEND_URL || 'https://buttontdash.vercel.app';
+        const returnUrl = process.env.PAYOS_RETURN_URL || `${frontendOrigin}/store/finance?status=success`;
+        const cancelUrl = process.env.PAYOS_CANCEL_URL || `${frontendOrigin}/store/finance?status=cancelled`;
+        const description = referenceCode.slice(0, 25);
+
+        const signature = signPaymentRequest(
+          {
+            amount: expectedAmount,
+            cancelUrl,
+            description,
+            orderCode: orderCodeNum,
+            returnUrl,
+          },
+          checksumKey,
+        );
+
+        const abortController = new AbortController();
+        const timeoutHandle = setTimeout(() => abortController.abort(), 6000);
+
+        const response = await fetch('https://api-merchant.payos.vn/v2/payment-requests', {
+          method: 'POST',
+          headers: {
+            'x-client-id': clientId,
+            'x-api-key': apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            orderCode: orderCodeNum,
+            amount: expectedAmount,
+            description,
+            cancelUrl,
+            returnUrl,
+            signature,
+          }),
+          signal: abortController.signal,
+        });
+        clearTimeout(timeoutHandle);
+
+        const resData: any = await response.json();
+        if (resData?.code === '00' && resData?.data) {
+          payosOrderCode = orderCodeNum;
+          payosCheckoutUrl = resData.data.checkoutUrl || null;
+          payosQrCode = resData.data.qrCode || null;
+          this.logger.log(`Created PayOS payment request for Store verification ${referenceCode}, orderCode: ${payosOrderCode}`);
+        }
+      } catch (payosErr: any) {
+        this.logger.warn(`Could not create PayOS payment request for store verification: ${payosErr.message}`);
+      }
+    }
+
     // 6. Tạo giao dịch xác minh
     const transaction = await this.repository.createVerificationTransaction({
       bankAccountId: bankAccount.id,
       referenceCode,
       expectedAmount,
       expiresAt,
+      providerTransactionId: payosOrderCode ? payosOrderCode.toString() : undefined,
     });
 
     // Platform receiving bank info (destination for the penny deposit)
@@ -200,7 +264,7 @@ export class BankVerificationService implements OnModuleInit {
     const recipientAccountNumber = process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '0339898989';
     const recipientAccountHolder = process.env.PLATFORM_BANK_ACCOUNT_HOLDER || 'CONG TY CP SMART ORDER';
 
-    const qrCodeUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(referenceCode)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
+    const defaultQrUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(referenceCode)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
 
     return {
       verificationId: transaction.id.toString(),
@@ -215,7 +279,8 @@ export class BankVerificationService implements OnModuleInit {
       recipientBankName,
       recipientAccountNumber,
       recipientAccountHolder,
-      qrCodeUrl,
+      qrCodeUrl: payosQrCode || defaultQrUrl,
+      checkoutUrl: payosCheckoutUrl || undefined,
       instructions: `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`,
     };
   }
@@ -938,13 +1003,68 @@ export class BankVerificationService implements OnModuleInit {
 
   async getVerificationTransactionById(id: bigint | string, userId: bigint, userRole?: string) {
     const rawId = BigInt(id);
-    const tx = await this.repository.findVerificationTransactionById(rawId);
+    let tx = await this.repository.findVerificationTransactionById(rawId);
     if (!tx) {
       throw new NotFoundException('Giao dịch xác minh không tồn tại');
     }
 
     if (tx.bankAccount?.storeId) {
       await this.verifyStoreOwnership(userId, tx.bankAccount.storeId, userRole);
+    }
+
+    // Active Fallback Query: Nếu tx đang PENDING và có providerTransactionId (PayOS orderCode)
+    if (tx.status === 'PENDING' && tx.providerTransactionId) {
+      const clientId = process.env.PAYOS_CLIENT_ID?.trim();
+      const apiKey = process.env.PAYOS_API_KEY?.trim();
+      if (clientId && apiKey) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 4000);
+          const res = await fetch(
+            `https://api-merchant.payos.vn/v2/payment-requests/${tx.providerTransactionId}`,
+            {
+              method: 'GET',
+              headers: {
+                'x-client-id': clientId,
+                'x-api-key': apiKey,
+                'Content-Type': 'application/json',
+              },
+              signal: controller.signal,
+            },
+          );
+          clearTimeout(timeout);
+          const payosData: any = await res.json();
+          if (payosData?.code === '00' && payosData?.data?.status === 'PAID') {
+            const data = payosData.data;
+            const webhookDto: BankVerificationWebhookDto = {
+              code: '00',
+              desc: 'success',
+              referenceCode: tx.referenceCode,
+              amount: data.amount || Number(tx.expectedAmount),
+              providerTransactionId: (data.reference || tx.providerTransactionId).toString(),
+              description: data.description || tx.referenceCode,
+              data: {
+                orderCode: Number(tx.providerTransactionId),
+                amount: data.amount || Number(tx.expectedAmount),
+                description: data.description || tx.referenceCode,
+                accountNumber: data.accountNumber,
+                reference: data.reference || tx.providerTransactionId,
+                transactionDateTime: data.transactionDateTime || new Date().toISOString(),
+                counterAccountBankId: data.counterAccountBankId,
+                counterAccountNumber: data.counterAccountNumber,
+                counterAccountName: data.counterAccountName,
+              },
+            };
+            await this.handleVerificationWebhook(webhookDto);
+            const reloadedTx = await this.repository.findVerificationTransactionById(rawId);
+            if (reloadedTx) {
+              tx = reloadedTx;
+            }
+          }
+        } catch (e: any) {
+          this.logger.warn(`[getVerificationTransactionById] Active query PayOS error for tx ${tx.id}: ${e.message}`);
+        }
+      }
     }
 
     return this.formatVerificationTransaction(tx);

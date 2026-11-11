@@ -912,8 +912,8 @@ async function runBankVerificationTests() {
     );
 
     // 2. Chạy worker outbox & reconciler để đối soát terminal từ cổng thanh toán
-    await service.processStoreRefundWorkerBatch(10);
-    const reconStats = await service.reconcilePendingStoreRefunds(10);
+    await service.processStoreRefundWorkerBatch(50);
+    const reconStats = await service.reconcilePendingStoreRefunds(50);
 
     verifiedDbTx = await prisma.bankAccountVerificationTransaction.findUnique({
       where: { id: createdTxId },

@@ -1,5 +1,24 @@
 # Project Handoff & Session Context
 
+### [2026-11-12] Bank Penny Verification Production Remediation: PayOS Timezone Skew Fix, Customer Account Reload & Store PayOS Integration (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS)
+- **Remediated Defects (Frontend Defect Report Post-Commit `8d10e3e`)**:
+  1. **Customer Bank Verification Timezone Parsing Skew (`payos.helper.ts`, `customer-bank-penny-verification.service.ts`, `customers.repository.ts`)**:
+     - *Root Cause*: PayOS sends `transactionDateTime` in Vietnam time (`YYYY-MM-DD HH:mm:ss`) without offset. On Render (`TZ=UTC`), naive `new Date()` parsed it as UTC, creating a +7-hour forward skew relative to `expires_at` UTC. In `customers.repository.ts:1500`, `expires_at > receivedAt` evaluated to `false`, wrongly flagging payments as `isLate = true` (`Giao dịch nhận sau khi phiên xác minh đã hết hạn`) and keeping customer bank accounts in `UNVERIFIED` / `PENDING`.
+     - *Remediation*: Implemented `parsePayosDateTime` in `src/payments/payos.helper.ts` normalizing `YYYY-MM-DD HH:mm:ss` to `+07:00`. Replaced redundant `Date.now() < expires_at` check with a 5-minute network latency grace period on `receivedAt`. Added masked suffix matching fallback (`cleanSource.includes('*') && plainAccount.endsWith(unmaskedSuffix)`) for counter-account validation.
+  2. **Stale Account State in Active Fallback Query (`customer-bank-penny-verification.service.ts`)**:
+     - *Root Cause*: In `getVerificationStatus`, after `processPayosVerificationWebhook` successfully verified the deposit and updated PostgreSQL, the service reloaded `latestSession` but neglected to reload `account`. Lines 530–544 returned stale `accountVerificationStatus: 'UNVERIFIED'`, causing Frontend polling to halt on `CONSUMED` session while UI displayed "Chờ xác minh".
+     - *Remediation*: Added explicit re-fetch `account = await this.customersRepo.findCustomerBankAccountById(...)` immediately after fallback webhook execution, ensuring `accountVerificationStatus: 'VERIFIED'` is returned to the client.
+  3. **Store Owner Bank Verification PayOS Integration (`bank-verification.service.ts`, `bank-verification.repository.ts`, `payments.service.ts`, `payments.module.ts`, `bank-verification.module.ts`)**:
+     - *Root Cause*: Store bank verification previously generated a static VietQR image to personal MBBank `0971757841`. Because personal MBBank accounts lack automated webhook push and `getVerificationTransactionById` only read from local DB, transfers remained stuck at `Đang chờ kết quả`.
+     - *Remediation (Option 1)*: Integrated PayOS Payment Requests for Store Bank Verification. When `createVerificationRequest` is called, a single-use PayOS payment request is created with `orderCode` and `description: referenceCode`, returning dynamic PayOS QR. When polling / "Kiểm tra kết quả" (`getVerificationTransactionById`) is invoked, the service actively queries `GET https://api-merchant.payos.vn/v2/payment-requests/:orderCode` and triggers `handleVerificationWebhook` upon `PAID`, transitioning the store bank account to `OWNERSHIP_VERIFIED` and triggering automated refund. `PaymentsService.handlePayosWebhook` was updated with smart routing for incoming `VERIFY_` webhooks.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Production NestJS build clean).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 14/14 PASS.
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS.
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS.
+
 ### [2026-11-11] VietQR Free Plan Discontinuation (Code 47) Graceful Fallback & Store Bank Verification Hardening (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `bank-account-verification.spec.ts` 40/40 PASS, live VietQR API tested)
 - **Root Cause & Technical Remediation**:

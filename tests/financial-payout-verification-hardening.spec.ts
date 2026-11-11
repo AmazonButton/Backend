@@ -446,8 +446,8 @@ async function run() {
         providerTransactionId: `payos_tx_${rand}`,
         senderAccountNumber: rawNumber,
         senderBankBin: '970422',
-        destinationAccountNumber: '999888777666',
-        destinationBankBin: '970422',
+        destinationAccountNumber: process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '999888777666',
+        destinationBankBin: process.env.PLATFORM_BANK_BIN || '970422',
       });
 
       assert.strictEqual(txResult.success, true);

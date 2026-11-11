@@ -102,6 +102,7 @@ export class BankVerificationRepository {
     referenceCode: string;
     expectedAmount: number;
     expiresAt: Date;
+    providerTransactionId?: string;
   }) {
     return this.prisma.bankAccountVerificationTransaction.create({
       data: {
@@ -110,6 +111,7 @@ export class BankVerificationRepository {
         expectedAmount: params.expectedAmount,
         status: 'PENDING',
         expiresAt: params.expiresAt,
+        providerTransactionId: params.providerTransactionId,
       },
     });
   }
@@ -422,6 +424,12 @@ export class BankVerificationRepository {
         process.env.NODE_ENV === 'production' ||
         process.env.BANK_VERIFICATION_STRICT === 'true';
 
+      const isPayosIntegratedTx = Boolean(
+        lockedTx.provider_transaction_id &&
+        params.providerTransactionId &&
+        lockedTx.provider_transaction_id === params.providerTransactionId
+      );
+
       if (isStrict) {
         if (!platformAcc || !params.destinationAccountNumber) {
           this.logger.warn(
@@ -465,7 +473,7 @@ export class BankVerificationRepository {
       }
 
       if (params.destinationAccountNumber && platformAcc) {
-        if (params.destinationAccountNumber.trim() !== platformAcc) {
+        if (params.destinationAccountNumber.trim() !== platformAcc && !isPayosIntegratedTx) {
           this.logger.warn(
             `[AtomicWebhookVerification] Tai khoan nhan khong khop nen tang (ref: ${params.referenceCode})`,
           );
@@ -487,7 +495,7 @@ export class BankVerificationRepository {
       }
 
       if (params.destinationBankBin && platformBin) {
-        if (params.destinationBankBin.trim() !== platformBin) {
+        if (params.destinationBankBin.trim() !== platformBin && !isPayosIntegratedTx) {
           this.logger.warn(
             `[AtomicWebhookVerification] BIN ngan hang nhan khong khop nen tang (ref: ${params.referenceCode})`,
           );
@@ -597,7 +605,16 @@ export class BankVerificationRepository {
           };
         }
 
-        if (params.senderAccountNumber.trim() !== plainRegisteredAcc) {
+        const cleanSender = params.senderAccountNumber.trim();
+        let isSenderAccountMatched = cleanSender === plainRegisteredAcc;
+        if (!isSenderAccountMatched && cleanSender.includes('*')) {
+          const unmaskedSuffix = cleanSender.replace(/\*/g, '');
+          if (unmaskedSuffix.length >= 4 && plainRegisteredAcc.endsWith(unmaskedSuffix)) {
+            isSenderAccountMatched = true;
+          }
+        }
+
+        if (!isSenderAccountMatched) {
           this.logger.warn(
             `[AtomicWebhookVerification] Tai khoan gui khong khop tai khoan can xac minh (ref: ${params.referenceCode})`,
           );

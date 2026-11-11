@@ -10,6 +10,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { StoreWalletModule } from '../store-wallet/store-wallet.module';
 import { BillingChargesModule } from '../billing-charges/billing-charges.module';
 import { CustomersModule } from '../customers/customers.module';
+import { BankVerificationModule } from '../bank-verification/bank-verification.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { CustomersModule } from '../customers/customers.module';
     forwardRef(() => StoreWalletModule),
     forwardRef(() => BillingChargesModule),
     forwardRef(() => CustomersModule),
+    forwardRef(() => BankVerificationModule),
   ],
   controllers: [PaymentsController, PayoutWebhookController],
   providers: [PaymentsService, PaymentsRepository, PayOSPayoutService],

@@ -71,6 +71,27 @@ export function signWebhookData(data: Record<string, any>, checksumKey: string):
 }
 
 /**
+ * Parse PayOS transactionDateTime with Vietnam timezone (+07:00) handling.
+ * PayOS sends datetime in "YYYY-MM-DD HH:mm:ss" without offset.
+ * On servers running in UTC, this prevents the timestamp from being parsed +7h into the future.
+ */
+export function parsePayosDateTime(dateStr?: string | null): Date {
+  if (!dateStr || typeof dateStr !== 'string') {
+    return new Date();
+  }
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+    const isoWithOffset = trimmed.replace(' ', 'T') + '+07:00';
+    const parsed = new Date(isoWithOffset);
+    if (!isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  const parsed = new Date(trimmed);
+  return isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+/**
  * Deep sort object with optional array sorting (Official PayOS Payout specification)
  * @param obj Object data
  * @param sortArrays Whether to sort arrays or maintain their order

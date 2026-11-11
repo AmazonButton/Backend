@@ -18,7 +18,7 @@ import {
   CustomerBankVerificationStatusResponseDto,
   CustomerBankVerificationHistoryItemDto,
 } from './dto/customer-bank-verification-response.dto';
-import { verifyWebhookSignature, signPaymentRequest, signWebhookData } from '../payments/payos.helper';
+import { verifyWebhookSignature, signPaymentRequest, signWebhookData, parsePayosDateTime } from '../payments/payos.helper';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import {
   verifyPayosPayoutEvidence,
@@ -89,7 +89,7 @@ export class CustomerBankPennyVerificationService {
     }
 
     const rawAccountId = BigInt(accountId);
-    const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    let account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
     if (!account) {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
     }
@@ -333,7 +333,7 @@ export class CustomerBankPennyVerificationService {
     }
 
     const rawAccountId = BigInt(accountId);
-    const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    let account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
     if (!account) {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
     }
@@ -419,6 +419,15 @@ export class CustomerBankPennyVerificationService {
               );
               if (reloadedSession) {
                 latestSession = reloadedSession;
+              }
+
+              // Tải lại bản ghi tài khoản mới nhất sau khi webhook kích hoạt
+              const reloadedAccount = await this.customersRepo.findCustomerBankAccountById(
+                profile.customerId,
+                rawAccountId,
+              );
+              if (reloadedAccount) {
+                account = reloadedAccount;
               }
             }
           } catch (e: any) {
@@ -735,7 +744,7 @@ export class CustomerBankPennyVerificationService {
       );
     }
 
-    const receivedAt = data.transactionDateTime ? new Date(data.transactionDateTime) : new Date();
+    const receivedAt = parsePayosDateTime(data.transactionDateTime);
 
     // 5. Tra cứu phiên xác nhận tương ứng
     const orderCode = BigInt(data.orderCode);
@@ -818,6 +827,7 @@ export class CustomerBankPennyVerificationService {
       sourceAccountHash,
       sourceAccountEncrypted,
       sourceAccountName,
+      sourceAccountNumber: sourceAccountNumber || undefined,
       hasSufficientEvidence,
       rawPayloadChecksum,
       reconciliationFlag: missingRefFlag,

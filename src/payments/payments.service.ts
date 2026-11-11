@@ -15,6 +15,7 @@ import { signPaymentRequest, verifyWebhookSignature } from './payos.helper';
 import { Optional, Inject, forwardRef } from '@nestjs/common';
 import { BillingChargesService } from '../billing-charges/billing-charges.service';
 import { CustomerBankPennyVerificationService } from '../customers/customer-bank-penny-verification.service';
+import { BankVerificationService } from '../bank-verification/bank-verification.service';
 import { storeCashEnabled } from '../store-cash/store-cash-settlement.transaction';
 
 import { NotificationsService } from '../notifications/notifications.service';
@@ -30,6 +31,7 @@ export class PaymentsService {
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
     @Optional() @Inject(forwardRef(() => BillingChargesService)) private readonly billingChargesService?: BillingChargesService,
     @Optional() @Inject(forwardRef(() => CustomerBankPennyVerificationService)) private readonly customerBankPennyService?: CustomerBankPennyVerificationService,
+    @Optional() @Inject(forwardRef(() => BankVerificationService)) private readonly bankVerificationService?: BankVerificationService,
   ) {}
 
   async createPayosPaymentLink(dto: CreatePaymentLinkDto, userOrUserId?: any) {
@@ -433,6 +435,19 @@ export class PaymentsService {
           }
         } catch (pennyErr: any) {
           this.logger.warn(`[PayOS Webhook] CustomerBankPennyVerificationService routing failed: ${pennyErr.message}`);
+        }
+      }
+
+      // Check if this webhook belongs to Store Bank Verification
+      if (this.bankVerificationService) {
+        try {
+          const storeResult = await this.bankVerificationService.handleVerificationWebhook(body as any);
+          if (storeResult && (storeResult.success || (storeResult as any).code === '00')) {
+            this.logger.log(`[PayOS Webhook] Routed to BankVerificationService for orderCode: ${orderCodeStr}`);
+            return storeResult;
+          }
+        } catch (storeErr: any) {
+          this.logger.warn(`[PayOS Webhook] BankVerificationService routing failed: ${storeErr.message}`);
         }
       }
 

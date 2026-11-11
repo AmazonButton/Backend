@@ -1,6 +1,7 @@
 import { Injectable, Inject, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 
 @Injectable()
 export class CustomersRepository {
@@ -1432,6 +1433,7 @@ export class CustomersRepository {
     sourceAccountHash?: string | null;
     sourceAccountEncrypted?: string | null;
     sourceAccountName?: string | null;
+    sourceAccountNumber?: string | null;
     hasSufficientEvidence: boolean;
     rawPayloadChecksum?: string | null;
     reconciliationFlag?: string | null;
@@ -1465,8 +1467,9 @@ export class CustomersRepository {
             bank_bin: string;
             account_number_hash: string;
             verification_status: string;
+            account_number_encrypted?: string | null;
           }>>`
-            SELECT id, customer_id, bank_bin, account_number_hash, verification_status
+            SELECT id, customer_id, bank_bin, account_number_hash, verification_status, account_number_encrypted
             FROM customer_bank_accounts
             WHERE id = ${proofMeta.accountId} AND customer_id = ${proofMeta.customerId}
             FOR UPDATE
@@ -1496,18 +1499,37 @@ export class CustomersRepository {
           // In-transaction validation of all lifecycle invariants
           const isSessionActive = lockedSession.session_status === 'ACTIVE';
           const isSessionUnused = lockedSession.used_at === null;
-          const isSessionUnexpired =
-            new Date(lockedSession.expires_at).getTime() > params.receivedAt.getTime() &&
-            new Date(lockedSession.expires_at).getTime() > Date.now();
+          const expiresAtTime = new Date(lockedSession.expires_at).getTime();
+          const receivedAtTime = params.receivedAt.getTime();
+          // Allow on-time payment based on transaction timestamp with 5-minute grace period for network/bank latency
+          const isSessionUnexpired = expiresAtTime + 5 * 60 * 1000 >= receivedAtTime;
           isLate = !isSessionUnexpired;
 
           const isExactPolicyAmount = amountNum === 2000;
           const isAccountUnverified = lockedAccount && lockedAccount.verification_status !== 'VERIFIED';
 
           const isBinMatched = Boolean(params.sourceBankBin && params.sourceBankBin === lockedSession.bank_bin);
-          const isAccountMatched = Boolean(
+          let isAccountMatched = Boolean(
             params.sourceAccountHash && params.sourceAccountHash === lockedSession.account_number_hash,
           );
+
+          // Graceful fallback for masked counter account numbers (e.g. "******8989") from PayOS
+          if (!isAccountMatched && lockedAccount?.account_number_encrypted && params.sourceAccountNumber) {
+            try {
+              const plainAccount = CryptoVaultUtil.decryptAccountNumber(lockedAccount.account_number_encrypted);
+              const cleanSource = params.sourceAccountNumber.trim();
+              if (cleanSource === plainAccount) {
+                isAccountMatched = true;
+              } else if (cleanSource.includes('*')) {
+                const unmaskedSuffix = cleanSource.replace(/\*/g, '');
+                if (unmaskedSuffix.length >= 4 && plainAccount.endsWith(unmaskedSuffix)) {
+                  isAccountMatched = true;
+                }
+              }
+            } catch {
+              // Ignore decryption failure in matching fallback
+            }
+          }
 
           if (params.reconciliationFlag === 'FLAGGED_MISSING_PROVIDER_REF') {
             matchDecision = 'MISSING_TRANSACTION_REF';

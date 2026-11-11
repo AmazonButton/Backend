@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { BanksController } from './banks.controller';
@@ -14,7 +14,7 @@ import { BANK_VERIFICATION_PROVIDER_TOKEN } from './providers/bank-verification.
 import { StoreBankRefundWorker } from './store-bank-refund.worker';
 
 @Module({
-  imports: [PrismaModule, PaymentsModule],
+  imports: [PrismaModule, forwardRef(() => PaymentsModule)],
   controllers: [
     BanksController,
     StoreBankAccountsController,
