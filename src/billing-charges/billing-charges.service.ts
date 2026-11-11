@@ -1,4 +1,4 @@
-import { Injectable, Inject, Optional, NotFoundException, BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException, ForbiddenException, UnauthorizedException, InternalServerErrorException } from '@nestjs/common';
 import { BillingChargesRepository, CreateChargeInput } from './billing-charges.repository';
 import { Prisma } from '@prisma/client';
 import { calculateRentalPricing } from '../rentals/rental-pricing';
@@ -334,12 +334,16 @@ export class BillingChargesService {
 
     const clientId = process.env.PAYOS_CLIENT_ID?.trim();
     const apiKey = process.env.PAYOS_API_KEY?.trim();
-    const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim() || 'mock_checksum_key_dev';
     const isMock = process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || clientId?.startsWith('ci_test_') || !clientId;
     const isAllowedMockEnv = ['test', 'development', 'local'].includes(process.env.NODE_ENV || '');
 
     if (isMock && !isAllowedMockEnv) {
       throw new BadRequestException('Chế độ giả lập thanh toán (Mock payment) bị cấm tuyệt đối trên môi trường Staging và Production');
+    }
+
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim() || (isAllowedMockEnv ? 'mock_checksum_key_dev' : '');
+    if (!isMock && !checksumKey) {
+      throw new InternalServerErrorException('Chưa cấu hình khóa PAYOS_CHECKSUM_KEY trong hệ thống');
     }
 
     if (isMock) {

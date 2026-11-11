@@ -75,6 +75,12 @@ export class BankVerificationService implements OnModuleInit {
           'FATAL: REDIS_URL or REDIS_HOST must be configured in production for distributed rate limiting',
         );
       }
+
+      if (!process.env.VIETQR_CLIENT_ID?.trim() || !process.env.VIETQR_API_KEY?.trim()) {
+        this.logger.warn(
+          '[onModuleInit] VIETQR_CLIENT_ID hoặc VIETQR_API_KEY chưa được cấu hình. Tính năng tra cứu tên chủ tài khoản ngân hàng (VietQR lookup) sẽ trả về HTTP 503 khi được gọi.',
+        );
+      }
     }
   }
 

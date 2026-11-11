@@ -83,10 +83,13 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
       if (!response.ok) {
         this.logger.warn(`VietQR Lookup HTTP ${response.status} for BIN ${bankBin}`);
         if (response.status === 401 || response.status === 403) {
+          this.logger.error(
+            `[PayOSBankVerificationProvider] VietQR API HTTP ${response.status}: Key VIETQR_CLIENT_ID/VIETQR_API_KEY không hợp lệ hoặc hết hạn trên https://my.vietqr.io (Lưu ý: Không dùng khóa PayOS cho VietQR Open API).`,
+          );
           throw new ServiceUnavailableException({
             success: false,
             errorCode: 'BANK_LOOKUP_SERVICE_UNAVAILABLE',
-            message: 'Dịch vụ tra cứu tài khoản ngân hàng tạm thời không khả dụng (xác thực dịch vụ thất bại)',
+            message: 'Dịch vụ tra cứu tài khoản ngân hàng tạm thời không khả dụng. Vui lòng thử lại sau.',
           });
         }
         throw new ServiceUnavailableException({

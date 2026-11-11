@@ -71,7 +71,7 @@ export class PayOSPayoutService {
   createPayoutSignature(params: PayosPayoutRequestParams): string {
     const { checksumKey } = this.getCredentials();
     if (!checksumKey) {
-      throw new InternalServerErrorException('PAYOS_CHECKSUM_KEY chua du?c c?u h�nh');
+      throw new InternalServerErrorException('PAYOS_PAYOUT_CHECKSUM_KEY chưa được cấu hình trong server .env');
     }
     return signPayoutRequest(params, checksumKey);
   }
@@ -81,7 +81,7 @@ export class PayOSPayoutService {
 
     if (!clientId || !apiKey || !checksumKey) {
       throw new InternalServerErrorException(
-        'Chua c?u h�nh d?y d? PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY trong server .env'
+        'Chưa cấu hình đầy đủ PAYOS_PAYOUT_CLIENT_ID, PAYOS_PAYOUT_API_KEY, PAYOS_PAYOUT_CHECKSUM_KEY trong server .env',
       );
     }
 

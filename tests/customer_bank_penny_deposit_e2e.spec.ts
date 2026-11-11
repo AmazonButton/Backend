@@ -1,11 +1,14 @@
 import assert from 'node:assert';
 import { CustomerBankPennyVerificationService } from '../src/customers/customer-bank-penny-verification.service';
 import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
+import { signWebhookData } from '../src/payments/payos.helper';
 
 async function run() {
   process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED = 'true';
-  process.env.BANK_ACCOUNT_ENCRYPTION_KEY = '5dad52bd291a3e8f96f284cd7fcdb72d96d5f114c00e642dea09e9da19d0363d';
+  process.env.PAYOS_CLIENT_ID = 'test_payos_client_id';
+  process.env.PAYOS_API_KEY = 'test_payos_api_key';
   process.env.PAYOS_CHECKSUM_KEY = 'test_checksum_key_for_penny_deposit_verification_suite_32chars';
+  process.env.BANK_ACCOUNT_ENCRYPTION_KEY = '5dad52bd291a3e8f96f284cd7fcdb72d96d5f114c00e642dea09e9da19d0363d';
   console.log('🧪 Testing Customer Bank Penny-Deposit Verification & Refund Lifecycle (End-to-End)...');
 
   // Test setup data
@@ -43,6 +46,44 @@ async function run() {
         return mockBankAccount;
       }
       return null;
+    },
+    getOrCreatePennyVerificationSessionTx: async (params: any) => {
+      const active = sessions.find(
+        (s) =>
+          s.customerId === params.customerId &&
+          s.accountId === params.accountId &&
+          s.sessionStatus === 'ACTIVE' &&
+          new Date(s.expiresAt).getTime() > Date.now() &&
+          !s.usedAt,
+      );
+      if (active) {
+        return { session: active, isReused: true };
+      }
+      const orderCode = params.generateOrderCode();
+      const session = {
+        id: BigInt(sessions.length + 1),
+        proofReference: params.generateProofReference(),
+        customerId: params.customerId,
+        accountId: params.accountId,
+        bankBin: params.bankBin,
+        accountNumberHash: params.accountNumberHash,
+        status: 'PENDING',
+        sessionStatus: 'ACTIVE',
+        verificationStatus: 'PENDING',
+        paymentOrderCode: orderCode,
+        paymentLinkId: `pl_${orderCode}`,
+        paymentCheckoutUrl: `https://pay.payos.vn/web/test-${orderCode}`,
+        expiresAt: params.expiresAt,
+        usedAt: null,
+        verifiedAt: null,
+        verifiedByTransactionId: null,
+        rejectionReason: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        inboundTransactions: [],
+      };
+      sessions.push(session);
+      return { session, isReused: false };
     },
     findActiveVerificationSessionByAccount: async (custId: bigint, accId: bigint) => {
       return (
@@ -130,6 +171,28 @@ async function run() {
       };
     },
     recordInboundTransactionAndObligationAtomicTx: async (params: any) => {
+      let matchDecision = 'PENDING';
+      let shouldActivate = false;
+      let refundStatus = 'PENDING_REFUND';
+      let sessionMatchStatus = params.proofId ? 'MATCHED_SESSION' : 'UNMATCHED_NO_SESSION';
+
+      const session = params.proofId ? sessions.find((s) => s.id === params.proofId) : null;
+
+      if (!params.hasSufficientEvidence) {
+        matchDecision = 'INSUFFICIENT_DATA';
+        refundStatus = 'PENDING_MANUAL_REFUND';
+      } else if (!session) {
+        matchDecision = 'UNMATCHED_NO_SESSION';
+        refundStatus = 'PENDING_MANUAL_REFUND';
+      } else if (session.bankBin !== params.sourceBankBin) {
+        matchDecision = 'MISMATCH_BIN';
+      } else if (session.accountNumberHash !== params.sourceAccountHash) {
+        matchDecision = 'MISMATCH_ACCOUNT';
+      } else {
+        matchDecision = 'MATCHED';
+        shouldActivate = true;
+      }
+
       const inboundId = BigInt(inboundTxs.length + 1);
       const inbound = {
         id: inboundId,
@@ -139,15 +202,15 @@ async function run() {
         providerTransactionRef: params.providerTransactionRef,
         amount: params.amount,
         receivedAt: params.receivedAt,
-        isLatePayment: params.isLatePayment,
+        isLatePayment: false,
         sourceBankBin: params.sourceBankBin,
         sourceAccountMasked: params.sourceAccountMasked,
         sourceAccountHash: params.sourceAccountHash,
         sourceAccountEncrypted: params.sourceAccountEncrypted,
         sourceAccountName: params.sourceAccountName,
         hasSufficientEvidence: params.hasSufficientEvidence,
-        sessionMatchStatus: params.sessionMatchStatus,
-        matchDecision: params.matchDecision,
+        sessionMatchStatus,
+        matchDecision,
         rawPayloadChecksum: params.rawPayloadChecksum,
         reconciliationFlag: params.reconciliationFlag,
         createdAt: new Date(),
@@ -159,7 +222,7 @@ async function run() {
         id: obligationId,
         inboundTransactionId: inbound.id,
         refundAmount: params.amount,
-        refundStatus: params.refundStatus,
+        refundStatus,
         targetBankBin: params.sourceBankBin,
         targetAccountMasked: params.sourceAccountMasked,
         targetAccountHash: params.sourceAccountHash,
@@ -174,32 +237,27 @@ async function run() {
       };
       refundObligations.push(obligation);
 
-      if (params.proofId) {
-        const session = sessions.find((s) => s.id === params.proofId);
-        if (session && session.verificationStatus !== 'VERIFIED') {
-          session.verificationStatus =
-            params.matchDecision === 'MATCHED'
-              ? 'VERIFIED'
-              : params.matchDecision === 'INSUFFICIENT_DATA'
-                ? 'PENDING_SOURCE_EVIDENCE'
-                : 'FAILED_MISMATCH';
-          if (params.matchDecision === 'MATCHED') {
-            session.verifiedAt = new Date();
-            session.verifiedByTransactionId = inbound.id;
-          }
+      if (session) {
+        session.verificationStatus =
+          matchDecision === 'MATCHED'
+            ? 'VERIFIED'
+            : matchDecision === 'INSUFFICIENT_DATA'
+              ? 'PENDING_SOURCE_EVIDENCE'
+              : 'FAILED_MISMATCH';
+        if (matchDecision === 'MATCHED') {
+          session.verifiedAt = new Date();
+          session.verifiedByTransactionId = inbound.id;
         }
 
-        if (params.shouldActivateAccount && params.accountId) {
+        if (shouldActivate) {
           mockBankAccount.verificationStatus = 'VERIFIED';
-          if (session) {
-            session.sessionStatus = 'CONSUMED';
-            session.status = 'SUCCESS';
-            session.usedAt = new Date();
-          }
+          session.sessionStatus = 'CONSUMED';
+          session.status = 'SUCCESS';
+          session.usedAt = new Date();
         }
       }
 
-      return { inbound, obligation };
+      return { inbound, obligation, matchDecision, shouldActivate };
     },
     findPendingRefundObligations: async (limit = 20) => {
       return refundObligations.filter((o) => o.refundStatus === 'PENDING_REFUND' && !o.activePayoutAttemptId).slice(0, limit);
@@ -249,7 +307,40 @@ async function run() {
     },
   };
 
-  const service = new CustomerBankPennyVerificationService(mockCustomersRepo as any);
+    const mockPayosPayoutService: any = {
+    createPayout: async (params: any) => ({
+      code: '00',
+      desc: 'Success',
+      data: {
+        id: `payout_${params.referenceId}`,
+        status: 'COMPLETED',
+        approvalState: 'COMPLETED',
+        transactions: [
+          {
+            reference: params.referenceId,
+            referenceId: params.referenceId,
+            amount: params.amount,
+            accountNumber: params.toAccountNumber,
+            toAccountNumber: params.toAccountNumber,
+            bin: params.toBin,
+            toBin: params.toBin,
+            status: 'SUCCEEDED',
+            state: 'SUCCEEDED',
+          },
+        ],
+      },
+    }),
+    getPayout: async (id: string) => ({
+      code: '00',
+      data: {
+        id,
+        status: 'COMPLETED',
+        approvalState: 'COMPLETED',
+        transactions: [{ status: 'SUCCESS' }],
+      },
+    }),
+  };
+  const service = new CustomerBankPennyVerificationService(mockCustomersRepo as any, mockPayosPayoutService as any);
   const user = { userId: BigInt(20), role: 'CUSTOMER' };
 
   // =========================================================================
@@ -282,7 +373,7 @@ async function run() {
   // Test 3: Webhook khớp chính chủ (Exact Match)
   // =========================================================================
   console.log('  3. Testing Webhook with Exact CounterAccount Match...');
-  const webhookPayloadMatch = {
+  const webhookPayloadMatch = { code: '00',
     data: {
       orderCode: Number(session1.orderCode),
       amount: 2000,
@@ -292,7 +383,7 @@ async function run() {
       counterAccountName: 'NGUYEN VAN TEST',
       transactionDateTime: new Date().toISOString(),
     },
-    signature: 'MOCK_TEST_SIGNATURE',
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
   };
 
   const webhookRes1 = await service.processPayosVerificationWebhook(webhookPayloadMatch);
@@ -327,7 +418,7 @@ async function run() {
   // Test 5: Khách chuyển tiền lần thứ hai vào cùng một mã phiên (Double Transfer)
   // =========================================================================
   console.log('  5. Testing Double Transfer to Same Session (Multiple Inbound)...');
-  const webhookDouble = {
+  const webhookDouble = { code: '00',
     data: {
       orderCode: Number(session1.orderCode),
       amount: 2000,
@@ -337,7 +428,7 @@ async function run() {
       counterAccountName: 'NGUYEN VAN TEST',
       transactionDateTime: new Date().toISOString(),
     },
-    signature: 'MOCK_TEST_SIGNATURE',
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
   };
 
   await service.processPayosVerificationWebhook(webhookDouble);
@@ -364,7 +455,7 @@ async function run() {
 
   const sessionForAcc2 = await service.initiateVerificationSession(user, bankAcc2.id);
 
-  const webhookMismatch = {
+  const webhookMismatch = { code: '00',
     data: {
       orderCode: Number(sessionForAcc2.orderCode),
       amount: 2000,
@@ -374,7 +465,7 @@ async function run() {
       counterAccountName: 'NGUOI KHAC CHUYEN',
       transactionDateTime: new Date().toISOString(),
     },
-    signature: 'MOCK_TEST_SIGNATURE',
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
   };
 
   await service.processPayosVerificationWebhook(webhookMismatch);
@@ -392,7 +483,7 @@ async function run() {
   console.log('  7. Testing Webhook with Missing CounterAccount Info (Insufficient Evidence)...');
   const sessionForAcc3 = await service.initiateVerificationSession(user, bankAcc2.id);
 
-  const webhookNoEvidence = {
+  const webhookNoEvidence = { code: '00',
     data: {
       orderCode: Number(sessionForAcc3.orderCode),
       amount: 2000,
@@ -400,7 +491,7 @@ async function run() {
       // Không có counterAccountBankId và counterAccountNumber
       transactionDateTime: new Date().toISOString(),
     },
-    signature: 'MOCK_TEST_SIGNATURE',
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
   };
 
   await service.processPayosVerificationWebhook(webhookNoEvidence);
@@ -426,7 +517,7 @@ async function run() {
   // Test 8: Khoản thu ngoài phiên (Orphan / Out-of-band Inbound Transaction)
   // =========================================================================
   console.log('  8. Testing Orphan Inbound Transaction (No Session)...');
-  const webhookOrphan = {
+  const webhookOrphan = { code: '00',
     data: {
       orderCode: 999999999, // orderCode hoàn toàn không có trong DB
       amount: 5000, // Khách chuyển 5.000đ ngoài phiên
@@ -436,7 +527,7 @@ async function run() {
       counterAccountName: 'KHACH VANG LAI',
       transactionDateTime: new Date().toISOString(),
     },
-    signature: 'MOCK_TEST_SIGNATURE',
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
   };
 
   const orphanRes = await service.processPayosVerificationWebhook(webhookOrphan);
@@ -457,6 +548,9 @@ async function run() {
   console.log('  9. Testing Refund Worker Batch & Single In-Flight Attempt Guarantee...');
   // Bật live payout giả lập
   process.env.FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED = 'true';
+  process.env.PAYOS_PAYOUT_CLIENT_ID = 'test_payout_client_id';
+  process.env.PAYOS_PAYOUT_API_KEY = 'test_payout_api_key';
+  process.env.PAYOS_PAYOUT_CHECKSUM_KEY = 'test_checksum_key_for_penny_deposit_verification_suite_32chars';
 
   const workerResult = await service.processRefundWorkerBatch(10);
   assert.strictEqual(workerResult.processed > 0, true, 'Worker must process pending obligations');
@@ -481,7 +575,97 @@ async function run() {
   assert.strictEqual(history.items.length >= 2, true);
   assert.strictEqual(history.items[0].receivedAmount !== undefined, true);
 
-  console.log('✅ ALL 10 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
+  // =========================================================================
+  // Test 11: Phân loại lỗi Payout (InternalServerError vs Network Timeout)
+  // =========================================================================
+  console.log('  11. Testing Payout Error Differentiation (Pre-dispatch FAILED vs Network PENDING_RECONCILIATION)...');
+  // 11a: Lỗi trước khi gửi (InternalServerErrorException) -> FAILED ngay lập tức
+  const obligationPreDispatch: any = {
+    id: BigInt(refundObligations.length + 1),
+    inboundTransactionId: BigInt(991),
+    refundAmount: 2000,
+    refundStatus: 'PENDING_REFUND',
+    targetBankBin: '970422',
+    targetAccountMasked: '******1234',
+    targetAccountHash: 'hash_test_predispatch',
+    targetAccountEncrypted: CryptoVaultUtil.encryptAccountNumber('0987654321'),
+    targetAccountName: 'TEST PREDISPATCH',
+    refundPayoutReference: 'REF_OBL_PREDISPATCH_01',
+    activePayoutAttemptId: null,
+    refundedAt: null,
+    failureReason: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  refundObligations.push(obligationPreDispatch);
+
+  const originalCreatePayout = mockPayosPayoutService.createPayout;
+  mockPayosPayoutService.createPayout = async () => {
+    const { InternalServerErrorException } = await import('@nestjs/common');
+    throw new InternalServerErrorException('Chưa cấu hình khóa kết nối PayOS');
+  };
+
+  const resPreDispatch = await service.processRefundWorkerBatch(1);
+  assert.strictEqual(resPreDispatch.failed, 1, 'Pre-dispatch error must count as failed');
+  assert.strictEqual(obligationPreDispatch.refundStatus, 'REFUND_FAILED', 'Pre-dispatch local error must mark REFUND_FAILED');
+
+  // 11b: Lỗi mạng / timeout / chưa rõ kết quả -> PENDING_RECONCILIATION
+  const obligationNetwork: any = {
+    id: BigInt(refundObligations.length + 1),
+    inboundTransactionId: BigInt(992),
+    refundAmount: 2000,
+    refundStatus: 'PENDING_REFUND',
+    targetBankBin: '970422',
+    targetAccountMasked: '******1234',
+    targetAccountHash: 'hash_test_network',
+    targetAccountEncrypted: CryptoVaultUtil.encryptAccountNumber('0987654321'),
+    targetAccountName: 'TEST NETWORK',
+    refundPayoutReference: 'REF_OBL_NETWORK_02',
+    activePayoutAttemptId: null,
+    refundedAt: null,
+    failureReason: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  refundObligations.push(obligationNetwork);
+
+  mockPayosPayoutService.createPayout = async () => {
+    const timeoutErr: any = new Error('ETIMEDOUT: Connection to PayOS gateway timed out');
+    timeoutErr.code = 'ETIMEDOUT';
+    throw timeoutErr;
+  };
+
+  const resNetwork = await service.processRefundWorkerBatch(1);
+  assert.strictEqual(resNetwork.failed, 1);
+  const netAttempt: any = payoutAttempts.find((a) => a.obligationId === obligationNetwork.id);
+  assert.strictEqual(netAttempt.status, 'PENDING_RECONCILIATION', 'Network timeout must stay in PENDING_RECONCILIATION');
+  mockPayosPayoutService.createPayout = originalCreatePayout;
+
+  // =========================================================================
+  // Test 12: Thử lại khi va chạm unique paymentOrderCode (Retry on P2002)
+  // =========================================================================
+  console.log('  12. Testing OrderCode Collision Retry Loop on P2002...');
+  let p2002Attempts = 0;
+  const originalGetOrCreate = mockCustomersRepo.getOrCreatePennyVerificationSessionTx;
+  mockCustomersRepo.getOrCreatePennyVerificationSessionTx = async (params: any) => {
+    p2002Attempts++;
+    if (p2002Attempts === 1) {
+      const p2002Err: any = new Error('Unique constraint failed on the fields: (`payment_order_code`)');
+      p2002Err.code = 'P2002';
+      p2002Err.meta = { target: ['payment_order_code'] };
+      throw p2002Err;
+    }
+    return originalGetOrCreate(params);
+  };
+
+  const newBankAcc = { id: BigInt(99), bankBin: '970415', accountNumberMasked: '******8888', bankName: 'VietinBank', accountName: 'TEST RETRY' };
+  mockCustomersRepo.findCustomerBankAccountById = async () => newBankAcc;
+  const sessionRetried = await service.initiateVerificationSession(user, newBankAcc.id);
+  assert.strictEqual(p2002Attempts, 2, 'Service must retry exactly once and succeed on 2nd attempt');
+  assert.strictEqual(Boolean(sessionRetried.orderCode), true);
+  mockCustomersRepo.getOrCreatePennyVerificationSessionTx = originalGetOrCreate;
+
+  console.log('✅ ALL 12 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
 }
 
 run().catch((err) => {

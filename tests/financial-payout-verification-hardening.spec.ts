@@ -602,9 +602,28 @@ async function run() {
         },
       };
 
+      const targetedRepo: any = Object.create(bankVerificationRepo);
+      targetedRepo.findPendingStoreRefundObligations = async () => {
+        const row = await prisma.storeBankRefundObligation.findUnique({
+          where: { id: crashedObligation.id },
+        });
+        return row ? [{
+          id: row.id,
+          receipt_id: row.receiptId,
+          refund_amount: row.refundAmount,
+          refund_status: row.refundStatus,
+          refund_reference: row.refundReference,
+          target_bank_bin: row.targetBankBin,
+          target_account_encrypted: row.targetAccountEncrypted,
+          target_account_hash: row.targetAccountHash,
+          attempt_count: row.attemptCount,
+          provider_payout_id: row.providerPayoutId,
+        }] : [];
+      };
+
       const crashWorkerService = new BankVerificationService(
         prisma,
-        bankVerificationRepo,
+        targetedRepo,
         mockProviderNoDoubleSpend,
         mockCrashRecoveryPayos,
       );

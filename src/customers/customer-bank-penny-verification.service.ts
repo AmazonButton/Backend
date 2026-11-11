@@ -6,6 +6,7 @@ import {
   ConflictException,
   ServiceUnavailableException,
   BadGatewayException,
+  InternalServerErrorException,
   Optional,
   Inject,
 } from '@nestjs/common';
@@ -32,7 +33,7 @@ export class CustomerBankPennyVerificationService {
   constructor(
     private readonly customersRepo: CustomersRepository,
     @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
-  ) {}
+  ) { }
 
   /**
    * Tra cứu payment link đã tạo từ PayOS theo orderCode (Phục hồi sau timeout / retry)
@@ -108,33 +109,73 @@ export class CustomerBankPennyVerificationService {
     }
 
     // 1. Kiểm tra tính năng thu tiền (Zero Fake Checkout URLs)
-    const isLivePaymentEnabled = process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED === 'true';
+    const clientId = process.env.PAYOS_CLIENT_ID?.trim();
+    const apiKey = process.env.PAYOS_API_KEY?.trim();
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
+    const hasAllPayosKeys = Boolean(clientId && apiKey && checksumKey);
+
+    // Tự động kích hoạt khi có đủ bộ 3 khóa PayOS, trừ khi bị tắt rõ ràng bằng cờ 'false'
+    const isLivePaymentEnabled =
+      process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED === 'true' ||
+      (process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED !== 'false' && hasAllPayosKeys);
+
     if (!isLivePaymentEnabled) {
+      if (process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED !== 'false' && !hasAllPayosKeys) {
+        // Chi tiết thiếu cấu hình chỉ ghi log phía server, không lộ tên biến ra client
+        this.logger.error(
+          '[initiateVerification] Thiếu cấu hình PayOS (PAYOS_CLIENT_ID / PAYOS_API_KEY / PAYOS_CHECKSUM_KEY) nên không thể tạo link thu tiền xác minh.',
+        );
+      }
       throw new ServiceUnavailableException(
         'Tính năng thu tiền xác minh tài khoản đang tạm thời tắt (chờ cấu hình kết nối đối tác). Vui lòng thử lại sau.',
       );
     }
 
-    const clientId = process.env.PAYOS_CLIENT_ID?.trim();
-    const apiKey = process.env.PAYOS_API_KEY?.trim();
-    const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
-
-    if (!clientId || !apiKey || !checksumKey) {
-      throw new ServiceUnavailableException('Chưa cấu hình khóa kết nối PayOS trong hệ thống');
+    if (!hasAllPayosKeys) {
+      // Cờ đã bật tường minh nhưng thiếu khóa: báo lỗi cấu hình riêng, không nói "đang tắt"
+      this.logger.error(
+        '[initiateVerification] CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED=true nhưng thiếu bộ khóa PayOS (PAYOS_CLIENT_ID / PAYOS_API_KEY / PAYOS_CHECKSUM_KEY).',
+      );
+      throw new ServiceUnavailableException(
+        'Dịch vụ thu tiền xác minh chưa sẵn sàng do thiếu cấu hình kết nối đối tác. Vui lòng thử lại sau.',
+      );
     }
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes TTL
 
-    // 2. [Step 1 & 2] Khóa tài khoản và LẤY hoặc TẠO phiên với orderCode ổn định trong DB Transaction
-    const { session, isReused } = await this.customersRepo.getOrCreatePennyVerificationSessionTx({
-      customerId: profile.customerId,
-      accountId: account.id,
-      bankBin: account.bankBin,
-      accountNumberHash: (account as any).accountNumberHash,
-      expiresAt,
-      generateOrderCode: () => BigInt(Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000)),
-      generateProofReference: () => `CUST_VRF_${account.bankBin}_${CryptoVaultUtil.generateReferenceCode('')}`.slice(0, 64),
-    });
+    // 2. [Step 1 & 2] Khóa tài khoản và LẤY hoặc TẠO phiên với orderCode ổn định trong DB Transaction (có cơ chế retry nếu va chạm unique)
+    let sessionResult: { session: any; isReused: boolean };
+    let attempt = 0;
+    while (true) {
+      try {
+        sessionResult = await this.customersRepo.getOrCreatePennyVerificationSessionTx({
+          customerId: profile.customerId,
+          accountId: account.id,
+          bankBin: account.bankBin,
+          accountNumberHash: (account as any).accountNumberHash,
+          expiresAt,
+          // Đảm bảo độ chính xác mili-giây và random 3 chữ số để chống trùng lặp giữa các request cùng giây
+          generateOrderCode: () => BigInt(Date.now()) * 1000n + BigInt(crypto.randomInt(100, 1000)),
+          generateProofReference: () => `CUST_VRF_${account.bankBin}_${CryptoVaultUtil.generateReferenceCode('')}`.slice(0, 64),
+        });
+        break;
+      } catch (err: any) {
+        attempt++;
+        const isTargetMatch =
+          Array.isArray(err?.meta?.target)
+            ? err.meta.target.includes('payment_order_code')
+            : (typeof err?.meta?.target === 'string' && (err.meta.target.includes('payment_order_code') || err.meta.target.includes('uq_cust_bank_payment_order_code')));
+        const isOrderCodeUniqueViolation =
+          err?.code === 'P2002' && (isTargetMatch || err?.message?.includes('uq_cust_bank_payment_order_code') || err?.message?.includes('payment_order_code'));
+
+        if (attempt < 3 && isOrderCodeUniqueViolation) {
+          this.logger.warn(`[initiateVerification] Va chạm paymentOrderCode, đang thử lại lần ${attempt}...`);
+          continue;
+        }
+        throw err;
+      }
+    }
+    const { session, isReused } = sessionResult!;
 
     // Nếu phiên đã có link PayOS hợp lệ gắn kèm -> Tái sử dụng ngay lập tức
     if (session.paymentCheckoutUrl) {
@@ -331,10 +372,10 @@ export class CustomerBankPennyVerificationService {
       const paymentStatus = hasConfirmedReceipt
         ? 'PAID'
         : unconfirmedObservations.length > 0
-        ? 'PENDING_RECONCILIATION'
-        : isExpired
-        ? 'EXPIRED'
-        : 'PENDING';
+          ? 'PENDING_RECONCILIATION'
+          : isExpired
+            ? 'EXPIRED'
+            : 'PENDING';
 
       // Tính toán nghĩa vụ hoàn tiền tổng hợp: CHỈ tính trên các giao dịch thực nhận đã xác nhận (confirmedReceipts)
       let refundStatus = 'NONE';
@@ -638,12 +679,14 @@ export class CustomerBankPennyVerificationService {
       const isSessionConflict = existingTx.proofId !== (session ? session.id : null);
 
       if (isAmountConflict || isSourceBinConflict || isSourceAccountConflict || isSessionConflict) {
+        const maskedOldHash = existingTx.sourceAccountHash ? `${existingTx.sourceAccountHash.slice(0, 8)}...` : 'null';
+        const maskedNewHash = sourceAccountHash ? `${sourceAccountHash.slice(0, 8)}...` : 'null';
         this.logger.error(
           `[CRITICAL AUDIT] Webhook trùng reference ${providerTransactionRef} nhưng mâu thuẫn dữ liệu: ` +
-            `amount (cũ: ${existingTx.amount}, mới: ${amount}), ` +
-            `BIN (cũ: ${existingTx.sourceBankBin}, mới: ${sourceBankBin}), ` +
-            `accountHash (cũ: ${existingTx.sourceAccountHash}, mới: ${sourceAccountHash}), ` +
-            `session (cũ: ${existingTx.proofId}, mới: ${session ? session.id : null})`,
+          `amount (cũ: ${existingTx.amount}, mới: ${amount}), ` +
+          `BIN (cũ: ${existingTx.sourceBankBin}, mới: ${sourceBankBin}), ` +
+          `accountHash (cũ: ${maskedOldHash}, mới: ${maskedNewHash}), ` +
+          `session (cũ: ${existingTx.proofId}, mới: ${session ? session.id : null})`,
         );
         await this.customersRepo.flagConflictingInboundTransaction(
           existingTx.id,
@@ -691,7 +734,7 @@ export class CustomerBankPennyVerificationService {
 
     this.logger.log(
       `Ghi nhận giao dịch PayOS [${providerTransactionRef}] amount=${amount} ` +
-        `matchDecision=${result.matchDecision} shouldActivate=${result.shouldActivate}`,
+      `matchDecision=${result.matchDecision} shouldActivate=${result.shouldActivate}`,
     );
 
     return {
@@ -699,8 +742,8 @@ export class CustomerBankPennyVerificationService {
       message: result.shouldActivate
         ? 'Ghi nhận giao dịch, kích hoạt tài khoản và tạo nghĩa vụ hoàn tiền thành công'
         : isMissingRef
-        ? 'Ghi nhận quan sát giao dịch thiếu reference đưa vào đối soát (chưa tạo nghĩa vụ tự động)'
-        : 'Ghi nhận giao dịch và nghĩa vụ hoàn tiền thành công',
+          ? 'Ghi nhận quan sát giao dịch thiếu reference đưa vào đối soát (chưa tạo nghĩa vụ tự động)'
+          : 'Ghi nhận giao dịch và nghĩa vụ hoàn tiền thành công',
     };
   }
 
@@ -709,10 +752,18 @@ export class CustomerBankPennyVerificationService {
    * Nối adapter PayOSPayoutService thật, không giả định thành công
    */
   async processRefundWorkerBatch(limit = 10): Promise<{ processed: number; succeeded: number; failed: number }> {
+    // Chi tiền thật bắt buộc phải bật tường minh bằng cờ FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED=true
     const isLivePayoutEnabled = process.env.FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED === 'true';
-    if (!isLivePayoutEnabled) {
+    const isProd = process.env.NODE_ENV === 'production';
+    const payoutClientId = process.env.PAYOS_PAYOUT_CLIENT_ID?.trim() || (!isProd ? process.env.PAYOS_CLIENT_ID?.trim() : undefined);
+    const payoutApiKey = process.env.PAYOS_PAYOUT_API_KEY?.trim() || (!isProd ? process.env.PAYOS_API_KEY?.trim() : undefined);
+    const payoutChecksumKey = process.env.PAYOS_PAYOUT_CHECKSUM_KEY?.trim() || (!isProd ? process.env.PAYOS_CHECKSUM_KEY?.trim() : undefined);
+    const hasAllPayoutKeys = Boolean(payoutClientId && payoutApiKey && payoutChecksumKey);
+
+    if (!isLivePayoutEnabled || !hasAllPayoutKeys) {
       this.logger.log(
-        '[DRY-RUN] FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED is disabled. Worker will not claim refund obligations.',
+        `[DRY-RUN] FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED=${isLivePayoutEnabled}, hasAllPayoutKeys=${hasAllPayoutKeys}. ` +
+        `Worker will not claim refund obligations.`,
       );
       return { processed: 0, succeeded: 0, failed: 0 };
     }
@@ -770,13 +821,27 @@ export class CustomerBankPennyVerificationService {
           });
         } catch (payoutErr: any) {
           this.logger.error(`Lỗi khi gọi PayOS createPayout cho attempt #${attempt.id}: ${payoutErr.message}`);
-          // Timeout / lỗi mạng không rõ kết quả -> Luôn giữ trong PENDING_RECONCILIATION, không tự suy diễn thất bại
-          await this.customersRepo.finalizePayoutAttemptTx({
-            obligationId: obligation.id,
-            attemptId: attempt.id,
-            status: 'PENDING_RECONCILIATION',
-            failureReason: `Network/Timeout: ${payoutErr.message}`,
-          });
+          // Chỉ đánh FAILED với lỗi CHẮC CHẮN xảy ra trước khi lệnh được gửi sang PayOS
+          // (thiếu cấu hình khóa, tham số bị từ chối cục bộ). Mọi lỗi khác (mạng, timeout,
+          // 5xx, parse response...) có thể đã chuyển tiền -> giữ PENDING_RECONCILIATION để tránh hoàn tiền 2 lần.
+          const isDefinitelyNotSent =
+            payoutErr instanceof InternalServerErrorException || payoutErr instanceof BadRequestException;
+
+          if (isDefinitelyNotSent) {
+            await this.customersRepo.finalizePayoutAttemptTx({
+              obligationId: obligation.id,
+              attemptId: attempt.id,
+              status: 'FAILED',
+              failureReason: `Config/Validation Error: ${payoutErr.message}`,
+            });
+          } else {
+            await this.customersRepo.finalizePayoutAttemptTx({
+              obligationId: obligation.id,
+              attemptId: attempt.id,
+              status: 'PENDING_RECONCILIATION',
+              failureReason: `Unknown outcome (cần đối soát): ${payoutErr.message}`,
+            });
+          }
           failed++;
           continue;
         }
@@ -912,7 +977,7 @@ export class CustomerBankPennyVerificationService {
         if (obligation?.targetAccountEncrypted) {
           try {
             targetAccountNumber = CryptoVaultUtil.decryptAccountNumber(obligation.targetAccountEncrypted);
-          } catch {}
+          } catch { }
         }
         const targetAccountHash =
           obligation?.targetAccountHash ||
@@ -966,7 +1031,7 @@ export class CustomerBankPennyVerificationService {
           attempt.id,
           this.computeBackoffMs(attempt.reconcileAttempts || 0),
           e.message,
-        ).catch(() => {});
+        ).catch(() => { });
       }
     }
 
