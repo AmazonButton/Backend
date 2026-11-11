@@ -1,5 +1,37 @@
 # Project Handoff & Session Context
 
+### [2026-11-11] Security Audit Run-5 Full Remediation: All 16 Findings Remediated Across Bundles 1-4 (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, all 5 critical test suites 100% PASS)
+- **Review Report Reference**: `c:/Users/ttphatt_2403/security-audit-skill/backend/run-5/REPORT.md` (Findings NV-01 to NV-16 across Bundles 1 to 4).
+- **Remediated Items & Architectural Defenses**:
+  1. **Bundle 1: Payments & Webhooks (NV-05, NV-11, NV-12)**:
+     - **NV-05 (`billing-charges.service.ts`, `billing-charges.repository.ts`)**: Implemented atomic CAS `assignStableOrderCode` to assign and persist deterministic `orderCode` for billing charges before external I/O. Prevents concurrent link creation requests from overwriting `providerTransactionCode` and orphaning callbacks.
+     - **NV-11 (`payments.repository.ts`)**: In `confirmPaymentAtomicTx`, allowed transitions from `FAILED` or `CANCELLED` to `PAID` with order `paymentStatus: REFUND_PENDING` when PayOS webhook arrives with verified payment for an order whose payment method was switched to COD or cancelled, preventing lost customer funds.
+     - **NV-12 (`payments.service.ts`)**: In `createPaymentLink`, removed unilateral `FAILED` status mark on PayOS connection/timeout errors; preserves `PENDING` state so that created links remain recoverable and webhooks correlate cleanly.
+  2. **Bundle 2: Store Withdrawals & Penny Refund (NV-01, NV-02, NV-03, NV-04)**:
+     - **NV-01 (`bank-verification.repository.ts`)**: In `executeAtomicWebhookVerificationTx`, ensured `store_bank_inbound_receipts` and `store_bank_refund_obligations` are ALWAYS recorded for confirmed inbound bank transfers, even on `AMOUNT_MISMATCH`, `EXPIRED`, `SENDER_ACCOUNT_MISMATCH`, or `SENDER_BANK_MISMATCH`, guaranteeing all received funds are tracked and refunded.
+     - **NV-02 (`bank-verification.repository.ts`)**: In `updateTransactionRefundStatus`, enforced conditional update `status: { not: 'REFUNDED' }` to prevent asynchronous or failed inline refunds from regressing terminal parent status.
+     - **NV-03 (`bank-verification.service.ts`)**: In `reconcilePendingStoreRefunds`, added anti-Head-of-Line `next_reconcile_at` backoff on all lookup failure, detail missing, or unmatched list branches before `continue`, preventing queue starvation.
+     - **NV-04 (`bank-verification.service.ts`)**: In `processStoreRefundWorkerBatch`, when `attempt_count > 0` and payout lookup is inconclusive or failed, records reconciliation pending with backoff and skips dispatch; never falls through to `createRefund()`, eliminating double payout vulnerability.
+  3. **Bundle 3: Order Lifecycle & Stock (NV-06, NV-07, NV-08, NV-09, NV-10)**:
+     - **NV-06 (`orders.repository.ts`)**: In `cancelOrderAtomicTx`, added timeout policy recheck under row lock (`FOR UPDATE`); idempotently skips cancellation if order was already `PAID` or is not `PENDING`.
+     - **NV-07 (`orders.repository.ts`)**: In `completeDeliveryAtomicTx`, acquired transaction-level advisory lock `SELECT pg_advisory_xact_lock(hashtext('pod_claim:' || $1))` on canonical POD subpath, serializing concurrent deliveries without schema change.
+     - **NV-08 (`orders.repository.ts`)**: In `cancelOrderAtomicTx`, prevented double stock release by checking `order.order_status !== 'DELIVERY_FAILED'` before decrementing `reserved_quantity` (already released in `completeDeliveryFailedTx`).
+     - **NV-09 (`orders.repository.ts`)**: In `completeDeliveryAtomicTx`, rejected changing payment method of orders already paid online (`PAYOS`/`VIETQR`) to `COD`, preserving gateway provenance and store wallet credit.
+     - **NV-10 (`orders.repository.ts`)**: In `createOrderFallbackTx`, sorted inventory product IDs and locked rows with `SELECT ... FOR UPDATE` before verifying availability and incrementing reservations, preventing race-condition overreservation and deadlocks.
+  4. **Bundle 4: Button Rental & Deposit (NV-13, NV-14, NV-15, NV-16)**:
+     - **NV-13 (`rentals.repository.ts`, `rentals.service.ts`, `rental-response.dto.ts`)**: Replaced `user: true` in `assignFulfillmentAndDevicesAdminTx` with explicit scalar select excluding `passwordHash` and reset/verification tokens; wrapped service return in `RentalResponseDto.fromEntity(updated)`.
+     - **NV-14 & NV-15 (`deposit-payout-verifier.ts`)**: Replaced legacy rental refund verifier with delegation to shared `verifyPayosPayoutEvidence`, enforcing strict recipient validation and rejecting contradictory account numbers/hashes.
+     - **NV-16 (`outbox-consumer.service.ts`)**: Added pre-dispatch reference lookup by `refundCode` in `handleSingleEvent` before calling `createPayout`, preventing double-payouts across process crash/retry cycles.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Production Nest build complete).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 12/12 PASS.
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS.
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS.
+  - `npx tsx tests/platform-button-rental-phase2-store-device-assignment.spec.ts`: 9/9 PASS.
+  - `npx tsx tests/order-lifecycle.spec.ts`: 7/7 PASS.
+
 ### [2026-11-11] CI/CD Test Isolation, Snapshot Integrity & Verifier Mock Hardening (COMPLETED)
 - **Status**: COMPLETED & 100% VERIFIED (`tests/admin_payout_invariants.spec.ts` PASS, `tests/financial-payout-verification-hardening.spec.ts` 10/10 PASS, `tests/user-avatar-profile.spec.ts` 25/25 PASS, `npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0)
 - **Root Cause & Fix Details**:

@@ -286,7 +286,37 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
           throw new Error('Dịch vụ chi hộ PayOSPayoutService chưa sẵn sàng');
         }
 
-        const payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
+        // NV-16 Invariant: Kiểm tra idempotent trên PayOS theo refundCode trước khi dispatch mới để chống chi trùng khi crash retry
+        let existingPayoutData: any = null;
+        if (refund.providerReferenceId) {
+          try {
+            const pRes = await this.payosPayoutService.getPayout(refund.providerReferenceId);
+            if (pRes?.data) existingPayoutData = pRes.data;
+          } catch {}
+        }
+        if (!existingPayoutData && refund.refundCode) {
+          try {
+            const listRes = await this.payosPayoutService.getPayouts({ referenceId: refund.refundCode });
+            const rawList = listRes?.data?.payouts || listRes?.data || [];
+            const matched = Array.isArray(rawList)
+              ? rawList.filter((p: any) => p?.referenceId === refund.refundCode || p?.id === refund.refundCode)
+              : [];
+            if (matched.length === 1 && matched[0]?.id) {
+              const detailRes = await this.payosPayoutService.getPayout(String(matched[0].id).trim());
+              if (detailRes?.data) existingPayoutData = detailRes.data;
+            }
+          } catch (lookupErr: any) {
+            this.logger.warn(`[OutboxConsumer] Không thể tra cứu payout trước cho refund #${refundId}: ${lookupErr?.message}`);
+          }
+        }
+
+        let payoutResult: any = null;
+        if (existingPayoutData) {
+          this.logger.log(`[OutboxConsumer] Đã tìm thấy payout có sẵn trên PayOS cho refund #${refundId} (id: ${existingPayoutData.id}). Sử dụng bằng chứng cũ, tránh gọi createPayout trùng lặp.`);
+          payoutResult = { data: existingPayoutData };
+        } else {
+          payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
+        }
         const payoutId = payoutResult?.data?.id;
 
         // P0 Invariant: Bắt buộc PayOS phải trả về payout ID thật (data.id).

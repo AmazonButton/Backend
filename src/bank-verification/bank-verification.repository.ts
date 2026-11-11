@@ -128,8 +128,12 @@ export class BankVerificationRepository {
     refundTransactionId?: string;
     refundedAt?: Date;
   }) {
-    return this.prisma.bankAccountVerificationTransaction.update({
-      where: { id: params.transactionId },
+    // NV-02: Prevent regressing transaction status if already terminal (REFUNDED)
+    return this.prisma.bankAccountVerificationTransaction.updateMany({
+      where: {
+        id: params.transactionId,
+        status: { not: 'REFUNDED' },
+      },
       data: {
         status: params.status,
         refundStatus: params.refundStatus,
@@ -314,20 +318,72 @@ export class BankVerificationRepository {
         };
       }
 
+      // NV-01: Helper ensuring confirmed inbound bank credit is always recorded with a refund obligation
+      const recordReceiptAndObligation = async (matchStatus: string): Promise<string> => {
+        let refundRef = `REF_ST_${lockedTx.id}`;
+        try {
+          const existingReceipts = await tx.$queryRaw<Array<{ id: bigint }>>`
+            SELECT id FROM store_bank_inbound_receipts
+            WHERE provider_transaction_id = ${params.providerTransactionId}
+            LIMIT 1
+          `;
+          if (existingReceipts && existingReceipts.length > 0) {
+            return `REF_ST_${existingReceipts[0].id}`;
+          }
+
+          const [receipt] = await tx.$queryRaw<Array<{ id: bigint }>>`
+            INSERT INTO store_bank_inbound_receipts (
+              verification_tx_id, provider_transaction_id, amount,
+              sender_account_number_encrypted, sender_account_hash, sender_bank_bin,
+              match_status, received_at, created_at
+            ) VALUES (
+              ${lockedTx.id}, ${params.providerTransactionId}, ${params.receivedAmount},
+              ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash}, ${params.senderBankBin || lockedAccount.bank_bin},
+              ${matchStatus}, NOW(), NOW()
+            ) RETURNING id
+          `;
+
+          if (receipt?.id) {
+            refundRef = `REF_ST_${receipt.id}`;
+            await tx.$executeRaw`
+              INSERT INTO store_bank_refund_obligations (
+                receipt_id, refund_amount, refund_status, refund_reference,
+                target_bank_bin, target_account_encrypted, target_account_hash,
+                created_at, updated_at
+              ) VALUES (
+                ${receipt.id}, ${params.receivedAmount}, 'PENDING_REFUND', ${refundRef},
+                ${lockedAccount.bank_bin}, ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash},
+                NOW(), NOW()
+              )
+            `;
+          }
+        } catch (receiptErr: any) {
+          this.logger.warn(`Could not insert store bank receipt: ${receiptErr.message}`);
+        }
+        return refundRef;
+      };
+
       // 4. Kiểm tra hết hạn (Expired check)
       const now = new Date();
       if (new Date(lockedTx.expires_at) < now) {
+        const refundRef = await recordReceiptAndObligation('EXPIRED');
         await tx.$executeRaw`
           UPDATE bank_account_verification_transactions
           SET status = 'EXPIRED',
               failure_reason = 'EXPIRED',
+              received_amount = ${params.receivedAmount},
+              provider_transaction_id = ${params.providerTransactionId},
+              refund_status = 'PENDING_REFUND',
               updated_at = NOW()
           WHERE id = ${lockedTx.id}
         `;
         return {
           success: false,
           reason: 'EXPIRED',
+          needsRefund: true,
+          refundReference: refundRef,
           transaction: { ...lockedTx, status: 'EXPIRED', failure_reason: 'EXPIRED' },
+          bankAccount: lockedAccount,
         };
       }
 
@@ -338,19 +394,24 @@ export class BankVerificationRepository {
         this.logger.warn(
           `[AtomicWebhookVerification] Số tiền không khớp cho ref ${params.referenceCode}: nhận ${params.receivedAmount}, kỳ vọng ${expectedAmount}`,
         );
+        const refundRef = await recordReceiptAndObligation('AMOUNT_MISMATCH');
         await tx.$executeRaw`
           UPDATE bank_account_verification_transactions
           SET status = 'FAILED',
               failure_reason = 'AMOUNT_MISMATCH',
               received_amount = ${params.receivedAmount},
               provider_transaction_id = ${params.providerTransactionId},
+              refund_status = 'PENDING_REFUND',
               updated_at = NOW()
           WHERE id = ${lockedTx.id}
         `;
         return {
           success: false,
           reason: 'AMOUNT_MISMATCH',
+          needsRefund: true,
+          refundReference: refundRef,
           transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'AMOUNT_MISMATCH' },
+          bankAccount: lockedAccount,
         };
       }
 
@@ -540,19 +601,24 @@ export class BankVerificationRepository {
           this.logger.warn(
             `[AtomicWebhookVerification] Tai khoan gui khong khop tai khoan can xac minh (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('SENDER_ACCOUNT_MISMATCH');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'SENDER_ACCOUNT_MISMATCH',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_REFUND',
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'SENDER_ACCOUNT_MISMATCH',
+            needsRefund: true,
+            refundReference: refundRef,
             transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_MISMATCH' },
+            bankAccount: lockedAccount,
           };
         }
       }
@@ -562,19 +628,24 @@ export class BankVerificationRepository {
           this.logger.warn(
             `[AtomicWebhookVerification] BIN ngan hang gui khong khop tai khoan can xac minh (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('SENDER_BANK_MISMATCH');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'SENDER_BANK_MISMATCH',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_REFUND',
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'SENDER_BANK_MISMATCH',
+            needsRefund: true,
+            refundReference: refundRef,
             transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_BANK_MISMATCH' },
+            bankAccount: lockedAccount,
           };
         }
       }
@@ -601,37 +672,7 @@ export class BankVerificationRepository {
       }
 
       // 9. Lưu biên lai thực nhận (store_bank_inbound_receipts) và tạo nghĩa vụ hoàn tiền (store_bank_refund_obligations)
-      let refundReference = `REF_ST_${lockedTx.id}`;
-      try {
-        const [receipt] = await tx.$queryRaw<Array<{ id: bigint }>>`
-          INSERT INTO store_bank_inbound_receipts (
-            verification_tx_id, provider_transaction_id, amount,
-            sender_account_number_encrypted, sender_account_hash, sender_bank_bin,
-            match_status, received_at, created_at
-          ) VALUES (
-            ${lockedTx.id}, ${params.providerTransactionId}, ${params.receivedAmount},
-            ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash}, ${params.senderBankBin || lockedAccount.bank_bin},
-            'MATCHED', NOW(), NOW()
-          ) RETURNING id
-        `;
-
-        if (receipt?.id) {
-          refundReference = `REF_ST_${receipt.id}`;
-          await tx.$executeRaw`
-            INSERT INTO store_bank_refund_obligations (
-              receipt_id, refund_amount, refund_status, refund_reference,
-              target_bank_bin, target_account_encrypted, target_account_hash,
-              created_at, updated_at
-            ) VALUES (
-              ${receipt.id}, ${params.receivedAmount}, 'PENDING_REFUND', ${refundReference},
-              ${lockedAccount.bank_bin}, ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash},
-              NOW(), NOW()
-            )
-          `;
-        }
-      } catch (receiptErr: any) {
-        this.logger.warn(`Could not insert store bank receipt: ${receiptErr.message}`);
-      }
+      const refundReference = await recordReceiptAndObligation('MATCHED');
 
       await tx.$executeRaw`
         UPDATE bank_account_verification_transactions

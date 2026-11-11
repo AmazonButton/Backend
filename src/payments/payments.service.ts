@@ -1,4 +1,4 @@
-import { EventsGateway } from '../websocket/events.gateway';
+﻿import { EventsGateway } from '../websocket/events.gateway';
 import {
   Injectable,
   HttpException,
@@ -329,8 +329,8 @@ export class PaymentsService {
     } catch (err: any) {
       if (err instanceof BadRequestException) throw err;
       this.logger.error(`PayOS request failed: ${err.message}`);
-      await this.paymentsRepo.updateTransactionStatus(transaction.paymentTransactionId, 'FAILED');
-      throw new InternalServerErrorException('L?i k?t n?i t?i c?ng thanh to�n PayOS');
+      // NV-12: Do NOT unilaterally mark transaction as FAILED on network/timeout errors.
+      throw new InternalServerErrorException('Lỗi kết nối tới cổng thanh toán PayOS');
     }
   }
 
@@ -744,3 +744,4 @@ export class PaymentsService {
     }
   }
 }
+

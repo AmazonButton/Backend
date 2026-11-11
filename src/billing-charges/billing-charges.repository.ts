@@ -312,7 +312,12 @@ export class BillingChargesRepository {
                 { chargeCode: orderCode },
               ]
             : []),
-          ...(paymentLinkId ? [{ paymentLinkId: paymentLinkId }] : []),
+          ...(paymentLinkId
+            ? [
+                { paymentLinkId: paymentLinkId },
+                { providerTransactionCode: paymentLinkId },
+              ]
+            : []),
         ],
       },
       include: {
@@ -337,6 +342,31 @@ export class BillingChargesRepository {
         checkoutUrl: details.checkoutUrl,
         qrCode: details.qrCode,
         providerTransactionCode: details.providerTransactionCode,
+      },
+    });
+  }
+
+  async assignStableOrderCode(chargeId: bigint, proposedOrderCode: string) {
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE billing_charges
+        SET provider_transaction_code = ${proposedOrderCode},
+            updated_at = NOW()
+        WHERE charge_id = ${chargeId}
+          AND provider_transaction_code IS NULL
+      `;
+    } catch (e) {
+      // In case of race condition or duplicate, authoritative code remains
+    }
+    return this.prisma.billingCharge.findUnique({
+      where: { chargeId },
+      select: {
+        providerTransactionCode: true,
+        paymentLinkId: true,
+        checkoutUrl: true,
+        qrCode: true,
+        totalAmount: true,
+        chargeCode: true,
       },
     });
   }

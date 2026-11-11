@@ -102,8 +102,9 @@ export class PaymentsRepository {
         return this.findTransactionByIdTx(tx, paymentTransactionId);
       }
 
-      // Only transition from PENDING to PAID
-      if (payment.status !== 'PENDING') {
+      // NV-11: If payment was CANCELLED or FAILED, but PayOS webhook arrives with verified payment,
+      // allow transitioning to PAID and route order to REFUND_PENDING so customer money is not lost!
+      if (!['PENDING', 'FAILED', 'CANCELLED'].includes(payment.status)) {
         throw new BadRequestException(`Không thể xác nhận giao dịch đang ở trạng thái ${payment.status}`);
       }
 
@@ -126,9 +127,9 @@ export class PaymentsRepository {
         },
       });
 
-      // Only update order to CONFIRMED if order is in PENDING status!
-      // If order was already CANCELLED, REJECTED, or COMPLETED, do NOT overwrite orderStatus!
-      const canConfirmOrder = order.order_status === 'PENDING';
+      // Only update order to CONFIRMED if order is in PENDING status AND payment_method is PAYOS!
+      // If order was already CANCELLED, REJECTED, COMPLETED, or switched to COD, do NOT overwrite orderStatus!
+      const canConfirmOrder = order.order_status === 'PENDING' && order.payment_method === 'PAYOS';
       if (canConfirmOrder) {
         await tx.order.update({
           where: { orderId: payment.order_id },
@@ -147,27 +148,23 @@ export class PaymentsRepository {
           },
         });
       } else {
-        // If order was already CANCELLED or REJECTED, mark paymentStatus as REFUND_PENDING for financial reconciliation
-        const isCancelledOrRejected = order.order_status === 'CANCELLED' || order.order_status === 'REJECTED';
-        const finalPaymentStatus = isCancelledOrRejected ? 'REFUND_PENDING' : 'PAID';
-
+        // If order was already CANCELLED, REJECTED, or payment_method was switched to COD,
+        // mark paymentStatus as REFUND_PENDING for financial reconciliation
         await tx.order.update({
           where: { orderId: payment.order_id },
           data: {
-            paymentStatus: finalPaymentStatus,
+            paymentStatus: 'REFUND_PENDING',
           },
         });
 
-        if (isCancelledOrRejected) {
-          await tx.orderStatusHistory.create({
-            data: {
-              orderId: payment.order_id,
-              oldStatus: order.order_status,
-              newStatus: order.order_status,
-              reason: `PayOS webhook nhận tiền sau khi đơn hàng đã ${order.order_status}. Đánh dấu paymentStatus: REFUND_PENDING để đối soát hoàn tiền.`,
-            },
-          });
-        }
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId: payment.order_id,
+            oldStatus: order.order_status,
+            newStatus: order.order_status,
+            reason: `PayOS webhook nhận tiền sau khi đơn hàng đã ${order.order_status} (hoặc đổi phương thức thanh toán sang ${order.payment_method}). Đánh dấu paymentStatus: REFUND_PENDING để đối soát hoàn tiền.`,
+          },
+        });
       }
 
       // 3. Atomically create customer notification with unique idempotency key

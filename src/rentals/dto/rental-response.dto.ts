@@ -92,6 +92,7 @@ export class RentalResponseDto {
   returns: RentalReturnSummaryDto[];
   refunds: DepositRefundSummaryDto[];
   depositBreakdown: DepositBreakdownDto;
+  fulfillmentStoreId?: string | null;
   effectiveExpiresAt?: Date | null;
   paidThrough?: Date | null;
   monthlyRentPerButtonSnapshot?: number | null;
@@ -181,25 +182,25 @@ export class RentalResponseDto {
     };
 
     return {
-      rentalId: r.rentalId.toString(),
-      rentalCode: r.rentalCode,
-      customerId: r.customerId.toString(),
+      rentalId: r.rentalId ? r.rentalId.toString() : '',
+      rentalCode: r.rentalCode || '',
+      customerId: r.customerId ? r.customerId.toString() : '',
       customer: r.customer
         ? {
-            customerId: r.customer.customerId?.toString() || r.customerId.toString(),
+            customerId: r.customer.customerId?.toString() || (r.customerId ? r.customerId.toString() : ''),
             fullName: r.customer.user?.fullName || '',
             phone: r.customer.phone || r.customer.user?.phone || null,
             email: r.customer.user?.email || null,
           }
         : null,
-      packageId: r.packageId.toString(),
+      packageId: r.packageId ? r.packageId.toString() : '',
       package: r.package
         ? {
-            packageId: r.package.packageId.toString(),
-            packageName: r.package.packageName,
+            packageId: r.package.packageId ? r.package.packageId.toString() : '',
+            packageName: r.package.packageName || '',
             monthlyPrice: Number(r.package.monthlyPrice || 0),
             depositFee: Number(r.package.depositFee || 0),
-            buttonQuantity: r.package.buttonQuantity,
+            buttonQuantity: Number(r.package.buttonQuantity || 0),
           }
         : null,
       monthsRented: r.monthsRented,
@@ -237,6 +238,7 @@ export class RentalResponseDto {
       returns,
       refunds,
       depositBreakdown,
+      fulfillmentStoreId: r.fulfillmentStoreId ? r.fulfillmentStoreId.toString() : null,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     };

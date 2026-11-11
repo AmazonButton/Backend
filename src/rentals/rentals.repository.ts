@@ -1284,7 +1284,20 @@ export class RentalsRepository {
           include: {
             package: true,
             buttons: true,
-            customer: { include: { user: true } },
+            customer: {
+              include: {
+                user: {
+                  select: {
+                    userId: true,
+                    email: true,
+                    fullName: true,
+                    phone: true,
+                    avatarUrl: true,
+                    status: true,
+                  },
+                },
+              },
+            },
           },
         });
       });

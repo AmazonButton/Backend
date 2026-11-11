@@ -378,7 +378,7 @@ export class RentalsService {
     );
 
     await this.invalidateRentalCaches(updated?.customer?.userId, fulfillmentStoreId);
-    return updated;
+    return RentalResponseDto.fromEntity(updated);
   }
 
   async activateRental(rentalId: string | number | bigint, actor?: any) {

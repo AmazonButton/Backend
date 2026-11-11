@@ -326,8 +326,31 @@ export class BillingChargesService {
       throw new BadRequestException('Số tiền thanh toán phải từ 1.000 VND trở lên');
     }
 
-    // Unique integer orderCode for PayOS (integer <= 9007199254740991)
-    const orderCode = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+    // NV-05: Ensure deterministic and stable orderCode per billing charge to prevent concurrent requests
+    // from generating different orderCodes that overwrite providerTransactionCode and orphan callbacks.
+    let orderCode: number;
+    if (charge.providerTransactionCode) {
+      orderCode = Number(charge.providerTransactionCode);
+    } else {
+      orderCode = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+      const refreshed = await this.repository.assignStableOrderCode(charge.chargeId, orderCode.toString());
+      if (refreshed?.paymentLinkId && refreshed?.checkoutUrl) {
+        return {
+          paymentTransactionId: charge.chargeId.toString(),
+          chargeCode: refreshed.chargeCode,
+          orderCode: Number(refreshed.providerTransactionCode),
+          amount: Number(refreshed.totalAmount),
+          checkoutUrl: refreshed.checkoutUrl,
+          qrCode: refreshed.qrCode,
+          paymentLinkId: refreshed.paymentLinkId,
+          currency: 'VND',
+          status: 'PENDING',
+        };
+      }
+      if (refreshed?.providerTransactionCode) {
+        orderCode = Number(refreshed.providerTransactionCode);
+      }
+    }
     const description = (charge.chargeCode || `CHG${charge.chargeId}`).slice(0, 25);
     const returnUrl = customReturnUrl || process.env.PAYOS_RETURN_URL || 'http://localhost:3000/payment/success';
     const cancelUrl = customCancelUrl || process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payment/cancel';

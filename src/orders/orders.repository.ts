@@ -169,14 +169,34 @@ export class OrdersRepository {
         });
       }
 
-      // 3. Verify available inventory before making any changes
-      for (const bp of button.buttonProducts) {
-        const inv = await tx.inventory.findUnique({
-          where: { productId: bp.productId },
+      // 3. NV-10: Lock inventories in sorted order with FOR UPDATE to prevent race conditions and deadlocks
+      const sortedProductIds: bigint[] = Array.from(
+        new Set(button.buttonProducts.map((bp: any) => BigInt(bp.productId))),
+      );
+      sortedProductIds.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+      const inventoryMap = new Map<bigint, { quantityOnHand: number; reservedQuantity: number }>();
+      for (const pId of sortedProductIds) {
+        const lockedInv = await tx.$queryRawUnsafe<any[]>(
+          `SELECT quantity_on_hand, reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+          pId,
+        );
+        if (!lockedInv || lockedInv.length === 0) {
+          throw new BadRequestException(`Không tìm thấy tồn kho cho sản phẩm ${pId}`);
+        }
+        inventoryMap.set(pId, {
+          quantityOnHand: Number(lockedInv[0].quantity_on_hand),
+          reservedQuantity: Number(lockedInv[0].reserved_quantity),
         });
+      }
+
+      // Verify available inventory under acquired row locks
+      for (const bp of button.buttonProducts) {
+        const inv = inventoryMap.get(BigInt(bp.productId));
         if (!inv || (inv.quantityOnHand - inv.reservedQuantity) < bp.quantity) {
           throw new BadRequestException('Không đủ tồn kho khả dụng cho sản phẩm trong nút bấm');
         }
+        inv.reservedQuantity += bp.quantity;
       }
 
       // 4. Create order directly with correct subtotal, discount, and total
@@ -268,13 +288,15 @@ export class OrdersRepository {
           },
         });
 
-        // Giữ chỗ tồn kho (Two-Phase Commit)
-        await tx.inventory.updateMany({
-          where: { productId: bp.productId },
-          data: {
-            reservedQuantity: { increment: bp.quantity },
-          },
-        });
+        // Giữ chỗ tồn kho (Two-Phase Commit, row already locked in step 3)
+        await tx.$executeRawUnsafe(
+          `UPDATE inventory
+           SET reserved_quantity = reserved_quantity + $1,
+               updated_at = NOW()
+           WHERE product_id = $2`,
+          bp.quantity,
+          bp.productId,
+        );
       }
 
       await tx.orderStatusHistory.create({
@@ -662,39 +684,61 @@ export class OrdersRepository {
         return this.findOrderByIdTx(tx, orderId);
       }
 
+      // NV-06: Check timeout / expiry policy under row lock.
+      // If cancellation reason indicates timeout (e.g. from lifecycle worker or payment timeout),
+      // verify that the order is actually still eligible for timeout cancellation (PENDING, UNPAID, no button_id).
+      // If it was already PAID or transitioned past PENDING, skip cancellation idempotently.
+      const isTimeoutReason = Boolean(
+        reason && (
+          reason.includes('Hết hạn') ||
+          reason.toUpperCase().includes('TIMEOUT') ||
+          reason.toUpperCase().includes('EXPIRED')
+        )
+      );
+      if (isTimeoutReason) {
+        if (order.payment_status === 'PAID' || order.order_status !== 'PENDING' || order.button_id != null) {
+          return this.findOrderByIdTx(tx, orderId);
+        }
+      }
+
       if (['COMPLETED', 'DELIVERED', 'SHIPPING'].includes(order.order_status)) {
         throw new BadRequestException('Đơn hàng đã được xử lý giao hàng hoặc hoàn tất, không thể hủy');
       }
 
-      const items = await tx.orderItem.findMany({ where: { orderId } });
-      for (const item of items) {
-        await tx.$executeRawUnsafe(
-          `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
-          item.productId,
-        );
-        const invRows = await tx.$queryRawUnsafe<any[]>(
-          `SELECT reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
-          item.productId,
-        );
-        const inv = invRows[0];
-        const currentReserved = inv ? Number(inv.reserved_quantity) : 0;
-        const releaseQty = Math.min(currentReserved, Number(item.quantity));
-
-        if (currentReserved < Number(item.quantity)) {
-          console.warn(
-            `[OrdersRepository.cancelOrderAtomicTx] Data discrepancy for product ${item.productId}: reserved_quantity (${currentReserved}) < item quantity (${item.quantity}). Clamping release to ${releaseQty}.`,
-          );
-        }
-
-        if (releaseQty > 0 || currentReserved > 0) {
+      // NV-08: If order was marked DELIVERY_FAILED, its reserved inventory was ALREADY released
+      // in completeDeliveryFailedTx. Re-releasing here would decrement reserved_quantity belonging to other orders!
+      const alreadyReleased = order.order_status === 'DELIVERY_FAILED';
+      if (!alreadyReleased) {
+        const items = await tx.orderItem.findMany({ where: { orderId } });
+        for (const item of items) {
           await tx.$executeRawUnsafe(
-            `UPDATE inventory
-             SET reserved_quantity = GREATEST(0, reserved_quantity - $1),
-                 updated_at = NOW()
-             WHERE product_id = $2`,
-            releaseQty,
+            `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
             item.productId,
           );
+          const invRows = await tx.$queryRawUnsafe<any[]>(
+            `SELECT reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+            item.productId,
+          );
+          const inv = invRows[0];
+          const currentReserved = inv ? Number(inv.reserved_quantity) : 0;
+          const releaseQty = Math.min(currentReserved, Number(item.quantity));
+
+          if (currentReserved < Number(item.quantity)) {
+            console.warn(
+              `[OrdersRepository.cancelOrderAtomicTx] Data discrepancy for product ${item.productId}: reserved_quantity (${currentReserved}) < item quantity (${item.quantity}). Clamping release to ${releaseQty}.`,
+            );
+          }
+
+          if (releaseQty > 0 || currentReserved > 0) {
+            await tx.$executeRawUnsafe(
+              `UPDATE inventory
+               SET reserved_quantity = GREATEST(0, reserved_quantity - $1),
+                   updated_at = NOW()
+               WHERE product_id = $2`,
+              releaseQty,
+              item.productId,
+            );
+          }
         }
       }
 
@@ -871,6 +915,12 @@ export class OrdersRepository {
         throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải là URL Cloudinary HTTPS hợp lệ thuộc thư mục stores/${order.store_id}/pod/`);
       }
 
+      // NV-07: Acquire transaction-level advisory lock on canonical POD subpath to serialize concurrent claims
+      await tx.$executeRawUnsafe(
+        `SELECT pg_advisory_xact_lock(hashtext('pod_claim:' || $1))`,
+        canonicalSubpath,
+      );
+
       const duplicatePod = await tx.$queryRawUnsafe<any[]>(
         `SELECT order_id FROM orders 
          WHERE order_id != $1 
@@ -882,6 +932,14 @@ export class OrdersRepository {
       );
       if (duplicatePod && duplicatePod.length > 0) {
         throw new BadRequestException('Ảnh xác thực giao hàng (POD) này đã được sử dụng cho đơn hàng khác, không thể tái sử dụng');
+      }
+
+      // NV-09: Prevent changing payment method of orders already paid via online gateway (PAYOS/VIETQR) to COD
+      const isPaidGateway = order.payment_status === 'PAID' && ['PAYOS', 'VIETQR'].includes(order.payment_method);
+      if (isPaidGateway && dto.paymentMethod !== order.payment_method) {
+        throw new BadRequestException(
+          `Đơn hàng đã được thanh toán trực tuyến qua ${order.payment_method}, không thể thay đổi phương thức thanh toán sang ${dto.paymentMethod}`,
+        );
       }
 
       if (dto.paymentMethod === 'COD') {
@@ -910,7 +968,7 @@ export class OrdersRepository {
         data: {
           orderStatus: 'DELIVERED',
           paymentStatus: 'PAID',
-          paymentMethod: dto.paymentMethod,
+          paymentMethod: isPaidGateway ? order.payment_method : dto.paymentMethod,
           podImageUrl: canonicalPodUrl || dto.podImageUrl,
           deliveredAt: deliveredAtDate,
         },

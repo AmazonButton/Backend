@@ -571,6 +571,8 @@ export class BankVerificationService implements OnModuleInit {
         if (Number(obligation.attempt_count) > 0 || obligation.provider_payout_id) {
           let existingPayout: any = null;
           let concretePayoutId = obligation.provider_payout_id ? String(obligation.provider_payout_id).trim() : null;
+          let lookupFailed = false;
+
           if (this.payosPayoutService) {
             try {
               if (concretePayoutId) {
@@ -589,6 +591,7 @@ export class BankVerificationService implements OnModuleInit {
                 }
               }
             } catch (e: any) {
+              lookupFailed = true;
               this.logger.warn(`Lỗi tra cứu attempt trước cho obligation #${obligation.id}: ${e.message}`);
             }
           }
@@ -635,6 +638,18 @@ export class BankVerificationService implements OnModuleInit {
             failed++;
             continue;
           }
+
+          // NV-04: Prior attempt exists but payout lookup is inconclusive or failed.
+          // NEVER fall through to createRefund() to prevent duplicate payouts.
+          await this.repository.recordObligationReconciliationPending(
+            obligation.id,
+            leaseToken,
+            concretePayoutId,
+            lookupFailed ? 'PRIOR_ATTEMPT_LOOKUP_FAILED' : 'PRIOR_ATTEMPT_UNRESOLVED',
+            60000,
+          );
+          failed++;
+          continue;
         }
 
         const refundResult = await this.provider.createRefund({
@@ -683,11 +698,21 @@ export class BankVerificationService implements OnModuleInit {
         let detailData: any = null;
         let concretePayoutId = obligation.provider_payout_id ? String(obligation.provider_payout_id).trim() : null;
 
+        const scheduleBackoff = async (delayMs: number = 60000) => {
+          await this.prisma.$executeRaw`
+            UPDATE store_bank_refund_obligations
+            SET next_reconcile_at = NOW() + (${delayMs}::int * interval '1 millisecond'),
+                updated_at = NOW()
+            WHERE id = ${obligation.id}
+          `.catch(() => {});
+        };
+
         if (concretePayoutId) {
           try {
             const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
             if (detailRes?.data) detailData = detailRes.data;
           } catch (e: any) {
+            await scheduleBackoff(60000);
             continue;
           }
         } else if (obligation.refund_reference) {
@@ -702,14 +727,19 @@ export class BankVerificationService implements OnModuleInit {
               const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
               if (detailRes?.data) detailData = detailRes.data;
             } else {
+              await scheduleBackoff(60000);
               continue;
             }
           } catch (e: any) {
+            await scheduleBackoff(60000);
             continue;
           }
         }
 
-        if (!detailData) continue;
+        if (!detailData) {
+          await scheduleBackoff(60000);
+          continue;
+        }
 
         let plainAcc = '';
         if (obligation.target_account_encrypted) {
