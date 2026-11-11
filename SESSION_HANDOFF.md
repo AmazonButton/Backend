@@ -1,5 +1,25 @@
 # Project Handoff & Session Context
 
+### [2026-11-11] CI/CD Test Isolation, Snapshot Integrity & Verifier Mock Hardening (COMPLETED)
+- **Status**: COMPLETED & 100% VERIFIED (`tests/admin_payout_invariants.spec.ts` PASS, `tests/financial-payout-verification-hardening.spec.ts` 10/10 PASS, `tests/user-avatar-profile.spec.ts` 25/25 PASS, `npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0)
+- **Root Cause & Fix Details**:
+  1. **Suite 60 Snapshot Integrity & Hash Method Alignment (`src/admin/admin.service.ts`, `tests/admin_payout_invariants.spec.ts`)**:
+     - Enforced snapshot integrity check in `adminService.syncPayoutStatus` prior to payout evidence verification: returns `MISSING_SNAPSHOT` if both hash and ciphertext are absent, and `INCONSISTENT_SNAPSHOT` if ciphertext decryption fails or hash mismatches.
+     - Aligned hash algorithm usage with `CryptoVaultUtil`: `computeDeterministicAccountHash` (standard SHA-256) and `hashAccountNumber` (HMAC-SHA256).
+     - Aligned mock payout provider responses in `tests/admin_payout_invariants.spec.ts` to supply `approvalState: 'COMPLETED'` required by unified verifier.
+     - Verified: `npx tsx tests/admin_payout_invariants.spec.ts` outputs `✅ Task 3 Payout invariant tests PASSED!`.
+  2. **Suite 77 Unique Constraint Isolation (`tests/financial-payout-verification-hardening.spec.ts:427`)**:
+     - Fixed `prisma.storeBankAccount.create()` in TC-06 by explicitly passing `isDefault: false`, preventing violation of partial unique index `uq_default_bank_account_per_store`.
+     - Verified: `npx tsx tests/financial-payout-verification-hardening.spec.ts` outputs `10 PASSED, 0 FAILED`.
+  3. **Suite 10 Avatar & Profile Lifecycle (`tests/user-avatar-profile.spec.ts`)**:
+     - Verified: `npx tsx tests/user-avatar-profile.spec.ts` passes 25/25 tests with zero database residue.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Built successfully via Nest CLI).
+  - `npx tsx tests/admin_payout_invariants.spec.ts`: PASS.
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS.
+  - `npx tsx tests/user-avatar-profile.spec.ts`: 25/25 PASS.
+
 ### [2026-11-11] Code Review Remediation: Customer Penny Deposit, VietQR Sanitization & Payout Production Hardening (COMPLETED)
 - **Status**: COMPLETED & 100% VERIFIED (All 12/12 E2E Tests PASS, 40/40 Bank Verification PASS, 10/10 Hardening PASS, `npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0)
 - **Review Report Reference**: `update-required/11-11-2026-2/` and reviewer feedback items 1–7.

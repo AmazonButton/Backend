@@ -423,6 +423,7 @@ async function run() {
           accountNumberHash: CryptoVaultUtil.hashAccountNumber(rawNumber),
           accountName: 'TEST SENDER',
           verificationStatus: 'PENDING',
+          isDefault: false,
         },
       });
       created.bankAccountIds.push(verifyAcc.id);

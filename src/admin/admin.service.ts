@@ -572,11 +572,61 @@ export class AdminService {
       ? Math.round(Number(withdrawal.netAmount))
       : Math.round(Number(withdrawal.amount) - Number(withdrawal.fee || 0));
 
+    const expectedHash = withdrawal.bankAccountHash ? String(withdrawal.bankAccountHash).trim() : null;
+    const expectedEncrypted = withdrawal.bankAccountEncrypted ? String(withdrawal.bankAccountEncrypted).trim() : null;
+
+    if (!expectedHash && !expectedEncrypted) {
+      return formatResponse(
+        withdrawal,
+        'PENDING',
+        'MISSING_SNAPSHOT',
+        verifiedPayoutId,
+        'Yêu cầu rút tiền thiếu snapshot tài khoản ngân hàng (cả hash và bản mã hóa đều trống). Dừng đối soát để bảo vệ an toàn.',
+      );
+    }
+
+    let decryptedAccount = '';
+    if (expectedEncrypted) {
+      try {
+        decryptedAccount = CryptoVaultUtil.decryptAccountNumber(expectedEncrypted).replace(/\s+/g, '').toUpperCase();
+      } catch (err: any) {
+        return formatResponse(
+          withdrawal,
+          'PENDING',
+          'INCONSISTENT_SNAPSHOT',
+          verifiedPayoutId,
+          'Không thể giải mã snapshot tài khoản ngân hàng trong yêu cầu rút tiền. Dừng đối soát để bảo vệ an toàn.',
+        );
+      }
+    }
+
+    if (expectedHash && decryptedAccount) {
+      let decryptedSha256 = '';
+      let decryptedHmac = '';
+      try {
+        decryptedSha256 = CryptoVaultUtil.computeDeterministicAccountHash(decryptedAccount);
+      } catch {}
+      try {
+        decryptedHmac = CryptoVaultUtil.hashAccountNumber(decryptedAccount);
+      } catch {}
+
+      const isConsistent = expectedHash === decryptedSha256 || (decryptedHmac && expectedHash === decryptedHmac);
+      if (!isConsistent) {
+        return formatResponse(
+          withdrawal,
+          'PENDING',
+          'INCONSISTENT_SNAPSHOT',
+          verifiedPayoutId,
+          'Snapshot tài khoản ngân hàng không nhất quán giữa hash và dữ liệu mã hóa. Dừng đối soát để bảo vệ an toàn.',
+        );
+      }
+    }
+
     const criteria: PayosPayoutExpectedCriteria = {
       amount: netAmount,
       payoutReference: withdrawal.providerReferenceId || withdrawal.withdrawalCode,
       targetBankBin: withdrawal.bankBinSnapshot || withdrawal.bankCode,
-      targetAccountHash: withdrawal.bankAccountHash,
+      targetAccountHash: expectedHash || (decryptedAccount ? CryptoVaultUtil.hashAccountNumber(decryptedAccount) : undefined),
       expectedPayoutId: expectedPayoutId || undefined,
     };
 
