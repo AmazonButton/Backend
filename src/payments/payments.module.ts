@@ -9,6 +9,7 @@ import { PayOSPayoutService } from './payos-payout.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { StoreWalletModule } from '../store-wallet/store-wallet.module';
 import { BillingChargesModule } from '../billing-charges/billing-charges.module';
+import { CustomersModule } from '../customers/customers.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { BillingChargesModule } from '../billing-charges/billing-charges.module'
     NotificationsModule,
     forwardRef(() => StoreWalletModule),
     forwardRef(() => BillingChargesModule),
+    forwardRef(() => CustomersModule),
   ],
   controllers: [PaymentsController, PayoutWebhookController],
   providers: [PaymentsService, PaymentsRepository, PayOSPayoutService],

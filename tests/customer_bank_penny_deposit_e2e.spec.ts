@@ -9,6 +9,7 @@ async function run() {
   process.env.PAYOS_API_KEY = 'test_payos_api_key';
   process.env.PAYOS_CHECKSUM_KEY = 'test_checksum_key_for_penny_deposit_verification_suite_32chars';
   process.env.BANK_ACCOUNT_ENCRYPTION_KEY = '5dad52bd291a3e8f96f284cd7fcdb72d96d5f114c00e642dea09e9da19d0363d';
+  process.env.BANK_ACCOUNT_HASH_SALT = 'test_salt_for_unit_tests_32_characters_long';
   console.log('🧪 Testing Customer Bank Penny-Deposit Verification & Refund Lifecycle (End-to-End)...');
 
   // Test setup data
@@ -33,19 +34,23 @@ async function run() {
     isDefault: true,
   };
 
+  let bankAccounts: any[] = [mockBankAccount];
   // In-memory relational storage simulating Postgres 4 entities
   let sessions: any[] = [];
   let inboundTxs: any[] = [];
   let refundObligations: any[] = [];
   let payoutAttempts: any[] = [];
 
+  (global as any).fetch = async () => ({
+    ok: false,
+    status: 404,
+    json: async () => ({ code: '10', desc: 'Not found' }),
+  });
+
   const mockCustomersRepo: any = {
     getCustomerProfileByUserId: async (userId: bigint) => (userId === mockCustomer.userId ? mockCustomer : null),
     findCustomerBankAccountById: async (custId: bigint, accId: bigint) => {
-      if (custId === mockCustomer.customerId && accId === mockBankAccount.id) {
-        return mockBankAccount;
-      }
-      return null;
+      return bankAccounts.find((a) => a.id === accId) || null;
     },
     getOrCreatePennyVerificationSessionTx: async (params: any) => {
       const active = sessions.find(
@@ -129,7 +134,7 @@ async function run() {
       return {
         ...s,
         customer: mockCustomer,
-        bankAccount: mockBankAccount,
+        bankAccount: bankAccounts.find((a) => a.id === s.accountId) || mockBankAccount,
         inboundTransactions: inboundTxs.filter((tx) => tx.proofId === s.id),
       };
     },
@@ -250,7 +255,8 @@ async function run() {
         }
 
         if (shouldActivate) {
-          mockBankAccount.verificationStatus = 'VERIFIED';
+          const accToActivate = bankAccounts.find((a) => a.id === session.accountId) || mockBankAccount;
+          accToActivate.verificationStatus = 'VERIFIED';
           session.sessionStatus = 'CONSUMED';
           session.status = 'SUCCESS';
           session.usedAt = new Date();
@@ -665,7 +671,74 @@ async function run() {
   assert.strictEqual(Boolean(sessionRetried.orderCode), true);
   mockCustomersRepo.getOrCreatePennyVerificationSessionTx = originalGetOrCreate;
 
-  console.log('✅ ALL 12 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
+  // =========================================================================
+  // Test 13: PayOS Webhook Handshake Confirmation Ping
+  // =========================================================================
+  console.log('  13. Testing Webhook URL Confirmation Handshake...');
+  const handshakePayload = {
+    webhookUrl: 'https://backend-fae8.onrender.com/api/v1/webhooks/payos/customer-bank-verification',
+  };
+  const handshakeRes = await service.processPayosVerificationWebhook(handshakePayload as any);
+  assert.strictEqual(handshakeRes.code, '00');
+  assert.strictEqual(handshakeRes.data.webhookUrl, handshakePayload.webhookUrl);
+
+  // =========================================================================
+  // Test 14: Active Fallback Query in getVerificationStatus when PayOS is PAID
+  // =========================================================================
+  console.log('  14. Testing Fallback Query in getVerificationStatus when PayOS is PAID...');
+  const plainSync = '0339898989';
+  const syncAcc = {
+    id: BigInt(88),
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainSync),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainSync),
+    accountNumberMasked: '******8989',
+    bankName: 'MBBank',
+    accountName: 'TEST SYNC',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(syncAcc);
+  mockCustomersRepo.findCustomerBankAccountById = async () => syncAcc;
+  const syncSession = await service.initiateVerificationSession(user, syncAcc.id);
+
+  const originalFetch = global.fetch;
+  (global as any).fetch = async (url: any, opts: any) => {
+    if (typeof url === 'string' && url.includes('/payment-requests/' + syncSession.orderCode)) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: '00',
+          desc: 'success',
+          data: {
+            id: 'link_' + syncSession.orderCode,
+            orderCode: Number(syncSession.orderCode),
+            amount: 2000,
+            status: 'PAID',
+            transactions: [
+              {
+                accountNumber: syncAcc.accountNumberMasked,
+                amount: 2000,
+                reference: 'TX_FALLBACK_' + syncSession.orderCode,
+                transactionDateTime: new Date().toISOString(),
+                counterAccountBankId: '970422',
+                counterAccountNumber: plainSync,
+                counterAccountName: 'TEST SYNC',
+              },
+            ],
+          },
+        }),
+      };
+    }
+    return originalFetch(url, opts);
+  };
+
+  const statusAfterQuery = await service.getVerificationStatus(user, syncAcc.id);
+  assert.strictEqual(statusAfterQuery.session?.paymentStatus, 'PAID', 'Status must transition to PAID via fallback query');
+  assert.strictEqual(statusAfterQuery.session?.verificationStatus, 'VERIFIED', 'Session must be VERIFIED');
+  assert.strictEqual(statusAfterQuery.accountVerificationStatus, 'VERIFIED', 'Bank account must be marked VERIFIED');
+  global.fetch = originalFetch;
+
+  console.log('✅ ALL 14 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
 }
 
 run().catch((err) => {

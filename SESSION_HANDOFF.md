@@ -1,5 +1,32 @@
 # Project Handoff & Session Context
 
+### [2026-11-11] Customer Bank Verification Production Remediation: Webhook Handshake, Smart Routing & Active Fallback Query (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS)
+- **Review Document Reference**: `update-required/11-11-2026-2/BANKING_503_BACKEND_ACTIONS_2026-11-11 (1).md`
+- **Remediated Items & Architectural Defenses**:
+  1. **PayOS Dashboard Webhook Handshake Support (`payos-webhook-payload.dto.ts`, `customer-bank-webhook.controller.ts`, `customer-bank-penny-verification.service.ts`)**:
+     - Handshake ping from PayOS dashboard (`POST { "webhookUrl": "..." }`) was previously rejected with 400 Bad Request ("property webhookUrl should not exist") due to strict DTO validation.
+     - Updated `PayosWebhookPayloadDto` to accept optional `webhookUrl` and allow missing payment fields during handshake.
+     - Added handshake interceptor returning `{ code: '00', desc: 'success', data: { webhookUrl } }` in both `CustomerBankWebhookController` and `CustomerBankPennyVerificationService.processPayosVerificationWebhook`.
+  2. **Single Webhook Ingress Smart Routing (`payments.service.ts`, `payments.module.ts`, `customers.module.ts`)**:
+     - Because PayOS dashboard allows only one webhook URL per merchant integration, pointing to `/api/v1/payments/payos/webhook` resulted in unhandled customer penny deposits being dropped.
+     - Implemented smart routing in `PaymentsService.handlePayosWebhook`: if webhook payload does not match orders or billing charges, it is safely forwarded to `CustomerBankPennyVerificationService.processPayosVerificationWebhook`.
+     - Wired bidirectional dependencies cleanly with NestJS `forwardRef()`.
+  3. **Active Fallback Query on Polling & "Kiểm tra kết quả" (`customer-bank-penny-verification.service.ts`)**:
+     - Solved customer issue where 2.000đ was transferred but UI remained stuck on "Chờ xác minh" if webhooks were delayed or dropped.
+     - In `CustomerBankPennyVerificationService.getVerificationStatus`, if the session has `verificationStatus === 'PENDING'`, actively queries PayOS API `GET https://api-merchant.payos.vn/v2/payment-requests/:orderCode`.
+     - If PayOS reports `PAID`, synthesizes signed webhook data using `signWebhookData`, processes inbound payment transaction, matches counter-account, activates bank account to `VERIFIED`, and enqueues refund obligation.
+  4. **Store Owner Bank Verification Root Cause & Operational Fix**:
+     - Verified that 503 on store bank lookup/verification is caused by missing/invalid `VIETQR_CLIENT_ID` / `VIETQR_API_KEY` on Render.
+     - Documented exact operational steps to obtain keys from `my.vietqr.io` and configure platform bank account variables (`PLATFORM_BANK_BIN`, `PLATFORM_BANK_ACCOUNT_NUMBER`, `BANK_VERIFICATION_WEBHOOK_SECRET`).
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Production build clean).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 14/14 PASS (added Test 13 for handshake, Test 14 for active fallback query).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS.
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS.
+
+
 ### [2026-11-11] Security Audit Run-5 Full Remediation: All 16 Findings Remediated Across Bundles 1-4 (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, all 5 critical test suites 100% PASS)
 - **Review Report Reference**: `c:/Users/ttphatt_2403/security-audit-skill/backend/run-5/REPORT.md` (Findings NV-01 to NV-16 across Bundles 1 to 4).

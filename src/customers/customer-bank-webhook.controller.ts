@@ -29,6 +29,19 @@ export class CustomerBankWebhookController {
     @Body() body: PayosWebhookPayloadDto,
     @Req() req?: any,
   ) {
+    // 1. PayOS Webhook URL confirmation handshake (sent when updating webhook URL on PayOS dashboard)
+    if ((body?.webhookUrl || (body as any)?.webhook_url) && !body?.data && !body?.signature) {
+      const confirmedUrl = body.webhookUrl || (body as any).webhook_url;
+      this.logger.log(`[PayOS Customer Bank Webhook] Acknowledged confirmation ping for webhookUrl: ${confirmedUrl}`);
+      return {
+        code: '00',
+        desc: 'success',
+        data: {
+          webhookUrl: confirmedUrl,
+        },
+      };
+    }
+
     this.logger.log(`Nhận webhook PayOS xác minh tài khoản: orderCode=${body?.data?.orderCode}`);
     return this.pennyVerificationService.processPayosVerificationWebhook(body, req?.rawBody);
   }

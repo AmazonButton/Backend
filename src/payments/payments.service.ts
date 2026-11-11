@@ -14,6 +14,7 @@ import { CreatePaymentLinkDto, PayosWebhookDto } from './dto/payment.dto';
 import { signPaymentRequest, verifyWebhookSignature } from './payos.helper';
 import { Optional, Inject, forwardRef } from '@nestjs/common';
 import { BillingChargesService } from '../billing-charges/billing-charges.service';
+import { CustomerBankPennyVerificationService } from '../customers/customer-bank-penny-verification.service';
 import { storeCashEnabled } from '../store-cash/store-cash-settlement.transaction';
 
 import { NotificationsService } from '../notifications/notifications.service';
@@ -28,6 +29,7 @@ export class PaymentsService {
     @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
     @Optional() @Inject(forwardRef(() => BillingChargesService)) private readonly billingChargesService?: BillingChargesService,
+    @Optional() @Inject(forwardRef(() => CustomerBankPennyVerificationService)) private readonly customerBankPennyService?: CustomerBankPennyVerificationService,
   ) {}
 
   async createPayosPaymentLink(dto: CreatePaymentLinkDto, userOrUserId?: any) {
@@ -418,6 +420,19 @@ export class PaymentsService {
                 : settlement.alreadySettled ? 'Already processed' : 'Billing charge settled successfully',
             };
           }
+        }
+      }
+
+      // Check if this webhook belongs to Customer Bank Penny Verification
+      if (this.customerBankPennyService) {
+        try {
+          const pennyResult = await this.customerBankPennyService.processPayosVerificationWebhook(body as any);
+          if (pennyResult && (pennyResult.success || pennyResult.code === '00')) {
+            this.logger.log(`[PayOS Webhook] Routed to CustomerBankPennyVerificationService for orderCode: ${orderCodeStr}`);
+            return pennyResult;
+          }
+        } catch (pennyErr: any) {
+          this.logger.warn(`[PayOS Webhook] CustomerBankPennyVerificationService routing failed: ${pennyErr.message}`);
         }
       }
 

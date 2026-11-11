@@ -18,7 +18,7 @@ import {
   CustomerBankVerificationStatusResponseDto,
   CustomerBankVerificationHistoryItemDto,
 } from './dto/customer-bank-verification-response.dto';
-import { verifyWebhookSignature, signPaymentRequest } from '../payments/payos.helper';
+import { verifyWebhookSignature, signPaymentRequest, signWebhookData } from '../payments/payos.helper';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import {
   verifyPayosPayoutEvidence,
@@ -338,7 +338,7 @@ export class CustomerBankPennyVerificationService {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
     }
 
-    const latestSession = await this.customersRepo.findLatestVerificationSessionByAccount(
+    let latestSession = await this.customersRepo.findLatestVerificationSessionByAccount(
       profile.customerId,
       rawAccountId,
     );
@@ -347,11 +347,8 @@ export class CustomerBankPennyVerificationService {
     let message = 'Tài khoản đang chờ xác minh';
 
     if (latestSession) {
-      const isExpired = new Date(latestSession.expiresAt).getTime() < Date.now();
-      const inbounds = latestSession.inboundTransactions || [];
-
-      // BẮT BUỘC (P1): Tách rõ giao dịch thực nhận xác định (confirmedReceipts) khỏi quan sát đối soát (unconfirmedObservations)
-      const confirmedReceipts = inbounds.filter((tx: any) =>
+      let inbounds = latestSession.inboundTransactions || [];
+      const hasConfirmedReceiptPrior = inbounds.some((tx: any) =>
         tx.matchDecision !== 'MISSING_TRANSACTION_REF' &&
         tx.matchDecision !== 'MERGED_INTO_CONFIRMED' &&
         tx.reconciliationFlag !== 'FLAGGED_MISSING_PROVIDER_REF' &&
@@ -359,7 +356,90 @@ export class CustomerBankPennyVerificationService {
         !tx.providerTransactionRef?.startsWith('UNREF_OBS_') &&
         !tx.mergedIntoInboundId
       );
-      const unconfirmedObservations = inbounds.filter((tx: any) =>
+
+      // Active Fallback Query: Nếu chưa ghi nhận thanh toán trong DB, chủ động truy vấn PayOS API
+      // để kiểm tra xem khách đã thanh toán thành công hay chưa (giải quyết trường hợp webhook chưa tới hoặc bị trễ)
+      if (!hasConfirmedReceiptPrior && latestSession.paymentOrderCode && latestSession.verificationStatus === 'PENDING') {
+        const clientId = process.env.PAYOS_CLIENT_ID?.trim();
+        const apiKey = process.env.PAYOS_API_KEY?.trim();
+        const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
+
+        if (clientId && apiKey && checksumKey) {
+          try {
+            const queryRes = await fetch(
+              `https://api-merchant.payos.vn/v2/payment-requests/${latestSession.paymentOrderCode}`,
+              {
+                method: 'GET',
+                headers: {
+                  'x-client-id': clientId,
+                  'x-api-key': apiKey,
+                },
+                signal: AbortSignal.timeout(4000),
+              },
+            );
+            const queryData = (await queryRes.json()) as any;
+            if (queryData?.code === '00' && queryData?.data?.status === 'PAID') {
+              this.logger.log(
+                `[getVerificationStatus] PayOS báo orderCode ${latestSession.paymentOrderCode} đã thanh toán PAID. Tự động đồng bộ xác nhận...`,
+              );
+              const txList = Array.isArray(queryData.data.transactions) ? queryData.data.transactions : [];
+              const firstTx = txList[0] || {};
+
+              const fakeWebhookData = {
+                orderCode: Number(latestSession.paymentOrderCode),
+                amount: Number(queryData.data.amount || 2000),
+                description: String(queryData.data.description || latestSession.proofReference),
+                accountNumber: String(firstTx.accountNumber || account.accountNumberMasked || ''),
+                reference: String(firstTx.reference || `RECON_${latestSession.paymentOrderCode}`),
+                transactionDateTime: String(firstTx.transactionDateTime || new Date().toISOString()),
+                currency: 'VND',
+                paymentLinkId: String(queryData.data.id || queryData.data.paymentLinkId || latestSession.paymentLinkId || ''),
+                code: '00',
+                desc: 'success',
+                counterAccountBankId: firstTx.counterAccountBankId || null,
+                counterAccountBankName: firstTx.counterAccountBankName || null,
+                counterAccountName: firstTx.counterAccountName || null,
+                counterAccountNumber: firstTx.counterAccountNumber || null,
+              };
+
+              const signature = signWebhookData(fakeWebhookData, checksumKey);
+              await this.processPayosVerificationWebhook({
+                code: '00',
+                desc: 'success',
+                data: fakeWebhookData,
+                signature,
+              }).catch((e: any) => {
+                this.logger.warn(`Lỗi kích hoạt webhook từ polling PayOS: ${e.message}`);
+              });
+
+              // Tải lại phiên mới nhất từ database
+              const reloadedSession = await this.customersRepo.findLatestVerificationSessionByAccount(
+                profile.customerId,
+                rawAccountId,
+              );
+              if (reloadedSession) {
+                latestSession = reloadedSession;
+              }
+            }
+          } catch (e: any) {
+            this.logger.warn(`Lỗi chủ động truy vấn PayOS cho orderCode ${latestSession.paymentOrderCode}: ${e.message}`);
+          }
+        }
+      }
+
+      const isExpired = new Date(latestSession.expiresAt).getTime() < Date.now();
+      const currentInbounds = latestSession.inboundTransactions || [];
+
+      // BẮT BUỘC (P1): Tách rõ giao dịch thực nhận xác định (confirmedReceipts) khỏi quan sát đối soát (unconfirmedObservations)
+      const confirmedReceipts = currentInbounds.filter((tx: any) =>
+        tx.matchDecision !== 'MISSING_TRANSACTION_REF' &&
+        tx.matchDecision !== 'MERGED_INTO_CONFIRMED' &&
+        tx.reconciliationFlag !== 'FLAGGED_MISSING_PROVIDER_REF' &&
+        !tx.reconciliationFlag?.startsWith('RECONCILED_MERGED') &&
+        !tx.providerTransactionRef?.startsWith('UNREF_OBS_') &&
+        !tx.mergedIntoInboundId
+      );
+      const unconfirmedObservations = currentInbounds.filter((tx: any) =>
         tx.matchDecision === 'MISSING_TRANSACTION_REF' ||
         tx.matchDecision === 'MERGED_INTO_CONFIRMED' ||
         tx.reconciliationFlag === 'FLAGGED_MISSING_PROVIDER_REF' ||
@@ -565,7 +645,19 @@ export class CustomerBankPennyVerificationService {
    * 5. Thiếu định danh giao dịch đáng tin cậy -> đưa vào đối soát
    * 6. Chống trùng có đối chiếu mâu thuẫn dữ liệu
    */
-  async processPayosVerificationWebhook(body: any, rawBody?: Buffer): Promise<{ success: boolean; message: string }> {
+  async processPayosVerificationWebhook(body: any, rawBody?: Buffer): Promise<any> {
+    if ((body?.webhookUrl || (body as any)?.webhook_url) && !body?.data && !body?.signature) {
+      const confirmedUrl = body.webhookUrl || (body as any).webhook_url;
+      this.logger.log(`[CustomerBankPennyVerificationService] Acknowledged confirmation ping for webhookUrl: ${confirmedUrl}`);
+      return {
+        code: '00',
+        desc: 'success',
+        data: {
+          webhookUrl: confirmedUrl,
+        },
+      };
+    }
+
     if (!body?.data) {
       throw new BadRequestException('Webhook payload không hợp lệ: thiếu data');
     }

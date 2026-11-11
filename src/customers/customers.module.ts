@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { DashboardCacheModule } from '../common/cache/dashboard-cache.module';
 import { PaymentsModule } from '../payments/payments.module';
@@ -10,7 +10,7 @@ import { CustomerBankPennyVerificationService } from './customer-bank-penny-veri
 import { CustomerBankRefundWorker } from './customer-bank-refund.worker';
 
 @Module({
-  imports: [PrismaModule, DashboardCacheModule, PaymentsModule],
+  imports: [PrismaModule, DashboardCacheModule, forwardRef(() => PaymentsModule)],
   controllers: [CustomersController, CustomerBankWebhookController],
   providers: [
     CustomersService,
