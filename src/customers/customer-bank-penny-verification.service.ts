@@ -9,31 +9,43 @@ import {
   InternalServerErrorException,
   Optional,
   Inject,
-} from '@nestjs/common';
-import * as crypto from 'crypto';
-import { CustomersRepository } from './customers.repository';
-import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
+} from "@nestjs/common";
+import * as crypto from "crypto";
+import { CustomersRepository } from "./customers.repository";
+import { CryptoVaultUtil } from "../common/utils/crypto-vault.util";
 import {
   CustomerBankVerificationSessionResponseDto,
   CustomerBankVerificationStatusResponseDto,
   CustomerBankVerificationHistoryItemDto,
-} from './dto/customer-bank-verification-response.dto';
-import { verifyWebhookSignature, signPaymentRequest, signWebhookData, parsePayosDateTime } from '../payments/payos.helper';
-import { PayOSPayoutService } from '../payments/payos-payout.service';
+} from "./dto/customer-bank-verification-response.dto";
+import {
+  verifyWebhookSignature,
+  signPaymentRequest,
+  signWebhookData,
+  parsePayosDateTime,
+} from "../payments/payos.helper";
+import { PayOSPayoutService } from "../payments/payos-payout.service";
 import {
   verifyPayosPayoutEvidence,
   verifyPayosPayoutRejectionEvidence,
-} from '../payments/payos-payout-verifier';
+} from "../payments/payos-payout-verifier";
 
 @Injectable()
 export class CustomerBankPennyVerificationService {
-  private readonly logger = new Logger(CustomerBankPennyVerificationService.name);
-  private readonly inFlightLinkCreations = new Map<string, Promise<{ paymentLinkId: string; checkoutUrl: string }>>();
+  private readonly logger = new Logger(
+    CustomerBankPennyVerificationService.name,
+  );
+  private readonly inFlightLinkCreations = new Map<
+    string,
+    Promise<{ paymentLinkId: string; checkoutUrl: string }>
+  >();
 
   constructor(
     private readonly customersRepo: CustomersRepository,
-    @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
-  ) { }
+    @Optional()
+    @Inject(PayOSPayoutService)
+    private readonly payosPayoutService?: PayOSPayoutService,
+  ) {}
 
   /**
    * Tra cứu payment link đã tạo từ PayOS theo orderCode (Phục hồi sau timeout / retry)
@@ -46,30 +58,38 @@ export class CustomerBankPennyVerificationService {
     try {
       const queryController = new AbortController();
       const queryTimeout = setTimeout(() => queryController.abort(), 6000);
-      const queryRes = await fetch(`https://api-merchant.payos.vn/v2/payment-requests/${orderCode}`, {
-        method: 'GET',
-        headers: {
-          'x-client-id': clientId,
-          'x-api-key': apiKey,
+      const queryRes = await fetch(
+        `https://api-merchant.payos.vn/v2/payment-requests/${orderCode}`,
+        {
+          method: "GET",
+          headers: {
+            "x-client-id": clientId,
+            "x-api-key": apiKey,
+          },
+          signal: queryController.signal,
         },
-        signal: queryController.signal,
-      });
+      );
       clearTimeout(queryTimeout);
       const queryData: any = await queryRes.json();
       if (
-        queryData?.code === '00' &&
+        queryData?.code === "00" &&
         queryData?.data &&
         Number(queryData.data.orderCode) === orderCode &&
         Number(queryData.data.amount) === 2000 &&
         queryData.data.checkoutUrl
       ) {
         return {
-          paymentLinkId: queryData.data.id || queryData.data.paymentLinkId || String(orderCode),
+          paymentLinkId:
+            queryData.data.id ||
+            queryData.data.paymentLinkId ||
+            String(orderCode),
           checkoutUrl: queryData.data.checkoutUrl,
         };
       }
     } catch (e: any) {
-      this.logger.warn(`Không thể tra cứu payment link cũ cho orderCode ${orderCode}: ${e.message}`);
+      this.logger.warn(
+        `Không thể tra cứu payment link cũ cho orderCode ${orderCode}: ${e.message}`,
+      );
     }
     return null;
   }
@@ -85,26 +105,31 @@ export class CustomerBankPennyVerificationService {
     const userId = BigInt(user.userId || user.id);
     const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
     if (!profile) {
-      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+      throw new NotFoundException("Hồ sơ khách hàng không tồn tại");
     }
 
     const rawAccountId = BigInt(accountId);
-    let account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
+    let account = await this.customersRepo.findCustomerBankAccountById(
+      profile.customerId,
+      rawAccountId,
+    );
     if (!account) {
-      throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
+      throw new NotFoundException(
+        "Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn",
+      );
     }
 
-    if (account.verificationStatus === 'VERIFIED') {
+    if (account.verificationStatus === "VERIFIED") {
       return {
         accountId: account.id.toString(),
-        sessionReference: '',
-        orderCode: '0',
-        checkoutUrl: '',
+        sessionReference: "",
+        orderCode: "0",
+        checkoutUrl: "",
         amount: 0,
-        sessionStatus: 'CONSUMED',
-        verificationStatus: 'VERIFIED',
+        sessionStatus: "CONSUMED",
+        verificationStatus: "VERIFIED",
         expiresAt: new Date().toISOString(),
-        message: 'Tài khoản ngân hàng đã được xác minh chính chủ trước đó',
+        message: "Tài khoản ngân hàng đã được xác minh chính chủ trước đó",
       };
     }
 
@@ -116,28 +141,32 @@ export class CustomerBankPennyVerificationService {
 
     // Tự động kích hoạt khi có đủ bộ 3 khóa PayOS, trừ khi bị tắt rõ ràng bằng cờ 'false'
     const isLivePaymentEnabled =
-      process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED === 'true' ||
-      (process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED !== 'false' && hasAllPayosKeys);
+      process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED === "true" ||
+      (process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED !== "false" &&
+        hasAllPayosKeys);
 
     if (!isLivePaymentEnabled) {
-      if (process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED !== 'false' && !hasAllPayosKeys) {
+      if (
+        process.env.CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED !== "false" &&
+        !hasAllPayosKeys
+      ) {
         // Chi tiết thiếu cấu hình chỉ ghi log phía server, không lộ tên biến ra client
         this.logger.error(
-          '[initiateVerification] Thiếu cấu hình PayOS (PAYOS_CLIENT_ID / PAYOS_API_KEY / PAYOS_CHECKSUM_KEY) nên không thể tạo link thu tiền xác minh.',
+          "[initiateVerification] Thiếu cấu hình PayOS (PAYOS_CLIENT_ID / PAYOS_API_KEY / PAYOS_CHECKSUM_KEY) nên không thể tạo link thu tiền xác minh.",
         );
       }
       throw new ServiceUnavailableException(
-        'Tính năng thu tiền xác minh tài khoản đang tạm thời tắt (chờ cấu hình kết nối đối tác). Vui lòng thử lại sau.',
+        "Tính năng thu tiền xác minh tài khoản đang tạm thời tắt (chờ cấu hình kết nối đối tác). Vui lòng thử lại sau.",
       );
     }
 
     if (!hasAllPayosKeys) {
       // Cờ đã bật tường minh nhưng thiếu khóa: báo lỗi cấu hình riêng, không nói "đang tắt"
       this.logger.error(
-        '[initiateVerification] CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED=true nhưng thiếu bộ khóa PayOS (PAYOS_CLIENT_ID / PAYOS_API_KEY / PAYOS_CHECKSUM_KEY).',
+        "[initiateVerification] CUSTOMER_BANK_VERIFICATION_PAYMENT_ENABLED=true nhưng thiếu bộ khóa PayOS (PAYOS_CLIENT_ID / PAYOS_API_KEY / PAYOS_CHECKSUM_KEY).",
       );
       throw new ServiceUnavailableException(
-        'Dịch vụ thu tiền xác minh chưa sẵn sàng do thiếu cấu hình kết nối đối tác. Vui lòng thử lại sau.',
+        "Dịch vụ thu tiền xác minh chưa sẵn sàng do thiếu cấu hình kết nối đối tác. Vui lòng thử lại sau.",
       );
     }
 
@@ -148,28 +177,40 @@ export class CustomerBankPennyVerificationService {
     let attempt = 0;
     while (true) {
       try {
-        sessionResult = await this.customersRepo.getOrCreatePennyVerificationSessionTx({
-          customerId: profile.customerId,
-          accountId: account.id,
-          bankBin: account.bankBin,
-          accountNumberHash: (account as any).accountNumberHash,
-          expiresAt,
-          // Đảm bảo độ chính xác mili-giây và random 3 chữ số để chống trùng lặp giữa các request cùng giây
-          generateOrderCode: () => BigInt(Date.now()) * 1000n + BigInt(crypto.randomInt(100, 1000)),
-          generateProofReference: () => `CUST_VRF_${account.bankBin}_${CryptoVaultUtil.generateReferenceCode('')}`.slice(0, 64),
-        });
+        sessionResult =
+          await this.customersRepo.getOrCreatePennyVerificationSessionTx({
+            customerId: profile.customerId,
+            accountId: account.id,
+            bankBin: account.bankBin,
+            accountNumberHash: (account as any).accountNumberHash,
+            expiresAt,
+            // Đảm bảo độ chính xác mili-giây và random 3 chữ số để chống trùng lặp giữa các request cùng giây
+            generateOrderCode: () =>
+              BigInt(Date.now()) * 1000n + BigInt(crypto.randomInt(100, 1000)),
+            generateProofReference: () =>
+              `CUST_VRF_${account.bankBin}_${CryptoVaultUtil.generateReferenceCode("")}`.slice(
+                0,
+                64,
+              ),
+          });
         break;
       } catch (err: any) {
         attempt++;
-        const isTargetMatch =
-          Array.isArray(err?.meta?.target)
-            ? err.meta.target.includes('payment_order_code')
-            : (typeof err?.meta?.target === 'string' && (err.meta.target.includes('payment_order_code') || err.meta.target.includes('uq_cust_bank_payment_order_code')));
+        const isTargetMatch = Array.isArray(err?.meta?.target)
+          ? err.meta.target.includes("payment_order_code")
+          : typeof err?.meta?.target === "string" &&
+            (err.meta.target.includes("payment_order_code") ||
+              err.meta.target.includes("uq_cust_bank_payment_order_code"));
         const isOrderCodeUniqueViolation =
-          err?.code === 'P2002' && (isTargetMatch || err?.message?.includes('uq_cust_bank_payment_order_code') || err?.message?.includes('payment_order_code'));
+          err?.code === "P2002" &&
+          (isTargetMatch ||
+            err?.message?.includes("uq_cust_bank_payment_order_code") ||
+            err?.message?.includes("payment_order_code"));
 
         if (attempt < 3 && isOrderCodeUniqueViolation) {
-          this.logger.warn(`[initiateVerification] Va chạm paymentOrderCode, đang thử lại lần ${attempt}...`);
+          this.logger.warn(
+            `[initiateVerification] Va chạm paymentOrderCode, đang thử lại lần ${attempt}...`,
+          );
           continue;
         }
         throw err;
@@ -188,7 +229,7 @@ export class CustomerBankPennyVerificationService {
         sessionStatus: session.sessionStatus,
         verificationStatus: session.verificationStatus,
         expiresAt: session.expiresAt.toISOString(),
-        message: 'Tái sử dụng phiên xác minh đang hoạt động trong hạn 15 phút',
+        message: "Tái sử dụng phiên xác minh đang hoạt động trong hạn 15 phút",
       };
     }
 
@@ -201,16 +242,25 @@ export class CustomerBankPennyVerificationService {
       linkPromise = (async () => {
         // Nếu là phiên tái sử dụng, kiểm tra tra cứu payment request đã tồn tại trước
         if (isReused) {
-          const recovered = await this.recoverExistingPaymentLink(orderCodeNum, clientId, apiKey);
+          const recovered = await this.recoverExistingPaymentLink(
+            orderCodeNum,
+            clientId,
+            apiKey,
+          );
           if (recovered) {
             return recovered;
           }
         }
 
         const description = `VRF ${account.bankBin}`.slice(0, 25);
-        const frontendOrigin = process.env.FRONTEND_URL || 'https://buttontdash.vercel.app';
-        const returnUrl = process.env.PAYOS_CUSTOMER_BANK_RETURN_URL || `${frontendOrigin}/customer/banking?status=success`;
-        const cancelUrl = process.env.PAYOS_CUSTOMER_BANK_CANCEL_URL || `${frontendOrigin}/customer/banking?status=cancelled`;
+        const frontendOrigin =
+          process.env.FRONTEND_URL || "https://buttontdash.vercel.app";
+        const returnUrl =
+          process.env.PAYOS_CUSTOMER_BANK_RETURN_URL ||
+          `${frontendOrigin}/customer/banking?status=success`;
+        const cancelUrl =
+          process.env.PAYOS_CUSTOMER_BANK_CANCEL_URL ||
+          `${frontendOrigin}/customer/banking?status=cancelled`;
 
         const signature = signPaymentRequest(
           {
@@ -227,26 +277,29 @@ export class CustomerBankPennyVerificationService {
         const timeoutHandle = setTimeout(() => abortController.abort(), 8000);
 
         try {
-          const response = await fetch('https://api-merchant.payos.vn/v2/payment-requests', {
-            method: 'POST',
-            headers: {
-              'x-client-id': clientId,
-              'x-api-key': apiKey,
-              'Content-Type': 'application/json',
+          const response = await fetch(
+            "https://api-merchant.payos.vn/v2/payment-requests",
+            {
+              method: "POST",
+              headers: {
+                "x-client-id": clientId,
+                "x-api-key": apiKey,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                orderCode: orderCodeNum,
+                amount: 2000,
+                description,
+                cancelUrl,
+                returnUrl,
+                signature,
+              }),
+              signal: abortController.signal,
             },
-            body: JSON.stringify({
-              orderCode: orderCodeNum,
-              amount: 2000,
-              description,
-              cancelUrl,
-              returnUrl,
-              signature,
-            }),
-            signal: abortController.signal,
-          });
+          );
 
           const resData: any = await response.json();
-          if (resData?.code === '00' && resData?.data?.checkoutUrl) {
+          if (resData?.code === "00" && resData?.data?.checkoutUrl) {
             return {
               paymentLinkId: resData.data.paymentLinkId,
               checkoutUrl: resData.data.checkoutUrl,
@@ -254,24 +307,38 @@ export class CustomerBankPennyVerificationService {
           }
 
           // Nếu PayOS báo đơn hàng đã tồn tại hoặc lỗi khác, phục hồi bằng cách tra cứu qua GET /v2/payment-requests/:orderCode
-          const recovered = await this.recoverExistingPaymentLink(orderCodeNum, clientId, apiKey);
+          const recovered = await this.recoverExistingPaymentLink(
+            orderCodeNum,
+            clientId,
+            apiKey,
+          );
           if (recovered) {
             return recovered;
           }
 
-          this.logger.error(`PayOS trả về lỗi khi tạo link xác minh: ${JSON.stringify(resData)}`);
+          this.logger.error(
+            `PayOS trả về lỗi khi tạo link xác minh: ${JSON.stringify(resData)}`,
+          );
           throw new BadGatewayException(
-            `Không thể tạo liên kết thanh toán từ cổng PayOS: ${resData?.desc || 'Lỗi nhà cung cấp'}`,
+            `Không thể tạo liên kết thanh toán từ cổng PayOS: ${resData?.desc || "Lỗi nhà cung cấp"}`,
           );
         } catch (err: any) {
           if (err instanceof BadGatewayException) throw err;
           // Client timeout hoặc lỗi mạng -> tra cứu lại trước khi throw
-          const recovered = await this.recoverExistingPaymentLink(orderCodeNum, clientId, apiKey);
+          const recovered = await this.recoverExistingPaymentLink(
+            orderCodeNum,
+            clientId,
+            apiKey,
+          );
           if (recovered) {
             return recovered;
           }
-          this.logger.error(`Lỗi kết nối PayOS khi tạo payment link: ${err.message}`);
-          throw new BadGatewayException(`Lỗi kết nối tới cổng thanh toán PayOS: ${err.message}`);
+          this.logger.error(
+            `Lỗi kết nối PayOS khi tạo payment link: ${err.message}`,
+          );
+          throw new BadGatewayException(
+            `Lỗi kết nối tới cổng thanh toán PayOS: ${err.message}`,
+          );
         } finally {
           clearTimeout(timeoutHandle);
         }
@@ -296,7 +363,8 @@ export class CustomerBankPennyVerificationService {
     );
     if (!casSuccess) {
       // Instance thua CAS hoặc link đã được gắn trước đó bởi instance khác: lấy lại link đã lưu trong DB
-      const currentSession = await this.customersRepo.findVerificationSessionById(session.id);
+      const currentSession =
+        await this.customersRepo.findVerificationSessionById(session.id);
       if (currentSession?.paymentCheckoutUrl) {
         finalCheckoutUrl = currentSession.paymentCheckoutUrl;
       }
@@ -313,8 +381,8 @@ export class CustomerBankPennyVerificationService {
       verificationStatus: session.verificationStatus,
       expiresAt: session.expiresAt.toISOString(),
       message: isReused
-        ? 'Tái sử dụng phiên xác minh đang hoạt động trong hạn 15 phút'
-        : 'Khởi tạo phiên xác minh tài khoản 2.000đ thành công. Vui lòng thanh toán trong vòng 15 phút.',
+        ? "Tái sử dụng phiên xác minh đang hoạt động trong hạn 15 phút"
+        : "Khởi tạo phiên xác minh tài khoản 2.000đ thành công. Vui lòng thanh toán trong vòng 15 phút.",
     };
   }
 
@@ -329,37 +397,48 @@ export class CustomerBankPennyVerificationService {
     const userId = BigInt(user.userId || user.id);
     const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
     if (!profile) {
-      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+      throw new NotFoundException("Hồ sơ khách hàng không tồn tại");
     }
 
     const rawAccountId = BigInt(accountId);
-    let account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
-    if (!account) {
-      throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
-    }
-
-    let latestSession = await this.customersRepo.findLatestVerificationSessionByAccount(
+    let account = await this.customersRepo.findCustomerBankAccountById(
       profile.customerId,
       rawAccountId,
     );
+    if (!account) {
+      throw new NotFoundException(
+        "Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn",
+      );
+    }
+
+    let latestSession =
+      await this.customersRepo.findLatestVerificationSessionByAccount(
+        profile.customerId,
+        rawAccountId,
+      );
 
     let sessionData: any = null;
-    let message = 'Tài khoản đang chờ xác minh';
+    let message = "Tài khoản đang chờ xác minh";
 
     if (latestSession) {
       let inbounds = latestSession.inboundTransactions || [];
-      const hasConfirmedReceiptPrior = inbounds.some((tx: any) =>
-        tx.matchDecision !== 'MISSING_TRANSACTION_REF' &&
-        tx.matchDecision !== 'MERGED_INTO_CONFIRMED' &&
-        tx.reconciliationFlag !== 'FLAGGED_MISSING_PROVIDER_REF' &&
-        !tx.reconciliationFlag?.startsWith('RECONCILED_MERGED') &&
-        !tx.providerTransactionRef?.startsWith('UNREF_OBS_') &&
-        !tx.mergedIntoInboundId
+      const hasConfirmedReceiptPrior = inbounds.some(
+        (tx: any) =>
+          tx.matchDecision !== "MISSING_TRANSACTION_REF" &&
+          tx.matchDecision !== "MERGED_INTO_CONFIRMED" &&
+          tx.reconciliationFlag !== "FLAGGED_MISSING_PROVIDER_REF" &&
+          !tx.reconciliationFlag?.startsWith("RECONCILED_MERGED") &&
+          !tx.providerTransactionRef?.startsWith("UNREF_OBS_") &&
+          !tx.mergedIntoInboundId,
       );
 
       // Active Fallback Query: Nếu chưa ghi nhận thanh toán trong DB, chủ động truy vấn PayOS API
       // để kiểm tra xem khách đã thanh toán thành công hay chưa (giải quyết trường hợp webhook chưa tới hoặc bị trễ)
-      if (!hasConfirmedReceiptPrior && latestSession.paymentOrderCode && latestSession.verificationStatus === 'PENDING') {
+      if (
+        !hasConfirmedReceiptPrior &&
+        latestSession.paymentOrderCode &&
+        latestSession.verificationStatus === "PENDING"
+      ) {
         const clientId = process.env.PAYOS_CLIENT_ID?.trim();
         const apiKey = process.env.PAYOS_API_KEY?.trim();
         const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
@@ -370,10 +449,10 @@ export class CustomerBankPennyVerificationService {
             const queryRes = await fetch(
               `https://api-merchant.payos.vn/v2/payment-requests/${latestSession.paymentOrderCode}`,
               {
-                method: 'GET',
+                method: "GET",
                 headers: {
-                  'x-client-id': clientId,
-                  'x-api-key': apiKey,
+                  "x-client-id": clientId,
+                  "x-api-key": apiKey,
                 },
                 signal: AbortSignal.timeout(8000),
               },
@@ -385,10 +464,10 @@ export class CustomerBankPennyVerificationService {
               const linkRes = await fetch(
                 `https://api-merchant.payos.vn/v2/payment-requests/${latestSession.paymentLinkId}`,
                 {
-                  method: 'GET',
+                  method: "GET",
                   headers: {
-                    'x-client-id': clientId,
-                    'x-api-key': apiKey,
+                    "x-client-id": clientId,
+                    "x-api-key": apiKey,
                   },
                   signal: AbortSignal.timeout(8000),
                 },
@@ -398,24 +477,43 @@ export class CustomerBankPennyVerificationService {
               }
             }
 
-            if (queryData?.code === '00' && queryData?.data?.status === 'PAID') {
+            if (
+              queryData?.code === "00" &&
+              queryData?.data?.status === "PAID"
+            ) {
               this.logger.log(
                 `[getVerificationStatus] PayOS báo orderCode ${latestSession.paymentOrderCode} đã thanh toán PAID. Tự động đồng bộ xác nhận...`,
               );
-              const txList = Array.isArray(queryData.data.transactions) ? queryData.data.transactions : [];
+              const txList = Array.isArray(queryData.data.transactions)
+                ? queryData.data.transactions
+                : [];
               const firstTx = txList[0] || {};
 
               const fakeWebhookData = {
                 orderCode: Number(latestSession.paymentOrderCode),
                 amount: Number(queryData.data.amount || 2000),
-                description: String(queryData.data.description || latestSession.proofReference),
-                accountNumber: String(firstTx.accountNumber || account.accountNumberMasked || ''),
-                reference: String(firstTx.reference || `RECON_${latestSession.paymentOrderCode}`),
-                transactionDateTime: String(firstTx.transactionDateTime || new Date().toISOString()),
-                currency: 'VND',
-                paymentLinkId: String(queryData.data.id || queryData.data.paymentLinkId || latestSession.paymentLinkId || ''),
-                code: '00',
-                desc: 'success',
+                description: String(
+                  queryData.data.description || latestSession.proofReference,
+                ),
+                accountNumber: String(
+                  firstTx.accountNumber || account.accountNumberMasked || "",
+                ),
+                reference: String(
+                  firstTx.reference ||
+                    `RECON_${latestSession.paymentOrderCode}`,
+                ),
+                transactionDateTime: String(
+                  firstTx.transactionDateTime || new Date().toISOString(),
+                ),
+                currency: "VND",
+                paymentLinkId: String(
+                  queryData.data.id ||
+                    queryData.data.paymentLinkId ||
+                    latestSession.paymentLinkId ||
+                    "",
+                ),
+                code: "00",
+                desc: "success",
                 counterAccountBankId: firstTx.counterAccountBankId || null,
                 counterAccountBankName: firstTx.counterAccountBankName || null,
                 counterAccountName: firstTx.counterAccountName || null,
@@ -425,29 +523,33 @@ export class CustomerBankPennyVerificationService {
               const signature = signWebhookData(fakeWebhookData, checksumKey);
               try {
                 await this.processPayosVerificationWebhook({
-                  code: '00',
-                  desc: 'success',
+                  code: "00",
+                  desc: "success",
                   data: fakeWebhookData,
                   signature,
                 });
               } catch (webhookErr: any) {
-                this.logger.error(`[getVerificationStatus] Lỗi đồng bộ webhook từ polling PayOS: ${webhookErr.message}`);
+                this.logger.error(
+                  `[getVerificationStatus] Lỗi đồng bộ webhook từ polling PayOS: ${webhookErr.message}`,
+                );
               }
 
               // Tải lại phiên mới nhất từ database
-              const reloadedSession = await this.customersRepo.findLatestVerificationSessionByAccount(
-                profile.customerId,
-                rawAccountId,
-              );
+              const reloadedSession =
+                await this.customersRepo.findLatestVerificationSessionByAccount(
+                  profile.customerId,
+                  rawAccountId,
+                );
               if (reloadedSession) {
                 latestSession = reloadedSession;
               }
 
               // Tải lại bản ghi tài khoản mới nhất sau khi webhook kích hoạt
-              const reloadedAccount = await this.customersRepo.findCustomerBankAccountById(
-                profile.customerId,
-                rawAccountId,
-              );
+              const reloadedAccount =
+                await this.customersRepo.findCustomerBankAccountById(
+                  profile.customerId,
+                  rawAccountId,
+                );
               if (reloadedAccount) {
                 account = reloadedAccount;
               }
@@ -457,72 +559,100 @@ export class CustomerBankPennyVerificationService {
               );
             }
           } catch (e: any) {
-            this.logger.warn(`Lỗi chủ động truy vấn PayOS cho orderCode ${latestSession.paymentOrderCode}: ${e.message}`);
+            this.logger.warn(
+              `Lỗi chủ động truy vấn PayOS cho orderCode ${latestSession.paymentOrderCode}: ${e.message}`,
+            );
           }
         }
       }
 
-      const isExpired = new Date(latestSession.expiresAt).getTime() < Date.now();
+      const isExpired =
+        new Date(latestSession.expiresAt).getTime() < Date.now();
       const currentInbounds = latestSession.inboundTransactions || [];
 
       // BẮT BUỘC (P1): Tách rõ giao dịch thực nhận xác định (confirmedReceipts) khỏi quan sát đối soát (unconfirmedObservations)
-      const confirmedReceipts = currentInbounds.filter((tx: any) =>
-        tx.matchDecision !== 'MISSING_TRANSACTION_REF' &&
-        tx.matchDecision !== 'MERGED_INTO_CONFIRMED' &&
-        tx.reconciliationFlag !== 'FLAGGED_MISSING_PROVIDER_REF' &&
-        !tx.reconciliationFlag?.startsWith('RECONCILED_MERGED') &&
-        !tx.providerTransactionRef?.startsWith('UNREF_OBS_') &&
-        !tx.mergedIntoInboundId
+      const confirmedReceipts = currentInbounds.filter(
+        (tx: any) =>
+          tx.matchDecision !== "MISSING_TRANSACTION_REF" &&
+          tx.matchDecision !== "MERGED_INTO_CONFIRMED" &&
+          tx.reconciliationFlag !== "FLAGGED_MISSING_PROVIDER_REF" &&
+          !tx.reconciliationFlag?.startsWith("RECONCILED_MERGED") &&
+          !tx.providerTransactionRef?.startsWith("UNREF_OBS_") &&
+          !tx.mergedIntoInboundId,
       );
-      const unconfirmedObservations = currentInbounds.filter((tx: any) =>
-        tx.matchDecision === 'MISSING_TRANSACTION_REF' ||
-        tx.matchDecision === 'MERGED_INTO_CONFIRMED' ||
-        tx.reconciliationFlag === 'FLAGGED_MISSING_PROVIDER_REF' ||
-        tx.reconciliationFlag?.startsWith('RECONCILED_MERGED') ||
-        tx.providerTransactionRef?.startsWith('UNREF_OBS_') ||
-        Boolean(tx.mergedIntoInboundId)
+      const unconfirmedObservations = currentInbounds.filter(
+        (tx: any) =>
+          tx.matchDecision === "MISSING_TRANSACTION_REF" ||
+          tx.matchDecision === "MERGED_INTO_CONFIRMED" ||
+          tx.reconciliationFlag === "FLAGGED_MISSING_PROVIDER_REF" ||
+          tx.reconciliationFlag?.startsWith("RECONCILED_MERGED") ||
+          tx.providerTransactionRef?.startsWith("UNREF_OBS_") ||
+          Boolean(tx.mergedIntoInboundId),
       );
 
       const hasConfirmedReceipt = confirmedReceipts.length > 0;
       const paymentStatus = hasConfirmedReceipt
-        ? 'PAID'
+        ? "PAID"
         : unconfirmedObservations.length > 0
-          ? 'PENDING_RECONCILIATION'
+          ? "PENDING_RECONCILIATION"
           : isExpired
-            ? 'EXPIRED'
-            : 'PENDING';
+            ? "EXPIRED"
+            : "PENDING";
 
       // Tính toán nghĩa vụ hoàn tiền tổng hợp: CHỈ tính trên các giao dịch thực nhận đã xác nhận (confirmedReceipts)
-      let refundStatus = 'NONE';
+      let refundStatus = "NONE";
       let totalObligationAmount = 0;
       let totalRefundedAmount = 0;
       let totalPendingRefundAmount = 0;
 
       if (hasConfirmedReceipt) {
-        const obligations = confirmedReceipts.map((tx: any) => tx.refundObligation).filter(Boolean);
+        const obligations = confirmedReceipts
+          .map((tx: any) => tx.refundObligation)
+          .filter(Boolean);
 
-        totalObligationAmount = obligations.reduce((sum: number, o: any) => sum + Number(o.refundAmount || 0), 0);
+        totalObligationAmount = obligations.reduce(
+          (sum: number, o: any) => sum + Number(o.refundAmount || 0),
+          0,
+        );
         totalRefundedAmount = obligations
-          .filter((o: any) => o.refundStatus === 'REFUNDED')
-          .reduce((sum: number, o: any) => sum + Number(o.refundAmount || 0), 0);
+          .filter((o: any) => o.refundStatus === "REFUNDED")
+          .reduce(
+            (sum: number, o: any) => sum + Number(o.refundAmount || 0),
+            0,
+          );
         totalPendingRefundAmount = obligations
-          .filter((o: any) => o.refundStatus !== 'REFUNDED')
-          .reduce((sum: number, o: any) => sum + Number(o.refundAmount || 0), 0);
+          .filter((o: any) => o.refundStatus !== "REFUNDED")
+          .reduce(
+            (sum: number, o: any) => sum + Number(o.refundAmount || 0),
+            0,
+          );
 
         if (obligations.length === 0) {
-          refundStatus = 'NONE';
-        } else if (obligations.every((o: any) => o.refundStatus === 'REFUNDED')) {
-          refundStatus = 'REFUNDED';
-        } else if (obligations.some((o: any) => o.refundStatus === 'REFUNDED')) {
-          refundStatus = 'PARTIALLY_REFUNDED';
-        } else if (obligations.every((o: any) => o.refundStatus === 'REFUND_FAILED')) {
-          refundStatus = 'REFUND_FAILED';
-        } else if (obligations.some((o: any) => o.refundStatus === 'PROCESSING_REFUND')) {
-          refundStatus = 'PROCESSING_REFUND';
-        } else if (obligations.some((o: any) => o.refundStatus === 'PENDING_MANUAL_REFUND')) {
-          refundStatus = 'PENDING_MANUAL_REFUND';
+          refundStatus = "NONE";
+        } else if (
+          obligations.every((o: any) => o.refundStatus === "REFUNDED")
+        ) {
+          refundStatus = "REFUNDED";
+        } else if (
+          obligations.some((o: any) => o.refundStatus === "REFUNDED")
+        ) {
+          refundStatus = "PARTIALLY_REFUNDED";
+        } else if (
+          obligations.every((o: any) => o.refundStatus === "REFUND_FAILED")
+        ) {
+          refundStatus = "REFUND_FAILED";
+        } else if (
+          obligations.some((o: any) => o.refundStatus === "PROCESSING_REFUND")
+        ) {
+          refundStatus = "PROCESSING_REFUND";
+        } else if (
+          obligations.some(
+            (o: any) => o.refundStatus === "PENDING_MANUAL_REFUND",
+          )
+        ) {
+          refundStatus = "PENDING_MANUAL_REFUND";
         } else {
-          refundStatus = 'PENDING_REFUND';
+          refundStatus = "PENDING_REFUND";
         }
       }
 
@@ -544,26 +674,32 @@ export class CustomerBankPennyVerificationService {
       };
 
       // Chuẩn hóa thông điệp người dùng
-      if (latestSession.verificationStatus === 'PENDING_SOURCE_EVIDENCE') {
+      if (latestSession.verificationStatus === "PENDING_SOURCE_EVIDENCE") {
         message =
-          'Đã nhận 2.000đ nhưng chưa đủ thông tin tài khoản nguồn để xác nhận và hoàn tự động. Khoản tiền đang chờ xử lý hoàn; vui lòng liên hệ hỗ trợ.';
-      } else if (latestSession.verificationStatus === 'VERIFIED') {
-        message = 'Tài khoản đã được xác thực chính chủ thành công. Khoản tiền 2.000đ đang trong quy trình hoàn trả.';
-      } else if (latestSession.verificationStatus === 'FAILED_MISMATCH') {
-        message = 'Giao dịch chuyển khoản không khớp với tài khoản đã đăng ký. Khoản tiền sẽ được hoàn trả về tài khoản đã chuyển.';
+          "Đã nhận 2.000đ nhưng chưa đủ thông tin tài khoản nguồn để xác nhận và hoàn tự động. Khoản tiền đang chờ xử lý hoàn; vui lòng liên hệ hỗ trợ.";
+      } else if (latestSession.verificationStatus === "VERIFIED") {
+        message =
+          "Tài khoản đã được xác thực chính chủ thành công. Khoản tiền 2.000đ đang trong quy trình hoàn trả.";
+      } else if (latestSession.verificationStatus === "FAILED_MISMATCH") {
+        message =
+          "Giao dịch chuyển khoản không khớp với tài khoản đã đăng ký. Khoản tiền sẽ được hoàn trả về tài khoản đã chuyển.";
       } else if (unconfirmedObservations.length > 0 && !hasConfirmedReceipt) {
-        message = 'Có thông báo chuyển khoản đang chờ đối soát mã tham chiếu ngân hàng (chưa xác nhận tiền thực nhận).';
+        message =
+          "Có thông báo chuyển khoản đang chờ đối soát mã tham chiếu ngân hàng (chưa xác nhận tiền thực nhận).";
       } else if (isExpired && !hasConfirmedReceipt) {
-        message = 'Phiên xác minh đã hết hạn. Vui lòng tạo yêu cầu xác minh mới.';
-      } else if (paymentStatus === 'PAID') {
-        message = 'Đã nhận khoản tiền chuyển khoản. Hệ thống đang tiến hành xử lý hoàn trả.';
+        message =
+          "Phiên xác minh đã hết hạn. Vui lòng tạo yêu cầu xác minh mới.";
+      } else if (paymentStatus === "PAID") {
+        message =
+          "Đã nhận khoản tiền chuyển khoản. Hệ thống đang tiến hành xử lý hoàn trả.";
       } else {
-        message = 'Đang chờ khách hàng chuyển khoản 2.000đ để xác thực tài khoản.';
+        message =
+          "Đang chờ khách hàng chuyển khoản 2.000đ để xác thực tài khoản.";
       }
     }
 
-    if (account.verificationStatus === 'VERIFIED') {
-      message = 'Tài khoản ngân hàng đã được xác minh chính chủ thành công.';
+    if (account.verificationStatus === "VERIFIED") {
+      message = "Tài khoản ngân hàng đã được xác minh chính chủ thành công.";
     }
 
     return {
@@ -585,82 +721,127 @@ export class CustomerBankPennyVerificationService {
   async getVerificationHistory(
     user: any,
     query: { page?: number; pageSize?: number } = {},
-  ): Promise<{ items: CustomerBankVerificationHistoryItemDto[]; total: number; page: number; pageSize: number }> {
+  ): Promise<{
+    items: CustomerBankVerificationHistoryItemDto[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
     const userId = BigInt(user.userId || user.id);
     const profile = await this.customersRepo.getCustomerProfileByUserId(userId);
     if (!profile) {
-      throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
+      throw new NotFoundException("Hồ sơ khách hàng không tồn tại");
     }
 
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
     const skip = (page - 1) * pageSize;
 
-    const { items, total } = await this.customersRepo.findVerificationSessionsHistory(profile.customerId, skip, pageSize);
-
-    const mappedItems: CustomerBankVerificationHistoryItemDto[] = items.map((s: any) => {
-      const inbounds = s.inboundTransactions || [];
-      // BẮT BUỘC (P1): CHỈ tính trên các giao dịch thực nhận đã xác nhận (confirmedReceipts)
-      const confirmedReceipts = inbounds.filter((tx: any) =>
-        tx.matchDecision !== 'MISSING_TRANSACTION_REF' &&
-        tx.matchDecision !== 'MERGED_INTO_CONFIRMED' &&
-        tx.reconciliationFlag !== 'FLAGGED_MISSING_PROVIDER_REF' &&
-        !tx.reconciliationFlag?.startsWith('RECONCILED_MERGED') &&
-        !tx.providerTransactionRef?.startsWith('UNREF_OBS_') &&
-        !tx.mergedIntoInboundId
+    const { items, total } =
+      await this.customersRepo.findVerificationSessionsHistory(
+        profile.customerId,
+        skip,
+        pageSize,
       );
-      const paymentReceived = confirmedReceipts.length > 0;
-      const receivedAmount = confirmedReceipts.reduce((sum: number, tx: any) => sum + Number(tx.amount || 0), 0);
 
-      const obligations = confirmedReceipts.map((tx: any) => tx.refundObligation).filter(Boolean);
-      const totalObligationAmount = obligations.reduce((sum: number, o: any) => sum + Number(o.refundAmount || 0), 0);
-      const totalRefundedAmount = obligations
-        .filter((o: any) => o.refundStatus === 'REFUNDED')
-        .reduce((sum: number, o: any) => sum + Number(o.refundAmount || 0), 0);
-      const totalPendingRefundAmount = obligations
-        .filter((o: any) => o.refundStatus !== 'REFUNDED')
-        .reduce((sum: number, o: any) => sum + Number(o.refundAmount || 0), 0);
+    const mappedItems: CustomerBankVerificationHistoryItemDto[] = items.map(
+      (s: any) => {
+        const inbounds = s.inboundTransactions || [];
+        // BẮT BUỘC (P1): CHỈ tính trên các giao dịch thực nhận đã xác nhận (confirmedReceipts)
+        const confirmedReceipts = inbounds.filter(
+          (tx: any) =>
+            tx.matchDecision !== "MISSING_TRANSACTION_REF" &&
+            tx.matchDecision !== "MERGED_INTO_CONFIRMED" &&
+            tx.reconciliationFlag !== "FLAGGED_MISSING_PROVIDER_REF" &&
+            !tx.reconciliationFlag?.startsWith("RECONCILED_MERGED") &&
+            !tx.providerTransactionRef?.startsWith("UNREF_OBS_") &&
+            !tx.mergedIntoInboundId,
+        );
+        const paymentReceived = confirmedReceipts.length > 0;
+        const receivedAmount = confirmedReceipts.reduce(
+          (sum: number, tx: any) => sum + Number(tx.amount || 0),
+          0,
+        );
 
-      let refundStatus = 'NONE';
-      if (obligations.length === 0) {
-        refundStatus = 'NONE';
-      } else if (obligations.every((o: any) => o.refundStatus === 'REFUNDED')) {
-        refundStatus = 'REFUNDED';
-      } else if (obligations.some((o: any) => o.refundStatus === 'REFUNDED')) {
-        refundStatus = 'PARTIALLY_REFUNDED';
-      } else if (obligations.every((o: any) => o.refundStatus === 'REFUND_FAILED')) {
-        refundStatus = 'REFUND_FAILED';
-      } else if (obligations.some((o: any) => o.refundStatus === 'PROCESSING_REFUND')) {
-        refundStatus = 'PROCESSING_REFUND';
-      } else if (obligations.some((o: any) => o.refundStatus === 'PENDING_MANUAL_REFUND')) {
-        refundStatus = 'PENDING_MANUAL_REFUND';
-      } else {
-        refundStatus = 'PENDING_REFUND';
-      }
+        const obligations = confirmedReceipts
+          .map((tx: any) => tx.refundObligation)
+          .filter(Boolean);
+        const totalObligationAmount = obligations.reduce(
+          (sum: number, o: any) => sum + Number(o.refundAmount || 0),
+          0,
+        );
+        const totalRefundedAmount = obligations
+          .filter((o: any) => o.refundStatus === "REFUNDED")
+          .reduce(
+            (sum: number, o: any) => sum + Number(o.refundAmount || 0),
+            0,
+          );
+        const totalPendingRefundAmount = obligations
+          .filter((o: any) => o.refundStatus !== "REFUNDED")
+          .reduce(
+            (sum: number, o: any) => sum + Number(o.refundAmount || 0),
+            0,
+          );
 
-      return {
-        sessionId: s.id.toString(),
-        sessionReference: s.proofReference,
-        orderCode: s.paymentOrderCode ? s.paymentOrderCode.toString() : null,
-        accountId: s.accountId ? s.accountId.toString() : null,
-        bankBin: s.bankAccount?.bankBin || s.bankBin || null,
-        bankName: s.bankAccount?.bankName || null,
-        accountNumberMasked: s.bankAccount?.accountNumberMasked || null,
-        accountName: s.bankAccount?.accountName || null,
-        checkoutUrl: s.paymentCheckoutUrl || null,
-        sessionStatus: (s.sessionStatus === 'ACTIVE' && new Date(s.expiresAt).getTime() < Date.now()) ? 'EXPIRED' : s.sessionStatus,
-        verificationStatus: s.verificationStatus,
-        paymentReceived,
-        receivedAmount: paymentReceived ? receivedAmount : null,
-        refundStatus,
-        totalObligationAmount: paymentReceived ? totalObligationAmount : 0,
-        totalRefundedAmount: paymentReceived ? totalRefundedAmount : 0,
-        totalPendingRefundAmount: paymentReceived ? totalPendingRefundAmount : 0,
-        expiresAt: s.expiresAt.toISOString(),
-        verifiedAt: s.verifiedAt ? s.verifiedAt.toISOString() : null,
-        createdAt: s.createdAt.toISOString(),
-      };
-    });
+        let refundStatus = "NONE";
+        if (obligations.length === 0) {
+          refundStatus = "NONE";
+        } else if (
+          obligations.every((o: any) => o.refundStatus === "REFUNDED")
+        ) {
+          refundStatus = "REFUNDED";
+        } else if (
+          obligations.some((o: any) => o.refundStatus === "REFUNDED")
+        ) {
+          refundStatus = "PARTIALLY_REFUNDED";
+        } else if (
+          obligations.every((o: any) => o.refundStatus === "REFUND_FAILED")
+        ) {
+          refundStatus = "REFUND_FAILED";
+        } else if (
+          obligations.some((o: any) => o.refundStatus === "PROCESSING_REFUND")
+        ) {
+          refundStatus = "PROCESSING_REFUND";
+        } else if (
+          obligations.some(
+            (o: any) => o.refundStatus === "PENDING_MANUAL_REFUND",
+          )
+        ) {
+          refundStatus = "PENDING_MANUAL_REFUND";
+        } else {
+          refundStatus = "PENDING_REFUND";
+        }
+
+        return {
+          sessionId: s.id.toString(),
+          sessionReference: s.proofReference,
+          orderCode: s.paymentOrderCode ? s.paymentOrderCode.toString() : null,
+          accountId: s.accountId ? s.accountId.toString() : null,
+          bankBin: s.bankAccount?.bankBin || s.bankBin || null,
+          bankName: s.bankAccount?.bankName || null,
+          accountNumberMasked: s.bankAccount?.accountNumberMasked || null,
+          accountName: s.bankAccount?.accountName || null,
+          checkoutUrl: s.paymentCheckoutUrl || null,
+          sessionStatus:
+            s.sessionStatus === "ACTIVE" &&
+            new Date(s.expiresAt).getTime() < Date.now()
+              ? "EXPIRED"
+              : s.sessionStatus,
+          verificationStatus: s.verificationStatus,
+          paymentReceived,
+          receivedAmount: paymentReceived ? receivedAmount : null,
+          refundStatus,
+          totalObligationAmount: paymentReceived ? totalObligationAmount : 0,
+          totalRefundedAmount: paymentReceived ? totalRefundedAmount : 0,
+          totalPendingRefundAmount: paymentReceived
+            ? totalPendingRefundAmount
+            : 0,
+          expiresAt: s.expiresAt.toISOString(),
+          verifiedAt: s.verifiedAt ? s.verifiedAt.toISOString() : null,
+          createdAt: s.createdAt.toISOString(),
+        };
+      },
+    );
 
     return {
       items: mappedItems,
@@ -680,13 +861,22 @@ export class CustomerBankPennyVerificationService {
    * 5. Thiếu định danh giao dịch đáng tin cậy -> đưa vào đối soát
    * 6. Chống trùng có đối chiếu mâu thuẫn dữ liệu
    */
-  async processPayosVerificationWebhook(body: any, rawBody?: Buffer): Promise<any> {
-    if ((body?.webhookUrl || (body as any)?.webhook_url) && !body?.data && !body?.signature) {
+  async processPayosVerificationWebhook(
+    body: any,
+    rawBody?: Buffer,
+  ): Promise<any> {
+    if (
+      (body?.webhookUrl || (body as any)?.webhook_url) &&
+      !body?.data &&
+      !body?.signature
+    ) {
       const confirmedUrl = body.webhookUrl || (body as any).webhook_url;
-      this.logger.log(`[CustomerBankPennyVerificationService] Acknowledged confirmation ping for webhookUrl: ${confirmedUrl}`);
+      this.logger.log(
+        `[CustomerBankPennyVerificationService] Acknowledged confirmation ping for webhookUrl: ${confirmedUrl}`,
+      );
       return {
-        code: '00',
-        desc: 'success',
+        code: "00",
+        desc: "success",
         data: {
           webhookUrl: confirmedUrl,
         },
@@ -694,29 +884,43 @@ export class CustomerBankPennyVerificationService {
     }
 
     if (!body?.data) {
-      throw new BadRequestException('Webhook payload không hợp lệ: thiếu data');
+      throw new BadRequestException("Webhook payload không hợp lệ: thiếu data");
     }
 
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
     if (!checksumKey) {
-      this.logger.error('PAYOS_CHECKSUM_KEY chưa được cấu hình');
-      throw new BadRequestException('Chưa cấu hình khóa xác thực webhook PayOS');
+      this.logger.error("PAYOS_CHECKSUM_KEY chưa được cấu hình");
+      throw new BadRequestException(
+        "Chưa cấu hình khóa xác thực webhook PayOS",
+      );
     }
 
     // 1. Kiểm tra chữ ký HMAC (Zero Mock Signature Bypass)
-    let isValid = verifyWebhookSignature(body.data, body.signature, checksumKey);
+    let isValid = verifyWebhookSignature(
+      body.data,
+      body.signature,
+      checksumKey,
+    );
     if (!isValid && rawBody) {
       try {
-        const rawHmac = crypto.createHmac('sha256', checksumKey).update(rawBody).digest('hex');
-        isValid = crypto.timingSafeEqual(Buffer.from(rawHmac, 'hex'), Buffer.from(body.signature, 'hex'));
+        const rawHmac = crypto
+          .createHmac("sha256", checksumKey)
+          .update(rawBody)
+          .digest("hex");
+        isValid = crypto.timingSafeEqual(
+          Buffer.from(rawHmac, "hex"),
+          Buffer.from(body.signature, "hex"),
+        );
       } catch {
         isValid = false;
       }
     }
 
     if (!isValid) {
-      this.logger.warn(`Chữ ký webhook PayOS không hợp lệ cho orderCode: ${body.data?.orderCode}`);
-      throw new BadRequestException('Chữ ký webhook không hợp lệ');
+      this.logger.warn(
+        `Chữ ký webhook PayOS không hợp lệ cho orderCode: ${body.data?.orderCode}`,
+      );
+      throw new BadRequestException("Chữ ký webhook không hợp lệ");
     }
 
     const data = body.data;
@@ -725,8 +929,9 @@ export class CustomerBankPennyVerificationService {
     // - Envelope bên ngoài (body.code) bắt buộc phải là '00'
     // - Dữ liệu đã xác thực chữ ký (data.code): nếu hiện diện, bắt buộc phải là '00'
     // - Tuyệt đối không cho phép body.desc === 'success' hoặc envelope bên ngoài thay thế/ghi đè khi data.code báo lỗi
-    const isEnvelopeSuccess = body.code === '00';
-    const isDataSuccess = data.code === undefined || data.code === null || data.code === '00';
+    const isEnvelopeSuccess = body.code === "00";
+    const isDataSuccess =
+      data.code === undefined || data.code === null || data.code === "00";
 
     if (!isEnvelopeSuccess || !isDataSuccess) {
       this.logger.warn(
@@ -734,7 +939,8 @@ export class CustomerBankPennyVerificationService {
       );
       return {
         success: true,
-        message: 'Giao dịch không ở trạng thái thành công; bỏ qua ghi sổ nhận tiền',
+        message:
+          "Giao dịch không ở trạng thái thành công; bỏ qua ghi sổ nhận tiền",
       };
     }
 
@@ -742,27 +948,29 @@ export class CustomerBankPennyVerificationService {
     if (
       data.amount === undefined ||
       data.amount === null ||
-      typeof data.amount !== 'number' ||
+      typeof data.amount !== "number" ||
       !Number.isFinite(data.amount) ||
       !Number.isInteger(data.amount) ||
       data.amount <= 0
     ) {
-      throw new BadRequestException('Số tiền thanh toán (amount) không hợp lệ hoặc thiếu trong webhook payload');
+      throw new BadRequestException(
+        "Số tiền thanh toán (amount) không hợp lệ hoặc thiếu trong webhook payload",
+      );
     }
     const amount = data.amount;
 
     // 4. Kiểm tra mã tham chiếu giao dịch provider đáng tin cậy
     // CHÚ Ý BẮT BUỘC (P0): Merchant/channel lấy từ cấu hình server gắn với bộ khóa xác thực.
     // Tuyệt đối KHÔNG dùng trường envelope chưa xác thực (body.channel) làm phạm vi chống trùng.
-    const provider = 'PAYOS';
-    const channel = 'PAYOS_WEBHOOK';
+    const provider = "PAYOS";
+    const channel = "PAYOS_WEBHOOK";
     const rawRef = data.reference ? String(data.reference).trim() : null;
     const isMissingRef = !rawRef;
     let providerTransactionRef = rawRef;
     let missingRefFlag: string | null = null;
 
     if (isMissingRef) {
-      missingRefFlag = 'FLAGGED_MISSING_PROVIDER_REF';
+      missingRefFlag = "FLAGGED_MISSING_PROVIDER_REF";
       const obsNonce = crypto.randomUUID();
       providerTransactionRef = `UNREF_OBS_${data.orderCode}_${Date.now()}_${obsNonce.slice(0, 8)}`;
       this.logger.warn(
@@ -774,120 +982,163 @@ export class CustomerBankPennyVerificationService {
 
     // 5. Tra cứu phiên xác nhận tương ứng
     const orderCode = BigInt(data.orderCode);
-    const session = await this.customersRepo.findVerificationSessionByOrderCode(orderCode);
+    const session =
+      await this.customersRepo.findVerificationSessionByOrderCode(orderCode);
 
-    const descStr = String(data.description || '');
+    const descStr = String(data.description || "");
     if (!session) {
-      if (/VERIFY_[A-Z0-9]{4,10}/i.test(descStr) || descStr.startsWith('VERIFY_')) {
-        this.logger.log(`[CustomerBankPennyVerificationService] Nhận diện webhook của Store (${descStr}), bỏ qua để Store xử lý`);
-        return { success: false, notHandled: true, message: 'Belongs to Store verification' };
+      if (
+        /VERIFY_[A-Z0-9]{4,10}/i.test(descStr) ||
+        descStr.startsWith("VERIFY_")
+      ) {
+        this.logger.log(
+          `[CustomerBankPennyVerificationService] Nhận diện webhook của Store (${descStr}), bỏ qua để Store xử lý`,
+        );
+        return {
+          success: false,
+          notHandled: true,
+          message: "Belongs to Store verification",
+        };
       }
-      const isStoreTx = await this.customersRepo.isStoreVerificationTransaction(String(data.orderCode));
+      const isStoreTx = await this.customersRepo.isStoreVerificationTransaction(
+        String(data.orderCode),
+      );
       if (isStoreTx) {
-        this.logger.log(`[CustomerBankPennyVerificationService] Nhận diện orderCode ${data.orderCode} thuộc về Store, bỏ qua để Store xử lý`);
-        return { success: false, notHandled: true, message: 'Belongs to Store verification' };
+        this.logger.log(
+          `[CustomerBankPennyVerificationService] Nhận diện orderCode ${data.orderCode} thuộc về Store, bỏ qua để Store xử lý`,
+        );
+        return {
+          success: false,
+          notHandled: true,
+          message: "Belongs to Store verification",
+        };
       }
     }
 
     // 6. Chuẩn bị thông tin tài khoản nguồn
-    const sourceBankBin = data.counterAccountBankId ? String(data.counterAccountBankId).trim() : null;
-    const sourceAccountNumber = data.counterAccountNumber ? String(data.counterAccountNumber).trim() : null;
-    const sourceAccountName = data.counterAccountName ? String(data.counterAccountName).trim() : null;
+    const sourceBankBin = data.counterAccountBankId
+      ? String(data.counterAccountBankId).trim()
+      : null;
+    const sourceAccountNumber = data.counterAccountNumber
+      ? String(data.counterAccountNumber).trim()
+      : null;
+    const sourceAccountName = data.counterAccountName
+      ? String(data.counterAccountName).trim()
+      : null;
 
     // P0-3 Fix: Nếu PayOS không trả counterAccount* (ví dụ TPBank hoặc NAPAS gateway strips sender details),
     // nhưng giao dịch khớp phiên duy nhất (session !== null) với paymentOrderCode được cấp riêng trong 15 phút,
     // chấp nhận đủ bằng chứng để xác minh thay vì kẹt vĩnh viễn ở PENDING_SOURCE_EVIDENCE.
-    const hasSufficientEvidence = !isMissingRef && (Boolean(sourceBankBin && sourceAccountNumber) || Boolean(session));
+    const hasSufficientEvidence =
+      !isMissingRef &&
+      (Boolean(sourceBankBin && sourceAccountNumber) || Boolean(session));
     let sourceAccountMasked: string | null = null;
     let sourceAccountHash: string | null = null;
     let sourceAccountEncrypted: string | null = null;
 
     if (sourceBankBin && sourceAccountNumber) {
       sourceAccountMasked = `******${sourceAccountNumber.slice(-4)}`;
-      sourceAccountHash = CryptoVaultUtil.computeDeterministicAccountHash(sourceAccountNumber);
-      sourceAccountEncrypted = CryptoVaultUtil.encryptAccountNumber(sourceAccountNumber);
+      sourceAccountHash =
+        CryptoVaultUtil.computeDeterministicAccountHash(sourceAccountNumber);
+      sourceAccountEncrypted =
+        CryptoVaultUtil.encryptAccountNumber(sourceAccountNumber);
     }
 
     // 7. Chống trùng lặp theo provider & channel scope và đối chiếu 4 thuộc tính bất biến mâu thuẫn
-    const existingTx = await this.customersRepo.findInboundTransactionByProviderRef(
-      provider,
-      channel,
-      providerTransactionRef!,
-    );
+    const existingTx =
+      await this.customersRepo.findInboundTransactionByProviderRef(
+        provider,
+        channel,
+        providerTransactionRef!,
+      );
 
     if (existingTx) {
       const isAmountConflict = Number(existingTx.amount) !== amount;
-      const isSourceBinConflict = (existingTx.sourceBankBin || null) !== sourceBankBin;
-      const isSourceAccountConflict = (existingTx.sourceAccountHash || null) !== sourceAccountHash;
-      const isSessionConflict = existingTx.proofId !== (session ? session.id : null);
+      const isSourceBinConflict =
+        (existingTx.sourceBankBin || null) !== sourceBankBin;
+      const isSourceAccountConflict =
+        (existingTx.sourceAccountHash || null) !== sourceAccountHash;
+      const isSessionConflict =
+        existingTx.proofId !== (session ? session.id : null);
 
-      if (isAmountConflict || isSourceBinConflict || isSourceAccountConflict || isSessionConflict) {
-        const maskedOldHash = existingTx.sourceAccountHash ? `${existingTx.sourceAccountHash.slice(0, 8)}...` : 'null';
-        const maskedNewHash = sourceAccountHash ? `${sourceAccountHash.slice(0, 8)}...` : 'null';
+      if (
+        isAmountConflict ||
+        isSourceBinConflict ||
+        isSourceAccountConflict ||
+        isSessionConflict
+      ) {
+        const maskedOldHash = existingTx.sourceAccountHash
+          ? `${existingTx.sourceAccountHash.slice(0, 8)}...`
+          : "null";
+        const maskedNewHash = sourceAccountHash
+          ? `${sourceAccountHash.slice(0, 8)}...`
+          : "null";
         this.logger.error(
           `[CRITICAL AUDIT] Webhook trùng reference ${providerTransactionRef} nhưng mâu thuẫn dữ liệu: ` +
-          `amount (cũ: ${existingTx.amount}, mới: ${amount}), ` +
-          `BIN (cũ: ${existingTx.sourceBankBin}, mới: ${sourceBankBin}), ` +
-          `accountHash (cũ: ${maskedOldHash}, mới: ${maskedNewHash}), ` +
-          `session (cũ: ${existingTx.proofId}, mới: ${session ? session.id : null})`,
+            `amount (cũ: ${existingTx.amount}, mới: ${amount}), ` +
+            `BIN (cũ: ${existingTx.sourceBankBin}, mới: ${sourceBankBin}), ` +
+            `accountHash (cũ: ${maskedOldHash}, mới: ${maskedNewHash}), ` +
+            `session (cũ: ${existingTx.proofId}, mới: ${session ? session.id : null})`,
         );
         await this.customersRepo.flagConflictingInboundTransaction(
           existingTx.id,
-          'FLAGGED_CONFLICTING_DUPLICATE_WEBHOOK',
+          "FLAGGED_CONFLICTING_DUPLICATE_WEBHOOK",
         );
         return {
           success: true,
-          message: 'Giao dịch trùng lặp có dữ liệu mâu thuẫn đã được đánh dấu cờ đối soát',
+          message:
+            "Giao dịch trùng lặp có dữ liệu mâu thuẫn đã được đánh dấu cờ đối soát",
         };
       }
 
       return {
         success: true,
-        message: 'Giao dịch đã được ghi nhận trước đó (Idempotent)',
+        message: "Giao dịch đã được ghi nhận trước đó (Idempotent)",
       };
     }
 
     const rawPayloadChecksum = crypto
-      .createHash('sha256')
+      .createHash("sha256")
       .update(JSON.stringify(data))
-      .digest('hex');
+      .digest("hex");
 
     const refundPayoutReference = isMissingRef
       ? null
       : `REF_PAYOS_${providerTransactionRef}_${Date.now()}`.slice(0, 64);
 
     // 8. Thực thi ghi sổ Inbound + Obligation và xác thực CAS trong cùng 1 transaction nguyên tử
-    const result = await this.customersRepo.recordInboundTransactionAndObligationAtomicTx({
-      proofId: session ? session.id : null,
-      provider,
-      channel,
-      providerTransactionRef: providerTransactionRef!,
-      amount,
-      receivedAt,
-      sourceBankBin,
-      sourceAccountMasked,
-      sourceAccountHash,
-      sourceAccountEncrypted,
-      sourceAccountName,
-      sourceAccountNumber: sourceAccountNumber || undefined,
-      hasSufficientEvidence,
-      rawPayloadChecksum,
-      reconciliationFlag: missingRefFlag,
-      refundPayoutReference,
-    });
+    const result =
+      await this.customersRepo.recordInboundTransactionAndObligationAtomicTx({
+        proofId: session ? session.id : null,
+        provider,
+        channel,
+        providerTransactionRef: providerTransactionRef!,
+        amount,
+        receivedAt,
+        sourceBankBin,
+        sourceAccountMasked,
+        sourceAccountHash,
+        sourceAccountEncrypted,
+        sourceAccountName,
+        sourceAccountNumber: sourceAccountNumber || undefined,
+        hasSufficientEvidence,
+        rawPayloadChecksum,
+        reconciliationFlag: missingRefFlag,
+        refundPayoutReference,
+      });
 
     this.logger.log(
       `Ghi nhận giao dịch PayOS [${providerTransactionRef}] amount=${amount} ` +
-      `matchDecision=${result.matchDecision} shouldActivate=${result.shouldActivate}`,
+        `matchDecision=${result.matchDecision} shouldActivate=${result.shouldActivate}`,
     );
 
     return {
       success: true,
       message: result.shouldActivate
-        ? 'Ghi nhận giao dịch, kích hoạt tài khoản và tạo nghĩa vụ hoàn tiền thành công'
+        ? "Ghi nhận giao dịch, kích hoạt tài khoản và tạo nghĩa vụ hoàn tiền thành công"
         : isMissingRef
-          ? 'Ghi nhận quan sát giao dịch thiếu reference đưa vào đối soát (chưa tạo nghĩa vụ tự động)'
-          : 'Ghi nhận giao dịch và nghĩa vụ hoàn tiền thành công',
+          ? "Ghi nhận quan sát giao dịch thiếu reference đưa vào đối soát (chưa tạo nghĩa vụ tự động)"
+          : "Ghi nhận giao dịch và nghĩa vụ hoàn tiền thành công",
     };
   }
 
@@ -895,29 +1146,43 @@ export class CustomerBankPennyVerificationService {
    * Worker xử lý hoàn tiền 2.000đ từ sổ nghĩa vụ hoàn trả (Refund Obligation Outbox)
    * Nối adapter PayOSPayoutService thật, không giả định thành công
    */
-  async processRefundWorkerBatch(limit = 10): Promise<{ processed: number; succeeded: number; failed: number }> {
+  async processRefundWorkerBatch(
+    limit = 10,
+  ): Promise<{ processed: number; succeeded: number; failed: number }> {
     // Chi tiền thật bắt buộc phải bật tường minh bằng cờ FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED=true
-    const isLivePayoutEnabled = process.env.FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED === 'true';
-    const isProd = process.env.NODE_ENV === 'production';
-    const payoutClientId = process.env.PAYOS_PAYOUT_CLIENT_ID?.trim() || (!isProd ? process.env.PAYOS_CLIENT_ID?.trim() : undefined);
-    const payoutApiKey = process.env.PAYOS_PAYOUT_API_KEY?.trim() || (!isProd ? process.env.PAYOS_API_KEY?.trim() : undefined);
-    const payoutChecksumKey = process.env.PAYOS_PAYOUT_CHECKSUM_KEY?.trim() || (!isProd ? process.env.PAYOS_CHECKSUM_KEY?.trim() : undefined);
-    const hasAllPayoutKeys = Boolean(payoutClientId && payoutApiKey && payoutChecksumKey);
+    const isLivePayoutEnabled =
+      process.env.FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED === "true";
+    const isProd = process.env.NODE_ENV === "production";
+    const payoutClientId =
+      process.env.PAYOS_PAYOUT_CLIENT_ID?.trim() ||
+      (!isProd ? process.env.PAYOS_CLIENT_ID?.trim() : undefined);
+    const payoutApiKey =
+      process.env.PAYOS_PAYOUT_API_KEY?.trim() ||
+      (!isProd ? process.env.PAYOS_API_KEY?.trim() : undefined);
+    const payoutChecksumKey =
+      process.env.PAYOS_PAYOUT_CHECKSUM_KEY?.trim() ||
+      (!isProd ? process.env.PAYOS_CHECKSUM_KEY?.trim() : undefined);
+    const hasAllPayoutKeys = Boolean(
+      payoutClientId && payoutApiKey && payoutChecksumKey,
+    );
 
     if (!isLivePayoutEnabled || !hasAllPayoutKeys) {
       this.logger.log(
         `[DRY-RUN] FEATURE_CUSTOMER_REFUND_PAYOUT_ENABLED=${isLivePayoutEnabled}, hasAllPayoutKeys=${hasAllPayoutKeys}. ` +
-        `Worker will not claim refund obligations.`,
+          `Worker will not claim refund obligations.`,
       );
       return { processed: 0, succeeded: 0, failed: 0 };
     }
 
     if (!this.payosPayoutService) {
-      this.logger.warn('PayOSPayoutService chưa được kích hoạt trong hệ thống. Bỏ qua lượt chi trả hoàn cọc.');
+      this.logger.warn(
+        "PayOSPayoutService chưa được kích hoạt trong hệ thống. Bỏ qua lượt chi trả hoàn cọc.",
+      );
       return { processed: 0, succeeded: 0, failed: 0 };
     }
 
-    const obligations = await this.customersRepo.findPendingRefundObligations(limit);
+    const obligations =
+      await this.customersRepo.findPendingRefundObligations(limit);
     let processed = 0;
     let succeeded = 0;
     let failed = 0;
@@ -929,9 +1194,13 @@ export class CustomerBankPennyVerificationService {
         let targetAccountNumber: string | null = null;
         if (obligation.targetAccountEncrypted) {
           try {
-            targetAccountNumber = CryptoVaultUtil.decryptAccountNumber(obligation.targetAccountEncrypted);
+            targetAccountNumber = CryptoVaultUtil.decryptAccountNumber(
+              obligation.targetAccountEncrypted,
+            );
           } catch (e: any) {
-            this.logger.error(`Lỗi giải mã số tài khoản thụ hưởng cho obligation #${obligation.id}: ${e.message}`);
+            this.logger.error(
+              `Lỗi giải mã số tài khoản thụ hưởng cho obligation #${obligation.id}: ${e.message}`,
+            );
           }
         }
 
@@ -941,17 +1210,18 @@ export class CustomerBankPennyVerificationService {
           );
           await this.customersRepo.moveObligationToManualRefund(
             obligation.id,
-            'Thiếu thông tin số tài khoản hoặc BIN nhận hoàn tiền',
+            "Thiếu thông tin số tài khoản hoặc BIN nhận hoàn tiền",
           );
           failed++;
           continue;
         }
 
         // 2. Tạo attempt và khóa obligation nguyên tử
-        const { attempt } = await this.customersRepo.createPayoutAttemptAndLockObligationTx(
-          obligation.id,
-          'PAYOS',
-        );
+        const { attempt } =
+          await this.customersRepo.createPayoutAttemptAndLockObligationTx(
+            obligation.id,
+            "PAYOS",
+          );
 
         // 3. Gửi lệnh chi hộ qua PayOSPayoutService thật
         let payoutResult: any;
@@ -964,25 +1234,28 @@ export class CustomerBankPennyVerificationService {
             referenceId: attempt.payoutReference,
           });
         } catch (payoutErr: any) {
-          this.logger.error(`Lỗi khi gọi PayOS createPayout cho attempt #${attempt.id}: ${payoutErr.message}`);
+          this.logger.error(
+            `Lỗi khi gọi PayOS createPayout cho attempt #${attempt.id}: ${payoutErr.message}`,
+          );
           // Chỉ đánh FAILED với lỗi CHẮC CHẮN xảy ra trước khi lệnh được gửi sang PayOS
           // (thiếu cấu hình khóa, tham số bị từ chối cục bộ). Mọi lỗi khác (mạng, timeout,
           // 5xx, parse response...) có thể đã chuyển tiền -> giữ PENDING_RECONCILIATION để tránh hoàn tiền 2 lần.
           const isDefinitelyNotSent =
-            payoutErr instanceof InternalServerErrorException || payoutErr instanceof BadRequestException;
+            payoutErr instanceof InternalServerErrorException ||
+            payoutErr instanceof BadRequestException;
 
           if (isDefinitelyNotSent) {
             await this.customersRepo.finalizePayoutAttemptTx({
               obligationId: obligation.id,
               attemptId: attempt.id,
-              status: 'FAILED',
+              status: "FAILED",
               failureReason: `Config/Validation Error: ${payoutErr.message}`,
             });
           } else {
             await this.customersRepo.finalizePayoutAttemptTx({
               obligationId: obligation.id,
               attemptId: attempt.id,
-              status: 'PENDING_RECONCILIATION',
+              status: "PENDING_RECONCILIATION",
               failureReason: `Unknown outcome (cần đối soát): ${payoutErr.message}`,
             });
           }
@@ -993,7 +1266,11 @@ export class CustomerBankPennyVerificationService {
         // 4. Xác minh kết quả payout bằng bộ kiểm định dùng chung nghiêm ngặt
         const targetAccountHash =
           obligation.targetAccountHash ||
-          (targetAccountNumber ? CryptoVaultUtil.computeDeterministicAccountHash(targetAccountNumber) : null);
+          (targetAccountNumber
+            ? CryptoVaultUtil.computeDeterministicAccountHash(
+                targetAccountNumber,
+              )
+            : null);
 
         const expectedCriteria = {
           amount: Number(obligation.refundAmount),
@@ -1003,28 +1280,37 @@ export class CustomerBankPennyVerificationService {
           expectedPayoutId: attempt.providerPayoutId || undefined,
         };
 
-        const verification = verifyPayosPayoutEvidence(payoutResult?.data, expectedCriteria);
+        const verification = verifyPayosPayoutEvidence(
+          payoutResult?.data,
+          expectedCriteria,
+        );
 
         if (verification.isVerified) {
           await this.customersRepo.finalizePayoutAttemptTx({
             obligationId: obligation.id,
             attemptId: attempt.id,
-            status: 'SUCCESS',
+            status: "SUCCESS",
             providerPayoutId: verification.providerPayoutId,
-            responseCode: '00',
+            responseCode: "00",
           });
           succeeded++;
         } else {
           // Xác minh bằng chứng thất bại terminal nghiêm ngặt (Fail-Closed)
-          const rejectionVerification = verifyPayosPayoutRejectionEvidence(payoutResult?.data, expectedCriteria);
+          const rejectionVerification = verifyPayosPayoutRejectionEvidence(
+            payoutResult?.data,
+            expectedCriteria,
+          );
           if (rejectionVerification.isVerified) {
             await this.customersRepo.finalizePayoutAttemptTx({
               obligationId: obligation.id,
               attemptId: attempt.id,
-              status: 'FAILED',
+              status: "FAILED",
               providerPayoutId: rejectionVerification.providerPayoutId,
-              responseCode: payoutResult?.code || 'REJECTED',
-              failureReason: rejectionVerification.reason || payoutResult?.desc || 'Cổng PayOS từ chối lệnh chi hộ',
+              responseCode: payoutResult?.code || "REJECTED",
+              failureReason:
+                rejectionVerification.reason ||
+                payoutResult?.desc ||
+                "Cổng PayOS từ chối lệnh chi hộ",
             });
             failed++;
           } else {
@@ -1032,16 +1318,20 @@ export class CustomerBankPennyVerificationService {
             await this.customersRepo.finalizePayoutAttemptTx({
               obligationId: obligation.id,
               attemptId: attempt.id,
-              status: 'PENDING_RECONCILIATION',
+              status: "PENDING_RECONCILIATION",
               providerPayoutId: payoutResult?.data?.id || undefined,
-              responseCode: payoutResult?.code || '00',
-              failureReason: verification.reason || 'Chưa đủ bằng chứng xác minh kết quả chi trả, giữ chờ đối soát',
+              responseCode: payoutResult?.code || "00",
+              failureReason:
+                verification.reason ||
+                "Chưa đủ bằng chứng xác minh kết quả chi trả, giữ chờ đối soát",
             });
             failed++;
           }
         }
       } catch (err: any) {
-        this.logger.error(`Lỗi xử lý hoàn tiền cho obligation #${obligation.id}: ${err.message}`);
+        this.logger.error(
+          `Lỗi xử lý hoàn tiền cho obligation #${obligation.id}: ${err.message}`,
+        );
         failed++;
       }
     }
@@ -1052,20 +1342,26 @@ export class CustomerBankPennyVerificationService {
   /**
    * Đối soát và phục hồi các lượt chi trả đang ở trạng thái chưa rõ kết quả (Reconciler)
    */
-  async reconcilePendingRefundPayouts(limit = 10): Promise<{ reconciled: number }> {
+  async reconcilePendingRefundPayouts(
+    limit = 10,
+  ): Promise<{ reconciled: number }> {
     if (!this.payosPayoutService) return { reconciled: 0 };
-    const attempts = await this.customersRepo.findPendingReconciliationAttempts(limit);
+    const attempts =
+      await this.customersRepo.findPendingReconciliationAttempts(limit);
     let reconciled = 0;
 
     for (const attempt of attempts) {
       try {
         let payoutDetailData: any = null;
-        let concretePayoutId = attempt.providerPayoutId ? String(attempt.providerPayoutId).trim() : null;
+        let concretePayoutId = attempt.providerPayoutId
+          ? String(attempt.providerPayoutId).trim()
+          : null;
 
         try {
           if (concretePayoutId) {
-            const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
-            if (detailRes?.code === '00' && detailRes?.data) {
+            const detailRes =
+              await this.payosPayoutService.getPayout(concretePayoutId);
+            if (detailRes?.code === "00" && detailRes?.data) {
               payoutDetailData = detailRes.data;
             }
           } else if (attempt.payoutReference) {
@@ -1074,30 +1370,46 @@ export class CustomerBankPennyVerificationService {
               referenceId: attempt.payoutReference,
             });
 
-            if (listRes?.code === '00' && Array.isArray(listRes?.data?.payouts)) {
+            if (
+              listRes?.code === "00" &&
+              Array.isArray(listRes?.data?.payouts)
+            ) {
               // Lọc chính xác các payout khớp referenceId
               const matchingPayouts = listRes.data.payouts.filter((p: any) => {
                 if (!p) return false;
-                const pRef = p.referenceId ? String(p.referenceId).trim() : (p.reference ? String(p.reference).trim() : '');
+                const pRef = p.referenceId
+                  ? String(p.referenceId).trim()
+                  : p.reference
+                    ? String(p.reference).trim()
+                    : "";
                 return pRef === attempt.payoutReference;
               });
 
               if (matchingPayouts.length === 1 && matchingPayouts[0]?.id) {
                 concretePayoutId = String(matchingPayouts[0].id).trim();
                 // Lấy chi tiết detail bằng ID cụ thể
-                const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
-                if (detailRes?.code === '00' && detailRes?.data) {
+                const detailRes =
+                  await this.payosPayoutService.getPayout(concretePayoutId);
+                if (detailRes?.code === "00" && detailRes?.data) {
                   payoutDetailData = detailRes.data;
                 }
               } else if (matchingPayouts.length > 1) {
                 this.logger.warn(
                   `Phát hiện nhiều hơn 1 payout (${matchingPayouts.length}) khớp reference ${attempt.payoutReference}. Giữ PENDING_RECONCILIATION.`,
                 );
-                await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), 'Nhiều payout trùng reference');
+                await this.customersRepo.updateAttemptReconcileBackoff(
+                  attempt.id,
+                  this.computeBackoffMs(attempt.reconcileAttempts || 0),
+                  "Nhiều payout trùng reference",
+                );
                 continue;
               } else {
                 // matchingPayouts.length === 0 -> Chưa có payout từ provider, tiếp tục giữ chờ đối soát
-                await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), 'Chưa tìm thấy payout từ cổng thanh toán');
+                await this.customersRepo.updateAttemptReconcileBackoff(
+                  attempt.id,
+                  this.computeBackoffMs(attempt.reconcileAttempts || 0),
+                  "Chưa tìm thấy payout từ cổng thanh toán",
+                );
                 continue;
               }
             }
@@ -1105,14 +1417,24 @@ export class CustomerBankPennyVerificationService {
         } catch (err: any) {
           // Mọi lỗi tra cứu (network timeout, 403, 404, gián đoạn) KHÔNG được hiểu thành "chưa chuyển tiền".
           // Giữ nguyên chờ đối soát trong PENDING_RECONCILIATION, tuyệt đối không suy diễn FAILED.
-          this.logger.warn(`Lỗi tra cứu PayOS cho attempt #${attempt.id}: ${err.message}. Giữ chờ đối soát.`);
-          await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), err.message);
+          this.logger.warn(
+            `Lỗi tra cứu PayOS cho attempt #${attempt.id}: ${err.message}. Giữ chờ đối soát.`,
+          );
+          await this.customersRepo.updateAttemptReconcileBackoff(
+            attempt.id,
+            this.computeBackoffMs(attempt.reconcileAttempts || 0),
+            err.message,
+          );
           continue;
         }
 
         if (!payoutDetailData) {
           // Chưa có detail đầy đủ từ provider -> tiếp tục giữ chờ đối soát
-          await this.customersRepo.updateAttemptReconcileBackoff(attempt.id, this.computeBackoffMs(attempt.reconcileAttempts || 0), 'Chưa có detail đầy đủ từ provider');
+          await this.customersRepo.updateAttemptReconcileBackoff(
+            attempt.id,
+            this.computeBackoffMs(attempt.reconcileAttempts || 0),
+            "Chưa có detail đầy đủ từ provider",
+          );
           continue;
         }
 
@@ -1120,12 +1442,18 @@ export class CustomerBankPennyVerificationService {
         let targetAccountNumber: string | null = null;
         if (obligation?.targetAccountEncrypted) {
           try {
-            targetAccountNumber = CryptoVaultUtil.decryptAccountNumber(obligation.targetAccountEncrypted);
-          } catch { }
+            targetAccountNumber = CryptoVaultUtil.decryptAccountNumber(
+              obligation.targetAccountEncrypted,
+            );
+          } catch {}
         }
         const targetAccountHash =
           obligation?.targetAccountHash ||
-          (targetAccountNumber ? CryptoVaultUtil.computeDeterministicAccountHash(targetAccountNumber) : null);
+          (targetAccountNumber
+            ? CryptoVaultUtil.computeDeterministicAccountHash(
+                targetAccountNumber,
+              )
+            : null);
 
         const expectedCriteria = {
           amount: Number(obligation?.refundAmount || 0),
@@ -1136,28 +1464,37 @@ export class CustomerBankPennyVerificationService {
         };
 
         // 1. Xác minh thành công (SUCCESS)
-        const successVerification = verifyPayosPayoutEvidence(payoutDetailData, expectedCriteria);
+        const successVerification = verifyPayosPayoutEvidence(
+          payoutDetailData,
+          expectedCriteria,
+        );
         if (successVerification.isVerified) {
           await this.customersRepo.finalizePayoutAttemptTx({
             obligationId: attempt.obligationId,
             attemptId: attempt.id,
-            status: 'SUCCESS',
+            status: "SUCCESS",
             providerPayoutId: successVerification.providerPayoutId,
-            responseCode: '00',
+            responseCode: "00",
           });
           reconciled++;
           continue;
         }
 
         // 2. Xác minh thất bại terminal (FAILED)
-        const rejectionVerification = verifyPayosPayoutRejectionEvidence(payoutDetailData, expectedCriteria);
+        const rejectionVerification = verifyPayosPayoutRejectionEvidence(
+          payoutDetailData,
+          expectedCriteria,
+        );
         if (rejectionVerification.isVerified) {
           await this.customersRepo.finalizePayoutAttemptTx({
             obligationId: attempt.obligationId,
             attemptId: attempt.id,
-            status: 'FAILED',
+            status: "FAILED",
             providerPayoutId: rejectionVerification.providerPayoutId,
-            failureReason: rejectionVerification.reason || payoutDetailData?.desc || 'PayOS xác nhận chi hộ thất bại',
+            failureReason:
+              rejectionVerification.reason ||
+              payoutDetailData?.desc ||
+              "PayOS xác nhận chi hộ thất bại",
           });
           reconciled++;
           continue;
@@ -1167,15 +1504,19 @@ export class CustomerBankPennyVerificationService {
         await this.customersRepo.updateAttemptReconcileBackoff(
           attempt.id,
           this.computeBackoffMs(attempt.reconcileAttempts || 0),
-          `Đang xử lý tại cổng chi tiền (${payoutDetailData?.desc || payoutDetailData?.state || 'PROCESSING'})`,
+          `Đang xử lý tại cổng chi tiền (${payoutDetailData?.desc || payoutDetailData?.state || "PROCESSING"})`,
         );
       } catch (e: any) {
-        this.logger.error(`Lỗi đối soát payout attempt #${attempt.id}: ${e.message}`);
-        await this.customersRepo.updateAttemptReconcileBackoff(
-          attempt.id,
-          this.computeBackoffMs(attempt.reconcileAttempts || 0),
-          e.message,
-        ).catch(() => { });
+        this.logger.error(
+          `Lỗi đối soát payout attempt #${attempt.id}: ${e.message}`,
+        );
+        await this.customersRepo
+          .updateAttemptReconcileBackoff(
+            attempt.id,
+            this.computeBackoffMs(attempt.reconcileAttempts || 0),
+            e.message,
+          )
+          .catch(() => {});
       }
     }
 
@@ -1184,12 +1525,12 @@ export class CustomerBankPennyVerificationService {
 
   private computeBackoffMs(attempts: number): number {
     const schedule = [
-      60 * 1000,        // 1m
-      2 * 60 * 1000,    // 2m
-      5 * 60 * 1000,    // 5m
-      15 * 60 * 1000,   // 15m
-      30 * 60 * 1000,   // 30m
-      60 * 60 * 1000,   // 1h
+      60 * 1000, // 1m
+      2 * 60 * 1000, // 2m
+      5 * 60 * 1000, // 5m
+      15 * 60 * 1000, // 15m
+      30 * 60 * 1000, // 30m
+      60 * 60 * 1000, // 1h
     ];
     return schedule[Math.min(attempts, schedule.length - 1)];
   }
@@ -1207,14 +1548,21 @@ export class CustomerBankPennyVerificationService {
     sourceAccountNumber: string;
     sourceAccountName?: string | null;
   }) {
-    if (!Array.isArray(params.observationIds) || params.observationIds.length === 0) {
-      throw new BadRequestException('Danh sách observationIds cần ghép không được rỗng');
+    if (
+      !Array.isArray(params.observationIds) ||
+      params.observationIds.length === 0
+    ) {
+      throw new BadRequestException(
+        "Danh sách observationIds cần ghép không được rỗng",
+      );
     }
 
     const rawAccNumber = params.sourceAccountNumber.trim();
     const sourceAccountMasked = `******${rawAccNumber.slice(-4)}`;
-    const sourceAccountHash = CryptoVaultUtil.computeDeterministicAccountHash(rawAccNumber);
-    const sourceAccountEncrypted = CryptoVaultUtil.encryptAccountNumber(rawAccNumber);
+    const sourceAccountHash =
+      CryptoVaultUtil.computeDeterministicAccountHash(rawAccNumber);
+    const sourceAccountEncrypted =
+      CryptoVaultUtil.encryptAccountNumber(rawAccNumber);
 
     return this.customersRepo.reconcileObservationsIntoConfirmedReceiptTx({
       sessionId: BigInt(params.sessionId),
