@@ -85,6 +85,11 @@ async function runPhase1PayosIntegrationSuite() {
       storeId,
       status: 'ACTIVE',
     }),
+    assignStableOrderCode: async (chargeId: bigint, orderCode: bigint) => {
+      const chg = chargesMap.get(chargeId.toString());
+      if (chg) (chg as any).payosOrderCode = orderCode;
+      return chg;
+    },
   };
 
   const billingChargesService = new BillingChargesService(mockBillingChargesRepo);

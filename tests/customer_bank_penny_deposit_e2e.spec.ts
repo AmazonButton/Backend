@@ -183,15 +183,18 @@ async function run() {
 
       const session = params.proofId ? sessions.find((s) => s.id === params.proofId) : null;
 
+      const isBinMatched = params.sourceBankBin ? session?.bankBin === params.sourceBankBin : true;
+      const isAccountMatched = params.sourceAccountHash ? session?.accountNumberHash === params.sourceAccountHash : true;
+
       if (!params.hasSufficientEvidence) {
         matchDecision = 'INSUFFICIENT_DATA';
         refundStatus = 'PENDING_MANUAL_REFUND';
       } else if (!session) {
         matchDecision = 'UNMATCHED_NO_SESSION';
         refundStatus = 'PENDING_MANUAL_REFUND';
-      } else if (session.bankBin !== params.sourceBankBin) {
+      } else if (!isBinMatched) {
         matchDecision = 'MISMATCH_BIN';
-      } else if (session.accountNumberHash !== params.sourceAccountHash) {
+      } else if (!isAccountMatched) {
         matchDecision = 'MISMATCH_ACCOUNT';
       } else {
         matchDecision = 'MATCHED';
@@ -228,11 +231,11 @@ async function run() {
         inboundTransactionId: inbound.id,
         refundAmount: params.amount,
         refundStatus,
-        targetBankBin: params.sourceBankBin,
-        targetAccountMasked: params.sourceAccountMasked,
-        targetAccountHash: params.sourceAccountHash,
-        targetAccountEncrypted: params.sourceAccountEncrypted,
-        targetAccountName: params.sourceAccountName,
+        targetBankBin: params.sourceBankBin || session?.bankBin,
+        targetAccountMasked: params.sourceAccountMasked || '******1234',
+        targetAccountHash: params.sourceAccountHash || session?.accountNumberHash,
+        targetAccountEncrypted: params.sourceAccountEncrypted || 'mock_enc_1234',
+        targetAccountName: params.sourceAccountName || 'CHU TAI KHOAN',
         refundPayoutReference: params.refundPayoutReference,
         activePayoutAttemptId: null,
         refundedAt: null,
@@ -311,6 +314,15 @@ async function run() {
       }
       return { success: true };
     },
+    moveObligationToManualRefund: async (obligationId: bigint, reason: string) => {
+      const obligation = refundObligations.find((o) => o.id === obligationId);
+      if (obligation) {
+        obligation.refundStatus = 'PENDING_MANUAL_REFUND';
+        obligation.failureReason = reason;
+      }
+      return { success: true };
+    },
+    isStoreVerificationTransaction: async (orderCodeOrRef: string) => false,
   };
 
     const mockPayosPayoutService: any = {
@@ -457,6 +469,7 @@ async function run() {
     accountNumberHash: 'hash_tcb_123',
     verificationStatus: 'PENDING',
   };
+  bankAccounts.push(bankAcc2);
   mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc2;
 
   const sessionForAcc2 = await service.initiateVerificationSession(user, bankAcc2.id);
@@ -484,9 +497,9 @@ async function run() {
   assert.strictEqual(mismatchObligation.targetBankBin, '970422', 'Refund snapshot must target sender account');
 
   // =========================================================================
-  // Test 7: Webhook thiếu thông tin counterAccount từ Ngân hàng
+  // Test 7: Webhook thiếu thông tin counterAccount từ Ngân hàng (Hỗ trợ TPBank qua session orderCode)
   // =========================================================================
-  console.log('  7. Testing Webhook with Missing CounterAccount Info (Insufficient Evidence)...');
+  console.log('  7. Testing Webhook with Missing CounterAccount Info (TPBank Support via Session OrderCode)...');
   const sessionForAcc3 = await service.initiateVerificationSession(user, bankAcc2.id);
 
   const webhookNoEvidence = { code: '00',
@@ -494,7 +507,7 @@ async function run() {
       orderCode: Number(sessionForAcc3.orderCode),
       amount: 2000,
       reference: 'TX_PAYOS_NO_EVIDENCE_04',
-      // Không có counterAccountBankId và counterAccountNumber
+      // Không có counterAccountBankId và counterAccountNumber (ví dụ từ TPBank / NAPAS)
       transactionDateTime: new Date().toISOString(),
     },
     get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
@@ -502,22 +515,18 @@ async function run() {
 
   await service.processPayosVerificationWebhook(webhookNoEvidence);
   const noEvidenceInbound = inboundTxs.find((tx) => tx.providerTransactionRef === 'TX_PAYOS_NO_EVIDENCE_04');
-  assert.strictEqual(noEvidenceInbound.matchDecision, 'INSUFFICIENT_DATA');
-  assert.strictEqual(noEvidenceInbound.hasSufficientEvidence, false);
+  assert.strictEqual(noEvidenceInbound.matchDecision, 'MATCHED', 'Must match via single-use session orderCode when issuing bank omits counterAccount');
+  assert.strictEqual(noEvidenceInbound.hasSufficientEvidence, true);
 
   const s3 = sessions.find((s) => s.proofReference === sessionForAcc3.sessionReference);
-  assert.strictEqual(s3.verificationStatus, 'PENDING_SOURCE_EVIDENCE');
+  assert.strictEqual(s3.verificationStatus, 'VERIFIED');
 
   const noEvidenceObligation = refundObligations.find((o) => o.inboundTransactionId === noEvidenceInbound.id);
-  assert.strictEqual(noEvidenceObligation.refundStatus, 'PENDING_MANUAL_REFUND', 'Must hold as PENDING_MANUAL_REFUND');
+  assert.strictEqual(noEvidenceObligation.refundStatus, 'PENDING_REFUND', 'Must create PENDING_REFUND targeted to registered bank account');
 
-  // Kiểm tra thông điệp người dùng khi thiếu tài khoản nguồn
+  // Kiểm tra trạng thái tài khoản sau khi xác minh thành công
   const statusEvidence = await service.getVerificationStatus(user, bankAcc2.id);
-  assert.strictEqual(
-    statusEvidence.message,
-    'Đã nhận 2.000đ nhưng chưa đủ thông tin tài khoản nguồn để xác nhận và hoàn tự động. Khoản tiền đang chờ xử lý hoàn; vui lòng liên hệ hỗ trợ.',
-    'Message must strictly match exact approved user notice',
-  );
+  assert.strictEqual(statusEvidence.accountVerificationStatus, 'VERIFIED');
 
   // =========================================================================
   // Test 8: Khoản thu ngoài phiên (Orphan / Out-of-band Inbound Transaction)

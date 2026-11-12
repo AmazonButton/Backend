@@ -426,14 +426,19 @@ export class PaymentsService {
       }
 
       const webhookDesc = data?.description || (body as any)?.description || '';
-      const isStoreVerifyDesc = /VERIFY_[A-Z0-9]{4,10}/i.test(webhookDesc);
+      let isStoreVerification = /VERIFY_[A-Z0-9]{4,10}/i.test(webhookDesc);
 
-      // 1. Ưu tiên định tuyến trực tiếp vào Store Bank Verification nếu description chứa mã VERIFY_
-      if (isStoreVerifyDesc && this.bankVerificationService) {
+      // Nếu description không chứa VERIFY_, kiểm tra thêm xem orderCode có thuộc về giao dịch Store Verification không
+      if (!isStoreVerification && orderCodeStr) {
+        isStoreVerification = await this.paymentsRepo.isStoreVerificationTransaction(orderCodeStr);
+      }
+
+      // 1. Ưu tiên định tuyến trực tiếp vào Store Bank Verification nếu thuộc về Store
+      if (isStoreVerification && this.bankVerificationService) {
         try {
           const storeResult = await this.bankVerificationService.handleVerificationWebhook(body as any);
           if (storeResult && (storeResult.success || (storeResult as any).code === '00')) {
-            this.logger.log(`[PayOS Webhook] Routed to BankVerificationService for description: ${webhookDesc}`);
+            this.logger.log(`[PayOS Webhook] Routed to BankVerificationService for description: ${webhookDesc}, orderCode: ${orderCodeStr}`);
             return storeResult;
           }
         } catch (storeErr: any) {
@@ -455,7 +460,7 @@ export class PaymentsService {
       }
 
       // 3. Fallback sang Store Bank Verification nếu Customer không xử lý
-      if (!isStoreVerifyDesc && this.bankVerificationService) {
+      if (!isStoreVerification && this.bankVerificationService) {
         try {
           const storeResult = await this.bankVerificationService.handleVerificationWebhook(body as any);
           if (storeResult && (storeResult.success || (storeResult as any).code === '00')) {

@@ -1626,11 +1626,11 @@ export class CustomersRepository {
             inboundTransactionId: inbound.id,
             refundAmount: params.amount,
             refundStatus: initialRefundStatus,
-            targetBankBin: params.sourceBankBin,
-            targetAccountMasked: params.sourceAccountMasked,
-            targetAccountHash: params.sourceAccountHash,
-            targetAccountEncrypted: params.sourceAccountEncrypted,
-            targetAccountName: params.sourceAccountName,
+            targetBankBin: params.sourceBankBin || lockedSession?.bank_bin,
+            targetAccountMasked: params.sourceAccountMasked || (lockedAccount ? CryptoVaultUtil.maskAccountNumber(CryptoVaultUtil.decryptAccountNumber(lockedAccount.account_number_encrypted)) : null),
+            targetAccountHash: params.sourceAccountHash || lockedSession?.account_number_hash,
+            targetAccountEncrypted: params.sourceAccountEncrypted || lockedAccount?.account_number_encrypted,
+            targetAccountName: params.sourceAccountName || lockedAccount?.account_name,
             refundPayoutReference: params.refundPayoutReference,
           },
         });
@@ -1939,5 +1939,23 @@ export class CustomersRepository {
 
       return { success: true, idempotent: false };
     });
+  }
+
+  async isStoreVerificationTransaction(orderCodeOrRef: string): Promise<boolean> {
+    if (!orderCodeOrRef) return false;
+    try {
+      const tx = await (this.prisma as any).bankAccountVerificationTransaction.findFirst({
+        where: {
+          OR: [
+            { providerTransactionId: orderCodeOrRef },
+            { referenceCode: orderCodeOrRef },
+          ],
+        },
+        select: { id: true },
+      });
+      return !!tx;
+    } catch {
+      return false;
+    }
   }
 }

@@ -777,9 +777,16 @@ export class CustomerBankPennyVerificationService {
     const session = await this.customersRepo.findVerificationSessionByOrderCode(orderCode);
 
     const descStr = String(data.description || '');
-    if (!session && /VERIFY_[A-Z0-9]{4,10}/i.test(descStr)) {
-      this.logger.log(`[CustomerBankPennyVerificationService] Nhận diện webhook của Store (${descStr}), bỏ qua để Store xử lý`);
-      return { success: false, notHandled: true, message: 'Belongs to Store verification' };
+    if (!session) {
+      if (/VERIFY_[A-Z0-9]{4,10}/i.test(descStr) || descStr.startsWith('VERIFY_')) {
+        this.logger.log(`[CustomerBankPennyVerificationService] Nhận diện webhook của Store (${descStr}), bỏ qua để Store xử lý`);
+        return { success: false, notHandled: true, message: 'Belongs to Store verification' };
+      }
+      const isStoreTx = await this.customersRepo.isStoreVerificationTransaction(String(data.orderCode));
+      if (isStoreTx) {
+        this.logger.log(`[CustomerBankPennyVerificationService] Nhận diện orderCode ${data.orderCode} thuộc về Store, bỏ qua để Store xử lý`);
+        return { success: false, notHandled: true, message: 'Belongs to Store verification' };
+      }
     }
 
     // 6. Chuẩn bị thông tin tài khoản nguồn
@@ -787,7 +794,10 @@ export class CustomerBankPennyVerificationService {
     const sourceAccountNumber = data.counterAccountNumber ? String(data.counterAccountNumber).trim() : null;
     const sourceAccountName = data.counterAccountName ? String(data.counterAccountName).trim() : null;
 
-    const hasSufficientEvidence = !isMissingRef && Boolean(sourceBankBin && sourceAccountNumber);
+    // P0-3 Fix: Nếu PayOS không trả counterAccount* (ví dụ TPBank hoặc NAPAS gateway strips sender details),
+    // nhưng giao dịch khớp phiên duy nhất (session !== null) với paymentOrderCode được cấp riêng trong 15 phút,
+    // chấp nhận đủ bằng chứng để xác minh thay vì kẹt vĩnh viễn ở PENDING_SOURCE_EVIDENCE.
+    const hasSufficientEvidence = !isMissingRef && (Boolean(sourceBankBin && sourceAccountNumber) || Boolean(session));
     let sourceAccountMasked: string | null = null;
     let sourceAccountHash: string | null = null;
     let sourceAccountEncrypted: string | null = null;

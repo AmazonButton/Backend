@@ -1,5 +1,25 @@
 # Project Handoff & Session Context
 
+### [2026-11-12] Bank Verification Final Hardening: P0-3 TPBank Stripped Details & P0-1 Store Webhook Yield Gap (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS, `platform-button-rental-phase1-payos-integration.spec.ts` 8/8 PASS)
+- **Remediated Defects**:
+  1. **P0-3: Issuing Bank CounterAccount Stripping & TPBank/NAPAS Support (`customer-bank-penny-verification.service.ts`, `customers.repository.ts`)**:
+     - *Issue*: Issuing banks like TPBank (BIN 970423) or NAPAS gateways strip sender details over 24/7 transfers, causing PayOS to deliver null `counterAccountBankId` and `counterAccountNumber`. Customers (e.g. session `CUST_VRF_970423_1FDTC6`) were permanently trapped in `PENDING_SOURCE_EVIDENCE` and `PENDING_MANUAL_REFUND`.
+     - *Fix*: In `CustomerBankPennyVerificationService`, `hasSufficientEvidence` recognizes matches when `session !== null` via the 15-minute single-use `paymentOrderCode`. In `CustomersRepository.recordInboundTransactionAndObligationAtomicTx`, when counter-account fields are null, `isBinMatched` and `isAccountMatched` default to true, activating the customer account to `VERIFIED` and targeting the refund obligation to `lockedSession.bank_bin` and `lockedAccount.account_number_encrypted`.
+  2. **P0-1: Store Webhook Yield Gap by OrderCode (`payments.service.ts`, `payments.repository.ts`, `customer-bank-penny-verification.service.ts`, `customers.repository.ts`)**:
+     - *Issue*: If PayOS webhook payload description omits `VERIFY_` (e.g., truncated to 25 chars or bank note altered), Store verification webhooks could still fall through to Customer verification, creating orphan inbound records.
+     - *Fix*: Added `isStoreVerificationTransaction(orderCode)` in `PaymentsRepository` and `CustomersRepository` to check `bankAccountVerificationTransaction.providerTransactionId`. Both `PaymentsService` and `CustomerBankPennyVerificationService` check orderCode and yield immediately to Store Verification with `{ notHandled: true }`.
+  3. **Architecture & Test Suite Alignment**:
+     - Preserved strict 6-layer architecture by removing direct `PrismaService` injection from `PaymentsService` and `CustomerBankPennyVerificationService`, encapsulating queries within their respective repositories.
+     - Verified all 4 backend test suites passing 100%.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 14/14 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase1-payos-integration.spec.ts`: 8/8 PASS (100%).
+
 ### [2026-11-12] Bank Verification Comprehensive Production Hardening: P0-1 through P1-6 Remediation (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS)
 - **Remediated Defects (P0-1 through P1-6)**:

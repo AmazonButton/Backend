@@ -287,4 +287,22 @@ export class PaymentsRepository {
     });
   }
 
+  async isStoreVerificationTransaction(orderCodeOrRef: string): Promise<boolean> {
+    if (!orderCodeOrRef) return false;
+    try {
+      const tx = await (this.prisma as any).bankAccountVerificationTransaction.findFirst({
+        where: {
+          OR: [
+            { providerTransactionId: orderCodeOrRef },
+            { referenceCode: orderCodeOrRef },
+          ],
+        },
+        select: { id: true },
+      });
+      return !!tx;
+    } catch {
+      return false;
+    }
+  }
+
 }
