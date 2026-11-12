@@ -1,5 +1,28 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: PayOS Payout Service Hardening & Indeterminate Error Isolation (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `platform-button-rental-phase1-payos-integration.spec.ts` 8/8 PASS).
+- **Changed**: `src/payments/payos-payout.service.ts`, `src/customers/customer-bank-penny-verification.service.ts`.
+- **Key Remediations**:
+  1. **Strict Error Differentiation & Double-Payout Protection**:
+     - Introduced `PayOSPayoutPreDispatchException` (HTTP 400, safe to mark `FAILED`): For pre-dispatch rejections where PayOS has definitely NOT sent funds to the banking rail (e.g. `BALANCE_NOT_ENOUGH`, `PAYOUT_INVALID_TO_*`, `FI_SERVICE_ACCOUNT_STATE_INACTIVE`, `AMOUNT_NOT_INTEGER`, `MISSING_IDEMPOTENCY_KEY`, `PAYMENT_REQUEST_DATA_SIGNATURE_INCORRECT`, and HTTP 401/403/429).
+     - Introduced `PayOSPayoutIndeterminateException` (HTTP 502, strictly keep `PENDING_RECONCILIATION`): For indeterminate outcomes where funds may have been disbursed or are in-flight (e.g. `PAYOUT_INTERRUPTED`, `PAYOUT_BANK_SYSTEM_ERROR`, `PAYOUT_SERVER_ERROR`, `DUPLICATE_IDEMPOTENCY_KEY`, `PAYOUT_FAILED`, `CREATE_PAYOUT_FAILED`, network timeouts, connection resets, and unexpected error payloads).
+  2. **Customer Penny Refund Worker Hardening**:
+     - Updated `customer-bank-penny-verification.service.ts` refund worker to only mark attempt as `FAILED` on verified `PayOSPayoutPreDispatchException` or config/validation failures. Any `PayOSPayoutIndeterminateException` safely preserves `PENDING_RECONCILIATION` to prevent duplicate refunds.
+  3. **Response Signature Guard**:
+     - Checks response `x-signature`; logs warning on mismatch and strictly gates throwing `PayOSPayoutIndeterminateException` behind `PAYOS_PAYOUT_ENFORCE_RESPONSE_SIGNATURE=true` to prevent false positive aborts.
+  4. **Timeout Guards & Health Check**:
+     - Enforced `fetchWithTimeout` on all PayOS calls (`createPayout`: 10s, `createBatchPayout`: 15s, `getPayout`: 8s, `getPayouts`: 8s, `estimateCredit`: 8s, `getPayoutBalance`: 8s).
+     - Fixed UTF-8 string encoding in `src/payments/payos-payout.service.ts:145` (`Tạo yêu cầu chi tiền PayOS thất bại`).
+     - Added non-blocking payout account balance health check in `onModuleInit()` via `checkPayoutAccountHealth()`.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 14/14 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase1-payos-integration.spec.ts`: 8/8 PASS (100%).
+
 ## 2026-11-12: Bank Verification Final Hardening, P0-3 Stripped Details (Option 2) & P0-1 Webhook Yield (COMPLETED & 100% VERIFIED)
 
 ### [2026-11-12] Bank Verification Final Hardening: P0-3 TPBank Stripped Details & P0-1 Store Webhook Yield Gap (COMPLETED & 100% VERIFIED)

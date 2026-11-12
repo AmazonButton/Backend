@@ -24,7 +24,11 @@ import {
   signWebhookData,
   parsePayosDateTime,
 } from "../payments/payos.helper";
-import { PayOSPayoutService } from "../payments/payos-payout.service";
+import {
+  PayOSPayoutService,
+  PayOSPayoutIndeterminateException,
+  PayOSPayoutPreDispatchException,
+} from "../payments/payos-payout.service";
 import {
   verifyPayosPayoutEvidence,
   verifyPayosPayoutRejectionEvidence,
@@ -1241,8 +1245,10 @@ export class CustomerBankPennyVerificationService {
           // (thiếu cấu hình khóa, tham số bị từ chối cục bộ). Mọi lỗi khác (mạng, timeout,
           // 5xx, parse response...) có thể đã chuyển tiền -> giữ PENDING_RECONCILIATION để tránh hoàn tiền 2 lần.
           const isDefinitelyNotSent =
-            payoutErr instanceof InternalServerErrorException ||
-            payoutErr instanceof BadRequestException;
+            !(payoutErr instanceof PayOSPayoutIndeterminateException) &&
+            (payoutErr instanceof PayOSPayoutPreDispatchException ||
+              payoutErr instanceof InternalServerErrorException ||
+              payoutErr instanceof BadRequestException);
 
           if (isDefinitelyNotSent) {
             await this.customersRepo.finalizePayoutAttemptTx({
