@@ -1,5 +1,14 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: Hold conflicting customer refunds before dispatch
+- Status: Implemented; local type/build/mock checks passed; PostgreSQL integration execution pending an isolated test database.
+- Changes: Conflict flagging locks obligations before updating the inbound record and holds unclaimed refunds atomically. Candidate selection and locked claim reject conflicting receipts. A final transactional dispatch authorization cancels PREPARING attempts when a conflict wins the lock; authorized SUBMITTED attempts remain attached for reconciliation. Authorization is the linearization point: conflicts after authorization cannot guarantee cancellation of an external transfer.
+- Changes: Unique collision matching requires the exact three inbound key fields or named constraint. PostgreSQL race tests now synchronize the initial absent reads and require the concurrency-specific result; conflicting obligations must be manual and unclaimable.
+- Files: src/customers/customers.repository.ts; src/customers/customer-bank-penny-verification.service.ts; tests/customer-refund-conflict-dispatch.spec.ts; tests/customer_bank_penny_deposit_e2e.spec.ts; tests/financial-payout-verification-hardening.spec.ts.
+- Verified this turn: `npx tsc --noEmit` exit 0; `npm run build` exit 0; `npx tsx tests/customer-refund-conflict-dispatch.spec.ts` exit 0; `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts` 22/22, exit 0; `git diff --check` exit 0 (line-ending warnings only).
+- Not run: financial-payout-verification-hardening.spec.ts against PostgreSQL; no isolated test database established in this turn. No production API calls, deployment or migration performed.
+- Next: Run the updated PostgreSQL suite against a confirmed isolated database, including conflict-versus-dispatch concurrency verification, before deployment.
+
 ## 2026-11-12: Customer Concurrency Data Invariant Reconciliation & Real PostgreSQL Multi-Connection Verification (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 22/22 PASS, `financial-payout-verification-hardening.spec.ts` 17/17 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
 - **Remediated Findings on Concurrency & Collision Reconciliation**:

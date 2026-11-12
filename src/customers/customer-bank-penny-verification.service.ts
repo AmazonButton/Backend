@@ -1308,12 +1308,11 @@ export class CustomerBankPennyVerificationService {
       const metaTarget = atomicErr?.meta?.target;
       const isTargetInboundRef =
         Array.isArray(metaTarget)
-          ? metaTarget.includes("providerTransactionRef") ||
-            metaTarget.includes("provider_transaction_ref") ||
-            (metaTarget.includes("provider") && metaTarget.includes("channel"))
+          ? metaTarget.length === 3 &&
+            ['provider', 'channel', 'provider_transaction_ref'].every((field) =>
+              metaTarget.map((value: string) => value === 'providerTransactionRef' ? 'provider_transaction_ref' : value).includes(field))
           : typeof metaTarget === "string"
-            ? metaTarget.includes("uq_cust_bank_inbound_provider_channel_ref") ||
-              metaTarget.includes("providerTransactionRef")
+            ? metaTarget === "uq_cust_bank_inbound_provider_channel_ref"
             : false;
 
       const isSpecificConstraintInMessage = String(atomicErr?.message || "").includes(
@@ -1430,6 +1429,11 @@ export class CustomerBankPennyVerificationService {
             obligation.id,
             "PAYOS",
           );
+
+        if (!await this.customersRepo.authorizeRefundDispatchTx(obligation.id, attempt.id)) {
+          failed++;
+          continue;
+        }
 
         // 3. Gửi lệnh chi hộ qua PayOSPayoutService thật
         let payoutResult: any;

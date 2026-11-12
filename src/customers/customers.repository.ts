@@ -1000,9 +1000,19 @@ export class CustomersRepository {
   }
 
   async flagConflictingInboundTransaction(txId: bigint, reconciliationFlag: string) {
-    return this.prisma.customerBankInboundTransaction.update({
-      where: { id: txId },
-      data: { reconciliationFlag },
+    return this.prisma.$transaction(async (tx) => {
+      // Same lock order as dispatch: obligation first. In-flight attempts remain reconcilable.
+      await tx.$queryRaw`SELECT id FROM customer_bank_refund_obligations
+        WHERE inbound_transaction_id = ${txId} ORDER BY id FOR UPDATE`;
+      const inbound = await tx.customerBankInboundTransaction.update({
+        where: { id: txId }, data: { reconciliationFlag },
+      });
+      await tx.customerBankRefundObligation.updateMany({
+        where: { inboundTransactionId: txId, activePayoutAttemptId: null,
+          refundStatus: { in: ['PENDING_REFUND', 'PROCESSING_REFUND'] } },
+        data: { refundStatus: 'PENDING_MANUAL_REFUND', failureReason: reconciliationFlag },
+      });
+      return inbound;
     });
   }
 
@@ -1704,6 +1714,10 @@ export class CustomersRepository {
       where: {
         refundStatus: 'PENDING_REFUND',
         activePayoutAttemptId: null,
+        inboundTransaction: { OR: [
+          { reconciliationFlag: null },
+          { NOT: { reconciliationFlag: { startsWith: 'FLAGGED_CONFLICTING_' } } },
+        ] },
       },
       take: limit,
       orderBy: { createdAt: 'asc' },
@@ -1780,6 +1794,13 @@ export class CustomersRepository {
         throw new NotFoundException('Không tìm thấy nghĩa vụ hoàn tiền');
       }
 
+      const binding = await tx.customerBankRefundObligation.findUnique({
+        where: { id: obligationId }, include: { inboundTransaction: true },
+      });
+      if (binding?.inboundTransaction.reconciliationFlag?.startsWith('FLAGGED_CONFLICTING_')) {
+        throw new ConflictException('Khoản nhận đang có xung đột, cần đối soát thủ công');
+      }
+
       if (obligation.refund_status !== 'PENDING_REFUND' && obligation.refund_status !== 'PROCESSING_REFUND') {
         throw new ConflictException(`Nghĩa vụ hoàn tiền ở trạng thái ${obligation.refund_status}, không thể chi trả.`);
       }
@@ -1818,6 +1839,32 @@ export class CustomersRepository {
       });
 
       return { obligation, attempt };
+    });
+  }
+
+  async authorizeRefundDispatchTx(obligationId: bigint, attemptId: bigint): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_bank_refund_obligations
+        WHERE id = ${obligationId} FOR UPDATE`;
+      const obligation = await tx.customerBankRefundObligation.findUnique({
+        where: { id: obligationId }, include: { inboundTransaction: true },
+      });
+      const attempt = await tx.customerBankRefundPayoutAttempt.findUnique({ where: { id: attemptId } });
+      if (!obligation || obligation.activePayoutAttemptId !== attemptId ||
+          attempt?.obligationId !== obligationId || attempt.status !== 'PREPARING') return false;
+      if (obligation.inboundTransaction.reconciliationFlag?.startsWith('FLAGGED_CONFLICTING_') ||
+          obligation.refundStatus !== 'PROCESSING_REFUND') {
+        await tx.customerBankRefundPayoutAttempt.update({ where: { id: attemptId },
+          data: { status: 'FAILED', failureReason: 'CONFLICT_BEFORE_DISPATCH' } });
+        await tx.customerBankRefundObligation.update({ where: { id: obligationId },
+          data: { refundStatus: 'PENDING_MANUAL_REFUND', activePayoutAttemptId: null,
+            failureReason: 'CONFLICT_BEFORE_DISPATCH' } });
+        return false;
+      }
+      // Dispatch authorization is the linearization point. After this commit, outcome
+      // may be unknown; preserve this attempt for reconciliation, never issue a replacement.
+      await tx.customerBankRefundPayoutAttempt.update({ where: { id: attemptId }, data: { status: 'SUBMITTED' } });
+      return true;
     });
   }
 

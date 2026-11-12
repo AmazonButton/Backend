@@ -349,10 +349,28 @@ async function run() {
       }
       return { success: true };
     },
+    authorizeRefundDispatchTx: async (obligationId: bigint, attemptId: bigint) => {
+      const obligation = refundObligations.find((o) => o.id === obligationId);
+      const attempt = payoutAttempts.find((a) => a.id === attemptId);
+      if (!obligation || obligation.activePayoutAttemptId !== attemptId || attempt?.status !== 'PREPARING') {
+        return false;
+      }
+      const inbound = inboundTxs.find((tx) => tx.id === obligation.inboundTransactionId);
+      if (inbound?.reconciliationFlag?.startsWith('FLAGGED_CONFLICTING_') || obligation.refundStatus !== 'PROCESSING_REFUND') {
+        attempt.status = 'FAILED';
+        attempt.failureReason = 'CONFLICT_BEFORE_DISPATCH';
+        obligation.refundStatus = 'PENDING_MANUAL_REFUND';
+        obligation.activePayoutAttemptId = null;
+        obligation.failureReason = 'CONFLICT_BEFORE_DISPATCH';
+        return false;
+      }
+      attempt.status = 'SUBMITTED';
+      return true;
+    },
     isStoreVerificationTransaction: async (orderCodeOrRef: string) => false,
   };
 
-    const mockPayosPayoutService: any = {
+  const mockPayosPayoutService: any = {
     createPayout: async (params: any) => ({
       code: '00',
       desc: 'Success',
@@ -418,7 +436,8 @@ async function run() {
   // Test 3: Webhook khớp chính chủ (Exact Match)
   // =========================================================================
   console.log('  3. Testing Webhook with Exact CounterAccount Match...');
-  const webhookPayloadMatch = { code: '00',
+  const webhookPayloadMatch = {
+    code: '00',
     data: {
       orderCode: Number(session1.orderCode),
       amount: 2000,
@@ -463,7 +482,8 @@ async function run() {
   // Test 5: Khách chuyển tiền lần thứ hai vào cùng một mã phiên (Double Transfer)
   // =========================================================================
   console.log('  5. Testing Double Transfer to Same Session (Multiple Inbound)...');
-  const webhookDouble = { code: '00',
+  const webhookDouble = {
+    code: '00',
     data: {
       orderCode: Number(session1.orderCode),
       amount: 2000,
@@ -501,7 +521,8 @@ async function run() {
 
   const sessionForAcc2 = await service.initiateVerificationSession(user, bankAcc2.id);
 
-  const webhookMismatch = { code: '00',
+  const webhookMismatch = {
+    code: '00',
     data: {
       orderCode: Number(sessionForAcc2.orderCode),
       amount: 2000,
@@ -529,7 +550,8 @@ async function run() {
   console.log('  7. Testing Webhook with Missing CounterAccount Info (TPBank Support via Session OrderCode)...');
   const sessionForAcc3 = await service.initiateVerificationSession(user, bankAcc2.id);
 
-  const webhookNoEvidence = { code: '00',
+  const webhookNoEvidence = {
+    code: '00',
     data: {
       orderCode: Number(sessionForAcc3.orderCode),
       amount: 2000,
@@ -561,7 +583,8 @@ async function run() {
   // Test 8: Khoản thu ngoài phiên (Orphan / Out-of-band Inbound Transaction)
   // =========================================================================
   console.log('  8. Testing Orphan Inbound Transaction (No Session)...');
-  const webhookOrphan = { code: '00',
+  const webhookOrphan = {
+    code: '00',
     data: {
       orderCode: 999999999, // orderCode hoàn toàn không có trong DB
       amount: 5000, // Khách chuyển 5.000đ ngoài phiên
