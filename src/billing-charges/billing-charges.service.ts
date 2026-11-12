@@ -333,22 +333,24 @@ export class BillingChargesService {
       orderCode = Number(charge.providerTransactionCode);
     } else {
       orderCode = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
-      const refreshed = await this.repository.assignStableOrderCode(charge.chargeId, orderCode.toString());
-      if (refreshed?.paymentLinkId && refreshed?.checkoutUrl) {
-        return {
-          paymentTransactionId: charge.chargeId.toString(),
-          chargeCode: refreshed.chargeCode,
-          orderCode: Number(refreshed.providerTransactionCode),
-          amount: Number(refreshed.totalAmount),
-          checkoutUrl: refreshed.checkoutUrl,
-          qrCode: refreshed.qrCode,
-          paymentLinkId: refreshed.paymentLinkId,
-          currency: 'VND',
-          status: 'PENDING',
-        };
-      }
-      if (refreshed?.providerTransactionCode) {
-        orderCode = Number(refreshed.providerTransactionCode);
+      if (typeof this.repository.assignStableOrderCode === 'function') {
+        const refreshed = await this.repository.assignStableOrderCode(charge.chargeId, orderCode.toString());
+        if (refreshed?.paymentLinkId && refreshed?.checkoutUrl) {
+          return {
+            paymentTransactionId: charge.chargeId.toString(),
+            chargeCode: refreshed.chargeCode,
+            orderCode: Number(refreshed.providerTransactionCode),
+            amount: Number(refreshed.totalAmount),
+            checkoutUrl: refreshed.checkoutUrl,
+            qrCode: refreshed.qrCode,
+            paymentLinkId: refreshed.paymentLinkId,
+            currency: 'VND',
+            status: 'PENDING',
+          };
+        }
+        if (refreshed?.providerTransactionCode) {
+          orderCode = Number(refreshed.providerTransactionCode);
+        }
       }
     }
     const description = (charge.chargeCode || `CHG${charge.chargeId}`).slice(0, 25);

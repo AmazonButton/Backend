@@ -1,4 +1,4 @@
-import { IsBoolean, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsObject, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class PayosWebhookPayloadDto {
@@ -13,7 +13,7 @@ export class PayosWebhookPayloadDto {
   webhook_url?: string;
 
   @ApiPropertyOptional({ description: 'Trạng thái thành công theo contract PayOS', example: true })
-  @IsOptional()
+  @ValidateIf((o) => !o.webhookUrl && !o.webhook_url)
   @IsBoolean()
   success?: boolean;
 
