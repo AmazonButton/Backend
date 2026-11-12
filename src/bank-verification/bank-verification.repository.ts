@@ -334,7 +334,10 @@ export class BankVerificationRepository {
       }
 
       // NV-01: Helper ensuring confirmed inbound bank credit is always recorded with a refund obligation
-      const recordReceiptAndObligation = async (matchStatus: string): Promise<string> => {
+      const recordReceiptAndObligation = async (
+        matchStatus: string,
+        refundStatus: string = 'PENDING_REFUND',
+      ): Promise<string> => {
         let refundRef = `REF_ST_${lockedTx.id}`;
         try {
           const existingReceipts = await tx.$queryRaw<Array<{ id: bigint }>>`
@@ -346,6 +349,17 @@ export class BankVerificationRepository {
             return `REF_ST_${existingReceipts[0].id}`;
           }
 
+          let senderEncrypted: string | null = null;
+          let senderHash: string | null = null;
+          if (params.senderAccountNumber && !params.senderAccountNumber.includes('*')) {
+            try {
+              senderEncrypted = CryptoVaultUtil.encryptAccountNumber(params.senderAccountNumber);
+              senderHash = CryptoVaultUtil.computeDeterministicAccountHash(params.senderAccountNumber);
+            } catch {
+              // fallback
+            }
+          }
+
           const [receipt] = await tx.$queryRaw<Array<{ id: bigint }>>`
             INSERT INTO store_bank_inbound_receipts (
               verification_tx_id, provider_transaction_id, amount,
@@ -353,7 +367,9 @@ export class BankVerificationRepository {
               match_status, received_at, created_at
             ) VALUES (
               ${lockedTx.id}, ${params.providerTransactionId}, ${params.receivedAmount},
-              ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash}, ${params.senderBankBin || lockedAccount.bank_bin},
+              ${senderEncrypted || lockedAccount.account_number_encrypted},
+              ${senderHash || lockedAccount.account_number_hash},
+              ${params.senderBankBin || lockedAccount.bank_bin},
               ${matchStatus}, NOW(), NOW()
             ) RETURNING id
           `;
@@ -366,7 +382,7 @@ export class BankVerificationRepository {
                 target_bank_bin, target_account_encrypted, target_account_hash,
                 created_at, updated_at
               ) VALUES (
-                ${receipt.id}, ${params.receivedAmount}, 'PENDING_REFUND', ${refundRef},
+                ${receipt.id}, ${params.receivedAmount}, ${refundStatus}, ${refundRef},
                 ${lockedAccount.bank_bin}, ${lockedAccount.account_number_encrypted}, ${lockedAccount.account_number_hash},
                 NOW(), NOW()
               )
@@ -448,19 +464,25 @@ export class BankVerificationRepository {
           this.logger.warn(
             `[AtomicWebhookVerification] Thieu thong tin tai khoan nhan (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('DESTINATION_ACCOUNT_UNVERIFIABLE', 'PENDING_MANUAL_REFUND');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_ACCOUNT_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_MANUAL_REFUND',
+                refund_transaction_id = ${refundRef},
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE' },
+            needsRefund: false,
+            refundReference: refundRef,
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            bankAccount: lockedAccount,
           };
         }
 
@@ -468,19 +490,25 @@ export class BankVerificationRepository {
           this.logger.warn(
             `[AtomicWebhookVerification] Thieu thong tin BIN ngan hang nhan (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('DESTINATION_BANK_UNVERIFIABLE', 'PENDING_MANUAL_REFUND');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_BANK_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_MANUAL_REFUND',
+                refund_transaction_id = ${refundRef},
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'DESTINATION_BANK_UNVERIFIABLE',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_UNVERIFIABLE' },
+            needsRefund: false,
+            refundReference: refundRef,
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            bankAccount: lockedAccount,
           };
         }
       }
@@ -490,19 +518,25 @@ export class BankVerificationRepository {
           this.logger.warn(
             `[AtomicWebhookVerification] Tai khoan nhan khong khop nen tang (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('DESTINATION_ACCOUNT_MISMATCH', 'PENDING_MANUAL_REFUND');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_ACCOUNT_MISMATCH',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_MANUAL_REFUND',
+                refund_transaction_id = ${refundRef},
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'DESTINATION_ACCOUNT_MISMATCH',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_MISMATCH' },
+            needsRefund: false,
+            refundReference: refundRef,
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_MISMATCH', refund_status: 'PENDING_MANUAL_REFUND' },
+            bankAccount: lockedAccount,
           };
         }
       }
@@ -512,19 +546,25 @@ export class BankVerificationRepository {
           this.logger.warn(
             `[AtomicWebhookVerification] BIN ngan hang nhan khong khop nen tang (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('DESTINATION_BANK_MISMATCH', 'PENDING_MANUAL_REFUND');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_BANK_MISMATCH',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_MANUAL_REFUND',
+                refund_transaction_id = ${refundRef},
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'DESTINATION_BANK_MISMATCH',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_MISMATCH' },
+            needsRefund: false,
+            refundReference: refundRef,
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_MISMATCH', refund_status: 'PENDING_MANUAL_REFUND' },
+            bankAccount: lockedAccount,
           };
         }
       }
@@ -532,46 +572,56 @@ export class BankVerificationRepository {
       // 7. Kiểm tra chéo tài khoản gửi (sender account & BIN)
       // Point 2 Fix: Apply strict sender verification across ALL channels including PayOS!
       // PayOS transactions are NO LONGER exempted from sender checks.
-      if (isStrict) {
-        if (!params.senderAccountNumber) {
-          this.logger.warn(
-            `[AtomicWebhookVerification] Thieu thong tin tai khoan gui (ref: ${params.referenceCode})`,
-          );
-          await tx.$executeRaw`
-            UPDATE bank_account_verification_transactions
-            SET status = 'FAILED',
-                failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
-                received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
-                updated_at = NOW()
-            WHERE id = ${lockedTx.id}
-          `;
-          return {
-            success: false,
-            reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE' },
-          };
-        }
+      if (!params.senderAccountNumber) {
+        this.logger.warn(
+          `[AtomicWebhookVerification] Thieu thong tin tai khoan gui (ref: ${params.referenceCode})`,
+        );
+        const refundRef = await recordReceiptAndObligation('SENDER_ACCOUNT_UNVERIFIABLE', 'PENDING_MANUAL_REFUND');
+        await tx.$executeRaw`
+          UPDATE bank_account_verification_transactions
+          SET status = 'FAILED',
+              failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
+              received_amount = ${params.receivedAmount},
+              provider_transaction_id = ${params.providerTransactionId},
+              refund_status = 'PENDING_MANUAL_REFUND',
+              refund_transaction_id = ${refundRef},
+              updated_at = NOW()
+          WHERE id = ${lockedTx.id}
+        `;
+        return {
+          success: false,
+          reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
+          needsRefund: false,
+          refundReference: refundRef,
+          transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+          bankAccount: lockedAccount,
+        };
+      }
 
-        if (!params.senderBankBin) {
-          this.logger.warn(
-            `[AtomicWebhookVerification] Thieu thong tin BIN ngan hang gui (ref: ${params.referenceCode})`,
-          );
-          await tx.$executeRaw`
-            UPDATE bank_account_verification_transactions
-            SET status = 'FAILED',
-                failure_reason = 'SENDER_BANK_UNVERIFIABLE',
-                received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
-                updated_at = NOW()
-            WHERE id = ${lockedTx.id}
-          `;
-          return {
-            success: false,
-            reason: 'SENDER_BANK_UNVERIFIABLE',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_BANK_UNVERIFIABLE' },
-          };
-        }
+      if (!params.senderBankBin) {
+        this.logger.warn(
+          `[AtomicWebhookVerification] Thieu thong tin BIN ngan hang gui (ref: ${params.referenceCode})`,
+        );
+        const refundRef = await recordReceiptAndObligation('SENDER_BANK_UNVERIFIABLE', 'PENDING_MANUAL_REFUND');
+        await tx.$executeRaw`
+          UPDATE bank_account_verification_transactions
+          SET status = 'FAILED',
+              failure_reason = 'SENDER_BANK_UNVERIFIABLE',
+              received_amount = ${params.receivedAmount},
+              provider_transaction_id = ${params.providerTransactionId},
+              refund_status = 'PENDING_MANUAL_REFUND',
+              refund_transaction_id = ${refundRef},
+              updated_at = NOW()
+          WHERE id = ${lockedTx.id}
+        `;
+        return {
+          success: false,
+          reason: 'SENDER_BANK_UNVERIFIABLE',
+          needsRefund: false,
+          refundReference: refundRef,
+          transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_BANK_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+          bankAccount: lockedAccount,
+        };
       }
 
       if (params.senderAccountNumber) {
@@ -584,19 +634,25 @@ export class BankVerificationRepository {
           this.logger.error(
             `[AtomicWebhookVerification] Giai ma tai khoan dang ky that bai (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('SENDER_ACCOUNT_UNVERIFIABLE', 'PENDING_MANUAL_REFUND');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_MANUAL_REFUND',
+                refund_transaction_id = ${refundRef},
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE' },
+            needsRefund: false,
+            refundReference: refundRef,
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            bankAccount: lockedAccount,
           };
         }
 
@@ -604,25 +660,57 @@ export class BankVerificationRepository {
           this.logger.warn(
             `[AtomicWebhookVerification] So tai khoan sau giai ma rong (ref: ${params.referenceCode})`,
           );
+          const refundRef = await recordReceiptAndObligation('SENDER_ACCOUNT_UNVERIFIABLE', 'PENDING_MANUAL_REFUND');
           await tx.$executeRaw`
             UPDATE bank_account_verification_transactions
             SET status = 'FAILED',
                 failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
                 provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_MANUAL_REFUND',
+                refund_transaction_id = ${refundRef},
                 updated_at = NOW()
             WHERE id = ${lockedTx.id}
           `;
           return {
             success: false,
             reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE' },
+            needsRefund: false,
+            refundReference: refundRef,
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            bankAccount: lockedAccount,
           };
         }
 
         const cleanSender = params.senderAccountNumber.trim();
         // Point 4 Fix: Masked 4-digit suffix is strictly forbidden as proof of ownership.
         // Full account number must match exactly.
+        if (cleanSender.includes('*')) {
+          this.logger.warn(
+            `[AtomicWebhookVerification] Tai khoan gui bi che (masked), khong du bang chung so huu (ref: ${params.referenceCode})`,
+          );
+          const refundRef = await recordReceiptAndObligation('SENDER_ACCOUNT_MASKED', 'PENDING_MANUAL_REFUND');
+          await tx.$executeRaw`
+            UPDATE bank_account_verification_transactions
+            SET status = 'FAILED',
+                failure_reason = 'SENDER_ACCOUNT_MASKED',
+                received_amount = ${params.receivedAmount},
+                provider_transaction_id = ${params.providerTransactionId},
+                refund_status = 'PENDING_MANUAL_REFUND',
+                refund_transaction_id = ${refundRef},
+                updated_at = NOW()
+            WHERE id = ${lockedTx.id}
+          `;
+          return {
+            success: false,
+            reason: 'SENDER_ACCOUNT_MASKED',
+            needsRefund: false,
+            refundReference: refundRef,
+            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_MASKED', refund_status: 'PENDING_MANUAL_REFUND' },
+            bankAccount: lockedAccount,
+          };
+        }
+
         const isSenderAccountMatched = cleanSender === plainRegisteredAcc;
 
         if (!isSenderAccountMatched) {

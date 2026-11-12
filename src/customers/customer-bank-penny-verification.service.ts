@@ -520,7 +520,8 @@ export class CustomerBankPennyVerificationService {
                       counterAccountNumber: realTx.counterAccountNumber || null,
                       counterAccountName: realTx.counterAccountName || null,
                       description: realTx.description || null,
-                      channel: "PAYOS_POLLING",
+                      channel: "PAYOS_WEBHOOK", // Issue 1 Fix: Always use canonical PAYOS_WEBHOOK channel for financial deduplication
+                      ingestionSource: "POLLING",
                       rawPayload: realTx,
                     });
                   } catch (syncErr: any) {
@@ -946,22 +947,38 @@ export class CustomerBankPennyVerificationService {
     }
 
     // Point 5 Fix: Nhận diện test/sample webhook ping từ PayOS dashboard
-    const descLower = String(data.description || body.desc || "").toLowerCase();
-    const isTestPing =
-      body.desc === "test" ||
-      Number(data.orderCode) === 123 ||
-      descLower.includes("thu nghiem") ||
-      descLower === "test";
+    // Chỉ coi là test ping khi KHÔNG tìm thấy phiên xác minh nào (cả Customer lẫn Store)
+    // VÀ mô tả hoặc payload khớp chính xác định dạng mẫu test từ PayOS dashboard
+    const orderCodeBigInt =
+      data.orderCode !== undefined && data.orderCode !== null
+        ? BigInt(data.orderCode)
+        : null;
+    const session = orderCodeBigInt
+      ? await this.customersRepo.findVerificationSessionByOrderCode(orderCodeBigInt)
+      : null;
+    const isStoreTx =
+      orderCodeBigInt && typeof this.customersRepo?.isStoreVerificationTransaction === "function"
+        ? await this.customersRepo.isStoreVerificationTransaction(String(data.orderCode))
+        : false;
 
-    if (isTestPing) {
-      this.logger.log(
-        `[processPayosVerificationWebhook] Nhận diện test webhook ping từ PayOS dashboard (orderCode=${data.orderCode}). Xác nhận thành công mà không tạo giao dịch thực.`,
-      );
-      return {
-        success: true,
-        code: "00",
-        message: "PayOS webhook test handshake acknowledged (zero database mutation)",
-      };
+    if (!session && !isStoreTx) {
+      const descLower = String(data.description || body.desc || "").trim().toLowerCase();
+      const isTestPing =
+        body.desc === "test" ||
+        descLower === "ma giao dich thu nghiem" ||
+        descLower === "test" ||
+        (Number(data.orderCode) === 123 && descLower.includes("thu nghiem"));
+
+      if (isTestPing) {
+        this.logger.log(
+          `[processPayosVerificationWebhook] Nhận diện test webhook ping từ PayOS dashboard (orderCode=${data.orderCode}, desc=${descLower}). Không có phiên xác minh nào tương ứng. Xác nhận thành công mà không tạo giao dịch thực.`,
+        );
+        return {
+          success: true,
+          code: "00",
+          message: "PayOS webhook test handshake acknowledged (zero database mutation)",
+        };
+      }
     }
 
     return this.recordInboundPaymentEvidence({
@@ -974,6 +991,8 @@ export class CustomerBankPennyVerificationService {
       counterAccountName: data.counterAccountName,
       description: data.description,
       channel: "PAYOS_WEBHOOK",
+      ingestionSource: "WEBHOOK",
+      session,
       rawPayload: data,
     });
   }
@@ -992,10 +1011,13 @@ export class CustomerBankPennyVerificationService {
     counterAccountName?: string | null;
     description?: string | null;
     channel?: string;
+    ingestionSource?: string;
+    session?: any;
     rawPayload?: any;
   }): Promise<{ success: boolean; message: string; notHandled?: boolean; code?: string }> {
     const provider = "PAYOS";
-    const channel = params.channel || "PAYOS_WEBHOOK";
+    // Always use canonical financial channel PAYOS_WEBHOOK to enforce database-level deduplication across polling and webhook
+    const channel = "PAYOS_WEBHOOK";
 
     // 1. Kiểm tra số tiền hợp lệ: bắt buộc là số nguyên dương hữu hạn (tuyệt đối không tự bù 2.000đ)
     if (
@@ -1033,10 +1055,12 @@ export class CustomerBankPennyVerificationService {
           : parsePayosDateTime(String(params.transactionDateTime)))
       : new Date();
 
-    // 3. Tra cứu phiên xác nhận tương ứng
+    // 3. Tra cứu phiên xác nhận tương ứng (tái sử dụng session đã tìm thấy nếu có)
     const orderCode = BigInt(params.orderCode);
     const session =
-      await this.customersRepo.findVerificationSessionByOrderCode(orderCode);
+      params.session !== undefined
+        ? params.session
+        : await this.customersRepo.findVerificationSessionByOrderCode(orderCode);
 
     const descStr = String(params.description || "");
     if (!session) {
@@ -1053,9 +1077,10 @@ export class CustomerBankPennyVerificationService {
           message: "Belongs to Store verification",
         };
       }
-      const isStoreTx = await this.customersRepo.isStoreVerificationTransaction(
-        String(params.orderCode),
-      );
+      const isStoreTx =
+        typeof this.customersRepo?.isStoreVerificationTransaction === "function"
+          ? await this.customersRepo.isStoreVerificationTransaction(String(params.orderCode))
+          : false;
       if (isStoreTx) {
         this.logger.log(
           `[CustomerBankPennyVerificationService] Nhận diện orderCode ${params.orderCode} thuộc về Store, bỏ qua để Store xử lý`,

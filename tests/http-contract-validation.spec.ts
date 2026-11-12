@@ -463,8 +463,11 @@ async function runHttpContractValidationTests() {
         inboundTxId: 10n,
         obligationId: 10n,
         verificationResult: 'MATCHED_PENDING_REFUND',
+        matchDecision: 'MATCHED',
+        shouldActivate: false,
       };
     },
+    isStoreVerificationTransaction: async () => false,
   };
 
   const mockOrdersRepo: any = {

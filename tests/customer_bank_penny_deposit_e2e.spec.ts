@@ -760,7 +760,7 @@ async function run() {
   const plainAcc4 = '03312348888';
   const bankAcc4 = {
     id: 404n,
-    customerId: user.customerId,
+    customerId: mockCustomer.customerId,
     bankBin: '970422',
     accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc4),
     accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc4),
@@ -799,7 +799,7 @@ async function run() {
   const plainAcc5 = '03312349999';
   const bankAcc5 = {
     id: 505n,
-    customerId: user.customerId,
+    customerId: mockCustomer.customerId,
     bankBin: '970422',
     accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc5),
     accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc5),
@@ -869,7 +869,220 @@ async function run() {
   assert.strictEqual(inboundTxs.length, preTestInboundCount, 'Zero inbound transactions recorded for test handshake ping');
   assert.strictEqual(refundObligations.length, preTestObligationCount, 'Zero refund obligations recorded for test handshake ping');
 
-  console.log('✅ ALL 17 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
+  // =========================================================================
+  // Test 18: Real Transaction with "thu nghiem" in Description (Must NOT be skipped as test ping)
+  // =========================================================================
+  console.log('  18. Testing Real Transaction with "thu nghiem" in Description (Must NOT be skipped as test ping)...');
+  const plainAcc6 = '03312347777';
+  const bankAcc6 = {
+    id: 606n,
+    customerId: mockCustomer.customerId,
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc6),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc6),
+    accountNumberMasked: '******7777',
+    bankName: 'MBBank',
+    accountName: 'TEST REAL THU NGHIEM',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(bankAcc6);
+  mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc6;
+  const session6 = await service.initiateVerificationSession(user, bankAcc6.id);
+
+  const webhookWithThuNghiem = {
+    code: '00',
+    data: {
+      orderCode: Number(session6.orderCode),
+      amount: 2000,
+      reference: 'TX_REAL_WITH_THU_NGHIEM_18',
+      description: 'Chuyen tien thu nghiem xac minh tai khoan',
+      counterAccountBankId: '970422',
+      counterAccountNumber: plainAcc6,
+      counterAccountName: 'TEST REAL THU NGHIEM',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  const result18 = await service.processPayosVerificationWebhook(webhookWithThuNghiem);
+  assert.strictEqual(result18.success, true);
+  const realThuNghiemInbound = inboundTxs.find((tx) => tx.providerTransactionRef === 'TX_REAL_WITH_THU_NGHIEM_18');
+  assert.ok(realThuNghiemInbound, 'Real transaction must be recorded even if description contains "thu nghiem"');
+  assert.strictEqual(realThuNghiemInbound.matchDecision, 'MATCHED', 'Match decision must be MATCHED');
+  assert.strictEqual(bankAcc6.verificationStatus, 'VERIFIED', 'Bank account must be activated VERIFIED');
+
+  // =========================================================================
+  // Test 19: Bidirectional Deduplication (Order 1: Polling First -> Webhook Follows)
+  // =========================================================================
+  console.log('  19. Testing Bidirectional Deduplication: Polling First -> Webhook Follows...');
+  const plainAcc7 = '03312346666';
+  const bankAcc7 = {
+    id: 707n,
+    customerId: mockCustomer.customerId,
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc7),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc7),
+    accountNumberMasked: '******6666',
+    bankName: 'MBBank',
+    accountName: 'TEST DEDUP POLL FIRST',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(bankAcc7);
+  mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc7;
+  const session7 = await service.initiateVerificationSession(user, bankAcc7.id);
+
+  const dedupRef1 = 'TX_DEDUP_POLL_FIRST_01';
+  (global as any).fetch = async (url: any, opts: any) => {
+    if (typeof url === 'string' && url.includes('/payment-requests/' + session7.orderCode)) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: '00',
+          desc: 'success',
+          data: {
+            id: 'link_' + session7.orderCode,
+            orderCode: Number(session7.orderCode),
+            status: 'PAID',
+            transactions: [
+              {
+                reference: dedupRef1,
+                amount: 2000,
+                transactionDateTime: new Date().toISOString(),
+                counterAccountNumber: plainAcc7,
+                counterAccountBankId: '970422',
+                counterAccountName: 'TEST DEDUP POLL FIRST',
+              },
+            ],
+          },
+        }),
+      };
+    }
+    return originalFetch(url, opts);
+  };
+
+  // 1. Polling executes first
+  await service.getVerificationStatus(user, bankAcc7.id);
+  global.fetch = originalFetch;
+
+  const countAfterPoll = inboundTxs.filter((tx) => tx.providerTransactionRef === dedupRef1).length;
+  assert.strictEqual(countAfterPoll, 1, 'Polling must create exactly 1 Inbound record');
+  const oblAfterPoll = refundObligations.filter((o) => {
+    const matchedTx = inboundTxs.find((tx) => tx.id === o.inboundTransactionId);
+    return matchedTx?.providerTransactionRef === dedupRef1;
+  }).length;
+  assert.strictEqual(oblAfterPoll, 1, 'Polling must create exactly 1 RefundObligation');
+
+  // 2. Webhook arrives second with identical reference
+  const webhookDedup1 = {
+    code: '00',
+    data: {
+      orderCode: Number(session7.orderCode),
+      amount: 2000,
+      reference: dedupRef1,
+      counterAccountBankId: '970422',
+      counterAccountNumber: plainAcc7,
+      counterAccountName: 'TEST DEDUP POLL FIRST',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  const webhookDedupRes1 = await service.processPayosVerificationWebhook(webhookDedup1);
+  assert.strictEqual(webhookDedupRes1.success, true);
+  assert.ok(webhookDedupRes1.message.includes('Idempotent') || webhookDedupRes1.message.includes('trước đó'));
+
+  const countAfterWebhook = inboundTxs.filter((tx) => tx.providerTransactionRef === dedupRef1).length;
+  assert.strictEqual(countAfterWebhook, 1, 'Inbound transactions must NOT duplicate when Webhook follows Polling');
+  const oblAfterWebhook = refundObligations.filter((o) => {
+    const matchedTx = inboundTxs.find((tx) => tx.id === o.inboundTransactionId);
+    return matchedTx?.providerTransactionRef === dedupRef1;
+  }).length;
+  assert.strictEqual(oblAfterWebhook, 1, 'Refund obligations must NOT duplicate when Webhook follows Polling');
+
+  // =========================================================================
+  // Test 20: Bidirectional Deduplication (Order 2: Webhook First -> Polling Follows)
+  // =========================================================================
+  console.log('  20. Testing Bidirectional Deduplication: Webhook First -> Polling Follows...');
+  const plainAcc8 = '03312345555';
+  const bankAcc8 = {
+    id: 808n,
+    customerId: mockCustomer.customerId,
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc8),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc8),
+    accountNumberMasked: '******5555',
+    bankName: 'MBBank',
+    accountName: 'TEST DEDUP WEBHOOK FIRST',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(bankAcc8);
+  mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc8;
+  const session8 = await service.initiateVerificationSession(user, bankAcc8.id);
+
+  const dedupRef2 = 'TX_DEDUP_WEBHOOK_FIRST_02';
+
+  // 1. Webhook executes first
+  const webhookDedup2 = {
+    code: '00',
+    data: {
+      orderCode: Number(session8.orderCode),
+      amount: 2000,
+      reference: dedupRef2,
+      counterAccountBankId: '970422',
+      counterAccountNumber: plainAcc8,
+      counterAccountName: 'TEST DEDUP WEBHOOK FIRST',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  const webhookDedupRes2 = await service.processPayosVerificationWebhook(webhookDedup2);
+  assert.strictEqual(webhookDedupRes2.success, true);
+
+  const countAfterWebhookFirst = inboundTxs.filter((tx) => tx.providerTransactionRef === dedupRef2).length;
+  assert.strictEqual(countAfterWebhookFirst, 1, 'Webhook must create exactly 1 Inbound record');
+
+  // 2. Polling executes second with identical reference
+  (global as any).fetch = async (url: any, opts: any) => {
+    if (typeof url === 'string' && url.includes('/payment-requests/' + session8.orderCode)) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: '00',
+          desc: 'success',
+          data: {
+            id: 'link_' + session8.orderCode,
+            orderCode: Number(session8.orderCode),
+            status: 'PAID',
+            transactions: [
+              {
+                reference: dedupRef2,
+                amount: 2000,
+                transactionDateTime: new Date().toISOString(),
+                counterAccountNumber: plainAcc8,
+                counterAccountBankId: '970422',
+                counterAccountName: 'TEST DEDUP WEBHOOK FIRST',
+              },
+            ],
+          },
+        }),
+      };
+    }
+    return originalFetch(url, opts);
+  };
+
+  await service.getVerificationStatus(user, bankAcc8.id);
+  global.fetch = originalFetch;
+
+  const countAfterPollFollows = inboundTxs.filter((tx) => tx.providerTransactionRef === dedupRef2).length;
+  assert.strictEqual(countAfterPollFollows, 1, 'Inbound transactions must NOT duplicate when Polling follows Webhook');
+  const oblAfterPollFollows = refundObligations.filter((o) => {
+    const matchedTx = inboundTxs.find((tx) => tx.id === o.inboundTransactionId);
+    return matchedTx?.providerTransactionRef === dedupRef2;
+  }).length;
+  assert.strictEqual(oblAfterPollFollows, 1, 'Refund obligations must NOT duplicate when Polling follows Webhook');
+
+  console.log('✅ ALL 20 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
 }
 
 run().catch((err) => {

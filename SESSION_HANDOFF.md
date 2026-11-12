@@ -1,5 +1,32 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: Resolution of 3 Critical Review Findings: Deduplication, Test Ping Scope & Store Missing Sender Obligations (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 20/20 PASS, `financial-payout-verification-hardening.spec.ts` 12/12 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
+- **Remediated 3 Critical Review Findings**:
+  1. **Canonical Channel Deduplication Across Polling & Webhook (`src/customers/customer-bank-penny-verification.service.ts`)**:
+     - Polling and Webhook now both use the canonical financial channel `PAYOS_WEBHOOK` (forcing `channel = "PAYOS_WEBHOOK"` in `recordInboundPaymentEvidence`).
+     - Aligns with Postgres unique constraint `@@unique([provider, channel, providerTransactionRef])`, guaranteeing that regardless of ingestion arrival order (`polling -> webhook` or `webhook -> polling`), duplicate inbound entries and duplicate refund obligations are mathematically blocked at both application and database levels.
+     - Added bidirectional idempotency test coverage in `tests/customer_bank_penny_deposit_e2e.spec.ts` (TC-19: Polling First -> Webhook Follows, TC-20: Webhook First -> Polling Follows).
+  2. **Active Session Priority Over Test Ping Detection (`src/customers/customer-bank-penny-verification.service.ts`)**:
+     - Webhook handler now queries database for active customer verification sessions (`findVerificationSessionByOrderCode`) and store verification transactions (`isStoreVerificationTransaction`) FIRST, before assessing test ping indicators.
+     - If an active session exists, the transaction is NEVER short-circuited as a test ping, even if the user or bank transfer description contains "thu nghiem" or "test".
+     - Passes retrieved `session` directly into `recordInboundPaymentEvidence` to eliminate redundant database round-trips.
+     - Added test case TC-18 in `tests/customer_bank_penny_deposit_e2e.spec.ts` verifying that real transactions with "thu nghiem" in the transfer description are processed, recorded, and activated normally.
+  3. **Store Flow Missing & Masked Sender Ledger Integrity (`src/bank-verification/bank-verification.repository.ts`)**:
+     - In `executeAtomicWebhookVerificationTx`: when `senderAccountNumber` or `senderBankBin` is missing, or the sender account is masked (contains `*`), the transaction now invokes `recordReceiptAndObligation` inside the atomic database transaction before returning failure.
+     - Creates an immutable inbound receipt in `store_bank_inbound_receipts` with `amount`, `provider_transaction_id`, and `match_status`.
+     - Creates a corresponding refund obligation in `store_bank_refund_obligations` with `refund_status = 'PENDING_MANUAL_REFUND'` (preventing automated payout workers from dispatching funds without verified destination details, while holding the obligation for manual accountant review).
+     - Updates `bank_account_verification_transactions` to `status = 'FAILED'`, `failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE'` / `'SENDER_BANK_UNVERIFIABLE'` / `'SENDER_ACCOUNT_MASKED'`, and stores `refund_transaction_id`.
+     - Leaves the store bank account unverified (`PENDING_VERIFICATION`).
+     - Added test cases TC-08b and TC-08c in `tests/financial-payout-verification-hardening.spec.ts` asserting atomic receipt/obligation creation and `PENDING_MANUAL_REFUND` routing.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 20/20 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 12/12 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/http-contract-validation.spec.ts`: 20/20 PASS (100%).
+
 ## 2026-11-12: Full Banking Verification Remediation & Gaps Resolution (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 17/17 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS, `platform-button-rental-phase1-payos-integration.spec.ts` 8/8 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
 - **Remediated 5 Deep-Review Findings**:
