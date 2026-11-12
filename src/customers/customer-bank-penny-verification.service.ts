@@ -256,7 +256,9 @@ export class CustomerBankPennyVerificationService {
           }
         }
 
-        const description = `VRF ${account.bankBin}`.slice(0, 25);
+        // Issue 7 Fix: PayOS non-integrated channel description limit is 9 chars.
+        // Use compact scheme: 'V' + last 8 digits of bankBin (bankBin is 6 digits so just 'V' + bankBin = 7 chars, safe).
+        const description = `V${account.bankBin}`.slice(0, 9);
         const frontendOrigin =
           process.env.FRONTEND_URL || "https://buttontdash.vercel.app";
         const returnUrl =
@@ -491,50 +493,55 @@ export class CustomerBankPennyVerificationService {
               const txList = Array.isArray(queryData.data.transactions)
                 ? queryData.data.transactions
                 : [];
-              const firstTx = txList[0] || {};
 
-              const fakeWebhookData = {
-                orderCode: Number(latestSession.paymentOrderCode),
-                amount: Number(queryData.data.amount || 2000),
-                description: String(
-                  queryData.data.description || latestSession.proofReference,
-                ),
-                accountNumber: String(
-                  firstTx.accountNumber || account.accountNumberMasked || "",
-                ),
-                reference: String(
-                  firstTx.reference ||
-                    `RECON_${latestSession.paymentOrderCode}`,
-                ),
-                transactionDateTime: String(
-                  firstTx.transactionDateTime || new Date().toISOString(),
-                ),
-                currency: "VND",
-                paymentLinkId: String(
-                  queryData.data.id ||
-                    queryData.data.paymentLinkId ||
-                    latestSession.paymentLinkId ||
-                    "",
-                ),
-                code: "00",
-                desc: "success",
-                counterAccountBankId: firstTx.counterAccountBankId || null,
-                counterAccountBankName: firstTx.counterAccountBankName || null,
-                counterAccountName: firstTx.counterAccountName || null,
-                counterAccountNumber: firstTx.counterAccountNumber || null,
-              };
-
-              const signature = signWebhookData(fakeWebhookData, checksumKey);
-              try {
-                await this.processPayosVerificationWebhook({
-                  code: "00",
-                  desc: "success",
-                  data: fakeWebhookData,
-                  signature,
-                });
-              } catch (webhookErr: any) {
-                this.logger.error(
-                  `[getVerificationStatus] Lỗi đồng bộ webhook từ polling PayOS: ${webhookErr.message}`,
+              // Issue 2 Fix: Remove fakeWebhookData construction entirely.
+              // Instead, process REAL transactions[] entries from PayOS polling response directly.
+              // Each transaction has real reference, transactionDateTime, amount, counterAccount* fields.
+              // Use real provider_transaction_id as dedup key (same as webhook path).
+              if (txList.length > 0) {
+                for (const realTx of txList) {
+                  if (!realTx.reference) {
+                    this.logger.warn(
+                      `[getVerificationStatus] Bỏ qua giao dịch không có reference trong polling response`,
+                    );
+                    continue;
+                  }
+                  const realWebhookPayload = {
+                    code: '00',
+                    desc: 'success',
+                    data: {
+                      orderCode: Number(latestSession.paymentOrderCode),
+                      amount: Number(realTx.amount ?? queryData.data.amount ?? 2000),
+                      description: String(realTx.description || queryData.data.description || ''),
+                      accountNumber: String(realTx.accountNumber || ''),
+                      reference: String(realTx.reference),
+                      transactionDateTime: String(realTx.transactionDateTime || new Date().toISOString()),
+                      currency: 'VND',
+                      paymentLinkId: String(queryData.data.id || queryData.data.paymentLinkId || latestSession.paymentLinkId || ''),
+                      code: '00',
+                      desc: 'success',
+                      counterAccountBankId: realTx.counterAccountBankId || null,
+                      counterAccountBankName: realTx.counterAccountBankName || null,
+                      counterAccountName: realTx.counterAccountName || null,
+                      counterAccountNumber: realTx.counterAccountNumber || null,
+                    },
+                  };
+                  // Sign with backend key so signature verification passes
+                  const realSig = signWebhookData(realWebhookPayload.data, checksumKey);
+                  try {
+                    await this.processPayosVerificationWebhook({
+                      ...realWebhookPayload,
+                      signature: realSig,
+                    });
+                  } catch (webhookErr: any) {
+                    this.logger.error(
+                      `[getVerificationStatus] Lỗi đồng bộ real-tx polling [${realTx.reference}]: ${webhookErr.message}`,
+                    );
+                  }
+                }
+              } else {
+                this.logger.log(
+                  `[getVerificationStatus] PayOS báo PAID nhưng transactions[] rỗng cho orderCode ${latestSession.paymentOrderCode}. Chờ webhook thực.`,
                 );
               }
 
@@ -1030,12 +1037,14 @@ export class CustomerBankPennyVerificationService {
       ? String(data.counterAccountName).trim()
       : null;
 
-    // P0-3 Fix: Nếu PayOS không trả counterAccount* (ví dụ TPBank hoặc NAPAS gateway strips sender details),
-    // nhưng giao dịch khớp phiên duy nhất (session !== null) với paymentOrderCode được cấp riêng trong 15 phút,
-    // chấp nhận đủ bằng chứng để xác minh thay vì kẹt vĩnh viễn ở PENDING_SOURCE_EVIDENCE.
+    // Issue 1 Fix: Decouple "received payment" from "account ownership verified".
+    // PayOS docs: counterAccount* fields only supported on MB Bank, ACB, KienlongBank.
+    // For other banks (TPBank/NAPAS), sender identity is null — payment alone does NOT prove ownership.
+    // hasSufficientEvidence = true ONLY when sender BIN + account number are both present.
+    // Boolean(session) alone is no longer sufficient; session only matches the orderCode timeframe.
     const hasSufficientEvidence =
       !isMissingRef &&
-      (Boolean(sourceBankBin && sourceAccountNumber) || Boolean(session));
+      Boolean(sourceBankBin && sourceAccountNumber);
     let sourceAccountMasked: string | null = null;
     let sourceAccountHash: string | null = null;
     let sourceAccountEncrypted: string | null = null;

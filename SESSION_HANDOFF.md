@@ -1,5 +1,33 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: PayOS & VietQR Contract Hardening & Security Decoupling (7-Point Audit Remediation) (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS, `platform-button-rental-phase1-payos-integration.spec.ts` 8/8 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
+- **Remediated 7 Findings based on PayOS & VietQR Official API Documentation**:
+  1. **Issue 1 (Business Logic Security): Decouple Account Ownership from Payment Receipt**:
+     - `src/customers/customer-bank-penny-verification.service.ts`: `hasSufficientEvidence` is now strictly `!isMissingRef && Boolean(sourceBankBin && sourceAccountNumber)`. Without direct sender identity from PayOS (`counterAccount*` supported only on MB Bank, ACB, KienlongBank), receipt of funds alone does NOT prove ownership. Account stays `PENDING` (not `VERIFIED`), session marks `PENDING_SOURCE_EVIDENCE`, and refund obligation is routed to `PENDING_MANUAL_REFUND`.
+  2. **Issue 2 (Audit Integrity): Elimination of Fabricated Webhook Payloads in Polling**:
+     - `src/customers/customer-bank-penny-verification.service.ts`: Completely removed `fakeWebhookData` construction block. Polling path now directly iterates real `queryData.data.transactions[]` from PayOS, preserving real provider `reference`, `transactionDateTime`, `amount`, and `counterAccount*` data. Real `providerTransactionRef` serves as the authoritative deduplication key across both webhook and polling sync paths.
+  3. **Issue 3 (Routing & Reliability): Store Webhook Identification via DB Query**:
+     - `src/bank-verification/bank-verification.service.ts` & `src/bank-verification/bank-verification.repository.ts`: Added `findReferenceCodeByOrderCode` to resolve Store `referenceCode` by PayOS `orderCode` / `providerTransactionId` from database. Webhook routing no longer fails if banking rail truncates or modifies the transfer `description`.
+  4. **Issue 4 (API Contract): VietQR BIN Integer Enforcement & Account Number Contract**:
+     - `src/bank-verification/providers/payos-bank-verification.provider.ts`: Transmit `bin: Number(bankBin)` to adhere to VietQR `/v2/lookup` integer schema specification.
+     - `src/bank-verification/dto/lookup-bank-account.dto.ts`: Strict regex validation `@Matches(/^[0-9]{6,19}$/)` for bank account numbers, enforcing numeric-only 6-19 digits according to VietQR specification.
+  5. **Issue 5 (Error Classification & Zero-Spoofing): VietQR Error Code Mapping**:
+     - `src/bank-verification/providers/payos-bank-verification.provider.ts`: Eliminated spoofed account name `'CHỦ TÀI KHOẢN (XÁC MINH QUA 2.000Đ)'` on VietQR code 47 (Free-tier lookup decommissioned). Throws `BadRequestException` (`ACCOUNT_NAME_UNRESOLVED`) allowing `createVerificationRequest` caller to gracefully fall through to penny deposit verification. Added mapping for code 43 (`BadGatewayException` / `VIETQR_SERVICE_ERROR`), code 10/21/22 (`BadRequestException` / `INVALID_REQUEST_PARAMETERS`), and HTTP 429 (`ServiceUnavailableException` / `BANK_SYSTEM_BUSY`).
+  6. **Issue 6 (API Contract): PayOS Cancel Payment Link Error Handling**:
+     - `src/payments/payments.service.ts` & `src/payments/payments.controller.ts`: Added explicit HTTP status check (`response.ok`) and PayOS application code check (`resData.code === '00'`). Errors throw mapped `BadRequestException` with error details rather than unconditionally returning success.
+  7. **Issue 7 (Length Constraints & Handshake): Compact Description Limit (<= 9 chars)**:
+     - `src/customers/customer-bank-penny-verification.service.ts`: Changed description to `V${account.bankBin}`.slice(0, 9) (<= 9 chars).
+     - `src/bank-verification/bank-verification.service.ts`: Changed Store description to `S${referenceCode.slice(-8)}`.slice(0, 9) (<= 9 chars). Relying on stored DB IDs for reconciliation rather than description matching.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 14/14 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase1-payos-integration.spec.ts`: 8/8 PASS (100%).
+  - `npx tsx tests/http-contract-validation.spec.ts`: 20/20 PASS (100%).
+
 ## 2026-11-12: CI/CD Pipeline Resolution & Master Regression Suite Repair (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, Suite 75 20/20 PASS, Suite 54 6/6 PASS, Suite 69 PASS, Suite 48 5/5 PASS, Suite 56 30/30 PASS, Penny Deposit E2E 14/14 PASS, Financial Hardening 10/10 PASS).
 - **Remediated Defects across 6 Failing CI Suites**:

@@ -59,6 +59,7 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   @Post('payos/payment-requests/:id/cancel')
   async cancelPaymentLink(@Param('id') id: string, @Body() body?: CancelPaymentLinkDto, @Request() req: any = {}) {
+    // Issue 6 Fix: Service now throws on PayOS error; only wrap in success when service returns cleanly.
     const res = await this.paymentsService.cancelPaymentLink(id, body?.cancellationReason, req.user);
     return { success: true, message: 'Đã hủy link thanh toán thành công', data: res?.data || res };
   }

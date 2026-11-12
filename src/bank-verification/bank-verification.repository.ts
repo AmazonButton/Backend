@@ -123,6 +123,18 @@ export class BankVerificationRepository {
     });
   }
 
+  /**
+   * Issue 3 Fix: Look up a Store verification transaction by its PayOS orderCode or paymentLinkId.
+   * Returns the referenceCode from DB without relying on description parsing.
+   */
+  async findReferenceCodeByOrderCode(orderCode: string | number): Promise<string | null> {
+    const tx = await this.prisma.bankAccountVerificationTransaction.findFirst({
+      where: { providerTransactionId: String(orderCode) },
+      select: { referenceCode: true },
+    });
+    return tx?.referenceCode ?? null;
+  }
+
   async updateTransactionRefundStatus(params: {
     transactionId: bigint;
     status: string;

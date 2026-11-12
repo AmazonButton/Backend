@@ -519,19 +519,21 @@ async function run() {
 
   await service.processPayosVerificationWebhook(webhookNoEvidence);
   const noEvidenceInbound = inboundTxs.find((tx) => tx.providerTransactionRef === 'TX_PAYOS_NO_EVIDENCE_04');
-  assert.strictEqual(noEvidenceInbound.matchDecision, 'MATCHED', 'Must match via single-use session orderCode when issuing bank omits counterAccount');
-  assert.strictEqual(noEvidenceInbound.hasSufficientEvidence, true);
+  // Issue 1 Fix (security): Payment without sender identity proof must NOT activate account.
+  // PayOS only provides counterAccount* for MB Bank, ACB, KienlongBank. For other banks (TPBank/NAPAS),
+  // absence of sender BIN+accountNumber means we cannot prove account ownership. Must stay INSUFFICIENT_DATA.
+  assert.strictEqual(noEvidenceInbound.matchDecision, 'INSUFFICIENT_DATA', 'Without sender identity proof, matchDecision must be INSUFFICIENT_DATA (not MATCHED)');
+  assert.strictEqual(noEvidenceInbound.hasSufficientEvidence, false, 'hasSufficientEvidence must be false when counterAccount fields are absent');
 
   const s3 = sessions.find((s) => s.proofReference === sessionForAcc3.sessionReference);
-  assert.strictEqual(s3.verificationStatus, 'VERIFIED');
+  assert.strictEqual(s3.verificationStatus, 'PENDING_SOURCE_EVIDENCE', 'Session must stay PENDING_SOURCE_EVIDENCE when sender identity is unproven — not consumed, not VERIFIED');
 
   const noEvidenceObligation = refundObligations.find((o) => o.inboundTransactionId === noEvidenceInbound.id);
-  assert.strictEqual(noEvidenceObligation.refundStatus, 'PENDING_MANUAL_REFUND', 'Must create PENDING_MANUAL_REFUND targeted to registered bank account when issuing bank omits sender details');
+  assert.strictEqual(noEvidenceObligation.refundStatus, 'PENDING_MANUAL_REFUND', 'Must create PENDING_MANUAL_REFUND when sender identity is unproven (no auto-payout without source account evidence)');
 
-  // Kiểm tra trạng thái tài khoản sau khi xác minh thành công
+  // Status check: account must remain PENDING (not VERIFIED) since ownership unproven
   const statusEvidence = await service.getVerificationStatus(user, bankAcc2.id);
-  assert.strictEqual(statusEvidence.accountVerificationStatus, 'VERIFIED');
-
+  assert.strictEqual(statusEvidence.accountVerificationStatus, 'PENDING', 'Account must remain PENDING when counterAccount is absent — ownership not proven');
   // =========================================================================
   // Test 8: Khoản thu ngoài phiên (Orphan / Out-of-band Inbound Transaction)
   // =========================================================================

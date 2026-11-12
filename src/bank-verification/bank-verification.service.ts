@@ -103,8 +103,8 @@ export class BankVerificationService implements OnModuleInit {
     }
 
     const cleanAcc = dto.accountNumber.trim();
-    if (!/^[0-9a-zA-Z]{5,30}$/.test(cleanAcc)) {
-      throw new BadRequestException('Số tài khoản ngân hàng không hợp lệ');
+    if (!/^[0-9]{6,19}$/.test(cleanAcc)) {
+      throw new BadRequestException('Số tài khoản ngân hàng không hợp lệ (chỉ chứa chữ số, 6–19 ký tự)');
     }
 
     try {
@@ -158,8 +158,17 @@ export class BankVerificationService implements OnModuleInit {
       } else {
         accountName = lookup.accountName;
       }
-    } catch (lookupErr) {
-      if (dto.accountName?.trim()) {
+    } catch (lookupErr: any) {
+      // Issue 5 Fix: Code 47 (ACCOUNT_NAME_UNRESOLVED) = Free-tier disabled; fall through to 2.000đ path gracefully.
+      // The account name stays as default 'CHỦ TÀI KHOẢN', verification continues via penny deposit.
+      const errorCode = lookupErr?.response?.errorCode || lookupErr?.message;
+      if (errorCode === 'ACCOUNT_NAME_UNRESOLVED') {
+        this.logger.warn('[createVerificationRequest] VietQR code 47: account name unresolvable, falling through to 2.000đ penny verification path.');
+        if (dto.accountName?.trim()) {
+          accountName = dto.accountName.trim().toUpperCase();
+        }
+        // accountName stays 'CHỦ TÀI KHOẢN' — caller can't distinguish real owner without lookup
+      } else if (dto.accountName?.trim()) {
         accountName = dto.accountName.trim().toUpperCase();
       } else {
         throw lookupErr;
@@ -203,7 +212,11 @@ export class BankVerificationService implements OnModuleInit {
         const frontendOrigin = process.env.FRONTEND_URL || 'https://buttontdash.vercel.app';
         const returnUrl = process.env.PAYOS_STORE_BANK_RETURN_URL || `${frontendOrigin}/store/finance?status=success`;
         const cancelUrl = process.env.PAYOS_STORE_BANK_CANCEL_URL || `${frontendOrigin}/store/finance?status=cancelled`;
-        const description = referenceCode.slice(0, 25);
+        // Issue 7 Fix: PayOS non-integrated bank channel description limit is 9 chars.
+        // Store referenceCode (VERIFY_XXXX) is 11+ chars which exceeds the limit.
+        // Session identification now relies on stored DB IDs (orderCode/paymentLinkId), NOT description parsing (Issue 3 fix).
+        // Use compact description: 'S' + last 8 chars of referenceCode for <= 9 chars.
+        const description = `S${referenceCode.slice(-8)}`.slice(0, 9);
 
         const signature = signPaymentRequest(
           {
@@ -441,11 +454,30 @@ export class BankVerificationService implements OnModuleInit {
       providerTransactionId = dto.data.reference || dto.providerTransactionId;
     }
 
-    // Trích xuất referenceCode từ description nếu chưa có
+    // Issue 3 Fix: When referenceCode is not in description, try DB lookup by orderCode/paymentLinkId.
+    // This handles Store verification where description doesn't contain VERIFY_ (e.g. description is compact code from bank).
+    // DB is the authoritative source; description is supplementary audit trail only.
     if (!referenceCode && description) {
       const match = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
       if (match) {
         referenceCode = match[0].toUpperCase();
+      }
+    }
+
+    // If still missing referenceCode, attempt DB lookup by providerTransactionId (PayOS orderCode)
+    if (!referenceCode && providerTransactionId) {
+      const dbRef = await this.repository.findReferenceCodeByOrderCode(providerTransactionId);
+      if (dbRef) {
+        referenceCode = dbRef;
+        this.logger.log(`[handleVerificationWebhook] Resolved referenceCode=${referenceCode} from DB via providerTransactionId=${providerTransactionId}`);
+      }
+    }
+    // Also try with dto.data.orderCode if available
+    if (!referenceCode && dto.data?.orderCode) {
+      const dbRef = await this.repository.findReferenceCodeByOrderCode(dto.data.orderCode);
+      if (dbRef) {
+        referenceCode = dbRef;
+        this.logger.log(`[handleVerificationWebhook] Resolved referenceCode=${referenceCode} from DB via orderCode=${dto.data.orderCode}`);
       }
     }
 

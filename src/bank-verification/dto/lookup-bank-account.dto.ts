@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, Matches, MinLength, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsString, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class LookupBankAccountDto {
@@ -12,13 +12,13 @@ export class LookupBankAccountDto {
   bankBin: string;
 
   @ApiProperty({
-    description: 'Số tài khoản ngân hàng',
+    description: 'Số tài khoản ngân hàng (6–19 chữ số, chỉ chứa số)',
     example: '0339898989',
   })
   @IsNotEmpty({ message: 'Số tài khoản không được để trống' })
   @IsString({ message: 'Số tài khoản phải là chuỗi' })
-  @MinLength(5, { message: 'Số tài khoản tối thiểu 5 ký tự' })
-  @MaxLength(30, { message: 'Số tài khoản tối đa 30 ký tự' })
-  @Matches(/^[0-9a-zA-Z]+$/, { message: 'Số tài khoản chỉ chứa chữ và số' })
+  // Issue 4 Fix: VietQR docs specify account numbers are 6-19 digits only (no alphanumeric).
+  // Leading zeros must be preserved (kept as string). Min/MaxLength decorators removed in favor of Matches.
+  @Matches(/^[0-9]{6,19}$/, { message: 'Số tài khoản chỉ chứa chữ số và phải từ 6 đến 19 ký tự' })
   accountNumber: string;
 }

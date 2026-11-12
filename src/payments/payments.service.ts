@@ -788,7 +788,22 @@ export class PaymentsService {
         },
         body: JSON.stringify({ cancellationReason: cancellationReason || 'Cancelled by store/customer' }),
       });
-      return await response.json();
+      // Issue 6 Fix: Always check HTTP status and PayOS response code before reporting success.
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        this.logger.error(`PayOS cancelPaymentLink HTTP ${response.status} for ${orderCodeOrId}: ${errText}`);
+        throw new BadRequestException(`Hủy link thanh toán thất bại (HTTP ${response.status})`);
+      }
+      const resData = await response.json() as any;
+      if (resData.code !== '00') {
+        this.logger.error(`PayOS cancelPaymentLink rejected (code ${resData.code}): ${resData.desc} for ${orderCodeOrId}`);
+        throw new BadRequestException({
+          success: false,
+          errorCode: resData.code || 'PAYOS_CANCEL_FAILED',
+          message: resData.desc || 'Hủy link thanh toán thất bại',
+        });
+      }
+      return resData;
     } catch (err: any) {
       this.logger.error(`PayOS cancelPaymentLink error: ${err.message}`);
       throw new InternalServerErrorException(`Không thể hủy link thanh toán: ${err.message}`);
