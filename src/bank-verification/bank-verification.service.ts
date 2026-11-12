@@ -148,28 +148,20 @@ export class BankVerificationService implements OnModuleInit {
     }
 
     // 3. Luôn gọi lookup từ provider để lấy accountName chính chủ, lấy bankName và bankCode từ danh sách server
-    let accountName = 'CHỦ TÀI KHOẢN';
+    let accountName: string;
     try {
       const lookup = await this.provider.lookupAccount(dto.bankBin, cleanAcc);
-      if (lookup.accountName && lookup.accountName !== 'CHỦ TÀI KHOẢN (XÁC MINH QUA 2.000Đ)') {
-        accountName = lookup.accountName;
-      } else if (dto.accountName?.trim()) {
-        accountName = dto.accountName.trim().toUpperCase();
-      } else {
-        accountName = lookup.accountName;
-      }
+      accountName = lookup.accountName;
     } catch (lookupErr: any) {
-      // Issue 5 Fix: Code 47 (ACCOUNT_NAME_UNRESOLVED) = Free-tier disabled; fall through to 2.000đ path gracefully.
-      // The account name stays as default 'CHỦ TÀI KHOẢN', verification continues via penny deposit.
+      // Point 3 Fix: Only fall back on ACCOUNT_NAME_UNRESOLVED (e.g. VietQR free-tier stopped).
+      // ALL other lookup errors (BANK_ACCOUNT_NOT_FOUND, INVALID_REQUEST_PARAMETERS, BANK_SYSTEM_BUSY, etc.)
+      // MUST be strictly rethrown! Client-provided dto.accountName is forbidden from bypassing legitimate lookup errors.
       const errorCode = lookupErr?.response?.errorCode || lookupErr?.message;
       if (errorCode === 'ACCOUNT_NAME_UNRESOLVED') {
         this.logger.warn('[createVerificationRequest] VietQR code 47: account name unresolvable, falling through to 2.000đ penny verification path.');
-        if (dto.accountName?.trim()) {
-          accountName = dto.accountName.trim().toUpperCase();
-        }
-        // accountName stays 'CHỦ TÀI KHOẢN' — caller can't distinguish real owner without lookup
-      } else if (dto.accountName?.trim()) {
-        accountName = dto.accountName.trim().toUpperCase();
+        accountName = dto.accountName?.trim()
+          ? dto.accountName.trim().toUpperCase()
+          : 'CHƯA_XÁC_THỰC';
       } else {
         throw lookupErr;
       }
@@ -1099,36 +1091,50 @@ export class BankVerificationService implements OnModuleInit {
             const payosData: any = await res.json();
             if (payosData?.code === '00' && payosData?.data?.status === 'PAID') {
               const data = payosData.data;
-              const firstTx =
-                Array.isArray(data.transactions) && data.transactions.length > 0
-                  ? data.transactions[0]
-                  : null;
+              const txList = Array.isArray(data.transactions) ? data.transactions : [];
 
-              const webhookDto: BankVerificationWebhookDto = {
-                code: '00',
-                desc: 'success',
-                referenceCode: tx.referenceCode,
-                amount: data.amount || Number(tx.expectedAmount),
-                providerTransactionId: (firstTx?.reference || data.reference || tx.providerTransactionId).toString(),
-                description: firstTx?.description || data.description || tx.referenceCode,
-                destinationAccountNumber: firstTx?.accountNumber || data.accountNumber || process.env.PLATFORM_BANK_ACCOUNT_NUMBER,
-                destinationBankBin: data.bin || firstTx?.bin || process.env.PLATFORM_BANK_BIN,
-                senderAccountNumber: firstTx?.counterAccountNumber || data.counterAccountNumber,
-                senderBankBin: firstTx?.counterAccountBankId || data.counterAccountBankId,
-                data: {
-                  orderCode: Number(tx.providerTransactionId),
-                  amount: data.amount || Number(tx.expectedAmount),
-                  description: firstTx?.description || data.description || tx.referenceCode,
-                  accountNumber: firstTx?.accountNumber || data.accountNumber || process.env.PLATFORM_BANK_ACCOUNT_NUMBER,
-                  reference: firstTx?.reference || data.reference || tx.providerTransactionId,
-                  transactionDateTime: firstTx?.transactionDateTime || data.transactionDateTime || new Date().toISOString(),
-                  counterAccountBankId: firstTx?.counterAccountBankId || data.counterAccountBankId,
-                  counterAccountNumber: firstTx?.counterAccountNumber || data.counterAccountNumber,
-                  counterAccountName: firstTx?.counterAccountName || data.counterAccountName,
-                  bin: data.bin || firstTx?.bin || process.env.PLATFORM_BANK_BIN,
-                },
-              };
-              await this.handleVerificationWebhook(webhookDto);
+              // Point 2 Fix: Process each real transaction in transactions[] without synthesizing fake amount/time/ref.
+              for (const realTx of txList) {
+                if (
+                  !realTx.reference ||
+                  typeof realTx.amount !== 'number' ||
+                  !Number.isInteger(realTx.amount) ||
+                  realTx.amount <= 0 ||
+                  !realTx.transactionDateTime
+                ) {
+                  this.logger.warn(
+                    `[getVerificationTransactionById] Bỏ qua realTx thiếu trường bắt buộc trong polling PayOS: ref=${realTx.reference}, amount=${realTx.amount}, dt=${realTx.transactionDateTime}`,
+                  );
+                  continue;
+                }
+
+                const webhookDto: BankVerificationWebhookDto = {
+                  code: '00',
+                  desc: 'success',
+                  referenceCode: tx.referenceCode,
+                  amount: realTx.amount,
+                  providerTransactionId: String(realTx.reference),
+                  description: realTx.description || tx.referenceCode,
+                  destinationAccountNumber: realTx.accountNumber || data.accountNumber || process.env.PLATFORM_BANK_ACCOUNT_NUMBER,
+                  destinationBankBin: data.bin || process.env.PLATFORM_BANK_BIN,
+                  senderAccountNumber: realTx.counterAccountNumber || undefined,
+                  senderBankBin: realTx.counterAccountBankId || undefined,
+                  data: {
+                    orderCode: Number(tx.providerTransactionId),
+                    amount: realTx.amount,
+                    description: realTx.description || tx.referenceCode,
+                    accountNumber: realTx.accountNumber || data.accountNumber || process.env.PLATFORM_BANK_ACCOUNT_NUMBER,
+                    reference: String(realTx.reference),
+                    transactionDateTime: realTx.transactionDateTime,
+                    counterAccountBankId: realTx.counterAccountBankId || undefined,
+                    counterAccountNumber: realTx.counterAccountNumber || undefined,
+                    counterAccountName: realTx.counterAccountName || undefined,
+                    bin: data.bin || process.env.PLATFORM_BANK_BIN,
+                  },
+                };
+                await this.handleVerificationWebhook(webhookDto);
+              }
+
               const reloadedTx = await this.repository.findVerificationTransactionById(rawId);
               if (reloadedTx) {
                 tx = reloadedTx;

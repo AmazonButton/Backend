@@ -1517,18 +1517,17 @@ export class CustomersRepository {
               params.sourceAccountHash && params.sourceAccountHash === lockedSession.account_number_hash,
             );
 
-            // Graceful fallback for masked counter account numbers (e.g. "******8989") from PayOS
+            // Point 4 Fix: Full account matching only. Masked counter account numbers (e.g. "******8989")
+            // cannot serve as proof of ownership (suffix-only matching is strictly forbidden).
             if (!isAccountMatched && lockedAccount?.account_number_encrypted && params.sourceAccountNumber) {
               try {
                 const plainAccount = CryptoVaultUtil.decryptAccountNumber(lockedAccount.account_number_encrypted);
                 const cleanSource = params.sourceAccountNumber.trim();
                 if (cleanSource === plainAccount) {
                   isAccountMatched = true;
-                } else if (cleanSource.includes('*')) {
-                  const unmaskedSuffix = cleanSource.replace(/\*/g, '');
-                  if (unmaskedSuffix.length >= 4 && plainAccount.endsWith(unmaskedSuffix)) {
-                    isAccountMatched = true;
-                  }
+                } else {
+                  // Masked suffix (ending with 4 digits) is NOT proof of ownership
+                  isAccountMatched = false;
                 }
               } catch {
                 // Ignore decryption failure in matching fallback

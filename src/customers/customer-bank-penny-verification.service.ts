@@ -494,48 +494,38 @@ export class CustomerBankPennyVerificationService {
                 ? queryData.data.transactions
                 : [];
 
-              // Issue 2 Fix: Remove fakeWebhookData construction entirely.
-              // Instead, process REAL transactions[] entries from PayOS polling response directly.
-              // Each transaction has real reference, transactionDateTime, amount, counterAccount* fields.
-              // Use real provider_transaction_id as dedup key (same as webhook path).
+              // Point 1 Fix: Record real inbound evidence directly from real transactions without synthesizing fake webhook payloads or self-signing.
               if (txList.length > 0) {
                 for (const realTx of txList) {
-                  if (!realTx.reference) {
+                  if (
+                    !realTx.reference ||
+                    typeof realTx.amount !== "number" ||
+                    !Number.isInteger(realTx.amount) ||
+                    realTx.amount <= 0 ||
+                    !realTx.transactionDateTime
+                  ) {
                     this.logger.warn(
-                      `[getVerificationStatus] Bỏ qua giao dịch không có reference trong polling response`,
+                      `[getVerificationStatus] Bỏ qua transaction thiếu dữ liệu hợp lệ trong polling response: ref=${realTx.reference}, amount=${realTx.amount}, dt=${realTx.transactionDateTime}`,
                     );
                     continue;
                   }
-                  const realWebhookPayload = {
-                    code: '00',
-                    desc: 'success',
-                    data: {
-                      orderCode: Number(latestSession.paymentOrderCode),
-                      amount: Number(realTx.amount ?? queryData.data.amount ?? 2000),
-                      description: String(realTx.description || queryData.data.description || ''),
-                      accountNumber: String(realTx.accountNumber || ''),
-                      reference: String(realTx.reference),
-                      transactionDateTime: String(realTx.transactionDateTime || new Date().toISOString()),
-                      currency: 'VND',
-                      paymentLinkId: String(queryData.data.id || queryData.data.paymentLinkId || latestSession.paymentLinkId || ''),
-                      code: '00',
-                      desc: 'success',
-                      counterAccountBankId: realTx.counterAccountBankId || null,
-                      counterAccountBankName: realTx.counterAccountBankName || null,
-                      counterAccountName: realTx.counterAccountName || null,
-                      counterAccountNumber: realTx.counterAccountNumber || null,
-                    },
-                  };
-                  // Sign with backend key so signature verification passes
-                  const realSig = signWebhookData(realWebhookPayload.data, checksumKey);
+
                   try {
-                    await this.processPayosVerificationWebhook({
-                      ...realWebhookPayload,
-                      signature: realSig,
+                    await this.recordInboundPaymentEvidence({
+                      orderCode: latestSession.paymentOrderCode,
+                      amount: realTx.amount,
+                      reference: String(realTx.reference),
+                      transactionDateTime: realTx.transactionDateTime,
+                      counterAccountBankId: realTx.counterAccountBankId || null,
+                      counterAccountNumber: realTx.counterAccountNumber || null,
+                      counterAccountName: realTx.counterAccountName || null,
+                      description: realTx.description || null,
+                      channel: "PAYOS_POLLING",
+                      rawPayload: realTx,
                     });
-                  } catch (webhookErr: any) {
+                  } catch (syncErr: any) {
                     this.logger.error(
-                      `[getVerificationStatus] Lỗi đồng bộ real-tx polling [${realTx.reference}]: ${webhookErr.message}`,
+                      `[getVerificationStatus] Lỗi ghi nhận realTx [${realTx.reference}]: ${syncErr.message}`,
                     );
                   }
                 }
@@ -955,27 +945,75 @@ export class CustomerBankPennyVerificationService {
       };
     }
 
-    // 3. Kiểm tra số tiền hợp lệ: bắt buộc là số nguyên dương hữu hạn (tuyệt đối không tự bù 2.000đ)
+    // Point 5 Fix: Nhận diện test/sample webhook ping từ PayOS dashboard
+    const descLower = String(data.description || body.desc || "").toLowerCase();
+    const isTestPing =
+      body.desc === "test" ||
+      Number(data.orderCode) === 123 ||
+      descLower.includes("thu nghiem") ||
+      descLower === "test";
+
+    if (isTestPing) {
+      this.logger.log(
+        `[processPayosVerificationWebhook] Nhận diện test webhook ping từ PayOS dashboard (orderCode=${data.orderCode}). Xác nhận thành công mà không tạo giao dịch thực.`,
+      );
+      return {
+        success: true,
+        code: "00",
+        message: "PayOS webhook test handshake acknowledged (zero database mutation)",
+      };
+    }
+
+    return this.recordInboundPaymentEvidence({
+      orderCode: data.orderCode,
+      amount: data.amount,
+      reference: data.reference,
+      transactionDateTime: data.transactionDateTime,
+      counterAccountBankId: data.counterAccountBankId,
+      counterAccountNumber: data.counterAccountNumber,
+      counterAccountName: data.counterAccountName,
+      description: data.description,
+      channel: "PAYOS_WEBHOOK",
+      rawPayload: data,
+    });
+  }
+
+  /**
+   * Phương thức chung ghi nhận bằng chứng giao dịch tiền vào (Inbound Payment Evidence)
+   * Được gọi từ cả Webhook và Polling đồng bộ, loại bỏ hoàn toàn việc tự sinh hay tự ký webhook giả mạo.
+   */
+  async recordInboundPaymentEvidence(params: {
+    orderCode: number | bigint | string;
+    amount: number;
+    reference?: string | null;
+    transactionDateTime?: string | Date | null;
+    counterAccountBankId?: string | null;
+    counterAccountNumber?: string | null;
+    counterAccountName?: string | null;
+    description?: string | null;
+    channel?: string;
+    rawPayload?: any;
+  }): Promise<{ success: boolean; message: string; notHandled?: boolean; code?: string }> {
+    const provider = "PAYOS";
+    const channel = params.channel || "PAYOS_WEBHOOK";
+
+    // 1. Kiểm tra số tiền hợp lệ: bắt buộc là số nguyên dương hữu hạn (tuyệt đối không tự bù 2.000đ)
     if (
-      data.amount === undefined ||
-      data.amount === null ||
-      typeof data.amount !== "number" ||
-      !Number.isFinite(data.amount) ||
-      !Number.isInteger(data.amount) ||
-      data.amount <= 0
+      params.amount === undefined ||
+      params.amount === null ||
+      typeof params.amount !== "number" ||
+      !Number.isFinite(params.amount) ||
+      !Number.isInteger(params.amount) ||
+      params.amount <= 0
     ) {
       throw new BadRequestException(
-        "Số tiền thanh toán (amount) không hợp lệ hoặc thiếu trong webhook payload",
+        "Số tiền thanh toán (amount) không hợp lệ hoặc thiếu trong dữ liệu giao dịch",
       );
     }
-    const amount = data.amount;
+    const amount = params.amount;
 
-    // 4. Kiểm tra mã tham chiếu giao dịch provider đáng tin cậy
-    // CHÚ Ý BẮT BUỘC (P0): Merchant/channel lấy từ cấu hình server gắn với bộ khóa xác thực.
-    // Tuyệt đối KHÔNG dùng trường envelope chưa xác thực (body.channel) làm phạm vi chống trùng.
-    const provider = "PAYOS";
-    const channel = "PAYOS_WEBHOOK";
-    const rawRef = data.reference ? String(data.reference).trim() : null;
+    // 2. Kiểm tra mã tham chiếu giao dịch provider đáng tin cậy
+    const rawRef = params.reference ? String(params.reference).trim() : null;
     const isMissingRef = !rawRef;
     let providerTransactionRef = rawRef;
     let missingRefFlag: string | null = null;
@@ -983,27 +1021,31 @@ export class CustomerBankPennyVerificationService {
     if (isMissingRef) {
       missingRefFlag = "FLAGGED_MISSING_PROVIDER_REF";
       const obsNonce = crypto.randomUUID();
-      providerTransactionRef = `UNREF_OBS_${data.orderCode}_${Date.now()}_${obsNonce.slice(0, 8)}`;
+      providerTransactionRef = `UNREF_OBS_${params.orderCode}_${Date.now()}_${obsNonce.slice(0, 8)}`;
       this.logger.warn(
-        `Webhook PayOS thiếu reference đáng tin cậy cho orderCode ${data.orderCode}. Lưu quan sát đối soát riêng biệt [${providerTransactionRef}].`,
+        `Giao dịch PayOS thiếu reference đáng tin cậy cho orderCode ${params.orderCode}. Lưu quan sát đối soát riêng biệt [${providerTransactionRef}].`,
       );
     }
 
-    const receivedAt = parsePayosDateTime(data.transactionDateTime);
+    const receivedAt = params.transactionDateTime
+      ? (params.transactionDateTime instanceof Date
+          ? params.transactionDateTime
+          : parsePayosDateTime(String(params.transactionDateTime)))
+      : new Date();
 
-    // 5. Tra cứu phiên xác nhận tương ứng
-    const orderCode = BigInt(data.orderCode);
+    // 3. Tra cứu phiên xác nhận tương ứng
+    const orderCode = BigInt(params.orderCode);
     const session =
       await this.customersRepo.findVerificationSessionByOrderCode(orderCode);
 
-    const descStr = String(data.description || "");
+    const descStr = String(params.description || "");
     if (!session) {
       if (
         /VERIFY_[A-Z0-9]{4,10}/i.test(descStr) ||
         descStr.startsWith("VERIFY_")
       ) {
         this.logger.log(
-          `[CustomerBankPennyVerificationService] Nhận diện webhook của Store (${descStr}), bỏ qua để Store xử lý`,
+          `[CustomerBankPennyVerificationService] Nhận diện giao dịch của Store (${descStr}), bỏ qua để Store xử lý`,
         );
         return {
           success: false,
@@ -1012,11 +1054,11 @@ export class CustomerBankPennyVerificationService {
         };
       }
       const isStoreTx = await this.customersRepo.isStoreVerificationTransaction(
-        String(data.orderCode),
+        String(params.orderCode),
       );
       if (isStoreTx) {
         this.logger.log(
-          `[CustomerBankPennyVerificationService] Nhận diện orderCode ${data.orderCode} thuộc về Store, bỏ qua để Store xử lý`,
+          `[CustomerBankPennyVerificationService] Nhận diện orderCode ${params.orderCode} thuộc về Store, bỏ qua để Store xử lý`,
         );
         return {
           success: false,
@@ -1026,38 +1068,43 @@ export class CustomerBankPennyVerificationService {
       }
     }
 
-    // 6. Chuẩn bị thông tin tài khoản nguồn
-    const sourceBankBin = data.counterAccountBankId
-      ? String(data.counterAccountBankId).trim()
+    // 4. Chuẩn bị thông tin tài khoản nguồn
+    const sourceBankBin = params.counterAccountBankId
+      ? String(params.counterAccountBankId).trim()
       : null;
-    const sourceAccountNumber = data.counterAccountNumber
-      ? String(data.counterAccountNumber).trim()
+    const sourceAccountNumber = params.counterAccountNumber
+      ? String(params.counterAccountNumber).trim()
       : null;
-    const sourceAccountName = data.counterAccountName
-      ? String(data.counterAccountName).trim()
+    const sourceAccountName = params.counterAccountName
+      ? String(params.counterAccountName).trim()
       : null;
 
-    // Issue 1 Fix: Decouple "received payment" from "account ownership verified".
-    // PayOS docs: counterAccount* fields only supported on MB Bank, ACB, KienlongBank.
-    // For other banks (TPBank/NAPAS), sender identity is null — payment alone does NOT prove ownership.
-    // hasSufficientEvidence = true ONLY when sender BIN + account number are both present.
-    // Boolean(session) alone is no longer sufficient; session only matches the orderCode timeframe.
+    // Point 4 Fix: Tài khoản che (chứa '*') không được coi là bằng chứng xác minh chính chủ.
+    // hasSufficientEvidence = true CHỈ KHI có đầy đủ cả sourceBankBin và sourceAccountNumber không bị che.
+    const isMaskedAccount = Boolean(
+      sourceAccountNumber && sourceAccountNumber.includes("*"),
+    );
     const hasSufficientEvidence =
       !isMissingRef &&
-      Boolean(sourceBankBin && sourceAccountNumber);
+      Boolean(sourceBankBin && sourceAccountNumber && !isMaskedAccount);
+
     let sourceAccountMasked: string | null = null;
     let sourceAccountHash: string | null = null;
     let sourceAccountEncrypted: string | null = null;
 
     if (sourceBankBin && sourceAccountNumber) {
-      sourceAccountMasked = `******${sourceAccountNumber.slice(-4)}`;
-      sourceAccountHash =
-        CryptoVaultUtil.computeDeterministicAccountHash(sourceAccountNumber);
-      sourceAccountEncrypted =
-        CryptoVaultUtil.encryptAccountNumber(sourceAccountNumber);
+      sourceAccountMasked = isMaskedAccount
+        ? sourceAccountNumber
+        : `******${sourceAccountNumber.slice(-4)}`;
+      if (!isMaskedAccount) {
+        sourceAccountHash =
+          CryptoVaultUtil.computeDeterministicAccountHash(sourceAccountNumber);
+        sourceAccountEncrypted =
+          CryptoVaultUtil.encryptAccountNumber(sourceAccountNumber);
+      }
     }
 
-    // 7. Chống trùng lặp theo provider & channel scope và đối chiếu 4 thuộc tính bất biến mâu thuẫn
+    // 5. Chống trùng lặp theo provider & channel scope và đối chiếu 4 thuộc tính bất biến mâu thuẫn
     const existingTx =
       await this.customersRepo.findInboundTransactionByProviderRef(
         provider,
@@ -1087,7 +1134,7 @@ export class CustomerBankPennyVerificationService {
           ? `${sourceAccountHash.slice(0, 8)}...`
           : "null";
         this.logger.error(
-          `[CRITICAL AUDIT] Webhook trùng reference ${providerTransactionRef} nhưng mâu thuẫn dữ liệu: ` +
+          `[CRITICAL AUDIT] Giao dịch trùng reference ${providerTransactionRef} nhưng mâu thuẫn dữ liệu: ` +
             `amount (cũ: ${existingTx.amount}, mới: ${amount}), ` +
             `BIN (cũ: ${existingTx.sourceBankBin}, mới: ${sourceBankBin}), ` +
             `accountHash (cũ: ${maskedOldHash}, mới: ${maskedNewHash}), ` +
@@ -1112,14 +1159,14 @@ export class CustomerBankPennyVerificationService {
 
     const rawPayloadChecksum = crypto
       .createHash("sha256")
-      .update(JSON.stringify(data))
+      .update(JSON.stringify(params.rawPayload || params))
       .digest("hex");
 
     const refundPayoutReference = isMissingRef
       ? null
       : `REF_PAYOS_${providerTransactionRef}_${Date.now()}`.slice(0, 64);
 
-    // 8. Thực thi ghi sổ Inbound + Obligation và xác thực CAS trong cùng 1 transaction nguyên tử
+    // 6. Thực thi ghi sổ Inbound + Obligation và xác thực CAS trong cùng 1 transaction nguyên tử
     const result =
       await this.customersRepo.recordInboundTransactionAndObligationAtomicTx({
         proofId: session ? session.id : null,
@@ -1133,7 +1180,10 @@ export class CustomerBankPennyVerificationService {
         sourceAccountHash,
         sourceAccountEncrypted,
         sourceAccountName,
-        sourceAccountNumber: sourceAccountNumber || undefined,
+        sourceAccountNumber:
+          sourceAccountNumber && !isMaskedAccount
+            ? sourceAccountNumber
+            : undefined,
         hasSufficientEvidence,
         rawPayloadChecksum,
         reconciliationFlag: missingRefFlag,

@@ -753,7 +753,123 @@ async function run() {
   assert.strictEqual(statusAfterQuery.accountVerificationStatus, 'VERIFIED', 'Bank account must be marked VERIFIED');
   global.fetch = originalFetch;
 
-  console.log('✅ ALL 14 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
+  // =========================================================================
+  // Test 15: Masked Sender Account (Point 4 Fix: Suffix-Only Match Rejection)
+  // =========================================================================
+  console.log('  15. Testing Masked Sender Account Rejection (Suffix matching is NOT sufficient proof)...');
+  const plainAcc4 = '03312348888';
+  const bankAcc4 = {
+    id: 404n,
+    customerId: user.customerId,
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc4),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc4),
+    accountNumberMasked: '******8888',
+    bankName: 'MBBank',
+    accountName: 'TEST MASKED',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(bankAcc4);
+  mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc4;
+  const session4 = await service.initiateVerificationSession(user, bankAcc4.id);
+
+  const webhookMasked = {
+    code: '00',
+    data: {
+      orderCode: Number(session4.orderCode),
+      amount: 2000,
+      reference: 'TX_PAYOS_MASKED_06',
+      counterAccountBankId: '970422',
+      counterAccountNumber: '******8888', // Masked account matching suffix
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  await service.processPayosVerificationWebhook(webhookMasked);
+  const maskedInbound = inboundTxs.find((tx) => tx.providerTransactionRef === 'TX_PAYOS_MASKED_06');
+  assert.strictEqual(maskedInbound.hasSufficientEvidence, false, 'Masked account cannot be accepted as sufficient evidence');
+  assert.strictEqual(maskedInbound.matchDecision, 'INSUFFICIENT_DATA', 'Masked account must result in INSUFFICIENT_DATA');
+  assert.strictEqual(bankAcc4.verificationStatus, 'PENDING', 'Bank account must remain PENDING when sender account is masked');
+
+  // =========================================================================
+  // Test 16: Polling Incomplete Transactions (Point 1 Fix: No Fake Data Synthesis)
+  // =========================================================================
+  console.log('  16. Testing Polling with Incomplete Transactions (Zero fake amount/datetime synthesis)...');
+  const plainAcc5 = '03312349999';
+  const bankAcc5 = {
+    id: 505n,
+    customerId: user.customerId,
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc5),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc5),
+    accountNumberMasked: '******9999',
+    bankName: 'MBBank',
+    accountName: 'TEST INCOMPLETE',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(bankAcc5);
+  mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc5;
+  const session5 = await service.initiateVerificationSession(user, bankAcc5.id);
+
+  const prevInboundCount = inboundTxs.length;
+  (global as any).fetch = async (url: any, opts: any) => {
+    if (typeof url === 'string' && url.includes('/payment-requests/' + session5.orderCode)) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: '00',
+          desc: 'success',
+          data: {
+            id: 'link_' + session5.orderCode,
+            orderCode: Number(session5.orderCode),
+            status: 'PAID',
+            transactions: [
+              // Transaction 1: Missing reference
+              { amount: 2000, transactionDateTime: new Date().toISOString() },
+              // Transaction 2: Missing amount
+              { reference: 'TX_NO_AMOUNT', transactionDateTime: new Date().toISOString() },
+              // Transaction 3: Missing transactionDateTime
+              { reference: 'TX_NO_DATE', amount: 2000 },
+            ],
+          },
+        }),
+      };
+    }
+    return originalFetch(url, opts);
+  };
+
+  await service.getVerificationStatus(user, bankAcc5.id);
+  assert.strictEqual(inboundTxs.length, prevInboundCount, 'No inbound transactions recorded for incomplete transactions (zero fake data synthesized)');
+  assert.strictEqual(bankAcc5.verificationStatus, 'PENDING', 'Account must NOT be activated when transactions lack required data');
+  global.fetch = originalFetch;
+
+  // =========================================================================
+  // Test 17: PayOS Dashboard Test Webhook Ping Handshake (Point 5 Fix)
+  // =========================================================================
+  console.log('  17. Testing PayOS Dashboard Test Webhook Ping Handshake (Zero database mutation)...');
+  const preTestInboundCount = inboundTxs.length;
+  const preTestObligationCount = refundObligations.length;
+
+  const sampleTestWebhook = {
+    code: '00',
+    desc: 'test',
+    data: {
+      orderCode: 123,
+      amount: 2000,
+      description: 'Ma giao dich thu nghiem - Webhook Test',
+      reference: 'TEST_SAMPLE_REF_01',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  const testWebhookResult = await service.processPayosVerificationWebhook(sampleTestWebhook);
+  assert.strictEqual(testWebhookResult.code, '00', 'Handshake test ping must return success code 00');
+  assert.strictEqual(inboundTxs.length, preTestInboundCount, 'Zero inbound transactions recorded for test handshake ping');
+  assert.strictEqual(refundObligations.length, preTestObligationCount, 'Zero refund obligations recorded for test handshake ping');
+
+  console.log('✅ ALL 17 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
 }
 
 run().catch((err) => {

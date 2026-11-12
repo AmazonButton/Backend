@@ -530,7 +530,9 @@ export class BankVerificationRepository {
       }
 
       // 7. Kiểm tra chéo tài khoản gửi (sender account & BIN)
-      if (isStrict && !isPayosIntegratedTx) {
+      // Point 2 Fix: Apply strict sender verification across ALL channels including PayOS!
+      // PayOS transactions are NO LONGER exempted from sender checks.
+      if (isStrict) {
         if (!params.senderAccountNumber) {
           this.logger.warn(
             `[AtomicWebhookVerification] Thieu thong tin tai khoan gui (ref: ${params.referenceCode})`,
@@ -619,13 +621,9 @@ export class BankVerificationRepository {
         }
 
         const cleanSender = params.senderAccountNumber.trim();
-        let isSenderAccountMatched = cleanSender === plainRegisteredAcc;
-        if (!isSenderAccountMatched && cleanSender.includes('*')) {
-          const unmaskedSuffix = cleanSender.replace(/\*/g, '');
-          if (unmaskedSuffix.length >= 4 && plainRegisteredAcc.endsWith(unmaskedSuffix)) {
-            isSenderAccountMatched = true;
-          }
-        }
+        // Point 4 Fix: Masked 4-digit suffix is strictly forbidden as proof of ownership.
+        // Full account number must match exactly.
+        const isSenderAccountMatched = cleanSender === plainRegisteredAcc;
 
         if (!isSenderAccountMatched) {
           this.logger.warn(

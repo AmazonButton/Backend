@@ -1,5 +1,32 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: Full Banking Verification Remediation & Gaps Resolution (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 17/17 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS, `platform-button-rental-phase1-payos-integration.spec.ts` 8/8 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
+- **Remediated 5 Deep-Review Findings**:
+  1. **Polling Zero-Fabrication & Shared Evidence Extraction (`src/customers/customer-bank-penny-verification.service.ts`)**:
+     - Extracted `recordInboundPaymentEvidence` shared method for both Webhook and Polling, completely eliminating fake webhook payload self-signing.
+     - Polling path no longer synthesizes missing values: transactions missing integer amount, reference, or timestamp are strictly skipped and held for reconciliation instead of defaulting to total link amount, 2000đ, or current time.
+  2. **Store Flow Strict Sender Verification & Polling Iteration (`src/bank-verification/bank-verification.repository.ts`, `src/bank-verification/bank-verification.service.ts`)**:
+     - Removed `!isPayosIntegratedTx` exemption at line 533: PayOS transactions for Store now enforce strict sender verification (bank BIN and account number required). If missing, transaction fails with `SENDER_ACCOUNT_UNVERIFIABLE`/`SENDER_BANK_UNVERIFIABLE`.
+     - Polling on Store transactions iterates real transactions without synthesizing fake amounts, references, or timestamps.
+  3. **Strict Account Name Fallback Guard (`src/bank-verification/bank-verification.service.ts`)**:
+     - Removed default `let accountName = 'CHỦ TÀI KHOẢN'`.
+     - Re-throws all lookup errors except `ACCOUNT_NAME_UNRESOLVED`. Client-provided `dto.accountName` cannot bypass legitimate errors such as `BANK_ACCOUNT_NOT_FOUND` or invalid parameters.
+     - When unresolvable and no user-declared name exists, represents as `'CHƯA_XÁC_THỰC'`.
+  4. **Elimination of 4-Digit Suffix Matching (`src/customers/customers.repository.ts`, `src/bank-verification/bank-verification.repository.ts`, `src/customers/customer-bank-penny-verification.service.ts`)**:
+     - Completely removed suffix matching (`endsWith(unmaskedSuffix)`). Masked accounts (containing `*`) are explicitly rejected as proof of ownership (`hasSufficientEvidence = false`). Match decision transitions to `INSUFFICIENT_DATA`, keeping session as `PENDING_SOURCE_EVIDENCE` and routing refund to `PENDING_MANUAL_REFUND`.
+  5. **PayOS Dashboard Test Ping Handshake & Zero Mutation (`src/customers/customer-bank-penny-verification.service.ts`, `src/customers/customer-bank-webhook.controller.ts`)**:
+     - Explicitly acknowledges test webhook pings (e.g. `desc === 'test'`, `orderCode === 123`, or `description` containing test indicators) returning 200 success without creating any database records or refund obligations.
+     - Expanded `customer_bank_penny_deposit_e2e.spec.ts` to 17 tests (added TC-15 masked sender rejection, TC-16 incomplete polling skip, TC-17 zero-residue test webhook handshake).
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 17/17 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase1-payos-integration.spec.ts`: 8/8 PASS (100%).
+  - `npx tsx tests/http-contract-validation.spec.ts`: 20/20 PASS (100%).
+
 ## 2026-11-12: PayOS & VietQR Contract Hardening & Security Decoupling (7-Point Audit Remediation) (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS, `platform-button-rental-phase1-payos-integration.spec.ts` 8/8 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
 - **Remediated 7 Findings based on PayOS & VietQR Official API Documentation**:
