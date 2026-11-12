@@ -199,6 +199,10 @@ async function run() {
       } else {
         matchDecision = 'MATCHED';
         shouldActivate = true;
+        const hasDirectSourceEvidence = Boolean(params.sourceBankBin && (params.sourceAccountEncrypted || params.sourceAccountMasked));
+        if (!hasDirectSourceEvidence) {
+          refundStatus = 'PENDING_MANUAL_REFUND';
+        }
       }
 
       const inboundId = BigInt(inboundTxs.length + 1);
@@ -522,7 +526,7 @@ async function run() {
   assert.strictEqual(s3.verificationStatus, 'VERIFIED');
 
   const noEvidenceObligation = refundObligations.find((o) => o.inboundTransactionId === noEvidenceInbound.id);
-  assert.strictEqual(noEvidenceObligation.refundStatus, 'PENDING_REFUND', 'Must create PENDING_REFUND targeted to registered bank account');
+  assert.strictEqual(noEvidenceObligation.refundStatus, 'PENDING_MANUAL_REFUND', 'Must create PENDING_MANUAL_REFUND targeted to registered bank account when issuing bank omits sender details');
 
   // Kiểm tra trạng thái tài khoản sau khi xác minh thành công
   const statusEvidence = await service.getVerificationStatus(user, bankAcc2.id);

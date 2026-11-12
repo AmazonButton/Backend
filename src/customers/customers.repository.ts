@@ -1615,10 +1615,15 @@ export class CustomersRepository {
       // tự động payout. Luôn đặt PENDING_MANUAL_REFUND để kế toán đối soát thủ công.
       const isMissingRef = params.reconciliationFlag === 'FLAGGED_MISSING_PROVIDER_REF';
       const isUnmatchedOrNoProof = !params.proofId || matchDecision === 'UNMATCHED_SESSION';
+      const hasDirectSourceEvidence = Boolean(params.sourceBankBin && (params.sourceAccountEncrypted || params.sourceAccountMasked));
       let obligation: any = null;
       if (!isMissingRef) {
+        // Option 2 (Security-by-Design Fail-Closed): Nếu ngân hàng phát hành (như TPBank/NAPAS) cắt thông tin người gửi,
+        // tài khoản khách vẫn được kích hoạt VERIFIED qua orderCode duy nhất trong 15 phút,
+        // nhưng nghĩa vụ hoàn tiền 2.000đ được đặt là PENDING_MANUAL_REFUND để kế toán đối soát,
+        // tuyệt đối KHÔNG tự động chi tiền (PENDING_REFUND) khi thiếu bằng chứng tài khoản nguồn trực tiếp.
         const initialRefundStatus =
-          (params.hasSufficientEvidence && !isUnmatchedOrNoProof)
+          (params.hasSufficientEvidence && !isUnmatchedOrNoProof && hasDirectSourceEvidence)
             ? 'PENDING_REFUND'
             : 'PENDING_MANUAL_REFUND';
         obligation = await tx.customerBankRefundObligation.create({
