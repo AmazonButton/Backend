@@ -1,5 +1,7 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: Bank Verification Final Hardening, P0-3 Stripped Details (Option 2) & P0-1 Webhook Yield (COMPLETED & 100% VERIFIED)
+
 ### [2026-11-12] Bank Verification Final Hardening: P0-3 TPBank Stripped Details & P0-1 Store Webhook Yield Gap (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS, `platform-button-rental-phase1-payos-integration.spec.ts` 8/8 PASS)
 - **Remediated Defects**:
