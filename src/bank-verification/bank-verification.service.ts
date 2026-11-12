@@ -32,6 +32,7 @@ import { signPaymentRequest, parsePayosDateTime } from '../payments/payos.helper
 @Injectable()
 export class BankVerificationService implements OnModuleInit {
   private readonly logger = new Logger(BankVerificationService.name);
+  private readonly storeCheckoutUrls = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -200,8 +201,8 @@ export class BankVerificationService implements OnModuleInit {
       try {
         const orderCodeNum = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
         const frontendOrigin = process.env.FRONTEND_URL || 'https://buttontdash.vercel.app';
-        const returnUrl = process.env.PAYOS_RETURN_URL || `${frontendOrigin}/store/finance?status=success`;
-        const cancelUrl = process.env.PAYOS_CANCEL_URL || `${frontendOrigin}/store/finance?status=cancelled`;
+        const returnUrl = process.env.PAYOS_STORE_BANK_RETURN_URL || `${frontendOrigin}/store/finance?status=success`;
+        const cancelUrl = process.env.PAYOS_STORE_BANK_CANCEL_URL || `${frontendOrigin}/store/finance?status=cancelled`;
         const description = referenceCode.slice(0, 25);
 
         const signature = signPaymentRequest(
@@ -242,6 +243,9 @@ export class BankVerificationService implements OnModuleInit {
           payosOrderCode = orderCodeNum;
           payosCheckoutUrl = resData.data.checkoutUrl || null;
           payosQrCode = resData.data.qrCode || null;
+          if (payosCheckoutUrl) {
+            this.storeCheckoutUrls.set(referenceCode, payosCheckoutUrl);
+          }
           this.logger.log(`Created PayOS payment request for Store verification ${referenceCode}, orderCode: ${payosOrderCode}`);
         }
       } catch (payosErr: any) {
@@ -257,6 +261,11 @@ export class BankVerificationService implements OnModuleInit {
       expiresAt,
       providerTransactionId: payosOrderCode ? payosOrderCode.toString() : undefined,
     });
+
+    if (payosCheckoutUrl) {
+      this.storeCheckoutUrls.set(transaction.id.toString(), payosCheckoutUrl);
+      this.storeCheckoutUrls.set(referenceCode, payosCheckoutUrl);
+    }
 
     // Platform receiving bank info (destination for the penny deposit)
     const recipientBankBin = process.env.PLATFORM_BANK_BIN || '970422';
@@ -279,7 +288,7 @@ export class BankVerificationService implements OnModuleInit {
       recipientBankName,
       recipientAccountNumber,
       recipientAccountHolder,
-      qrCodeUrl: payosQrCode || defaultQrUrl,
+      qrCodeUrl: defaultQrUrl,
       checkoutUrl: payosCheckoutUrl || undefined,
       instructions: `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`,
     };
@@ -465,20 +474,31 @@ export class BankVerificationService implements OnModuleInit {
       destinationAccountNumber =
         dto.data.destinationAccountNumber ||
         dto.data.accountNumber ||
-        dto.data.virtualAccountNumber;
+        dto.data.virtualAccountNumber ||
+        dto.destinationAccountNumber;
 
       destinationBankBin =
         dto.data.destinationBankBin ||
-        dto.data.bin;
+        dto.data.bin ||
+        dto.destinationBankBin;
 
       senderAccountNumber =
         dto.data.counterAccountNumber ||
-        dto.data.senderAccountNumber;
+        dto.data.senderAccountNumber ||
+        dto.senderAccountNumber;
 
       senderBankBin =
         dto.data.counterAccountBankId ||
         dto.data.counterBankBin ||
-        dto.data.senderBankBin;
+        dto.data.senderBankBin ||
+        dto.senderBankBin;
+
+      if (!destinationBankBin && process.env.PLATFORM_BANK_BIN) {
+        destinationBankBin = process.env.PLATFORM_BANK_BIN.trim();
+      }
+      if (!destinationAccountNumber && process.env.PLATFORM_BANK_ACCOUNT_NUMBER) {
+        destinationAccountNumber = process.env.PLATFORM_BANK_ACCOUNT_NUMBER.trim();
+      }
     } else {
       // Direct raw-body signed webhook where the entire top-level body is authenticated
       destinationAccountNumber = dto.destinationAccountNumber;
@@ -496,6 +516,7 @@ export class BankVerificationService implements OnModuleInit {
       senderBankBin,
       destinationAccountNumber,
       destinationBankBin,
+      orderCode: dto.data?.orderCode,
     });
 
     if (!txResult.success) {
@@ -595,6 +616,10 @@ export class BankVerificationService implements OnModuleInit {
           refundStatus: 'PROCESSING',
           refundTransactionId: refundResult.refundTransactionId,
         });
+        await this.repository.markObligationDispatchedByReference(
+          refundRef,
+          refundResult.refundTransactionId,
+        );
         this.logger.log(`Lệnh hoàn tiền ${amountToRefund} VND đã gửi cho verificationId #${transactionId}, trạng thái PROCESSING/PENDING_RECONCILIATION`);
       } else {
         await this.repository.updateTransactionRefundStatus({
@@ -970,6 +995,10 @@ export class BankVerificationService implements OnModuleInit {
     const qrCodeUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(referenceCode)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
     const instructions = `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`;
     const actualAmount = tx.receivedAmount ? Number(tx.receivedAmount) : (tx.actualAmount ? Number(tx.actualAmount) : null);
+    const checkoutUrl =
+      this.storeCheckoutUrls.get(tx.id?.toString()) ||
+      this.storeCheckoutUrls.get(tx.referenceCode) ||
+      undefined;
 
     return {
       id: tx.id.toString(),
@@ -993,6 +1022,7 @@ export class BankVerificationService implements OnModuleInit {
       recipientAccountNumber,
       recipientAccountHolder,
       qrCodeUrl,
+      checkoutUrl,
       instructions,
       expiresAt: tx.expiresAt,
       verifiedAt: tx.verifiedAt || null,
@@ -1019,7 +1049,7 @@ export class BankVerificationService implements OnModuleInit {
       if (clientId && apiKey) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 4000);
+          const timeout = setTimeout(() => controller.abort(), 8000);
           const res = await fetch(
             `https://api-merchant.payos.vn/v2/payment-requests/${tx.providerTransactionId}`,
             {
@@ -1033,32 +1063,44 @@ export class BankVerificationService implements OnModuleInit {
             },
           );
           clearTimeout(timeout);
-          const payosData: any = await res.json();
-          if (payosData?.code === '00' && payosData?.data?.status === 'PAID') {
-            const data = payosData.data;
-            const webhookDto: BankVerificationWebhookDto = {
-              code: '00',
-              desc: 'success',
-              referenceCode: tx.referenceCode,
-              amount: data.amount || Number(tx.expectedAmount),
-              providerTransactionId: (data.reference || tx.providerTransactionId).toString(),
-              description: data.description || tx.referenceCode,
-              data: {
-                orderCode: Number(tx.providerTransactionId),
+          if (res.ok) {
+            const payosData: any = await res.json();
+            if (payosData?.code === '00' && payosData?.data?.status === 'PAID') {
+              const data = payosData.data;
+              const firstTx =
+                Array.isArray(data.transactions) && data.transactions.length > 0
+                  ? data.transactions[0]
+                  : null;
+
+              const webhookDto: BankVerificationWebhookDto = {
+                code: '00',
+                desc: 'success',
+                referenceCode: tx.referenceCode,
                 amount: data.amount || Number(tx.expectedAmount),
-                description: data.description || tx.referenceCode,
-                accountNumber: data.accountNumber,
-                reference: data.reference || tx.providerTransactionId,
-                transactionDateTime: data.transactionDateTime || new Date().toISOString(),
-                counterAccountBankId: data.counterAccountBankId,
-                counterAccountNumber: data.counterAccountNumber,
-                counterAccountName: data.counterAccountName,
-              },
-            };
-            await this.handleVerificationWebhook(webhookDto);
-            const reloadedTx = await this.repository.findVerificationTransactionById(rawId);
-            if (reloadedTx) {
-              tx = reloadedTx;
+                providerTransactionId: (firstTx?.reference || data.reference || tx.providerTransactionId).toString(),
+                description: firstTx?.description || data.description || tx.referenceCode,
+                destinationAccountNumber: firstTx?.accountNumber || data.accountNumber || process.env.PLATFORM_BANK_ACCOUNT_NUMBER,
+                destinationBankBin: data.bin || firstTx?.bin || process.env.PLATFORM_BANK_BIN,
+                senderAccountNumber: firstTx?.counterAccountNumber || data.counterAccountNumber,
+                senderBankBin: firstTx?.counterAccountBankId || data.counterAccountBankId,
+                data: {
+                  orderCode: Number(tx.providerTransactionId),
+                  amount: data.amount || Number(tx.expectedAmount),
+                  description: firstTx?.description || data.description || tx.referenceCode,
+                  accountNumber: firstTx?.accountNumber || data.accountNumber || process.env.PLATFORM_BANK_ACCOUNT_NUMBER,
+                  reference: firstTx?.reference || data.reference || tx.providerTransactionId,
+                  transactionDateTime: firstTx?.transactionDateTime || data.transactionDateTime || new Date().toISOString(),
+                  counterAccountBankId: firstTx?.counterAccountBankId || data.counterAccountBankId,
+                  counterAccountNumber: firstTx?.counterAccountNumber || data.counterAccountNumber,
+                  counterAccountName: firstTx?.counterAccountName || data.counterAccountName,
+                  bin: data.bin || firstTx?.bin || process.env.PLATFORM_BANK_BIN,
+                },
+              };
+              await this.handleVerificationWebhook(webhookDto);
+              const reloadedTx = await this.repository.findVerificationTransactionById(rawId);
+              if (reloadedTx) {
+                tx = reloadedTx;
+              }
             }
           }
         } catch (e: any) {

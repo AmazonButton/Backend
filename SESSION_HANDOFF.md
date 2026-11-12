@@ -1,5 +1,42 @@
 # Project Handoff & Session Context
 
+### [2026-11-12] Bank Verification Comprehensive Production Hardening: P0-1 through P1-6 Remediation (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS)
+- **Remediated Defects (P0-1 through P1-6)**:
+  1. **P0-1: Store Webhook Routing Isolation (`payments.service.ts`, `customer-bank-penny-verification.service.ts`)**:
+     - *Issue*: Store webhooks (`VERIFY_...`) were swallowed by `customerBankPennyService.processPayosVerificationWebhook` as orphan transactions (`proofId: null`), returning `{ success: true }` and preventing `BankVerificationService` from ever receiving them.
+     - *Fix*: In `PaymentsService.handlePayosWebhook`, prioritized routing `VERIFY_` descriptions to `BankVerificationService` first. In `CustomerBankPennyVerificationService`, added early return `{ success: false, notHandled: true }` when `!session` matches a `VERIFY_` description.
+  2. **P0-2: Customer Verification Active Fallback Query Hardening (`customer-bank-penny-verification.service.ts`)**:
+     - *Issue*: Active fallback query in `getVerificationStatus` timed out at 4000ms, lacked `queryRes.ok` check, lacked fallback to `paymentLinkId`, and swallowed exceptions via `.catch(...)`.
+     - *Fix*: Increased timeout to 8000ms, added `queryRes.ok` validation, added fallback query via `latestSession.paymentLinkId` when `paymentOrderCode` lookup fails, reloads updated `account` entity, and logs errors cleanly without silent swallowing.
+  3. **P0-4: Store Verification Fallback Polling Data Extraction (`bank-verification.service.ts`)**:
+     - *Issue*: In `getVerificationTransactionById`, active query read directly from `payosData.data` instead of `payosData.data.transactions[0]`, leaving reference, counter-account, and receiving bank details undefined and failing the transaction.
+     - *Fix*: Extracted `firstTx = Array.isArray(payosData.data?.transactions) && payosData.data.transactions.length > 0 ? payosData.data.transactions[0] : null;`. Properly mapped `reference`, `transactionDateTime`, `counterAccountBankId`, `counterAccountNumber`, `counterAccountName`, `destinationAccountNumber`, `destinationBankBin` (`data.bin || firstTx?.bin || process.env.PLATFORM_BANK_BIN`), and passed `orderCode: Number(tx.providerTransactionId)`.
+  4. **P0-5: `isPayosIntegratedTx` Matching & False-Positive Destination Mismatch (`bank-verification.repository.ts`, `bank-verification.service.ts`)**:
+     - *Issue*: `isPayosIntegratedTx` compared `lockedTx.provider_transaction_id` (PayOS `orderCode`) against `params.providerTransactionId` (bank trace `data.reference`), always evaluating to `false` and causing false-positive `DESTINATION_*_MISMATCH` / `*_UNVERIFIABLE`.
+     - *Fix*: Added `orderCode` to `executeAtomicWebhookVerificationTx` and matched `lockedTx.provider_transaction_id === String(params.orderCode) || lockedTx.provider_transaction_id === params.providerTransactionId`. In `handleVerificationWebhook`, populated `destinationBankBin` and `destinationAccountNumber` with platform defaults for PayOS-wrapped webhooks, allowing seamless verification of dynamic QR payments.
+  5. **P1-1: Distinct Return & Cancel URLs for Customer vs Store (`customer-bank-penny-verification.service.ts`, `bank-verification.service.ts`)**:
+     - *Issue*: Both Customer and Store verification read `PAYOS_RETURN_URL`, sending users to the homepage instead of `/customer/banking` and `/store/finance`.
+     - *Fix*: Separated return and cancel URLs into `PAYOS_CUSTOMER_BANK_RETURN_URL` (defaulting to `${frontendOrigin}/customer/banking?status=success`) and `PAYOS_STORE_BANK_RETURN_URL` (defaulting to `${frontendOrigin}/store/finance?status=success`).
+  6. **P1-2: Expired Verification Session Normalization (`customer-bank-penny-verification.service.ts`)**:
+     - *Issue*: Expired verification sessions in `getVerificationHistory` returned `sessionStatus: 'ACTIVE'`.
+     - *Fix*: Normalized `sessionStatus` to `'EXPIRED'` if `s.sessionStatus === 'ACTIVE'` and `new Date(s.expiresAt).getTime() < Date.now()`.
+  7. **P1-3: `webhook_url` (snake_case) DTO Support (`payos-webhook-payload.dto.ts`)**:
+     - *Issue*: PayOS dashboard handshake ping with `webhook_url` failed strict `ValidationPipe` with 400 Bad Request.
+     - *Fix*: Added `@ApiPropertyOptional() @IsOptional() @IsString() webhook_url?: string;` to `PayosWebhookPayloadDto`.
+  8. **P1-5: Valid QR Code URL & Checkout URL Persistence (`bank-verification.service.ts`)**:
+     - *Issue*: Raw EMVCo string assigned to `qrCodeUrl` broke `<img src>` on frontend, and `checkoutUrl` was missing in `formatVerificationTransaction`.
+     - *Fix*: Kept `qrCodeUrl` as standard `defaultQrUrl` (valid PNG image URL), tracked checkout URLs in `storeCheckoutUrls` map, and emitted `checkoutUrl` in both `createVerificationRequest` and `formatVerificationTransaction`.
+  9. **P1-6: Double Refund Prevention & Obligation State Transition (`bank-verification.service.ts`, `bank-verification.repository.ts`)**:
+     - *Issue*: `triggerAutomatedRefund` dispatched refund immediately after verification without updating `store_bank_refund_obligations`, leaving obligations in `PENDING_REFUND` to be re-dispatched by `StoreBankRefundWorker` cron.
+     - *Fix*: Added `markObligationDispatchedByReference` in `BankVerificationRepository`, updating `store_bank_refund_obligations` to `PENDING_RECONCILIATION` with `provider_payout_id` upon successful dispatch, preventing concurrent duplicate payouts.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Production NestJS build clean).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 14/14 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 10/10 PASS (100%).
+
 ### [2026-11-12] Bank Penny Verification Production Remediation: PayOS Timezone Skew Fix, Customer Account Reload & Store PayOS Integration (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 14/14 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `financial-payout-verification-hardening.spec.ts` 10/10 PASS)
 - **Remediated Defects (Frontend Defect Report Post-Commit `8d10e3e`)**:

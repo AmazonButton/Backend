@@ -7,6 +7,11 @@ export class PayosWebhookPayloadDto {
   @IsString()
   webhookUrl?: string;
 
+  @ApiPropertyOptional({ description: 'URL Webhook dùng cho handshake ping xác nhận URL từ PayOS Dashboard (snake_case)' })
+  @IsOptional()
+  @IsString()
+  webhook_url?: string;
+
   @ApiPropertyOptional({ description: 'Trạng thái thành công theo contract PayOS', example: true })
   @IsOptional()
   @IsBoolean()

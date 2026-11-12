@@ -1508,26 +1508,31 @@ export class CustomersRepository {
           const isExactPolicyAmount = amountNum === 2000;
           const isAccountUnverified = lockedAccount && lockedAccount.verification_status !== 'VERIFIED';
 
-          const isBinMatched = Boolean(params.sourceBankBin && params.sourceBankBin === lockedSession.bank_bin);
-          let isAccountMatched = Boolean(
-            params.sourceAccountHash && params.sourceAccountHash === lockedSession.account_number_hash,
-          );
+          const isBinMatched = params.sourceBankBin
+            ? params.sourceBankBin === lockedSession.bank_bin
+            : true; // Cho phép fallback theo orderCode duy nhất nếu ngân hàng phát hành (như TPBank) không truyền thông tin nguồn qua NAPAS
+          let isAccountMatched = true;
+          if (params.sourceAccountHash || params.sourceAccountNumber) {
+            isAccountMatched = Boolean(
+              params.sourceAccountHash && params.sourceAccountHash === lockedSession.account_number_hash,
+            );
 
-          // Graceful fallback for masked counter account numbers (e.g. "******8989") from PayOS
-          if (!isAccountMatched && lockedAccount?.account_number_encrypted && params.sourceAccountNumber) {
-            try {
-              const plainAccount = CryptoVaultUtil.decryptAccountNumber(lockedAccount.account_number_encrypted);
-              const cleanSource = params.sourceAccountNumber.trim();
-              if (cleanSource === plainAccount) {
-                isAccountMatched = true;
-              } else if (cleanSource.includes('*')) {
-                const unmaskedSuffix = cleanSource.replace(/\*/g, '');
-                if (unmaskedSuffix.length >= 4 && plainAccount.endsWith(unmaskedSuffix)) {
+            // Graceful fallback for masked counter account numbers (e.g. "******8989") from PayOS
+            if (!isAccountMatched && lockedAccount?.account_number_encrypted && params.sourceAccountNumber) {
+              try {
+                const plainAccount = CryptoVaultUtil.decryptAccountNumber(lockedAccount.account_number_encrypted);
+                const cleanSource = params.sourceAccountNumber.trim();
+                if (cleanSource === plainAccount) {
                   isAccountMatched = true;
+                } else if (cleanSource.includes('*')) {
+                  const unmaskedSuffix = cleanSource.replace(/\*/g, '');
+                  if (unmaskedSuffix.length >= 4 && plainAccount.endsWith(unmaskedSuffix)) {
+                    isAccountMatched = true;
+                  }
                 }
+              } catch {
+                // Ignore decryption failure in matching fallback
               }
-            } catch {
-              // Ignore decryption failure in matching fallback
             }
           }
 

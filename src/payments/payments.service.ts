@@ -425,11 +425,27 @@ export class PaymentsService {
         }
       }
 
-      // Check if this webhook belongs to Customer Bank Penny Verification
+      const webhookDesc = data?.description || (body as any)?.description || '';
+      const isStoreVerifyDesc = /VERIFY_[A-Z0-9]{4,10}/i.test(webhookDesc);
+
+      // 1. Ưu tiên định tuyến trực tiếp vào Store Bank Verification nếu description chứa mã VERIFY_
+      if (isStoreVerifyDesc && this.bankVerificationService) {
+        try {
+          const storeResult = await this.bankVerificationService.handleVerificationWebhook(body as any);
+          if (storeResult && (storeResult.success || (storeResult as any).code === '00')) {
+            this.logger.log(`[PayOS Webhook] Routed to BankVerificationService for description: ${webhookDesc}`);
+            return storeResult;
+          }
+        } catch (storeErr: any) {
+          this.logger.warn(`[PayOS Webhook] BankVerificationService routing failed: ${storeErr.message}`);
+        }
+      }
+
+      // 2. Thử định tuyến vào Customer Bank Penny Verification
       if (this.customerBankPennyService) {
         try {
           const pennyResult = await this.customerBankPennyService.processPayosVerificationWebhook(body as any);
-          if (pennyResult && (pennyResult.success || pennyResult.code === '00')) {
+          if (pennyResult && (pennyResult.success || pennyResult.code === '00') && !(pennyResult as any).notHandled) {
             this.logger.log(`[PayOS Webhook] Routed to CustomerBankPennyVerificationService for orderCode: ${orderCodeStr}`);
             return pennyResult;
           }
@@ -438,16 +454,16 @@ export class PaymentsService {
         }
       }
 
-      // Check if this webhook belongs to Store Bank Verification
-      if (this.bankVerificationService) {
+      // 3. Fallback sang Store Bank Verification nếu Customer không xử lý
+      if (!isStoreVerifyDesc && this.bankVerificationService) {
         try {
           const storeResult = await this.bankVerificationService.handleVerificationWebhook(body as any);
           if (storeResult && (storeResult.success || (storeResult as any).code === '00')) {
-            this.logger.log(`[PayOS Webhook] Routed to BankVerificationService for orderCode: ${orderCodeStr}`);
+            this.logger.log(`[PayOS Webhook] Fallback routed to BankVerificationService for orderCode: ${orderCodeStr}`);
             return storeResult;
           }
         } catch (storeErr: any) {
-          this.logger.warn(`[PayOS Webhook] BankVerificationService routing failed: ${storeErr.message}`);
+          this.logger.warn(`[PayOS Webhook] BankVerificationService fallback routing failed: ${storeErr.message}`);
         }
       }
 

@@ -249,6 +249,7 @@ export class BankVerificationRepository {
     senderBankBin?: string;
     destinationAccountNumber?: string;
     destinationBankBin?: string;
+    orderCode?: number | string;
   }): Promise<AtomicWebhookVerificationResult> {
     return this.prisma.$transaction(async (tx) => {
       // 1. Khóa hàng verification transaction bằng SELECT ... FOR UPDATE
@@ -426,11 +427,11 @@ export class BankVerificationRepository {
 
       const isPayosIntegratedTx = Boolean(
         lockedTx.provider_transaction_id &&
-        params.providerTransactionId &&
-        lockedTx.provider_transaction_id === params.providerTransactionId
+        ((params.providerTransactionId && lockedTx.provider_transaction_id === params.providerTransactionId) ||
+         (params.orderCode && lockedTx.provider_transaction_id === String(params.orderCode)))
       );
 
-      if (isStrict) {
+      if (isStrict && !isPayosIntegratedTx) {
         if (!platformAcc || !params.destinationAccountNumber) {
           this.logger.warn(
             `[AtomicWebhookVerification] Thieu thong tin tai khoan nhan (ref: ${params.referenceCode})`,
@@ -517,7 +518,7 @@ export class BankVerificationRepository {
       }
 
       // 7. Kiểm tra chéo tài khoản gửi (sender account & BIN)
-      if (isStrict) {
+      if (isStrict && !isPayosIntegratedTx) {
         if (!params.senderAccountNumber) {
           this.logger.warn(
             `[AtomicWebhookVerification] Thieu thong tin tai khoan gui (ref: ${params.referenceCode})`,
@@ -865,5 +866,20 @@ export class BankVerificationRepository {
       ORDER BY next_reconcile_at ASC NULLS FIRST, id ASC
       LIMIT ${limit}
     `;
+  }
+
+  async markObligationDispatchedByReference(
+    refundReference: string,
+    providerPayoutId?: string,
+  ): Promise<boolean> {
+    const count = await this.prisma.$executeRaw`
+      UPDATE store_bank_refund_obligations
+      SET refund_status = 'PENDING_RECONCILIATION',
+          provider_payout_id = COALESCE(${providerPayoutId || null}, provider_payout_id),
+          updated_at = NOW()
+      WHERE refund_reference = ${refundReference}
+        AND refund_status IN ('PENDING_REFUND', 'PROCESSING')
+    `;
+    return count > 0;
   }
 }

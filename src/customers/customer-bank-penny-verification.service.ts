@@ -209,8 +209,8 @@ export class CustomerBankPennyVerificationService {
 
         const description = `VRF ${account.bankBin}`.slice(0, 25);
         const frontendOrigin = process.env.FRONTEND_URL || 'https://buttontdash.vercel.app';
-        const returnUrl = process.env.PAYOS_RETURN_URL || `${frontendOrigin}/customer/banking?status=success`;
-        const cancelUrl = process.env.PAYOS_CANCEL_URL || `${frontendOrigin}/customer/banking?status=cancelled`;
+        const returnUrl = process.env.PAYOS_CUSTOMER_BANK_RETURN_URL || `${frontendOrigin}/customer/banking?status=success`;
+        const cancelUrl = process.env.PAYOS_CUSTOMER_BANK_CANCEL_URL || `${frontendOrigin}/customer/banking?status=cancelled`;
 
         const signature = signPaymentRequest(
           {
@@ -366,6 +366,7 @@ export class CustomerBankPennyVerificationService {
 
         if (clientId && apiKey && checksumKey) {
           try {
+            let queryData: any = null;
             const queryRes = await fetch(
               `https://api-merchant.payos.vn/v2/payment-requests/${latestSession.paymentOrderCode}`,
               {
@@ -374,10 +375,29 @@ export class CustomerBankPennyVerificationService {
                   'x-client-id': clientId,
                   'x-api-key': apiKey,
                 },
-                signal: AbortSignal.timeout(4000),
+                signal: AbortSignal.timeout(8000),
               },
             );
-            const queryData = (await queryRes.json()) as any;
+            if (queryRes.ok) {
+              queryData = (await queryRes.json()) as any;
+            } else if (latestSession.paymentLinkId) {
+              // Fallback: Tra cứu theo paymentLinkId nếu query theo paymentOrderCode thất bại
+              const linkRes = await fetch(
+                `https://api-merchant.payos.vn/v2/payment-requests/${latestSession.paymentLinkId}`,
+                {
+                  method: 'GET',
+                  headers: {
+                    'x-client-id': clientId,
+                    'x-api-key': apiKey,
+                  },
+                  signal: AbortSignal.timeout(8000),
+                },
+              );
+              if (linkRes.ok) {
+                queryData = (await linkRes.json()) as any;
+              }
+            }
+
             if (queryData?.code === '00' && queryData?.data?.status === 'PAID') {
               this.logger.log(
                 `[getVerificationStatus] PayOS báo orderCode ${latestSession.paymentOrderCode} đã thanh toán PAID. Tự động đồng bộ xác nhận...`,
@@ -403,14 +423,16 @@ export class CustomerBankPennyVerificationService {
               };
 
               const signature = signWebhookData(fakeWebhookData, checksumKey);
-              await this.processPayosVerificationWebhook({
-                code: '00',
-                desc: 'success',
-                data: fakeWebhookData,
-                signature,
-              }).catch((e: any) => {
-                this.logger.warn(`Lỗi kích hoạt webhook từ polling PayOS: ${e.message}`);
-              });
+              try {
+                await this.processPayosVerificationWebhook({
+                  code: '00',
+                  desc: 'success',
+                  data: fakeWebhookData,
+                  signature,
+                });
+              } catch (webhookErr: any) {
+                this.logger.error(`[getVerificationStatus] Lỗi đồng bộ webhook từ polling PayOS: ${webhookErr.message}`);
+              }
 
               // Tải lại phiên mới nhất từ database
               const reloadedSession = await this.customersRepo.findLatestVerificationSessionByAccount(
@@ -429,6 +451,10 @@ export class CustomerBankPennyVerificationService {
               if (reloadedAccount) {
                 account = reloadedAccount;
               }
+            } else if (queryData?.data?.status) {
+              this.logger.log(
+                `[getVerificationStatus] Trạng thái PayOS hiện tại cho orderCode ${latestSession.paymentOrderCode}: ${queryData.data.status}`,
+              );
             }
           } catch (e: any) {
             this.logger.warn(`Lỗi chủ động truy vấn PayOS cho orderCode ${latestSession.paymentOrderCode}: ${e.message}`);
@@ -622,7 +648,7 @@ export class CustomerBankPennyVerificationService {
         accountNumberMasked: s.bankAccount?.accountNumberMasked || null,
         accountName: s.bankAccount?.accountName || null,
         checkoutUrl: s.paymentCheckoutUrl || null,
-        sessionStatus: s.sessionStatus,
+        sessionStatus: (s.sessionStatus === 'ACTIVE' && new Date(s.expiresAt).getTime() < Date.now()) ? 'EXPIRED' : s.sessionStatus,
         verificationStatus: s.verificationStatus,
         paymentReceived,
         receivedAmount: paymentReceived ? receivedAmount : null,
@@ -749,6 +775,12 @@ export class CustomerBankPennyVerificationService {
     // 5. Tra cứu phiên xác nhận tương ứng
     const orderCode = BigInt(data.orderCode);
     const session = await this.customersRepo.findVerificationSessionByOrderCode(orderCode);
+
+    const descStr = String(data.description || '');
+    if (!session && /VERIFY_[A-Z0-9]{4,10}/i.test(descStr)) {
+      this.logger.log(`[CustomerBankPennyVerificationService] Nhận diện webhook của Store (${descStr}), bỏ qua để Store xử lý`);
+      return { success: false, notHandled: true, message: 'Belongs to Store verification' };
+    }
 
     // 6. Chuẩn bị thông tin tài khoản nguồn
     const sourceBankBin = data.counterAccountBankId ? String(data.counterAccountBankId).trim() : null;
