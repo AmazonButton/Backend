@@ -78,6 +78,8 @@ async function run() {
     inboundTxIds: [] as any[],
     customerObligationIds: [] as any[],
     customerAttemptIds: [] as any[],
+    customerProofIds: [] as any[],
+    customerBankAccIds: [] as any[],
     verificationTxIds: [] as any[],
   };
 
@@ -1303,6 +1305,222 @@ async function run() {
         'Attempt 1 must NOT block head-of-line: it is deferred to nextReconcileAt',
       );
     });
+
+    console.log('\n[SECTION 4] Real PostgreSQL Customer Concurrency & Conflict Reconciliation Tests');
+
+    // TC-11: Real PostgreSQL Concurrency Collision: Two simultaneous requests with identical payload
+    // One wins the DB insert; the other catches real Postgres P2002 on uq_cust_bank_inbound_provider_channel_ref,
+    // reconciles with the winner, and returns graceful idempotent win without unhandled 500 error.
+    await test('TC-11 Real PostgreSQL Customer Concurrency: Identical payloads resolve to exactly 1 inbound, 1 obligation, 1 winner, 1 idempotent win', async () => {
+      const custRand = Math.floor(Math.random() * 100000);
+      const custUser = await prisma.user.create({
+        data: {
+          username: `cust_race_user_${custRand}`,
+          fullName: 'Customer Race User',
+          email: `cust_race_${custRand}@example.com`,
+          status: 'ACTIVE',
+        },
+      });
+      created.userIds.push(custUser.userId);
+
+      const custProfile = await prisma.customerProfile.create({
+        data: {
+          userId: custUser.userId,
+          phone: `0922${custRand.toString().padStart(6, '0')}`,
+        },
+      });
+      created.customerProfileIds.push(custProfile.customerId);
+
+      const rawCustAcc = '092233445566';
+      const encCustAcc = CryptoVaultUtil.encryptAccountNumber(rawCustAcc);
+      const hashCustAcc = CryptoVaultUtil.computeDeterministicAccountHash(rawCustAcc);
+      const custBin = '970422';
+
+      const custBankAcc = await prisma.customerBankAccount.create({
+        data: {
+          customerId: custProfile.customerId,
+          bankBin: custBin,
+          bankName: 'MBBank',
+          accountNumberEncrypted: encCustAcc,
+          accountNumberHash: hashCustAcc,
+          accountNumberMasked: '******5566',
+          accountName: 'NGUYEN RACE USER',
+          verificationStatus: 'PENDING',
+          isDefault: true,
+        },
+      });
+      created.customerBankAccIds.push(custBankAcc.id);
+
+      const orderCode11 = BigInt(Date.now() + Math.floor(Math.random() * 1000));
+      const proof11 = await prisma.customerBankVerificationProof.create({
+        data: {
+          proofReference: `PROOF_RACE_${custRand}_${Date.now()}`,
+          customerId: custProfile.customerId,
+          accountId: custBankAcc.id,
+          paymentOrderCode: orderCode11,
+          accountNumberHash: hashCustAcc,
+          bankBin: custBin,
+          verificationStatus: 'PENDING',
+          sessionStatus: 'ACTIVE',
+          expiresAt: new Date(Date.now() + 1800000),
+        },
+      });
+      created.customerProofIds.push(proof11.id);
+
+      const raceRef = `PAYOS_RACE_IDENTICAL_${custRand}`;
+      const payload1 = {
+        orderCode: Number(orderCode11),
+        amount: 2000,
+        reference: raceRef,
+        transactionDateTime: new Date().toISOString(),
+        counterAccountBankId: custBin,
+        counterAccountNumber: rawCustAcc,
+        counterAccountName: 'NGUYEN RACE USER',
+        description: 'V970422',
+        session: proof11,
+      };
+      const payload2 = {
+        ...payload1,
+      };
+
+      // Execute simultaneously on real PostgreSQL
+      const [res1, res2] = await Promise.all([
+        customerPennyService.recordInboundPaymentEvidence(payload1),
+        customerPennyService.recordInboundPaymentEvidence(payload2),
+      ]);
+
+      assert.strictEqual(res1.success, true, 'Request 1 must succeed');
+      assert.strictEqual(res2.success, true, 'Request 2 must succeed');
+      const messages = [res1.message, res2.message];
+      const hasWinner = messages.some((m) => m.includes('Ghi nhận giao dịch'));
+      const hasIdempotentWin = messages.some((m) => m.includes('Idempotent Concurrency Win') || m.includes('Idempotent'));
+      assert.strictEqual(hasWinner, true, 'One request must be the atomic winner');
+      assert.strictEqual(hasIdempotentWin, true, 'The colliding request must be handled as Idempotent Concurrency Win');
+
+      // Assert PostgreSQL state directly: exactly 1 inbound, 1 obligation
+      const dbInbounds = await prisma.customerBankInboundTransaction.findMany({
+        where: { providerTransactionRef: raceRef },
+      });
+      assert.strictEqual(dbInbounds.length, 1, 'PostgreSQL unique constraint must ensure exactly 1 inbound row');
+      created.inboundTxIds.push(dbInbounds[0].id);
+
+      const dbObligations = await prisma.customerBankRefundObligation.findMany({
+        where: { inboundTransactionId: dbInbounds[0].id },
+      });
+      assert.strictEqual(dbObligations.length, 1, 'Exactly 1 refund obligation row in PostgreSQL');
+      created.customerObligationIds.push(dbObligations[0].id);
+    });
+
+    // TC-12: Real PostgreSQL Concurrency Collision with Contradictory Payload:
+    // Two simultaneous requests with same reference, but DIFFERENT amount (2.000đ vs 50.000đ).
+    // Winner inserts; losing request hits Postgres P2002, reconciles against winning record,
+    // detects amount mismatch, updates reconciliationFlag to FLAGGED_CONFLICTING_DUPLICATE_PAYLOAD,
+    // and returns success: false with conflict error (NOT a valid duplicate!).
+    await test('TC-12 Real PostgreSQL Customer Concurrency: Contradictory payloads flag conflict in DB, reject valid duplicate claim', async () => {
+      const custRand = Math.floor(Math.random() * 100000) + 100000;
+      const custUser = await prisma.user.create({
+        data: {
+          username: `cust_conflict_user_${custRand}`,
+          fullName: 'Customer Conflict User',
+          email: `cust_conflict_${custRand}@example.com`,
+          status: 'ACTIVE',
+        },
+      });
+      created.userIds.push(custUser.userId);
+
+      const custProfile = await prisma.customerProfile.create({
+        data: {
+          userId: custUser.userId,
+          phone: `0933${(custRand % 100000).toString().padStart(6, '0')}`,
+        },
+      });
+      created.customerProfileIds.push(custProfile.customerId);
+
+      const rawCustAcc = '093344556677';
+      const encCustAcc = CryptoVaultUtil.encryptAccountNumber(rawCustAcc);
+      const hashCustAcc = CryptoVaultUtil.computeDeterministicAccountHash(rawCustAcc);
+      const custBin = '970422';
+
+      const custBankAcc = await prisma.customerBankAccount.create({
+        data: {
+          customerId: custProfile.customerId,
+          bankBin: custBin,
+          bankName: 'MBBank',
+          accountNumberEncrypted: encCustAcc,
+          accountNumberHash: hashCustAcc,
+          accountNumberMasked: '******6677',
+          accountName: 'NGUYEN CONFLICT USER',
+          verificationStatus: 'PENDING',
+          isDefault: true,
+        },
+      });
+      created.customerBankAccIds.push(custBankAcc.id);
+
+      const orderCode12 = BigInt(Date.now() + Math.floor(Math.random() * 1000) + 2000);
+      const proof12 = await prisma.customerBankVerificationProof.create({
+        data: {
+          proofReference: `PROOF_CONFLICT_${custRand}_${Date.now()}`,
+          customerId: custProfile.customerId,
+          accountId: custBankAcc.id,
+          paymentOrderCode: orderCode12,
+          accountNumberHash: hashCustAcc,
+          bankBin: custBin,
+          verificationStatus: 'PENDING',
+          sessionStatus: 'ACTIVE',
+          expiresAt: new Date(Date.now() + 1800000),
+        },
+      });
+      created.customerProofIds.push(proof12.id);
+
+      const conflictRef = `PAYOS_RACE_CONFLICT_${custRand}`;
+      const payloadValid = {
+        orderCode: Number(orderCode12),
+        amount: 2000,
+        reference: conflictRef,
+        transactionDateTime: new Date().toISOString(),
+        counterAccountBankId: custBin,
+        counterAccountNumber: rawCustAcc,
+        counterAccountName: 'NGUYEN CONFLICT USER',
+        description: 'V970422',
+        session: proof12,
+      };
+      const payloadContradictory = {
+        ...payloadValid,
+        amount: 50000, // Contradictory amount!
+      };
+
+      // Execute simultaneously on real PostgreSQL
+      const [resValid, resContradictory] = await Promise.all([
+        customerPennyService.recordInboundPaymentEvidence(payloadValid),
+        customerPennyService.recordInboundPaymentEvidence(payloadContradictory),
+      ]);
+
+      const winner = resValid.success ? resValid : resContradictory;
+      const loser = !resValid.success ? resValid : resContradictory;
+
+      assert.strictEqual(winner.success, true, 'One atomic request must win');
+      assert.strictEqual(loser.success, false, 'Conflicting request must NOT be reported as successful duplicate');
+      assert.strictEqual(loser.isConflict, true, 'Conflicting request must have isConflict=true');
+      assert.ok(loser.message.includes('mâu thuẫn dữ liệu'), 'Message must explicitly declare data conflict');
+
+      // Assert PostgreSQL state directly: exactly 1 inbound, 1 obligation, and reconciliationFlag set!
+      const dbInbounds = await prisma.customerBankInboundTransaction.findMany({
+        where: { providerTransactionRef: conflictRef },
+      });
+      assert.strictEqual(dbInbounds.length, 1, 'PostgreSQL unique constraint must ensure exactly 1 inbound row');
+      assert.strictEqual(
+        dbInbounds[0].reconciliationFlag,
+        'FLAGGED_CONFLICTING_DUPLICATE_PAYLOAD',
+        'Inbound record in PostgreSQL must be flagged for manual reconciliation due to contradictory race attempt',
+      );
+      created.inboundTxIds.push(dbInbounds[0].id);
+
+      const dbObligations = await prisma.customerBankRefundObligation.findMany({
+        where: { inboundTransactionId: dbInbounds[0].id },
+      });
+      assert.strictEqual(dbObligations.length, 1, 'Exactly 1 refund obligation row in PostgreSQL');
+      created.customerObligationIds.push(dbObligations[0].id);
+    });
   } finally {
     // Surgical fixture teardown: strictly restricted to IDs created by this test run
     console.log('\n[TEARDOWN] Cleaning up specific test fixtures by created ID...');
@@ -1341,8 +1559,17 @@ async function run() {
         await prisma.storeWallet.deleteMany({ where: { storeId: { in: created.storeIds } } });
         await prisma.store.deleteMany({ where: { storeId: { in: created.storeIds } } });
       }
-      if (created.customerProfileIds.length > 0) {
-        await prisma.customerProfile.deleteMany({ where: { customerId: { in: created.customerProfileIds } } });
+      if (created.customerProofIds.length > 0) {
+        await prisma.customerBankVerificationProof.updateMany({
+          where: { id: { in: created.customerProofIds } },
+          data: { verifiedByTransactionId: null },
+        });
+      }
+      if (created.inboundTxIds.length > 0) {
+        await prisma.customerBankInboundTransaction.updateMany({
+          where: { id: { in: created.inboundTxIds } },
+          data: { proofId: null, mergedIntoInboundId: null },
+        });
       }
       if (created.customerObligationIds.length > 0) {
         await prisma.customerBankRefundObligation.updateMany({
@@ -1358,6 +1585,15 @@ async function run() {
       }
       if (created.inboundTxIds.length > 0) {
         await prisma.customerBankInboundTransaction.deleteMany({ where: { id: { in: created.inboundTxIds } } });
+      }
+      if (created.customerProofIds.length > 0) {
+        await prisma.customerBankVerificationProof.deleteMany({ where: { id: { in: created.customerProofIds } } });
+      }
+      if (created.customerBankAccIds.length > 0) {
+        await prisma.customerBankAccount.deleteMany({ where: { id: { in: created.customerBankAccIds } } });
+      }
+      if (created.customerProfileIds.length > 0) {
+        await prisma.customerProfile.deleteMany({ where: { customerId: { in: created.customerProfileIds } } });
       }
       if (created.verificationTxIds.length > 0) {
         await prisma.bankAccountVerificationTransaction.deleteMany({ where: { id: { in: created.verificationTxIds } } });

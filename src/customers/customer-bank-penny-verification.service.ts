@@ -999,6 +999,113 @@ export class CustomerBankPennyVerificationService {
   }
 
   /**
+   * Đối chiếu dữ liệu giữa bản ghi giao dịch đã tồn tại và dữ liệu request mới.
+   * Dùng chung cho cả nhánh kiểm tra trước (read-before-write) và nhánh bắt lỗi va chạm unique (concurrency catch).
+   *
+   * 4 Thuộc tính bất biến cần đối chiếu:
+   * 1. Số tiền (amount)
+   * 2. BIN ngân hàng nguồn (sourceBankBin)
+   * 3. Hash tài khoản nguồn (sourceAccountHash)
+   * 4. ID phiên xác minh (proofId / session.id)
+   *
+   * - Nếu khớp toàn bộ: trả về kết quả idempotent hợp lệ.
+   * - Nếu mâu thuẫn bất kỳ trường nào: đánh dấu cờ đối soát (reconciliationFlag), ghi log cảnh báo kiểm toán,
+   *   và trả về thông báo mâu thuẫn (KHÔNG báo là bản sao hợp lệ).
+   */
+  async reconcileExistingInboundTransaction(
+    existingTx: any,
+    current: {
+      amount: number;
+      sourceBankBin: string | null;
+      sourceAccountHash: string | null;
+      sessionId: bigint | null;
+      providerTransactionRef: string;
+      isConcurrencyLoss?: boolean;
+    },
+  ): Promise<{
+    success: boolean;
+    isConflict?: boolean;
+    message: string;
+    existingId: string;
+  }> {
+    const isAmountConflict = Number(existingTx.amount) !== current.amount;
+    const isSourceBinConflict =
+      (existingTx.sourceBankBin || null) !== (current.sourceBankBin || null);
+    const isSourceAccountConflict =
+      (existingTx.sourceAccountHash || null) !== (current.sourceAccountHash || null);
+
+    const existingProofId =
+      existingTx.proofId !== undefined && existingTx.proofId !== null
+        ? BigInt(existingTx.proofId)
+        : null;
+    const currentProofId =
+      current.sessionId !== undefined && current.sessionId !== null
+        ? BigInt(current.sessionId)
+        : null;
+    const isSessionConflict = existingProofId !== currentProofId;
+
+    const hasConflict =
+      isAmountConflict ||
+      isSourceBinConflict ||
+      isSourceAccountConflict ||
+      isSessionConflict;
+
+    if (hasConflict) {
+      const maskedOldHash = existingTx.sourceAccountHash
+        ? `${existingTx.sourceAccountHash.slice(0, 8)}...`
+        : "null";
+      const maskedNewHash = current.sourceAccountHash
+        ? `${current.sourceAccountHash.slice(0, 8)}...`
+        : "null";
+
+      const conflictDetails = [
+        isAmountConflict
+          ? `amount (cũ: ${existingTx.amount}, mới: ${current.amount})`
+          : null,
+        isSourceBinConflict
+          ? `BIN (cũ: ${existingTx.sourceBankBin}, mới: ${current.sourceBankBin})`
+          : null,
+        isSourceAccountConflict
+          ? `accountHash (cũ: ${maskedOldHash}, mới: ${maskedNewHash})`
+          : null,
+        isSessionConflict
+          ? `session (cũ: ${existingProofId}, mới: ${currentProofId})`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("; ");
+
+      this.logger.error(
+        `[CRITICAL AUDIT] Giao dịch trùng reference [${current.providerTransactionRef}] nhưng mâu thuẫn dữ liệu ` +
+          `(${current.isConcurrencyLoss ? "phát hiện sau va chạm đồng thời" : "phát hiện trước khi ghi"}): ${conflictDetails}`,
+      );
+
+      if (typeof this.customersRepo?.flagConflictingInboundTransaction === "function") {
+        await this.customersRepo.flagConflictingInboundTransaction(
+          existingTx.id,
+          "FLAGGED_CONFLICTING_DUPLICATE_PAYLOAD",
+        );
+      }
+
+      return {
+        success: false,
+        isConflict: true,
+        message: `Giao dịch trùng reference nhưng mâu thuẫn dữ liệu: ${conflictDetails}. Đã đánh dấu cờ đối soát (không xác nhận bản sao hợp lệ).`,
+        existingId: String(existingTx.id),
+      };
+    }
+
+    return {
+      success: true,
+      isConflict: false,
+      message: current.isConcurrencyLoss
+        ? "Giao dịch đã được ghi nhận trước đó (Idempotent Concurrency Win)"
+        : "Giao dịch đã được ghi nhận trước đó (Idempotent)",
+      existingId: String(existingTx.id),
+    };
+  }
+
+  /**
    * Phương thức chung ghi nhận bằng chứng giao dịch tiền vào (Inbound Payment Evidence)
    * Được gọi từ cả Webhook và Polling đồng bộ, loại bỏ hoàn toàn việc tự sinh hay tự ký webhook giả mạo.
    */
@@ -1015,7 +1122,7 @@ export class CustomerBankPennyVerificationService {
     ingestionSource?: string;
     session?: any;
     rawPayload?: any;
-  }): Promise<{ success: boolean; message: string; notHandled?: boolean; code?: string }> {
+  }): Promise<{ success: boolean; message: string; notHandled?: boolean; code?: string; isConflict?: boolean; existingId?: string }> {
     const provider = "PAYOS";
     // Always use canonical financial channel PAYOS_WEBHOOK to enforce database-level deduplication across polling and webhook
     const channel = "PAYOS_WEBHOOK";
@@ -1139,48 +1246,14 @@ export class CustomerBankPennyVerificationService {
       );
 
     if (existingTx) {
-      const isAmountConflict = Number(existingTx.amount) !== amount;
-      const isSourceBinConflict =
-        (existingTx.sourceBankBin || null) !== sourceBankBin;
-      const isSourceAccountConflict =
-        (existingTx.sourceAccountHash || null) !== sourceAccountHash;
-      const isSessionConflict =
-        existingTx.proofId !== (session ? session.id : null);
-
-      if (
-        isAmountConflict ||
-        isSourceBinConflict ||
-        isSourceAccountConflict ||
-        isSessionConflict
-      ) {
-        const maskedOldHash = existingTx.sourceAccountHash
-          ? `${existingTx.sourceAccountHash.slice(0, 8)}...`
-          : "null";
-        const maskedNewHash = sourceAccountHash
-          ? `${sourceAccountHash.slice(0, 8)}...`
-          : "null";
-        this.logger.error(
-          `[CRITICAL AUDIT] Giao dịch trùng reference ${providerTransactionRef} nhưng mâu thuẫn dữ liệu: ` +
-            `amount (cũ: ${existingTx.amount}, mới: ${amount}), ` +
-            `BIN (cũ: ${existingTx.sourceBankBin}, mới: ${sourceBankBin}), ` +
-            `accountHash (cũ: ${maskedOldHash}, mới: ${maskedNewHash}), ` +
-            `session (cũ: ${existingTx.proofId}, mới: ${session ? session.id : null})`,
-        );
-        await this.customersRepo.flagConflictingInboundTransaction(
-          existingTx.id,
-          "FLAGGED_CONFLICTING_DUPLICATE_WEBHOOK",
-        );
-        return {
-          success: true,
-          message:
-            "Giao dịch trùng lặp có dữ liệu mâu thuẫn đã được đánh dấu cờ đối soát",
-        };
-      }
-
-      return {
-        success: true,
-        message: "Giao dịch đã được ghi nhận trước đó (Idempotent)",
-      };
+      return this.reconcileExistingInboundTransaction(existingTx, {
+        amount,
+        sourceBankBin,
+        sourceAccountHash,
+        sessionId: session ? session.id : null,
+        providerTransactionRef: providerTransactionRef!,
+        isConcurrencyLoss: false,
+      });
     }
 
     const rawPayloadChecksum = crypto
@@ -1231,15 +1304,30 @@ export class CustomerBankPennyVerificationService {
             : "Ghi nhận giao dịch và nghĩa vụ hoàn tiền thành công",
       };
     } catch (atomicErr: any) {
-      // Check if this is a concurrent race condition duplicate key collision (P2002 on providerTransactionRef)
-      const isUniqueCollision =
-        atomicErr?.code === "P2002" ||
-        String(atomicErr?.message || "").includes("uq_cust_bank_inbound_provider_channel_ref") ||
-        String(atomicErr?.message || "").includes("unique constraint");
+      // Thu hẹp nhận diện va chạm về đúng constraint uq_cust_bank_inbound_provider_channel_ref
+      const metaTarget = atomicErr?.meta?.target;
+      const isTargetInboundRef =
+        Array.isArray(metaTarget)
+          ? metaTarget.includes("providerTransactionRef") ||
+            metaTarget.includes("provider_transaction_ref") ||
+            (metaTarget.includes("provider") && metaTarget.includes("channel"))
+          : typeof metaTarget === "string"
+            ? metaTarget.includes("uq_cust_bank_inbound_provider_channel_ref") ||
+              metaTarget.includes("providerTransactionRef")
+            : false;
 
-      if (isUniqueCollision) {
+      const isSpecificConstraintInMessage = String(atomicErr?.message || "").includes(
+        "uq_cust_bank_inbound_provider_channel_ref",
+      );
+
+      const isUniqueInboundCollision =
+        atomicErr?.code === "P2002" &&
+        (isTargetInboundRef || isSpecificConstraintInMessage);
+
+      if (isUniqueInboundCollision) {
         this.logger.warn(
-          `[recordInboundPaymentEvidence] Va chạm đồng thời (Concurrent Race) trên reference [${providerTransactionRef}]. Request thua cuộc được xử lý an toàn thành Idempotent.`,
+          `[recordInboundPaymentEvidence] Va chạm đồng thời (Concurrent Race) trên constraint uq_cust_bank_inbound_provider_channel_ref ` +
+            `cho reference [${providerTransactionRef}]. Tiến hành đối chiếu bản ghi thắng cuộc.`,
         );
         const existingTx =
           await this.customersRepo.findInboundTransactionByProviderRef(
@@ -1248,10 +1336,14 @@ export class CustomerBankPennyVerificationService {
             providerTransactionRef!,
           );
         if (existingTx) {
-          return {
-            success: true,
-            message: "Giao dịch đã được ghi nhận trước đó (Idempotent Concurrency Win)",
-          };
+          return this.reconcileExistingInboundTransaction(existingTx, {
+            amount,
+            sourceBankBin,
+            sourceAccountHash,
+            sessionId: session ? session.id : null,
+            providerTransactionRef: providerTransactionRef!,
+            isConcurrencyLoss: true,
+          });
         }
       }
       throw atomicErr;

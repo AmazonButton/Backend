@@ -175,6 +175,13 @@ async function run() {
         refundObligation: refundObligations.find((o) => o.inboundTransactionId === tx.id) || null,
       };
     },
+    flagConflictingInboundTransaction: async (txId: bigint, reconciliationFlag: string) => {
+      const tx = inboundTxs.find((x) => x.id === txId);
+      if (tx) {
+        tx.reconciliationFlag = reconciliationFlag;
+      }
+      return tx;
+    },
     recordInboundTransactionAndObligationAtomicTx: async (params: any) => {
       // Accurately simulate PostgreSQL @@unique([provider, channel, providerTransactionRef]) constraint collision
       const existingCollision = inboundTxs.find(
@@ -185,9 +192,10 @@ async function run() {
       );
       if (existingCollision) {
         const p2002Err: any = new Error(
-          'Unique constraint failed on the fields: uq_cust_bank_inbound_provider_channel_ref',
+          'Unique constraint failed on the constraint: uq_cust_bank_inbound_provider_channel_ref',
         );
         p2002Err.code = 'P2002';
+        p2002Err.meta = { target: ['providerTransactionRef'] };
         throw p2002Err;
       }
 
@@ -1166,7 +1174,80 @@ async function run() {
   }).length;
   assert.strictEqual(concurrentObligationCount, 1, 'Exactly 1 RefundObligation in DB despite parallel execution');
 
-  console.log('✅ ALL 21 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
+  // =========================================================================
+  // Test 22: Parallel Concurrent Requests with Contradictory Payload (Collision flags conflict, does not claim valid duplicate)
+  // =========================================================================
+  console.log('  22. Testing Parallel Concurrent Requests with Contradictory Payload (Collision flags conflict)...');
+  const plainAcc10 = '03312343333';
+  const bankAcc10 = {
+    id: 1010n,
+    customerId: mockCustomer.customerId,
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc10),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc10),
+    accountNumberMasked: '******3333',
+    bankName: 'MBBank',
+    accountName: 'TEST CONCURRENT CONFLICT',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(bankAcc10);
+  mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc10;
+  const session10 = await service.initiateVerificationSession(user, bankAcc10.id);
+
+  const conflictRef = 'TX_CONCURRENT_CONFLICT_100';
+  const webhookValid = {
+    code: '00',
+    data: {
+      orderCode: Number(session10.orderCode),
+      amount: 2000,
+      reference: conflictRef,
+      counterAccountBankId: '970422',
+      counterAccountNumber: plainAcc10,
+      counterAccountName: 'TEST CONCURRENT CONFLICT',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  const webhookContradictory = {
+    code: '00',
+    data: {
+      orderCode: Number(session10.orderCode),
+      amount: 50000, // Contradictory amount!
+      reference: conflictRef,
+      counterAccountBankId: '970422',
+      counterAccountNumber: plainAcc10,
+      counterAccountName: 'TEST CONCURRENT CONFLICT',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  // Dispatch both simultaneously
+  const [resValid, resContradictory] = await Promise.all([
+    service.processPayosVerificationWebhook(webhookValid),
+    service.processPayosVerificationWebhook(webhookContradictory),
+  ]);
+
+  // One request won and inserted, the other collided and flagged conflict
+  const winnerRes = resValid.success ? resValid : resContradictory;
+  const loserRes = !resValid.success ? resValid : resContradictory;
+
+  assert.strictEqual(winnerRes.success, true, 'Winner must succeed');
+  assert.strictEqual(loserRes.success, false, 'Conflicting request must NOT be reported as successful duplicate');
+  assert.strictEqual(loserRes.isConflict, true, 'Conflicting request must have isConflict=true');
+  assert.ok(loserRes.message.includes('mâu thuẫn dữ liệu'), 'Must explain data conflict in message');
+
+  const conflictInboundCount = inboundTxs.filter((tx) => tx.providerTransactionRef === conflictRef).length;
+  assert.strictEqual(conflictInboundCount, 1, 'Only 1 inbound record persisted despite parallel contradictory requests');
+  const recordedConflictTx = inboundTxs.find((tx) => tx.providerTransactionRef === conflictRef);
+  assert.strictEqual(
+    recordedConflictTx?.reconciliationFlag,
+    'FLAGGED_CONFLICTING_DUPLICATE_PAYLOAD',
+    'Winning inbound record must be flagged for manual reconciliation due to contradictory race attempt',
+  );
+
+  console.log('✅ ALL 22 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
 }
 
 run().catch((err) => {

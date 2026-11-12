@@ -1,5 +1,32 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: Customer Concurrency Data Invariant Reconciliation & Real PostgreSQL Multi-Connection Verification (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 22/22 PASS, `financial-payout-verification-hardening.spec.ts` 17/17 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
+- **Remediated Findings on Concurrency & Collision Reconciliation**:
+  1. **Unified Invariant Reconciler Method (`reconcileExistingInboundTransaction`)**:
+     - Extracted common reconciliation helper in `src/customers/customer-bank-penny-verification.service.ts` used by BOTH the read-before-write check and the concurrency collision catch block.
+     - Compares all 4 critical invariant attributes: `amount`, `sourceBankBin`, `sourceAccountHash`, and `sessionId` (`proofId`).
+     - If all 4 invariants match: returns `{ success: true, message: "Giao dịch đã được ghi nhận trước đó (Idempotent Concurrency Win)" }`.
+     - If ANY invariant contradicts (e.g. conflicting amount, different account, or mismatched session):
+       - Flags the existing record in PostgreSQL with `reconciliationFlag = "FLAGGED_CONFLICTING_DUPLICATE_PAYLOAD"` via `flagConflictingInboundTransaction`.
+       - Emits critical audit security log.
+       - Returns `{ success: false, isConflict: true, message: "Giao dịch trùng reference nhưng mâu thuẫn dữ liệu: ... Đã đánh dấu cờ đối soát (không xác nhận bản sao hợp lệ)." }`.
+       - Never falsely claims a contradictory request is a valid duplicate!
+  2. **Strict Constraint Scope Narrowing**:
+     - Narrowed the P2002 catch block to check specifically for `meta.target` containing `providerTransactionRef` / `uq_cust_bank_inbound_provider_channel_ref` or message containing `uq_cust_bank_inbound_provider_channel_ref`.
+     - Unrelated unique constraint violations are never swallowed as concurrency races.
+  3. **Real PostgreSQL Concurrency Verification (`tests/financial-payout-verification-hardening.spec.ts`)**:
+     - Added **TC-11**: Two parallel concurrent requests with identical payloads on real PostgreSQL via `Promise.all`. Verified exactly 1 inbound record, 1 refund obligation in PostgreSQL, 1 atomic winner, and 1 graceful idempotent concurrency win.
+     - Added **TC-12**: Two parallel concurrent requests with contradictory payloads (2.000đ vs 50.000đ) on real PostgreSQL via `Promise.all`. Verified that one request wins, the second catches `uq_cust_bank_inbound_provider_channel_ref`, flags `FLAGGED_CONFLICTING_DUPLICATE_PAYLOAD` on the record in PostgreSQL, and returns `success: false, isConflict: true`.
+     - Added **Test 22** in `tests/customer_bank_penny_deposit_e2e.spec.ts` asserting contradictory payload race behavior.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 22/22 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 17/17 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/http-contract-validation.spec.ts`: 20/20 PASS (100%).
+
 ## 2026-11-12: Resolution of 4 Deep Review Findings: Concurrency Idempotency, Strict Test Ping Scope, Sender Evidence Upfront Decoupling & Null Falsification Prevention (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 21/21 PASS, `financial-payout-verification-hardening.spec.ts` 15/15 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
 - **Remediated 4 Critical Security & Financial Findings**:
