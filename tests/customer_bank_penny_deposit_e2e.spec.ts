@@ -176,6 +176,21 @@ async function run() {
       };
     },
     recordInboundTransactionAndObligationAtomicTx: async (params: any) => {
+      // Accurately simulate PostgreSQL @@unique([provider, channel, providerTransactionRef]) constraint collision
+      const existingCollision = inboundTxs.find(
+        (x) =>
+          x.provider === params.provider &&
+          x.channel === params.channel &&
+          x.providerTransactionRef === params.providerTransactionRef,
+      );
+      if (existingCollision) {
+        const p2002Err: any = new Error(
+          'Unique constraint failed on the fields: uq_cust_bank_inbound_provider_channel_ref',
+        );
+        p2002Err.code = 'P2002';
+        throw p2002Err;
+      }
+
       let matchDecision = 'PENDING';
       let shouldActivate = false;
       let refundStatus = 'PENDING_REFUND';
@@ -857,7 +872,7 @@ async function run() {
     data: {
       orderCode: 123,
       amount: 2000,
-      description: 'Ma giao dich thu nghiem - Webhook Test',
+      description: 'Ma giao dich thu nghiem',
       reference: 'TEST_SAMPLE_REF_01',
       transactionDateTime: new Date().toISOString(),
     },
@@ -866,6 +881,23 @@ async function run() {
 
   const testWebhookResult = await service.processPayosVerificationWebhook(sampleTestWebhook);
   assert.strictEqual(testWebhookResult.code, '00', 'Handshake test ping must return success code 00');
+  assert.strictEqual(inboundTxs.length, preTestInboundCount, 'Zero inbound transactions recorded for test handshake ping');
+  assert.strictEqual(refundObligations.length, preTestObligationCount, 'Zero refund obligations recorded for test handshake ping');
+
+  // Also verify description: 'test'
+  const sampleTestWebhook2 = {
+    code: '00',
+    data: {
+      orderCode: 123,
+      amount: 2000,
+      description: 'test',
+      reference: 'TEST_SAMPLE_REF_02',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+  const testWebhookResult2 = await service.processPayosVerificationWebhook(sampleTestWebhook2);
+  assert.strictEqual(testWebhookResult2.code, '00', 'Handshake test ping with description="test" must return success code 00');
   assert.strictEqual(inboundTxs.length, preTestInboundCount, 'Zero inbound transactions recorded for test handshake ping');
   assert.strictEqual(refundObligations.length, preTestObligationCount, 'Zero refund obligations recorded for test handshake ping');
 
@@ -1082,7 +1114,59 @@ async function run() {
   }).length;
   assert.strictEqual(oblAfterPollFollows, 1, 'Refund obligations must NOT duplicate when Polling follows Webhook');
 
-  console.log('✅ ALL 20 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
+  // =========================================================================
+  // Test 21: Parallel Concurrent Requests (PostgreSQL P2002 Collision Safe Handling)
+  // =========================================================================
+  console.log('  21. Testing Parallel Concurrent Requests (PostgreSQL P2002 Collision Handling)...');
+  const plainAcc9 = '03312344444';
+  const bankAcc9 = {
+    id: 909n,
+    customerId: mockCustomer.customerId,
+    bankBin: '970422',
+    accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc9),
+    accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(plainAcc9),
+    accountNumberMasked: '******4444',
+    bankName: 'MBBank',
+    accountName: 'TEST CONCURRENT RACE',
+    verificationStatus: 'PENDING',
+  };
+  bankAccounts.push(bankAcc9);
+  mockCustomersRepo.findCustomerBankAccountById = async () => bankAcc9;
+  const session9 = await service.initiateVerificationSession(user, bankAcc9.id);
+
+  const concurrentRef = 'TX_CONCURRENT_RACE_99';
+  const concurrentWebhook = {
+    code: '00',
+    data: {
+      orderCode: Number(session9.orderCode),
+      amount: 2000,
+      reference: concurrentRef,
+      counterAccountBankId: '970422',
+      counterAccountNumber: plainAcc9,
+      counterAccountName: 'TEST CONCURRENT RACE',
+      transactionDateTime: new Date().toISOString(),
+    },
+    get signature() { return signWebhookData(this.data, process.env.PAYOS_CHECKSUM_KEY!); },
+  };
+
+  // Dispatch both simultaneously without waiting for one to finish
+  const [resA, resB] = await Promise.all([
+    service.processPayosVerificationWebhook(concurrentWebhook),
+    service.processPayosVerificationWebhook(concurrentWebhook),
+  ]);
+
+  assert.strictEqual(resA.success, true, 'Request A must succeed');
+  assert.strictEqual(resB.success, true, 'Request B must succeed gracefully (Idempotent Concurrency Win)');
+
+  const concurrentInboundCount = inboundTxs.filter((tx) => tx.providerTransactionRef === concurrentRef).length;
+  assert.strictEqual(concurrentInboundCount, 1, 'Exactly 1 Inbound record in DB despite parallel execution');
+  const concurrentObligationCount = refundObligations.filter((o) => {
+    const matchedTx = inboundTxs.find((tx) => tx.id === o.inboundTransactionId);
+    return matchedTx?.providerTransactionRef === concurrentRef;
+  }).length;
+  assert.strictEqual(concurrentObligationCount, 1, 'Exactly 1 RefundObligation in DB despite parallel execution');
+
+  console.log('✅ ALL 21 TESTS PASSED! End-to-end Penny-Deposit Verification & Refund lifecycle is 100% verified.');
 }
 
 run().catch((err) => {

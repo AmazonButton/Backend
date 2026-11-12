@@ -962,12 +962,13 @@ export class CustomerBankPennyVerificationService {
         : false;
 
     if (!session && !isStoreTx) {
-      const descLower = String(data.description || body.desc || "").trim().toLowerCase();
+      // Point 5 Fix: Nhận diện test/sample webhook ping từ PayOS dashboard
+      // Chỉ dựa trên trường dữ liệu data đã được xác thực chữ ký HMAC (không dùng body.desc ngoài chữ ký)
+      // Khớp chính xác mẫu test ping từ PayOS dashboard (orderCode=123 và description="ma giao dich thu nghiem" hoặc "test")
+      const descLower = String(data.description || "").trim().toLowerCase();
       const isTestPing =
-        body.desc === "test" ||
-        descLower === "ma giao dich thu nghiem" ||
-        descLower === "test" ||
-        (Number(data.orderCode) === 123 && descLower.includes("thu nghiem"));
+        Number(data.orderCode) === 123 &&
+        (descLower === "ma giao dich thu nghiem" || descLower === "test");
 
       if (isTestPing) {
         this.logger.log(
@@ -1192,42 +1193,69 @@ export class CustomerBankPennyVerificationService {
       : `REF_PAYOS_${providerTransactionRef}_${Date.now()}`.slice(0, 64);
 
     // 6. Thực thi ghi sổ Inbound + Obligation và xác thực CAS trong cùng 1 transaction nguyên tử
-    const result =
-      await this.customersRepo.recordInboundTransactionAndObligationAtomicTx({
-        proofId: session ? session.id : null,
-        provider,
-        channel,
-        providerTransactionRef: providerTransactionRef!,
-        amount,
-        receivedAt,
-        sourceBankBin,
-        sourceAccountMasked,
-        sourceAccountHash,
-        sourceAccountEncrypted,
-        sourceAccountName,
-        sourceAccountNumber:
-          sourceAccountNumber && !isMaskedAccount
-            ? sourceAccountNumber
-            : undefined,
-        hasSufficientEvidence,
-        rawPayloadChecksum,
-        reconciliationFlag: missingRefFlag,
-        refundPayoutReference,
-      });
+    try {
+      const result =
+        await this.customersRepo.recordInboundTransactionAndObligationAtomicTx({
+          proofId: session ? session.id : null,
+          provider,
+          channel,
+          providerTransactionRef: providerTransactionRef!,
+          amount,
+          receivedAt,
+          sourceBankBin,
+          sourceAccountMasked,
+          sourceAccountHash,
+          sourceAccountEncrypted,
+          sourceAccountName,
+          sourceAccountNumber:
+            sourceAccountNumber && !isMaskedAccount
+              ? sourceAccountNumber
+              : undefined,
+          hasSufficientEvidence,
+          rawPayloadChecksum,
+          reconciliationFlag: missingRefFlag,
+          refundPayoutReference,
+        });
 
-    this.logger.log(
-      `Ghi nhận giao dịch PayOS [${providerTransactionRef}] amount=${amount} ` +
-        `matchDecision=${result.matchDecision} shouldActivate=${result.shouldActivate}`,
-    );
+      this.logger.log(
+        `Ghi nhận giao dịch PayOS [${providerTransactionRef}] amount=${amount} ` +
+          `matchDecision=${result.matchDecision} shouldActivate=${result.shouldActivate}`,
+      );
 
-    return {
-      success: true,
-      message: result.shouldActivate
-        ? "Ghi nhận giao dịch, kích hoạt tài khoản và tạo nghĩa vụ hoàn tiền thành công"
-        : isMissingRef
-          ? "Ghi nhận quan sát giao dịch thiếu reference đưa vào đối soát (chưa tạo nghĩa vụ tự động)"
-          : "Ghi nhận giao dịch và nghĩa vụ hoàn tiền thành công",
-    };
+      return {
+        success: true,
+        message: result.shouldActivate
+          ? "Ghi nhận giao dịch, kích hoạt tài khoản và tạo nghĩa vụ hoàn tiền thành công"
+          : isMissingRef
+            ? "Ghi nhận quan sát giao dịch thiếu reference đưa vào đối soát (chưa tạo nghĩa vụ tự động)"
+            : "Ghi nhận giao dịch và nghĩa vụ hoàn tiền thành công",
+      };
+    } catch (atomicErr: any) {
+      // Check if this is a concurrent race condition duplicate key collision (P2002 on providerTransactionRef)
+      const isUniqueCollision =
+        atomicErr?.code === "P2002" ||
+        String(atomicErr?.message || "").includes("uq_cust_bank_inbound_provider_channel_ref") ||
+        String(atomicErr?.message || "").includes("unique constraint");
+
+      if (isUniqueCollision) {
+        this.logger.warn(
+          `[recordInboundPaymentEvidence] Va chạm đồng thời (Concurrent Race) trên reference [${providerTransactionRef}]. Request thua cuộc được xử lý an toàn thành Idempotent.`,
+        );
+        const existingTx =
+          await this.customersRepo.findInboundTransactionByProviderRef(
+            provider,
+            channel,
+            providerTransactionRef!,
+          );
+        if (existingTx) {
+          return {
+            success: true,
+            message: "Giao dịch đã được ghi nhận trước đó (Idempotent Concurrency Win)",
+          };
+        }
+      }
+      throw atomicErr;
+    }
   }
 
   /**

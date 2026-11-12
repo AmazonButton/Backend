@@ -699,6 +699,9 @@ async function run() {
       assert.ok(savedReceipt, 'Receipt MUST persist in store_bank_inbound_receipts even when sender info is missing');
       assert.strictEqual(Number(savedReceipt?.amount), 2000);
       assert.strictEqual(savedReceipt?.matchStatus, 'SENDER_ACCOUNT_UNVERIFIABLE');
+      assert.strictEqual(savedReceipt?.senderAccountNumberEncrypted, null, 'Unverifiable sender must never populate senderAccountNumberEncrypted');
+      assert.strictEqual(savedReceipt?.senderAccountHash, null, 'Unverifiable sender must never populate senderAccountHash');
+      assert.strictEqual(savedReceipt?.senderBankBin, null, 'Unverifiable sender must never populate senderBankBin');
       created.receiptIds.push(savedReceipt!.id);
 
       const savedObligation = await prisma.storeBankRefundObligation.findFirst({
@@ -706,6 +709,9 @@ async function run() {
       });
       assert.ok(savedObligation, 'Obligation MUST persist in store_bank_refund_obligations');
       assert.strictEqual(savedObligation?.refundStatus, 'PENDING_MANUAL_REFUND', 'Must be PENDING_MANUAL_REFUND');
+      assert.strictEqual(savedObligation?.targetBankBin, null, 'PENDING_MANUAL_REFUND obligation must have null targetBankBin');
+      assert.strictEqual(savedObligation?.targetAccountEncrypted, null, 'PENDING_MANUAL_REFUND obligation must have null targetAccountEncrypted');
+      assert.strictEqual(savedObligation?.targetAccountHash, null, 'PENDING_MANUAL_REFUND obligation must have null targetAccountHash');
       created.obligationIds.push(savedObligation!.id);
 
       const reloadedTx = await prisma.bankAccountVerificationTransaction.findUnique({
@@ -766,6 +772,9 @@ async function run() {
       assert.ok(savedReceipt, 'Receipt MUST persist in store_bank_inbound_receipts when sender account is masked');
       assert.strictEqual(Number(savedReceipt?.amount), 2000);
       assert.strictEqual(savedReceipt?.matchStatus, 'SENDER_ACCOUNT_MASKED');
+      assert.strictEqual(savedReceipt?.senderAccountNumberEncrypted, null, 'Masked sender must never populate senderAccountNumberEncrypted');
+      assert.strictEqual(savedReceipt?.senderAccountHash, null, 'Masked sender must never populate senderAccountHash');
+      assert.strictEqual(savedReceipt?.senderBankBin, null, 'Masked sender must never populate senderBankBin');
       created.receiptIds.push(savedReceipt!.id);
 
       const savedObligation = await prisma.storeBankRefundObligation.findFirst({
@@ -773,6 +782,9 @@ async function run() {
       });
       assert.ok(savedObligation, 'Obligation MUST persist in store_bank_refund_obligations');
       assert.strictEqual(savedObligation?.refundStatus, 'PENDING_MANUAL_REFUND', 'Must be PENDING_MANUAL_REFUND');
+      assert.strictEqual(savedObligation?.targetBankBin, null, 'PENDING_MANUAL_REFUND obligation must have null targetBankBin');
+      assert.strictEqual(savedObligation?.targetAccountEncrypted, null, 'PENDING_MANUAL_REFUND obligation must have null targetAccountEncrypted');
+      assert.strictEqual(savedObligation?.targetAccountHash, null, 'PENDING_MANUAL_REFUND obligation must have null targetAccountHash');
       created.obligationIds.push(savedObligation!.id);
 
       const reloadedTx = await prisma.bankAccountVerificationTransaction.findUnique({
@@ -780,6 +792,219 @@ async function run() {
       });
       assert.strictEqual(reloadedTx?.status, 'FAILED');
       assert.strictEqual(reloadedTx?.failureReason, 'SENDER_ACCOUNT_MASKED');
+      assert.strictEqual(reloadedTx?.refundStatus, 'PENDING_MANUAL_REFUND');
+    });
+
+    // TC-08d: Store Bank Verification Expired session with missing sender info creates PENDING_MANUAL_REFUND and leaves sender/target null
+    await test('TC-08d Store Bank Verification Expired + Missing Sender: PENDING_MANUAL_REFUND, needsRefund=false, null sender/target', async () => {
+      const rawNumberD = '091234567893';
+      const verifyAccD = await prisma.storeBankAccount.create({
+        data: {
+          storeId: testStore.storeId,
+          bankBin: '970422',
+          bankName: 'MBBank',
+          accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(rawNumberD),
+          accountNumberHash: CryptoVaultUtil.hashAccountNumber(rawNumberD),
+          accountName: 'TEST SENDER EXPIRED MISSING',
+          verificationStatus: 'PENDING',
+          isDefault: false,
+        },
+      });
+      created.bankAccountIds.push(verifyAccD.id);
+
+      const refCodeExpiredMissing = `VERIFY_EXP_MISSING_${rand}`;
+      const verifyTxExpMissing = await prisma.bankAccountVerificationTransaction.create({
+        data: {
+          bankAccountId: verifyAccD.id,
+          referenceCode: refCodeExpiredMissing,
+          expectedAmount: 2000,
+          status: 'PENDING',
+          expiresAt: new Date(Date.now() - 60000), // Expired 1 min ago
+        },
+      });
+      created.verificationTxIds.push(verifyTxExpMissing.id);
+
+      const resultExpMissing = await bankVerificationRepo.executeAtomicWebhookVerificationTx({
+        referenceCode: refCodeExpiredMissing,
+        receivedAmount: 2000,
+        providerTransactionId: `payos_tx_exp_missing_${rand}`,
+        senderAccountNumber: undefined,
+        senderBankBin: undefined,
+        destinationAccountNumber: process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '999888777666',
+        destinationBankBin: process.env.PLATFORM_BANK_BIN || '970422',
+      });
+
+      assert.strictEqual(resultExpMissing.success, false);
+      assert.strictEqual(resultExpMissing.reason, 'EXPIRED');
+      assert.strictEqual(resultExpMissing.needsRefund, false, 'Unverifiable sender must never trigger automated refund');
+
+      const savedReceipt = await prisma.storeBankInboundReceipt.findFirst({
+        where: { verificationTxId: verifyTxExpMissing.id },
+      });
+      assert.ok(savedReceipt, 'Receipt MUST persist');
+      assert.strictEqual(savedReceipt?.matchStatus, 'EXPIRED');
+      assert.strictEqual(savedReceipt?.senderAccountNumberEncrypted, null, 'Sender account must be null');
+      assert.strictEqual(savedReceipt?.senderAccountHash, null, 'Sender hash must be null');
+      assert.strictEqual(savedReceipt?.senderBankBin, null, 'Sender bin must be null');
+      created.receiptIds.push(savedReceipt!.id);
+
+      const savedObligation = await prisma.storeBankRefundObligation.findFirst({
+        where: { receiptId: savedReceipt!.id },
+      });
+      assert.ok(savedObligation, 'Obligation MUST persist');
+      assert.strictEqual(savedObligation?.refundStatus, 'PENDING_MANUAL_REFUND');
+      assert.strictEqual(savedObligation?.targetBankBin, null);
+      assert.strictEqual(savedObligation?.targetAccountEncrypted, null);
+      assert.strictEqual(savedObligation?.targetAccountHash, null);
+      created.obligationIds.push(savedObligation!.id);
+
+      const reloadedTx = await prisma.bankAccountVerificationTransaction.findUnique({
+        where: { id: verifyTxExpMissing.id },
+      });
+      assert.strictEqual(reloadedTx?.status, 'EXPIRED');
+      assert.strictEqual(reloadedTx?.failureReason, 'EXPIRED');
+      assert.strictEqual(reloadedTx?.refundStatus, 'PENDING_MANUAL_REFUND');
+    });
+
+    // TC-08e: Store Bank Verification Amount Mismatch with missing sender BIN creates PENDING_MANUAL_REFUND and leaves sender/target null
+    await test('TC-08e Store Bank Verification Amount Mismatch + Missing Sender BIN: PENDING_MANUAL_REFUND, needsRefund=false, null sender/target', async () => {
+      const rawNumberE = '091234567894';
+      const verifyAccE = await prisma.storeBankAccount.create({
+        data: {
+          storeId: testStore.storeId,
+          bankBin: '970422',
+          bankName: 'MBBank',
+          accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(rawNumberE),
+          accountNumberHash: CryptoVaultUtil.hashAccountNumber(rawNumberE),
+          accountName: 'TEST SENDER AMT MISMATCH',
+          verificationStatus: 'PENDING',
+          isDefault: false,
+        },
+      });
+      created.bankAccountIds.push(verifyAccE.id);
+
+      const refCodeAmtMismatch = `VERIFY_AMT_MISMATCH_${rand}`;
+      const verifyTxAmtMismatch = await prisma.bankAccountVerificationTransaction.create({
+        data: {
+          bankAccountId: verifyAccE.id,
+          referenceCode: refCodeAmtMismatch,
+          expectedAmount: 2000,
+          status: 'PENDING',
+          expiresAt: new Date(Date.now() + 1800000),
+        },
+      });
+      created.verificationTxIds.push(verifyTxAmtMismatch.id);
+
+      const resultAmtMismatch = await bankVerificationRepo.executeAtomicWebhookVerificationTx({
+        referenceCode: refCodeAmtMismatch,
+        receivedAmount: 1000, // Amount mismatch (expected 2000)
+        providerTransactionId: `payos_tx_amt_mismatch_${rand}`,
+        senderAccountNumber: rawNumberE,
+        senderBankBin: undefined, // Missing BIN makes sender unverified
+        destinationAccountNumber: process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '999888777666',
+        destinationBankBin: process.env.PLATFORM_BANK_BIN || '970422',
+      });
+
+      assert.strictEqual(resultAmtMismatch.success, false);
+      assert.strictEqual(resultAmtMismatch.reason, 'AMOUNT_MISMATCH');
+      assert.strictEqual(resultAmtMismatch.needsRefund, false, 'Unverifiable sender must never trigger automated refund');
+
+      const savedReceipt = await prisma.storeBankInboundReceipt.findFirst({
+        where: { verificationTxId: verifyTxAmtMismatch.id },
+      });
+      assert.ok(savedReceipt, 'Receipt MUST persist');
+      assert.strictEqual(savedReceipt?.matchStatus, 'AMOUNT_MISMATCH');
+      assert.strictEqual(savedReceipt?.senderAccountNumberEncrypted, null);
+      assert.strictEqual(savedReceipt?.senderAccountHash, null);
+      assert.strictEqual(savedReceipt?.senderBankBin, null);
+      created.receiptIds.push(savedReceipt!.id);
+
+      const savedObligation = await prisma.storeBankRefundObligation.findFirst({
+        where: { receiptId: savedReceipt!.id },
+      });
+      assert.ok(savedObligation, 'Obligation MUST persist');
+      assert.strictEqual(savedObligation?.refundStatus, 'PENDING_MANUAL_REFUND');
+      assert.strictEqual(savedObligation?.targetBankBin, null);
+      assert.strictEqual(savedObligation?.targetAccountEncrypted, null);
+      assert.strictEqual(savedObligation?.targetAccountHash, null);
+      created.obligationIds.push(savedObligation!.id);
+
+      const reloadedTx = await prisma.bankAccountVerificationTransaction.findUnique({
+        where: { id: verifyTxAmtMismatch.id },
+      });
+      assert.strictEqual(reloadedTx?.status, 'FAILED');
+      assert.strictEqual(reloadedTx?.failureReason, 'AMOUNT_MISMATCH');
+      assert.strictEqual(reloadedTx?.refundStatus, 'PENDING_MANUAL_REFUND');
+    });
+
+    // TC-08f: Store Bank Verification Amount Mismatch with Masked Sender creates PENDING_MANUAL_REFUND and leaves sender/target null
+    await test('TC-08f Store Bank Verification Amount Mismatch + Masked Sender: PENDING_MANUAL_REFUND, needsRefund=false, null sender/target', async () => {
+      const rawNumberF = '091234567895';
+      const verifyAccF = await prisma.storeBankAccount.create({
+        data: {
+          storeId: testStore.storeId,
+          bankBin: '970422',
+          bankName: 'MBBank',
+          accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(rawNumberF),
+          accountNumberHash: CryptoVaultUtil.hashAccountNumber(rawNumberF),
+          accountName: 'TEST SENDER MASKED AMT MISMATCH',
+          verificationStatus: 'PENDING',
+          isDefault: false,
+        },
+      });
+      created.bankAccountIds.push(verifyAccF.id);
+
+      const refCodeMaskedMismatch = `VERIFY_MASKED_MISMATCH_${rand}`;
+      const verifyTxMaskedMismatch = await prisma.bankAccountVerificationTransaction.create({
+        data: {
+          bankAccountId: verifyAccF.id,
+          referenceCode: refCodeMaskedMismatch,
+          expectedAmount: 2000,
+          status: 'PENDING',
+          expiresAt: new Date(Date.now() + 1800000),
+        },
+      });
+      created.verificationTxIds.push(verifyTxMaskedMismatch.id);
+
+      const resultMaskedMismatch = await bankVerificationRepo.executeAtomicWebhookVerificationTx({
+        referenceCode: refCodeMaskedMismatch,
+        receivedAmount: 1500, // Amount mismatch (expected 2000)
+        providerTransactionId: `payos_tx_masked_mismatch_${rand}`,
+        senderAccountNumber: '******' + rawNumberF.slice(-4), // Masked!
+        senderBankBin: '970422',
+        destinationAccountNumber: process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '999888777666',
+        destinationBankBin: process.env.PLATFORM_BANK_BIN || '970422',
+      });
+
+      assert.strictEqual(resultMaskedMismatch.success, false);
+      assert.strictEqual(resultMaskedMismatch.reason, 'AMOUNT_MISMATCH');
+      assert.strictEqual(resultMaskedMismatch.needsRefund, false, 'Masked sender must never trigger automated refund');
+
+      const savedReceipt = await prisma.storeBankInboundReceipt.findFirst({
+        where: { verificationTxId: verifyTxMaskedMismatch.id },
+      });
+      assert.ok(savedReceipt, 'Receipt MUST persist');
+      assert.strictEqual(savedReceipt?.matchStatus, 'AMOUNT_MISMATCH');
+      assert.strictEqual(savedReceipt?.senderAccountNumberEncrypted, null);
+      assert.strictEqual(savedReceipt?.senderAccountHash, null);
+      assert.strictEqual(savedReceipt?.senderBankBin, null);
+      created.receiptIds.push(savedReceipt!.id);
+
+      const savedObligation = await prisma.storeBankRefundObligation.findFirst({
+        where: { receiptId: savedReceipt!.id },
+      });
+      assert.ok(savedObligation, 'Obligation MUST persist');
+      assert.strictEqual(savedObligation?.refundStatus, 'PENDING_MANUAL_REFUND');
+      assert.strictEqual(savedObligation?.targetBankBin, null);
+      assert.strictEqual(savedObligation?.targetAccountEncrypted, null);
+      assert.strictEqual(savedObligation?.targetAccountHash, null);
+      created.obligationIds.push(savedObligation!.id);
+
+      const reloadedTx = await prisma.bankAccountVerificationTransaction.findUnique({
+        where: { id: verifyTxMaskedMismatch.id },
+      });
+      assert.strictEqual(reloadedTx?.status, 'FAILED');
+      assert.strictEqual(reloadedTx?.failureReason, 'AMOUNT_MISMATCH');
       assert.strictEqual(reloadedTx?.refundStatus, 'PENDING_MANUAL_REFUND');
     });
 

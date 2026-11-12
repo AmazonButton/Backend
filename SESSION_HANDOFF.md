@@ -1,5 +1,33 @@
 # Project Handoff & Session Context
 
+## 2026-11-12: Resolution of 4 Deep Review Findings: Concurrency Idempotency, Strict Test Ping Scope, Sender Evidence Upfront Decoupling & Null Falsification Prevention (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 21/21 PASS, `financial-payout-verification-hardening.spec.ts` 15/15 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
+- **Remediated 4 Critical Security & Financial Findings**:
+  1. **Customer Concurrency Collision & Idempotent Win Handling (`src/customers/customer-bank-penny-verification.service.ts`)**:
+     - When concurrent requests race on `recordInboundPaymentEvidence` with the same `(provider, channel, providerTransactionRef)`, the losing thread catches PostgreSQL unique constraint `P2002` on `uq_cust_bank_inbound_provider_channel_ref`.
+     - Verifies winning record existence via `findInboundTransactionByProviderRef` and safely returns graceful idempotent success (`{ success: true, message: "Giao dịch đã được ghi nhận trước đó (Idempotent Concurrency Win)" }`) rather than bubbling an unhandled 500 error.
+     - Added parallel `Promise.all` test case 21 in `tests/customer_bank_penny_deposit_e2e.spec.ts`.
+  2. **Upfront Sender Evidence Decoupling & Auto-Refund Prevention on Expired / Mismatched Transactions (`src/bank-verification/bank-verification.repository.ts`)**:
+     - Decoupled failure conditions (`EXPIRED`, `AMOUNT_MISMATCH`) from automated refund eligibility by evaluating `hasReliableSenderEvidence = Boolean(cleanSenderAcc && !isMaskedSender && cleanSenderBin && senderEncrypted && senderHash)` upfront.
+     - Expired sessions and amount mismatches that lack verified sender information now strictly route to `refundStatus = 'PENDING_MANUAL_REFUND'` with `needsRefund = false`, preventing workers from automatically refunding money when sender destination details are unknown or masked.
+  3. **Elimination of Sender & Target Falsification on Inbound Receipts & Refund Obligations (`src/bank-verification/bank-verification.repository.ts`)**:
+     - Removed fallback substitution `${senderEncrypted || lockedAccount.account_number_encrypted}`.
+     - `store_bank_inbound_receipts` strictly records `sender_account_number_encrypted = null`, `sender_account_hash = null`, and `sender_bank_bin = null` whenever sender evidence is unreliable or masked. Never falsifies the audit log with the store's registered bank account!
+     - `store_bank_refund_obligations` strictly records `target_bank_bin = null`, `target_account_encrypted = null`, and `target_account_hash = null` whenever `refundStatus === 'PENDING_MANUAL_REFUND'`. Never targets platform funds to an unverified or store-substituted account!
+     - Added test cases TC-08b, TC-08c, TC-08d, TC-08e, TC-08f in `tests/financial-payout-verification-hardening.spec.ts` asserting exact `null` column values.
+  4. **Strict Test Webhook Ping Handshake Scope Hardening (`src/customers/customer-bank-penny-verification.service.ts`)**:
+     - Removed `body.desc === 'test'` (which is outside the HMAC-signed payload).
+     - Removed loose partial substring matching `descLower.includes('thu nghiem')`.
+     - Strictly requires `Number(data.orderCode) === 123 && (descLower === 'ma giao dich thu nghiem' || descLower === 'test')` evaluated solely from the HMAC-signed `data.description`.
+     - Verified in Test 17 & 18 of `customer_bank_penny_deposit_e2e.spec.ts`.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 21/21 PASS (100%).
+  - `npx tsx tests/financial-payout-verification-hardening.spec.ts`: 15/15 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+  - `npx tsx tests/http-contract-validation.spec.ts`: 20/20 PASS (100%).
+
 ## 2026-11-12: Resolution of 3 Critical Review Findings: Deduplication, Test Ping Scope & Store Missing Sender Obligations (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `customer_bank_penny_deposit_e2e.spec.ts` 20/20 PASS, `financial-payout-verification-hardening.spec.ts` 12/12 PASS, `bank-account-verification.spec.ts` 40/40 PASS, `http-contract-validation.spec.ts` 20/20 PASS).
 - **Remediated 3 Critical Review Findings**:
