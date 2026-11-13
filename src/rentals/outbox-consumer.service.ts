@@ -60,7 +60,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     // 1. Claim pending events hoặc lease đã hết hạn bằng SELECT FOR UPDATE SKIP LOCKED
     const events = await this.prisma.$transaction(async (tx) => {
       const pending = await tx.$queryRawUnsafe<any[]>(
-        `SELECT id, event_type, payload, attempts, status 
+        `SELECT id, event_type, payload, attempts, status, error 
          FROM outbox_events 
          WHERE (status = 'PENDING' OR (status = 'PROCESSING' AND locked_until < NOW()))
            AND next_attempt_at <= NOW() 
@@ -357,16 +357,30 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        // Item F Fix: Dùng đúng attempts từ query outbox_events (và status PROCESSING cho crash recovery).
-        // Nếu outbox event đang retry (attempts > 0) hoặc recovery sau crash (status === 'PROCESSING'),
-        // mà tra cứu trạng thái trên PayOS thất bại hoặc không rõ kết quả, TUYỆT ĐỐI không gọi createPayout mù quáng.
+        // Item F Fix: Quyết định quyền dispatch trực tiếp một cách chặt chẽ:
+        // Chỉ cho phép dispatch tạo payout mới khi và chỉ khi:
+        // 1. Không phải lượt retry hoặc crash recovery (!isRetryOrCrashRecovery)
+        // 2. Tra cứu trước đó trả về danh sách rỗng (listEmpty)
+        // 3. Tra cứu không bị lỗi mạng/cổng (!lookupFailed)
+        // 4. Không có kết quả nào thiếu id kỹ thuật (!matchedMissingId)
+        // 5. Không có query chi tiết nào bị rỗng (!detailMissingData)
         const previousAttempts = Number(event.attempts ?? 0);
         const isCrashRecovery = event.status === 'PROCESSING';
         const isRetry = previousAttempts > 0;
         const isRetryOrCrashRecovery = isRetry || isCrashRecovery || hasStoredProviderRef;
 
-        // Phân định rõ trạng thái 3: Chưa xác định kết quả lần gửi trước -> Chặn createPayout!
-        if (!existingPayoutData && isRetryOrCrashRecovery) {
+        const canCreate =
+          !isRetryOrCrashRecovery &&
+          listEmpty &&
+          !lookupFailed &&
+          !matchedMissingId &&
+          !detailMissingData;
+
+        // Nếu chưa có bằng chứng hoàn tất và không đủ điều kiện khởi tạo mới -> Chặn tuyệt đối!
+        if (!existingPayoutData && !canCreate) {
+          const recoveryPrefix = isRetryOrCrashRecovery
+            ? `đang trong luồng retry/recovery (attempts=${previousAttempts}, status=${event.status}) nhưng `
+            : '';
           let indeterminateReason = '';
           if (lookupFailed) {
             indeterminateReason = 'tra cứu trạng thái trên PayOS thất bại hoặc gặp lỗi kết nối';
@@ -376,13 +390,16 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
             indeterminateReason = 'tìm thấy payout theo mã tham chiếu nhưng kết quả thiếu id kỹ thuật từ cổng';
           } else if (detailMissingData) {
             indeterminateReason = 'tìm thấy payout nhưng phản hồi chi tiết thiếu dữ liệu hợp lệ';
-          } else if (listEmpty && isCrashRecovery) {
-            indeterminateReason = 'đang phục hồi sau sự cố gián đoạn (status=PROCESSING) nhưng chưa có bằng chứng chi trả được xác nhận trên PayOS';
+          } else if (listEmpty) {
+            indeterminateReason = 'chưa có bằng chứng chi trả được xác nhận trên PayOS (danh sách rỗng)';
+          } else {
+            indeterminateReason = 'chưa đủ điều kiện an toàn để khởi tạo payout mới';
           }
 
-          if (indeterminateReason) {
-            throw new Error(`Yêu cầu hoàn cọc #${refundId} đang trong luồng retry/recovery (attempts=${previousAttempts}, status=${event.status}) nhưng ${indeterminateReason}. Giữ trạng thái để đối soát, không dispatch mới.`);
-          }
+          const prevErr = event.error ? ` [Lỗi lần trước: ${event.error}]` : '';
+          throw new Error(
+            `Yêu cầu hoàn cọc #${refundId} chưa đủ bằng chứng để tạo payout mới: ${recoveryPrefix}${indeterminateReason}.${prevErr} Giữ trạng thái để đối soát, không dispatch mới.`
+          );
         }
 
         let payoutResult: any = null;

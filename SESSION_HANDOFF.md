@@ -1,5 +1,42 @@
 # Project Handoff & Session Context
 
+## 2026-11-13: Resolution of Item F Direct Dispatch Authority & Retry PENDING Empty List Guard (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 19/19 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts` 5/5 PASS, `tests/phase3-queues-retry-dlq.spec.ts` 19/19 PASS).
+- **Core Invariant & Direct Dispatch Authority (`canCreate`)**:
+  - **Issue**:
+    1. *Retry PENDING + Empty List*: In `src/rentals/outbox-consumer.service.ts`, line 379 checked `listEmpty && isCrashRecovery` (only checking `status === 'PROCESSING'`), allowing retries in `status: 'PENDING'` with `attempts > 0` (the actual retry status recorded at line 168) where PayOS returned `payouts: []` to bypass the guard and call `createPayout`.
+    2. *First Attempt with Incomplete Lookup*: On first attempt (`attempts: 0`, `status: 'PENDING'`), if lookup encountered network errors (`lookupFailed`) or matched items missing ID (`matchedMissingId`) or detail missing data (`detailMissingData`), the previous guard allowed `createPayout` to proceed because `isRetryOrCrashRecovery` was false.
+  - **Remediation**:
+    - Enforced direct dispatch authority boolean:
+      ```typescript
+      const canCreate =
+        !isRetryOrCrashRecovery &&
+        listEmpty &&
+        !lookupFailed &&
+        !matchedMissingId &&
+        !detailMissingData;
+
+      if (!existingPayoutData && !canCreate) {
+        throw new Error(`Yêu cầu hoàn cọc #${refundId} chưa đủ bằng chứng để tạo payout mới: ...`);
+      }
+      ```
+    - Added `error` to the SELECT column list in line 63 to preserve previous attempt error details across retries.
+    - If `!existingPayoutData && !canCreate`: strictly throws an error preserving event state for retry/reconciliation, preventing any new payout creation.
+  - **Expanded Test Suite (`tests/audit-run6-payos-fixes.spec.ts`)**:
+    - Added Test 4.5: Verifies that retry in `status: 'PENDING'` with `attempts: 1` when lookup returns empty list strictly blocks `createPayout` and throws error.
+    - Added Test 4.6: Verifies that first attempt (`attempts: 0`, `status: 'PENDING'`) blocks `createPayout` when lookup fails, and strictly allows `createPayout` only when lookup is valid, error-free, and returns a clean empty list.
+- **Verification Commands & Evidence**:
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: 19/19 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`: 30/30 PASS (100%).
+  - `npx tsx tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts`: 5/5 PASS (100%).
+  - `npx tsx tests/phase3-queues-retry-dlq.spec.ts`: 19/19 PASS (100%).
+  - `npm run build`: Exit code 0 (Clean NestJS build).
+- **Files Modified**:
+  - `src/rentals/outbox-consumer.service.ts`
+  - `tests/audit-run6-payos-fixes.spec.ts`
+  - `SESSION_HANDOFF.md`
+
+
 ## 2026-11-13: Resolution of Item F Recovery Indeterminate Payout Guard (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 17/17 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts` 5/5 PASS, `tests/phase3-queues-retry-dlq.spec.ts` 19/19 PASS).
 - **Core Invariant & Remediation**:

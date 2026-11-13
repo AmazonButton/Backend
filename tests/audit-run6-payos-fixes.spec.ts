@@ -551,6 +551,195 @@ async function runAuditRun6Tests() {
     assert(!createPayoutCalled, 'createPayout must NEVER be called when detail query returns empty data');
   });
 
+  await test('4.5 [Item F] OutboxConsumer blocks createPayout on retry (status=PENDING, attempts=1) when lookup returns empty list (danh sách rỗng)', async () => {
+    const { OutboxConsumerService } = await import('../src/rentals/outbox-consumer.service');
+
+    let createPayoutCalled = false;
+    const mockPayosService = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => ({
+        code: '00',
+        data: { payouts: [] }, // Danh sách rỗng trên PayOS khi retry PENDING!
+      }),
+      createPayout: async () => {
+        createPayoutCalled = true;
+        return { data: { id: 'payout_new_should_not_happen' } };
+      },
+    };
+
+    const encValid = CryptoVaultUtil.encryptAccountNumber('12345678');
+    const hashValid = CryptoVaultUtil.computeDeterministicAccountHash('12345678');
+    const mockPrisma = {
+      $transaction: async (cb: any) => cb({
+        $queryRawUnsafe: async () => [{
+          refund_id: BigInt(5005),
+          status: 'PENDING_PAYOUT',
+          provider_reference_id: null,
+          refund_code: 'REF_DP_5005',
+          amount: 50000,
+          recipient_bin: '970422',
+          recipient_account_number_encrypted: encValid,
+          recipient_account_number_hash: hashValid,
+          recipient_account_holder_name: 'NGUYEN VAN A',
+          recipient_account_number_masked: '******78',
+        }],
+      }),
+      depositRefund: {
+        findUnique: async () => ({
+          refundId: BigInt(5005),
+          status: 'PENDING_PAYOUT',
+          refundCode: 'REF_DP_5005',
+          amount: 50000,
+          recipientBin: '970422',
+          recipientAccountNumberEncrypted: encValid,
+          recipientAccountNumberHash: hashValid,
+          recipientAccountHolderName: 'NGUYEN VAN A',
+          recipientAccountNumberMasked: '******78',
+        }),
+      },
+    };
+
+    const consumer = new OutboxConsumerService(mockPrisma as any, {} as any, {} as any, mockPayosService as any);
+    // Nhánh retry thực tế theo dòng 168: status = 'PENDING', attempts = 1
+    const pendingRetryEvent = {
+      id: BigInt(9905),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5005' },
+      attempts: 1, // attempts > 0
+      status: 'PENDING', // status is PENDING, NOT PROCESSING!
+      claimToken: 'lease_token_retry_pending',
+    };
+
+    let caughtError: any = null;
+    try {
+      await (consumer as any).handleSingleEvent(pendingRetryEvent);
+    } catch (e) {
+      caughtError = e;
+    }
+
+    assert(caughtError !== null, 'Must throw error when retrying PENDING event with empty list');
+    assert(caughtError.message.includes('đang trong luồng retry/recovery (attempts=1, status=PENDING)'), `Expected pending retry error, got: ${caughtError.message}`);
+    assert(!createPayoutCalled, 'createPayout must NEVER be called when retry (status=PENDING, attempts>0) returns empty list');
+  });
+
+  await test('4.6 [Item F] OutboxConsumer blocks createPayout on first attempt when lookup fails or evidence is missing; dispatches when first attempt lookup is valid and empty', async () => {
+    const { OutboxConsumerService } = await import('../src/rentals/outbox-consumer.service');
+
+    const encValid = CryptoVaultUtil.encryptAccountNumber('12345678');
+    const hashValid = CryptoVaultUtil.computeDeterministicAccountHash('12345678');
+    const mockPrismaBuilder = (refundId: bigint, refundCode: string) => ({
+      $transaction: async (cb: any) => cb({
+        $queryRawUnsafe: async () => [{
+          refund_id: refundId,
+          status: 'PENDING_PAYOUT',
+          provider_reference_id: null,
+          refund_code: refundCode,
+          amount: 50000,
+          recipient_bin: '970422',
+          recipient_account_number_encrypted: encValid,
+          recipient_account_number_hash: hashValid,
+          recipient_account_holder_name: 'NGUYEN VAN A',
+          recipient_account_number_masked: '******78',
+        }],
+      }),
+      depositRefund: {
+        findUnique: async () => ({
+          refundId,
+          status: 'PENDING_PAYOUT',
+          refundCode,
+          amount: 50000,
+          recipientBin: '970422',
+          recipientAccountNumberEncrypted: encValid,
+          recipientAccountNumberHash: hashValid,
+          recipientAccountHolderName: 'NGUYEN VAN A',
+          recipientAccountNumberMasked: '******78',
+        }),
+        update: async () => {},
+      },
+    });
+
+    // Ca 1: Lượt đầu (attempts=0, status=PENDING) nhưng lookup bị lỗi -> Phải CHẶN createPayout!
+    let createPayoutCalledFailCase = false;
+    const mockPayosLookupFail = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => {
+        throw new Error('PayOS gateway timeout on pre-dispatch search');
+      },
+      createPayout: async () => {
+        createPayoutCalledFailCase = true;
+        return { data: { id: 'should_not_be_created' } };
+      },
+    };
+
+    const consumerFail = new OutboxConsumerService(mockPrismaBuilder(BigInt(5006), 'REF_DP_5006') as any, {} as any, {} as any, mockPayosLookupFail as any);
+    const firstAttemptEventFail = {
+      id: BigInt(9906),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5006' },
+      attempts: 0,
+      status: 'PENDING',
+      claimToken: 'lease_token_first_fail',
+    };
+
+    let caughtErrorFail: any = null;
+    try {
+      await (consumerFail as any).handleSingleEvent(firstAttemptEventFail);
+    } catch (e) {
+      caughtErrorFail = e;
+    }
+
+    assert(caughtErrorFail !== null, 'Must throw error when first attempt lookup fails');
+    assert(caughtErrorFail.message.includes('tra cứu trạng thái trên PayOS thất bại hoặc gặp lỗi kết nối'), `Expected fail error, got: ${caughtErrorFail.message}`);
+    assert(!createPayoutCalledFailCase, 'createPayout must NEVER be called on first attempt if lookup failed');
+
+    // Ca 2: Lượt đầu (attempts=0, status=PENDING) lookup thành công và danh sách rỗng -> ĐƯỢC PHÉP dispatch createPayout!
+    let createPayoutCalledSuccessCase = false;
+    const mockPayosLookupSuccess = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => ({
+        code: '00',
+        data: { payouts: [] }, // Danh sách rỗng, tra cứu thành công!
+      }),
+      createPayout: async (payload: any) => {
+        createPayoutCalledSuccessCase = true;
+        return {
+          data: {
+            id: 'PAYOUT_CLEAN_FIRST_RUN_888',
+            approvalState: 'COMPLETED',
+            amount: 50000,
+            transactions: [
+              {
+                id: 'TXN-888',
+                referenceId: payload.referenceId,
+                amount: 50000,
+                state: 'COMPLETED',
+                toBin: payload.toBin,
+                toAccountNumber: payload.toAccountNumber,
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const mockRentalsRepoClean: any = {
+      confirmDepositRefundPayoutTx: async () => {},
+    };
+
+    const consumerSuccess = new OutboxConsumerService(mockPrismaBuilder(BigInt(5007), 'REF_DP_5007') as any, mockRentalsRepoClean, {} as any, mockPayosLookupSuccess as any);
+    const firstAttemptEventSuccess = {
+      id: BigInt(9907),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5007' },
+      attempts: 0,
+      status: 'PENDING',
+      claimToken: 'lease_token_first_success',
+    };
+
+    await (consumerSuccess as any).handleSingleEvent(firstAttemptEventSuccess);
+    assert(createPayoutCalledSuccessCase, 'createPayout MUST be called when first attempt lookup is valid and clean empty list');
+  });
+
   // ---------------------------------------------------------------------------
   // 5. Item B: Store Inline Refund Dispatch from Claimed Obligation Snapshot
   // ---------------------------------------------------------------------------
