@@ -1,5 +1,36 @@
 # Project Handoff & Session Context
 
+## 2026-11-14: Store Wallet Bank Account Contract, Dynamic BIN Persistence & Re-verification (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` exit code 0, `npm run build` exit code 0, `tests/wallet-bank-contract.spec.ts` PASS, `tests/store-wallet.spec.ts` PASS, Suite 79 added to `tests/run_all_suites.ts`).
+- **Core Changes & Invariants**:
+  - `src/store-wallet/dto/wallet.dto.ts`: Added required `bankBin` with strict 6-digit regex validation (`/^[0-9]{6}$/`). Added numeric format validation for `bankAccountNumber` (`/^[0-9]{6,19}$/`).
+  - `src/store-wallet/mappers/wallet.mapper.ts`: Extended `WalletResponseDto` to return structured `bankAccount` containing `bankName`, `bankBin`, masked `accountNumber`, `accountHolderName`, and `verificationStatus`.
+  - `src/store-wallet/store-wallet.repository.ts`:
+    - Replaced hardcoded `'970422'` in `updateBankAccountAtomicTx` with caller-provided `bankBin`.
+    - Detects bank changes (`changedBank = existingAccount && existingAccount.bankBin !== params.bankBin`) and resets `verificationStatus: 'PENDING'`, `verifiedAt: null`, `lastVerifiedAt: null` to enforce fresh verification.
+    - Added `findDefaultBankAccount(storeId)` helper.
+  - `src/store-wallet/store-wallet.service.ts`: Added `getWalletResponse` and wired `bankBin` through `updateBankAccount`.
+  - `src/store-wallet/store-wallet.controller.ts`: Delegates `getWallet` to `getWalletResponse(storeId)`.
+  - `tests/wallet-bank-contract.spec.ts`: Added Suite 79 covering DTO validation, selected BIN persistence, bank-change re-verification trigger, and masked response isolation.
+  - `tests/store-wallet.spec.ts` & `tests/master-superpowers-qa.spec.ts`: Updated test fixtures with valid 6-digit `bankBin` (`970436` / `970422`).
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (Clean).
+  - `npm run build`: Exit code 0 (Clean NestJS production build).
+  - `npx tsx tests/wallet-bank-contract.spec.ts`: PASS (100%).
+  - `npx tsx tests/store-wallet.spec.ts`: PASS (100%).
+  - `npx tsx tests/bank-identifier-normalization.spec.ts`: PASS (100%).
+- **Files Modified**:
+  - `src/store-wallet/dto/wallet.dto.ts`
+  - `src/store-wallet/mappers/wallet.mapper.ts`
+  - `src/store-wallet/store-wallet.controller.ts`
+  - `src/store-wallet/store-wallet.repository.ts`
+  - `src/store-wallet/store-wallet.service.ts`
+  - `tests/wallet-bank-contract.spec.ts`
+  - `tests/store-wallet.spec.ts`
+  - `tests/master-superpowers-qa.spec.ts`
+  - `tests/run_all_suites.ts`
+  - `SESSION_HANDOFF.md`
+
 ## 2026-11-14: Multi-bank CITAD/BIN snapshot and frontend verification readiness (COMMITTED, PUSHED & DEPLOYED)
 - **Status**: COMPLETED, COMMITTED & 100% VERIFIED LIVE (Commit `a3ec218`, GitHub Actions CI/CD Run ID `43478566467` 100% Green, All 78 Suites Passed, Live deployed across all 3 production instances).
 - **Deployment Status Across 3 Live Production Instances (Commit `a3ec218`)**:

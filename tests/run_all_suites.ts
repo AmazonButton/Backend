@@ -394,6 +394,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'bank-identifier-normalization.spec.ts')],
   },
+  {
+    name: '79. Wallet Bank Contract (Offline Validation and Persistence)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'wallet-bank-contract.spec.ts')],
+  },
 ];
 
 async function main() {

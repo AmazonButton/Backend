@@ -31,8 +31,8 @@ export class StoreWalletController {
   @Get()
   async getWallet(@Request() req: any, @Query() query?: StoreQueryDto) {
     const storeId = this.extractStoreId(req, query);
-    const data = await this.walletService.getOrCreateStoreWallet(storeId);
-    return { success: true, data: WalletMapper.toWalletDto(data) };
+    const data = await this.walletService.getWalletResponse(storeId);
+    return { success: true, data };
   }
 
   @Put('bank-account')

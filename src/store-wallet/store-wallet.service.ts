@@ -61,6 +61,12 @@ export class StoreWalletService {
     return this.repo.getOrCreateStoreWallet(rawStoreId);
   }
 
+  async getWalletResponse(storeId: bigint) {
+    const wallet = await this.getOrCreateStoreWallet(storeId);
+    const defaultBankAccount = await this.repo.findDefaultBankAccount(storeId);
+    return WalletMapper.toWalletDto({ ...wallet, defaultBankAccount });
+  }
+
   async updateBankAccount(storeId: string | number | bigint, dto: UpdateBankAccountDto) {
     const rawStoreId = BigInt(storeId);
     await this.getOrCreateStoreWallet(rawStoreId);
@@ -72,6 +78,7 @@ export class StoreWalletService {
     const updated = await this.repo.updateBankAccountAtomicTx({
       storeId: rawStoreId,
       bankName: dto.bankName,
+      bankBin: dto.bankBin,
       bankAccountHolder: dto.bankAccountHolder,
       accountNumberHash: accHash,
       accountNumberEncrypted: accEncrypted,

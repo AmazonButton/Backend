@@ -337,6 +337,7 @@ async function runMasterSuperpowersQASuite() {
     // 3.B Withdrawal & Balance Locking (Phase 1)
     const storeWalletCurrent = await walletService.getOrCreateStoreWallet(store.storeId);
     await walletService.updateBankAccount(store.storeId, {
+      bankBin: '970422',
       bankName: 'MBBANK',
       bankAccountNumber: '970422123456789',
       bankAccountHolder: 'SUPERPOWERS STORE OWNER',

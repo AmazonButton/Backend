@@ -32,8 +32,13 @@ export class StoreWalletRepository {
     });
   }
 
+  async findDefaultBankAccount(storeId: bigint) {
+    return this.prisma.storeBankAccount.findFirst({ where: { storeId, isDefault: true } });
+  }
+
   async updateBankAccountAtomicTx(params: {
     storeId: bigint;
+    bankBin: string;
     bankName: string;
     bankAccountHolder: string;
     accountNumberHash: string;
@@ -53,8 +58,15 @@ export class StoreWalletRepository {
         data: { isDefault: false },
       });
 
-      // Upsert new bank account record with isDefault: true
-      await tx.storeBankAccount.upsert({
+      const existingAccount = await tx.storeBankAccount.findUnique({
+        where: { uq_store_bank_account_store_acc_hash: {
+          storeId: params.storeId, accountNumberHash: params.accountNumberHash,
+        } },
+      });
+      const changedBank = existingAccount && existingAccount.bankBin !== params.bankBin;
+
+      // Upsert the selected bank; a bank change requires fresh ownership verification.
+      const savedAccount = await tx.storeBankAccount.upsert({
         where: {
           uq_store_bank_account_store_acc_hash: {
             storeId: params.storeId,
@@ -63,7 +75,7 @@ export class StoreWalletRepository {
         },
         create: {
           storeId: params.storeId,
-          bankBin: '970422',
+          bankBin: params.bankBin,
           bankName: params.bankName,
           accountNumberEncrypted: params.accountNumberEncrypted,
           accountNumberHash: params.accountNumberHash,
@@ -72,6 +84,8 @@ export class StoreWalletRepository {
           isDefault: true,
         },
         update: {
+          bankBin: params.bankBin,
+          ...(changedBank ? { verificationStatus: 'PENDING', verifiedAt: null, lastVerifiedAt: null } : {}),
           bankName: params.bankName,
           accountName: params.bankAccountHolder,
           accountNumberEncrypted: params.accountNumberEncrypted,
@@ -80,7 +94,7 @@ export class StoreWalletRepository {
       });
 
       // Update store wallet metadata
-      return tx.storeWallet.update({
+      const wallet = await tx.storeWallet.update({
         where: { storeId: params.storeId },
         data: {
           bankName: params.bankName,
@@ -89,6 +103,7 @@ export class StoreWalletRepository {
           updatedAt: new Date(),
         },
       });
+      return { ...wallet, defaultBankAccount: savedAccount };
     });
     });
   }

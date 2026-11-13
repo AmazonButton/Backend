@@ -1,13 +1,18 @@
-import { IsNotEmpty, IsString, IsOptional, IsNumberString } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsNumberString, Matches } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 export class UpdateBankAccountDto {
+  @IsString()
+  @Matches(/^[0-9]{6}$/, { message: 'Mã BIN ngân hàng phải gồm 6 chữ số' })
+  bankBin: string;
+
   @IsString()
   @IsNotEmpty()
   bankName: string;
 
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[0-9]{6,19}$/, { message: 'Số tài khoản phải gồm 6–19 chữ số' })
   bankAccountNumber: string;
 
   @IsString()

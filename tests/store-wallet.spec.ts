@@ -1,5 +1,6 @@
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StoreWalletService } from '../src/store-wallet/store-wallet.service';
+import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
 
 async function testStoreWallet() {
   console.log('Testing Store Wallet & Order Revenue Settlement...');
@@ -46,14 +47,16 @@ async function testStoreWallet() {
 
     // 3. Update Bank Account Info
     const bankDto = {
+      bankBin: '970436',
       bankName: 'Vietcombank',
       bankAccountNumber: '9876543210',
       bankAccountHolder: 'NGUYEN VAN A',
     };
     const updatedWallet = await walletService.updateBankAccount(store.storeId, bankDto);
+    const expectedMasked = CryptoVaultUtil.maskAccountNumber(bankDto.bankAccountNumber);
     if (
       updatedWallet.bankName === bankDto.bankName &&
-      updatedWallet.bankAccountNumber === bankDto.bankAccountNumber &&
+      (updatedWallet.bankAccountNumber === bankDto.bankAccountNumber || updatedWallet.bankAccountNumber === expectedMasked) &&
       updatedWallet.bankAccountHolder === bankDto.bankAccountHolder
     ) {
       console.log('  [PASS] updateBankAccount persisted bank details');

@@ -1,6 +1,13 @@
 import { CryptoVaultUtil } from '../../common/utils/crypto-vault.util';
 
 export interface WalletResponseDto {
+  bankAccount: {
+    bankName: string;
+    bankBin: string;
+    accountNumber: string;
+    accountHolderName: string;
+    verificationStatus: string;
+  } | null;
   walletId: string;
   storeId: string;
   balance: number;
@@ -53,11 +60,22 @@ export interface WalletTransactionResponseDto {
 
 export class WalletMapper {
   static toWalletDto(wallet: any): WalletResponseDto {
+    const account = wallet.defaultBankAccount;
+    const accountMasked = account?.accountNumberEncrypted
+      ? CryptoVaultUtil.maskAccountNumber(CryptoVaultUtil.decryptAccountNumber(account.accountNumberEncrypted))
+      : null;
     const masked = wallet.bankAccountNumber
       ? CryptoVaultUtil.maskAccountNumber(wallet.bankAccountNumber)
       : null;
 
     return {
+      bankAccount: account && accountMasked ? {
+        bankName: account.bankName,
+        bankBin: account.bankBin,
+        accountNumber: accountMasked,
+        accountHolderName: account.accountName,
+        verificationStatus: account.verificationStatus,
+      } : null,
       walletId: wallet.walletId?.toString(),
       storeId: wallet.storeId?.toString(),
       balance: Number(wallet.balance || 0),
