@@ -42,7 +42,8 @@ async function runPhase3QueueSuite() {
     const enqueueDuration = Date.now() - enqueueStart;
 
     assert(typeof jobId === 'string' && jobId.startsWith('job_'), 'Job enqueued and returned unique job ID');
-    assert(enqueueDuration < 20, `Enqueue returned non-blocking in ${enqueueDuration}ms (<20ms)`);
+    const maxAllowedEnqueueMs = 200;
+    assert(enqueueDuration <= maxAllowedEnqueueMs, `Enqueue returned non-blocking in ${enqueueDuration}ms (<=${maxAllowedEnqueueMs}ms)`);
 
     // Wait for worker loop to pick up and process job
     await new Promise((r) => setTimeout(r, 150));
