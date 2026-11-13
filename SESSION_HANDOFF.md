@@ -1,5 +1,49 @@
 # Project Handoff & Session Context
 
+## 2026-11-13: Resolution of Audit Run-6 Findings (Store Webhook Boundary, Subsequent Transfer Accounting, Payout Classification & Recovery Contract) (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 9/9 PASS, `tests/customer-refund-conflict-dispatch.spec.ts` 1/1 PASS, `tests/customer_bank_penny_deposit_e2e.spec.ts` 22/22 PASS, `tests/http-contract-validation.spec.ts` 20/20 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/bank-account-verification.spec.ts` 40/40 PASS).
+- **Remediated Findings from Audit Run-6 (`REPORT.md` & `NEEDS-VALIDATION.md`)**:
+  1. **Store Webhook Signed Data Boundary (Item A)**:
+     - In `src/bank-verification/bank-verification.service.ts`: When PayOS HMAC-signed `dto.data` is present, `referenceCode`, `amount`, `providerTransactionId`, `senderAccountNumber`, `senderBankBin`, `destinationAccountNumber`, and `destinationBankBin` are strictly derived from verified signed fields. Top-level unsigned envelope fields are rejected if conflicting and cannot augment sender identity. Immediate fail-closed check throws `BadRequestException` when `providerTransactionId` is missing.
+  2. **Inbound Receipt Decoupled from Session State (Item B)**:
+     - In `src/bank-verification/bank-verification.repository.ts` (`executeAtomicWebhookVerificationTx`): Checks per-transfer receipt identity via `store_bank_inbound_receipts` BEFORE checking completed session status (`VERIFIED`, `REFUND_PENDING`, `REFUNDED`). Replays return idempotent success; distinct subsequent transfers on completed sessions insert a new receipt with match status `'SUBSEQUENT_TRANSFER'` and create a refund obligation (`PENDING_REFUND` or `PENDING_MANUAL_REFUND`).
+  3. **Preserving Session orderCode vs Bank Reference (Item C)**:
+     - In `src/bank-verification/bank-verification.repository.ts`: Preserves the PayOS `orderCode` in `bank_account_verification_transactions.provider_transaction_id` using `COALESCE(bank_account_verification_transactions.provider_transaction_id, ...)`. `findReferenceCodeByOrderCode` searches both verification transactions and inbound receipts.
+  4. **Store Refund Dual-Path Dispatch Coordination (Item D)**:
+     - In `src/bank-verification/bank-verification.service.ts` (`triggerAutomatedRefund`): Inline webhook refund path claims the obligation via `claimRefundObligationForDispatch(obligation.id, leaseToken, 60000)` before invoking `provider.createRefund`. If already claimed by a background worker, it safely yields. It finalizes or records reconciliation pending using the lease token.
+  5. **Late Payment on Replaced Link vs Active Payment Index (Item E)**:
+     - In `src/payments/payments.repository.ts` (`confirmPaymentAtomicTx`): Before updating a payment to `PAID`, checks for active sibling payment transactions (`status IN ('PENDING', 'PAID')` on the same `order_id`). If an active sibling exists (e.g. replacement link), it transitions the obsolete transaction to `REFUND_PENDING` (not `PAID`), preserving PostgreSQL partial unique index `uq_payment_active_per_order` while properly accounting for the received money.
+  6. **Payout Adapter Error Classification & Signature Enforcement (Item G & H)**:
+     - In `src/payments/payos-payout.service.ts`: When `PAYOS_PAYOUT_ENFORCE_RESPONSE_SIGNATURE=true`, missing `x-signature` header or missing `result.data` throws `PayOSPayoutIndeterminateException` (`RESPONSE_SIGNATURE_MISSING` / `RESPONSE_DATA_MISSING`).
+     - `createBatchPayout`, `estimateCredit`, `getPayout`, `getPayouts`: HTTP status and business codes (`code !== '00'`) are parsed and mapped via `classifyRejection` to `PayOSPayoutPreDispatchException` or `PayOSPayoutIndeterminateException` instead of blindly returning raw JSON.
+     - In `src/admin/dto/payos-payout.dto.ts`: `amount` converted from `@IsNumber` to `@IsInt`. `toAccountNumber` validated with `/^\d{6,19}$/`. Batch `payouts` validated with `@ArrayMinSize(1)` and `@ArrayMaxSize(100)`.
+     - In `src/bank-verification/dto/create-verification-request.dto.ts`: `accountNumber` standardized to `/^[0-9]{6,19}$/`.
+  7. **Customer Link Recovery without `checkoutUrl` (Item K)**:
+     - In `src/customers/customer-bank-penny-verification.service.ts` (`recoverExistingPaymentLink`): Extracts real provider ID `queryData.data.id`. Generates fallback `https://pay.payos.vn/web/${paymentLinkId}` if `checkoutUrl` is omitted from GET response. Never substitutes `String(orderCode)` into `paymentLinkId`.
+  8. **Rental Refund Ambiguous Transaction Correlation & Recovery Guard (Item F)**:
+     - In `src/rentals/deposit-payout-verifier.ts`: Strictly filters transactions without cross-namespace conflation (`matchesRefundCode || matchesProviderRef`). If multiple matching transactions exist, rejects with `isVerified: false` due to ambiguous evidence.
+     - In `src/rentals/outbox-consumer.service.ts`: If `event.attemptCount > 0` and pre-dispatch lookup fails with network/indeterminate error, does NOT call `createPayout` blindly; throws error to retry lookup on next cycle.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: 9/9 PASS (100%).
+  - `npx tsx tests/customer-refund-conflict-dispatch.spec.ts`: 1/1 PASS (100%).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 22/22 PASS (100%).
+  - `npx tsx tests/http-contract-validation.spec.ts`: 20/20 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`: 30/30 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+- **Files Modified**:
+  - `src/bank-verification/bank-verification.service.ts`
+  - `src/bank-verification/bank-verification.repository.ts`
+  - `src/bank-verification/dto/create-verification-request.dto.ts`
+  - `src/payments/payments.repository.ts`
+  - `src/payments/payos-payout.service.ts`
+  - `src/admin/dto/payos-payout.dto.ts`
+  - `src/customers/customer-bank-penny-verification.service.ts`
+  - `src/rentals/deposit-payout-verifier.ts`
+  - `src/rentals/outbox-consumer.service.ts`
+  - `tests/audit-run6-payos-fixes.spec.ts`
+
 ## 2026-11-12: Hold conflicting customer refunds before dispatch
 - Status: Implemented; local type/build/mock checks passed; PostgreSQL integration execution pending an isolated test database.
 - Changes: Conflict flagging locks obligations before updating the inbound record and holds unclaimed refunds atomically. Candidate selection and locked claim reject conflicting receipts. A final transactional dispatch authorization cancels PREPARING attempts when a conflict wins the lock; authorized SUBMITTED attempts remain attached for reconciliation. Authorization is the linearization point: conflicts after authorization cannot guarantee cancellation of an external transfer.

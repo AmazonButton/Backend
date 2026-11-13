@@ -427,8 +427,17 @@ export class BankVerificationService implements OnModuleInit {
   async handleVerificationWebhook(dto: BankVerificationWebhookDto) {
     let referenceCode = dto.referenceCode;
     let amount = dto.amount;
-    let providerTransactionId = dto.providerTransactionId;
+    let providerTransactionId = dto.data?.reference || dto.providerTransactionId;
     let description = dto.description || '';
+    let destinationAccountNumber: string | undefined;
+    let destinationBankBin: string | undefined;
+    let senderAccountNumber: string | undefined;
+    let senderBankBin: string | undefined;
+
+    // Fail-closed nếu thiếu providerTransactionId
+    if (!providerTransactionId) {
+      throw new BadRequestException('Missing provider transaction ID');
+    }
 
     // Handle PayOS nested webhook payload structure (Signed-Data Precedence)
     if (dto.data) {
@@ -441,81 +450,62 @@ export class BankVerificationService implements OnModuleInit {
       }
 
       // Signed inner fields strictly take precedence over unsigned top-level fields
-      amount = dto.data.amount !== undefined ? dto.data.amount : amount;
-      description = dto.data.description || dto.description || '';
-      providerTransactionId = dto.data.reference || dto.providerTransactionId;
-    }
+      amount = dto.data.amount;
+      description = dto.data.description || '';
+      providerTransactionId = dto.data.reference;
 
-    // Issue 3 Fix: When referenceCode is not in description, try DB lookup by orderCode/paymentLinkId.
-    // This handles Store verification where description doesn't contain VERIFY_ (e.g. description is compact code from bank).
-    // DB is the authoritative source; description is supplementary audit trail only.
-    if (!referenceCode && description) {
-      const match = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
-      if (match) {
-        referenceCode = match[0].toUpperCase();
+      // Fail-closed nếu thiếu providerTransactionId
+      if (!providerTransactionId) {
+        throw new BadRequestException('Missing provider transaction ID');
       }
-    }
 
-    // If still missing referenceCode, attempt DB lookup by providerTransactionId (PayOS orderCode)
-    if (!referenceCode && providerTransactionId) {
-      const dbRef = await this.repository.findReferenceCodeByOrderCode(providerTransactionId);
-      if (dbRef) {
-        referenceCode = dbRef;
-        this.logger.log(`[handleVerificationWebhook] Resolved referenceCode=${referenceCode} from DB via providerTransactionId=${providerTransactionId}`);
+      // Item A Fix: In PayOS signed data mode, resolve referenceCode STRICTLY from signed data fields.
+      let resolvedRef: string | null = null;
+      if (dto.data.orderCode) {
+        resolvedRef = await this.repository.findReferenceCodeByOrderCode(dto.data.orderCode);
       }
-    }
-    // Also try with dto.data.orderCode if available
-    if (!referenceCode && dto.data?.orderCode) {
-      const dbRef = await this.repository.findReferenceCodeByOrderCode(dto.data.orderCode);
-      if (dbRef) {
-        referenceCode = dbRef;
-        this.logger.log(`[handleVerificationWebhook] Resolved referenceCode=${referenceCode} from DB via orderCode=${dto.data.orderCode}`);
+      if (!resolvedRef && description) {
+        const match = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
+        if (match) {
+          resolvedRef = match[0].toUpperCase();
+        }
       }
-    }
+      if (!resolvedRef && dto.data.paymentLinkId) {
+        resolvedRef = await this.repository.findReferenceCodeByOrderCode(dto.data.paymentLinkId);
+      }
 
-    if (!referenceCode) {
-      this.logger.warn('Webhook ignored: missing reference code in transaction [operation: webhook]');
-      return {
-        success: false,
-        message: 'Nội dung giao dịch không chứa mã xác minh hợp lệ',
-      };
-    }
+      // If unsigned top-level referenceCode was also provided, it must not contradict signed resolution
+      if (dto.referenceCode && resolvedRef && dto.referenceCode.toUpperCase() !== resolvedRef.toUpperCase()) {
+        throw new BadRequestException('Dữ liệu webhook không nhất quán: top-level referenceCode không khớp với signed session');
+      }
 
-    // Fail-closed nếu thiếu providerTransactionId
-    if (!providerTransactionId) {
-      throw new BadRequestException('Missing provider transaction ID');
-    }
+      if (!resolvedRef) {
+        this.logger.warn(`[handleVerificationWebhook] Không thể giải quyết phiên xác minh từ dữ liệu chữ ký PayOS hợp lệ (orderCode: ${dto.data.orderCode}, desc: ${description})`);
+        return {
+          success: false,
+          message: 'Không tìm thấy phiên xác minh từ dữ liệu chữ ký PayOS hợp lệ',
+        };
+      }
+      referenceCode = resolvedRef;
 
-    const receivedAmount = Number(amount || 0);
-
-    // Trích xuất thông tin tài khoản và BIN gửi / nhận để kiểm tra chéo (Signed data strictness, no unsigned fallback)
-    let destinationAccountNumber: string | undefined;
-    let destinationBankBin: string | undefined;
-    let senderAccountNumber: string | undefined;
-    let senderBankBin: string | undefined;
-
-    if (dto.data) {
+      // Sender and destination information STRICTLY from signed data fields, NO unauthenticated top-level envelope fallback
       destinationAccountNumber =
         dto.data.destinationAccountNumber ||
         dto.data.accountNumber ||
-        dto.data.virtualAccountNumber ||
-        dto.destinationAccountNumber;
+        dto.data.virtualAccountNumber;
 
       destinationBankBin =
         dto.data.destinationBankBin ||
-        dto.data.bin ||
-        dto.destinationBankBin;
+        dto.data.bin;
 
       senderAccountNumber =
         dto.data.counterAccountNumber ||
-        dto.data.senderAccountNumber ||
-        dto.senderAccountNumber;
+        dto.data.senderAccountNumber;
 
       senderBankBin =
         dto.data.counterAccountBankId ||
         dto.data.counterBankBin ||
-        dto.data.senderBankBin ||
-        dto.senderBankBin;
+        dto.data.senderBankBin;
 
       if (!destinationBankBin && process.env.PLATFORM_BANK_BIN) {
         destinationBankBin = process.env.PLATFORM_BANK_BIN.trim();
@@ -525,11 +515,36 @@ export class BankVerificationService implements OnModuleInit {
       }
     } else {
       // Direct raw-body signed webhook where the entire top-level body is authenticated
+      if (!referenceCode && description) {
+        const match = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
+        if (match) {
+          referenceCode = match[0].toUpperCase();
+        }
+      }
+
+      if (!referenceCode && providerTransactionId) {
+        const dbRef = await this.repository.findReferenceCodeByOrderCode(providerTransactionId);
+        if (dbRef) {
+          referenceCode = dbRef;
+          this.logger.log(`[handleVerificationWebhook] Resolved referenceCode=${referenceCode} from DB via providerTransactionId=${providerTransactionId}`);
+        }
+      }
+
+      if (!referenceCode) {
+        this.logger.warn('Webhook ignored: missing reference code in transaction [operation: webhook]');
+        return {
+          success: false,
+          message: 'Nội dung giao dịch không chứa mã xác minh hợp lệ',
+        };
+      }
+
       destinationAccountNumber = dto.destinationAccountNumber;
       destinationBankBin = dto.destinationBankBin;
       senderAccountNumber = dto.senderAccountNumber || dto.counterAccountNumber;
       senderBankBin = dto.senderBankBin || dto.counterBankBin;
     }
+
+    const receivedAmount = Number(amount || 0);
 
     // Thực thi transaction nguyên tử với SELECT ... FOR UPDATE
     const txResult = await this.repository.executeAtomicWebhookVerificationTx({
@@ -573,7 +588,20 @@ export class BankVerificationService implements OnModuleInit {
       };
     }
 
-    if (txResult.alreadyProcessed && !txResult.needsRefund) {
+    if (txResult.alreadyProcessed) {
+      if (txResult.bankAccount && txResult.needsRefund) {
+        const refundAmount = Number(
+          (txResult.transaction as any)?.expected_amount ||
+          (txResult.transaction as any)?.expectedAmount ||
+          2000,
+        );
+        await this.triggerAutomatedRefund(
+          txResult.transaction.id,
+          txResult.bankAccount,
+          refundAmount,
+          txResult.refundReference,
+        );
+      }
       return {
         success: true,
         message: 'Giao dịch đã được xác minh trước đó (Idempotent)',
@@ -613,6 +641,29 @@ export class BankVerificationService implements OnModuleInit {
     const amountToRefund = refundAmount || Number(process.env.BANK_VERIFICATION_AMOUNT_VND || 2000);
     const refundRef = customRefundReference || `REF_ST_${transactionId}`;
 
+    // Item D Fix: Store refund dual-path dispatch coordination.
+    // Webhook inline dispatch MUST participate in the obligation lease protocol to prevent
+    // competing dispatch ownership or conflicting state mutations with the scheduled worker.
+    const obligation = await this.prisma.storeBankRefundObligation.findFirst({
+      where: { refundReference: refundRef },
+    });
+
+    if (!obligation) {
+      this.logger.warn(`Không tìm thấy obligation hoàn tiền cho mã ref ${refundRef}`);
+      return;
+    }
+
+    const leaseToken = crypto.randomUUID();
+    const claimed = await this.repository.claimRefundObligationForDispatch(
+      obligation.id,
+      leaseToken,
+      60000,
+    );
+    if (!claimed) {
+      this.logger.log(`Obligation #${obligation.id} (${refundRef}) đã được worker claim hoặc đang xử lý`);
+      return;
+    }
+
     try {
       await this.repository.updateTransactionRefundStatus({
         transactionId,
@@ -630,7 +681,7 @@ export class BankVerificationService implements OnModuleInit {
         accountName: bankAccount.account_name,
         amount: amountToRefund,
         referenceId: refundRef,
-        description: `Hoan tien xac minh tai khoan ${amountToRefund} VND`,
+        description: `Hoan tiền xac minh tai khoan ${amountToRefund} VND`,
       });
 
       if (refundResult.status === 'SUCCESS' || refundResult.status === 'PENDING_RECONCILIATION') {
@@ -646,6 +697,12 @@ export class BankVerificationService implements OnModuleInit {
         );
         this.logger.log(`Lệnh hoàn tiền ${amountToRefund} VND đã gửi cho verificationId #${transactionId}, trạng thái PROCESSING/PENDING_RECONCILIATION`);
       } else {
+        await this.repository.recordObligationTerminalFailure(
+          obligation.id,
+          leaseToken,
+          null,
+          (refundResult as any).reason || refundResult.rawResponse?.desc || 'Hoàn tiền không thành công',
+        );
         await this.repository.updateTransactionRefundStatus({
           transactionId,
           status: 'REFUND_PENDING',
@@ -655,6 +712,12 @@ export class BankVerificationService implements OnModuleInit {
       }
     } catch (error: any) {
       this.logger.error(`Hoàn tiền thất bại [verificationId: #${transactionId}]: ${error?.message}`);
+      await this.repository.recordObligationReconciliationPending(
+        obligation.id,
+        leaseToken,
+        null,
+        error?.message || 'Error during inline dispatch',
+      );
       await this.repository.updateTransactionRefundStatus({
         transactionId,
         status: 'REFUND_PENDING',

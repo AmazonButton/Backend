@@ -294,6 +294,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
             if (pRes?.data) existingPayoutData = pRes.data;
           } catch {}
         }
+        let lookupFailed = false;
         if (!existingPayoutData && refund.refundCode) {
           try {
             const listRes = await this.payosPayoutService.getPayouts({ referenceId: refund.refundCode });
@@ -301,13 +302,24 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
             const matched = Array.isArray(rawList)
               ? rawList.filter((p: any) => p?.referenceId === refund.refundCode || p?.id === refund.refundCode)
               : [];
+            if (matched.length > 1) {
+              this.logger.error(`[OutboxConsumer] Phát hiện nhiều payout trùng mã reference ${refund.refundCode} trên PayOS`);
+              throw new Error(`Phát hiện nhiều payout trùng mã tham chiếu ${refund.refundCode} trên PayOS, cần đối soát thủ công`);
+            }
             if (matched.length === 1 && matched[0]?.id) {
               const detailRes = await this.payosPayoutService.getPayout(String(matched[0].id).trim());
               if (detailRes?.data) existingPayoutData = detailRes.data;
             }
           } catch (lookupErr: any) {
+            lookupFailed = true;
             this.logger.warn(`[OutboxConsumer] Không thể tra cứu payout trước cho refund #${refundId}: ${lookupErr?.message}`);
           }
+        }
+
+        // Item F Fix: If this outbox event has been attempted before (attemptCount > 0) and lookup failed with indeterminate error,
+        // do NOT call createPayout blindly. Throw error to retry lookup on the next cycle rather than issuing a new payout.
+        if (!existingPayoutData && Number(event.attemptCount) > 0 && lookupFailed) {
+          throw new Error(`Yêu cầu hoàn cọc #${refundId} đã từng được xử lý trước đó nhưng tra cứu trạng thái trên PayOS thất bại. Giữ trạng thái để đối soát, không dispatch mới.`);
         }
 
         let payoutResult: any = null;

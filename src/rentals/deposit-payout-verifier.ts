@@ -90,21 +90,27 @@ export function verifyDepositRefundPayoutEvidence(
   const expectedProviderRef = refund.providerReferenceId ? String(refund.providerReferenceId).trim() : null;
   const expectedRefundCode = refund.refundCode ? String(refund.refundCode).trim() : null;
 
-  const matchedTxn = transactions.find((t: any) => {
+  // Item F Fix: Strict, non-ambiguous transaction matching without cross-namespace conflation.
+  // Transaction technical ID matches expectedProviderRef, while business reference strictly matches refundCode.
+  const matchedTxns = transactions.filter((t: any) => {
     if (!t) return false;
     const tId = t.id ? String(t.id).trim() : '';
     const tRef = t.referenceId ? String(t.referenceId).trim() : t.reference ? String(t.reference).trim() : '';
 
-    if (expectedProviderRef && (tId === expectedProviderRef || tRef === expectedProviderRef)) {
-      return true;
+    // Business reference matches refundCode
+    const matchesRefundCode = Boolean(expectedRefundCode && (tRef === expectedRefundCode || tId === expectedRefundCode));
+    // Technical ID matches providerReferenceId
+    const matchesProviderRef = Boolean(expectedProviderRef && (tId === expectedProviderRef || tRef === expectedProviderRef));
+
+    // If an explicit business reference is present and contradicts expectedRefundCode, reject
+    if (expectedRefundCode && tRef && tRef !== expectedRefundCode) {
+      return false;
     }
-    if (expectedRefundCode && (tRef === expectedRefundCode || tId === expectedRefundCode)) {
-      return true;
-    }
-    return false;
+
+    return matchesRefundCode || matchesProviderRef;
   });
 
-  if (!matchedTxn) {
+  if (matchedTxns.length === 0) {
     return {
       isVerified: false,
       providerRef: payoutId,
@@ -112,6 +118,17 @@ export function verifyDepositRefundPayoutEvidence(
       reason: `Không tìm thấy transaction chi tiết nào khớp với mã tham chiếu (providerReferenceId: ${expectedProviderRef || 'N/A'}, refundCode: ${expectedRefundCode}) trong mảng transactions`,
     };
   }
+
+  if (matchedTxns.length > 1) {
+    return {
+      isVerified: false,
+      providerRef: payoutId,
+      reportedAmount: 0,
+      reason: 'Phát hiện nhiều giao dịch chi tiết trùng khớp mâu thuẫn trong danh sách transactions',
+    };
+  }
+
+  const matchedTxn = matchedTxns[0];
 
   // 2. Bắt buộc transaction có trạng thái thành công riêng; tuyệt đối không fallback sang approvalState
   const txnState = matchedTxn.state || matchedTxn.status;

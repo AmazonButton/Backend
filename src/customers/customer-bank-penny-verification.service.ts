@@ -79,15 +79,22 @@ export class CustomerBankPennyVerificationService {
         queryData?.code === "00" &&
         queryData?.data &&
         Number(queryData.data.orderCode) === orderCode &&
-        Number(queryData.data.amount) === 2000 &&
-        queryData.data.checkoutUrl
+        Number(queryData.data.amount) === 2000
       ) {
+        // Item K Fix: Real provider paymentLinkId (data.id) must be preserved even if checkoutUrl is absent in GET response schema.
+        // Never substitute String(orderCode) into paymentLinkId.
+        const paymentLinkId = String(
+          queryData.data.id || queryData.data.paymentLinkId || "",
+        ).trim();
+        if (!paymentLinkId) {
+          return null;
+        }
+        const checkoutUrl =
+          queryData.data.checkoutUrl ||
+          `https://pay.payos.vn/web/${paymentLinkId}`;
         return {
-          paymentLinkId:
-            queryData.data.id ||
-            queryData.data.paymentLinkId ||
-            String(orderCode),
-          checkoutUrl: queryData.data.checkoutUrl,
+          paymentLinkId,
+          checkoutUrl,
         };
       }
     } catch (e: any) {

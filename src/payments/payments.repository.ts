@@ -118,6 +118,46 @@ export class PaymentsRepository {
       }
       const order = lockedOrders[0];
 
+      // Item E Fix: Check if an active sibling payment transaction already occupies uq_payment_active_per_order
+      const activeSibling = await tx.paymentTransaction.findFirst({
+        where: {
+          orderId: payment.order_id,
+          status: { in: ['PENDING', 'PAID'] },
+          paymentTransactionId: { not: paymentTransactionId },
+        },
+      });
+
+      if (activeSibling) {
+        // Colliding with active replacement payment on the same order.
+        // To preserve uq_payment_active_per_order, transition this obsolete transaction to REFUND_PENDING
+        // instead of PAID, record the funds received, and route to financial refund reconciliation!
+        await tx.paymentTransaction.update({
+          where: { paymentTransactionId },
+          data: {
+            status: 'REFUND_PENDING',
+            paidAt: new Date(),
+          },
+        });
+
+        await tx.order.update({
+          where: { orderId: payment.order_id },
+          data: {
+            paymentStatus: 'REFUND_PENDING',
+          },
+        });
+
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId: payment.order_id,
+            oldStatus: order.order_status,
+            newStatus: order.order_status,
+            reason: 'Nhận khoản thanh toán từ liên kết cũ đã hủy khi đã có liên kết thanh toán mới; chuyển trạng thái thanh toán sang REFUND_PENDING để hoàn tiền cho khách',
+          },
+        });
+
+        return this.findTransactionByIdTx(tx, paymentTransactionId);
+      }
+
       // Update payment transaction to PAID
       await tx.paymentTransaction.update({
         where: { paymentTransactionId },

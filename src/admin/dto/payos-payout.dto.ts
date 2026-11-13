@@ -10,6 +10,8 @@ import {
   Max,
   Matches,
   ValidateNested,
+  ArrayMinSize,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -18,7 +20,7 @@ export class PayosPayoutItemDto {
   @IsNotEmpty({ message: 'referenceId không được để trống' })
   referenceId: string;
 
-  @IsNumber({}, { message: 'amount phải là số tiền nguyên' })
+  @IsInt({ message: 'amount phải là số tiền nguyên' })
   @Min(1000, { message: 'Số tiền chi tối thiểu là 1,000 VND' })
   amount: number;
 
@@ -32,6 +34,7 @@ export class PayosPayoutItemDto {
 
   @IsString({ message: 'toAccountNumber phải là chuỗi' })
   @IsNotEmpty({ message: 'toAccountNumber không được để trống' })
+  @Matches(/^\d{6,19}$/, { message: 'toAccountNumber phải là từ 6 đến 19 chữ số' })
   toAccountNumber: string;
 }
 
@@ -50,6 +53,8 @@ export class CreatePayosBatchPayoutDto {
   validateDestination?: boolean;
 
   @IsArray({ message: 'payouts phải là mảng danh sách lệnh chi' })
+  @ArrayMinSize(1, { message: 'Danh sách lệnh chi không được rỗng' })
+  @ArrayMaxSize(100, { message: 'Danh sách lệnh chi tối đa 100 giao dịch' })
   @ValidateNested({ each: true })
   @Type(() => PayosPayoutItemDto)
   payouts: PayosPayoutItemDto[];

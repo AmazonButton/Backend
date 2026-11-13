@@ -128,11 +128,18 @@ export class BankVerificationRepository {
    * Returns the referenceCode from DB without relying on description parsing.
    */
   async findReferenceCodeByOrderCode(orderCode: string | number): Promise<string | null> {
+    const codeStr = String(orderCode);
     const tx = await this.prisma.bankAccountVerificationTransaction.findFirst({
-      where: { providerTransactionId: String(orderCode) },
+      where: { providerTransactionId: codeStr },
       select: { referenceCode: true },
     });
-    return tx?.referenceCode ?? null;
+    if (tx?.referenceCode) return tx.referenceCode;
+
+    const receipt = await (this.prisma as any).storeBankInboundReceipt.findFirst({
+      where: { providerTransactionId: codeStr },
+      select: { verificationTx: { select: { referenceCode: true } } },
+    });
+    return receipt?.verificationTx?.referenceCode ?? null;
   }
 
   async updateTransactionRefundStatus(params: {
@@ -318,21 +325,6 @@ export class BankVerificationRepository {
         };
       }
 
-      // 3. Kiểm tra Idempotency: nếu đã VERIFIED hoặc REFUNDED
-      if (
-        lockedTx.status === 'VERIFIED' ||
-        lockedTx.status === 'REFUND_PENDING' ||
-        lockedTx.status === 'REFUNDED'
-      ) {
-        return {
-          success: true,
-          alreadyProcessed: true,
-          needsRefund: false,
-          transaction: lockedTx,
-          bankAccount: lockedAccount,
-        };
-      }
-
       // Evaluate sender evidence upfront
       const isMaskedSender = Boolean(
         params.senderAccountNumber && params.senderAccountNumber.includes('*'),
@@ -430,6 +422,46 @@ export class BankVerificationRepository {
         }
         return refundRef;
       };
+
+      // Item B Fix: Inspect per-transfer receipt identity BEFORE checking verification session completion.
+      const existingReceipts = await tx.$queryRaw<Array<{ id: bigint; match_status: string }>>`
+        SELECT id, match_status FROM store_bank_inbound_receipts
+        WHERE provider_transaction_id = ${params.providerTransactionId}
+        LIMIT 1
+      `;
+      const isReplayReceipt = Boolean(existingReceipts && existingReceipts.length > 0);
+
+      // 3. Kiểm tra Idempotency: nếu đã VERIFIED hoặc REFUNDED
+      if (
+        lockedTx.status === 'VERIFIED' ||
+        lockedTx.status === 'REFUND_PENDING' ||
+        lockedTx.status === 'REFUNDED'
+      ) {
+        if (isReplayReceipt) {
+          return {
+            success: true,
+            alreadyProcessed: true,
+            needsRefund: false,
+            transaction: lockedTx,
+            bankAccount: lockedAccount,
+          };
+        }
+
+        // Distinct subsequent transfer reaching a completed session: record receipt and create refund obligation
+        const refundRef = await recordReceiptAndObligation(
+          'SUBSEQUENT_TRANSFER',
+          hasReliableSenderEvidence ? 'PENDING_REFUND' : 'PENDING_MANUAL_REFUND',
+        );
+
+        return {
+          success: true,
+          alreadyProcessed: true,
+          needsRefund: hasReliableSenderEvidence,
+          refundReference: refundRef,
+          transaction: lockedTx,
+          bankAccount: lockedAccount,
+        };
+      }
 
       // 4. Kiểm tra hết hạn (Expired check)
       const now = new Date();
@@ -839,7 +871,7 @@ export class BankVerificationRepository {
         UPDATE bank_account_verification_transactions
         SET status = 'VERIFIED',
             received_amount = ${params.receivedAmount},
-            provider_transaction_id = ${params.providerTransactionId},
+            provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
             refund_status = 'PENDING_REFUND',
             verified_at = NOW(),
             updated_at = NOW()

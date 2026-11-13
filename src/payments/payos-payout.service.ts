@@ -173,14 +173,33 @@ export class PayOSPayoutService implements OnModuleInit {
   }
 
   private checkResponseSignature(response: Response, result: any, checksumKey: string): void {
+    const isEnforce = process.env.PAYOS_PAYOUT_ENFORCE_RESPONSE_SIGNATURE === 'true';
     const resSignature = response.headers?.get?.('x-signature');
-    if (!resSignature || !result?.data) return;
+
+    if (!resSignature) {
+      if (isEnforce) {
+        throw new PayOSPayoutIndeterminateException(
+          'RESPONSE_SIGNATURE_MISSING',
+          'Phản hồi từ PayOS Payout thiếu chữ ký x-signature khi đang bật chế độ bắt buộc chữ ký',
+        );
+      }
+      return;
+    }
+
+    if (!result?.data) {
+      if (isEnforce) {
+        throw new PayOSPayoutIndeterminateException(
+          'RESPONSE_DATA_MISSING',
+          'Phản hồi từ PayOS Payout thiếu khối data để đối chiếu chữ ký phản hồi',
+        );
+      }
+      return;
+    }
+
     if (verifyPayoutSignature(result.data, resSignature, checksumKey)) return;
 
     this.logger.error('[PayOS Payout] Chữ ký x-signature của response không hợp lệ.');
-    // Công thức ký response chưa được đối chiếu với tài liệu CAS => mặc định chỉ cảnh báo,
-    // bật PAYOS_PAYOUT_ENFORCE_RESPONSE_SIGNATURE=true để coi là "chưa rõ kết quả" sau khi đã kiểm chứng.
-    if (process.env.PAYOS_PAYOUT_ENFORCE_RESPONSE_SIGNATURE === 'true') {
+    if (isEnforce) {
       throw new PayOSPayoutIndeterminateException(
         'RESPONSE_SIGNATURE_INVALID',
         'Chữ ký phản hồi từ PayOS Payout không hợp lệ, cần đối soát trạng thái lệnh chi',
@@ -324,8 +343,15 @@ export class PayOSPayoutService implements OnModuleInit {
         { method: 'GET', headers: { 'x-client-id': clientId, 'x-api-key': apiKey } },
         8000,
       );
-      return await response.json();
+      const result = await response.json();
+      if (result?.code !== '00') {
+        throw this.classifyRejection(response.status, result);
+      }
+      return result;
     } catch (err: any) {
+      if (err instanceof PayOSPayoutPreDispatchException || err instanceof PayOSPayoutIndeterminateException) {
+        throw err;
+      }
       this.logger.error(`PayOS getPayout error: ${err.message}`);
       throw new InternalServerErrorException(`Không thể tra cứu payout: ${err.message}`);
     }
@@ -377,8 +403,15 @@ export class PayOSPayoutService implements OnModuleInit {
         { method: 'GET', headers: { 'x-client-id': clientId, 'x-api-key': apiKey } },
         8000,
       );
-      return await response.json();
+      const result = await response.json();
+      if (result?.code !== '00') {
+        throw this.classifyRejection(response.status, result);
+      }
+      return result;
     } catch (err: any) {
+      if (err instanceof PayOSPayoutPreDispatchException || err instanceof PayOSPayoutIndeterminateException) {
+        throw err;
+      }
       this.logger.error(`PayOS getPayouts error: ${err.message}`);
       throw new InternalServerErrorException(`Không thể tra cứu danh sách payout: ${err.message}`);
     }
@@ -413,8 +446,10 @@ export class PayOSPayoutService implements OnModuleInit {
       };
     }
 
+    let response: Response;
+    let resData: any;
     try {
-      const response = await this.fetchWithTimeout(
+      response = await this.fetchWithTimeout(
         `${this.baseUrl}/v1/payouts/batch`,
         {
           method: 'POST',
@@ -429,7 +464,6 @@ export class PayOSPayoutService implements OnModuleInit {
         },
         15000,
       );
-      return await response.json();
     } catch (err: any) {
       this.logger.error(`PayOS createBatchPayout error: ${err.message}`);
       throw new PayOSPayoutIndeterminateException(
@@ -437,12 +471,31 @@ export class PayOSPayoutService implements OnModuleInit {
         `Lỗi kết nối tới PayOS Batch Payout API (chưa rõ lô lệnh đã được gửi hay chưa): ${err.message}`,
       );
     }
+
+    try {
+      resData = await response.json();
+    } catch (err: any) {
+      if (PRE_DISPATCH_HTTP_STATUS.has(response.status)) {
+        throw new PayOSPayoutPreDispatchException(String(response.status), 'PayOS từ chối yêu cầu chi tiền theo lô');
+      }
+      throw new PayOSPayoutIndeterminateException(
+        'INVALID_RESPONSE',
+        `Không đọc được phản hồi từ PayOS Batch Payout API (HTTP ${response.status})`,
+      );
+    }
+
+    if (resData?.code !== '00') {
+      throw this.classifyRejection(response.status, resData);
+    }
+
+    this.checkResponseSignature(response, resData, checksumKey);
+    return resData;
   }
 
   async estimateCredit(params: PayosBatchPayoutRequestParams): Promise<any> {
     const { clientId, apiKey, checksumKey } = this.getCredentials();
-    if (!clientId || !apiKey) {
-      throw new InternalServerErrorException('PayOS credentials missing');
+    if (!clientId || !apiKey || !checksumKey) {
+      throw new InternalServerErrorException('PayOS credentials missing (clientId, apiKey or checksumKey)');
     }
 
     if (this.isMockMode(clientId)) {
@@ -460,20 +513,33 @@ export class PayOSPayoutService implements OnModuleInit {
       'Content-Type': 'application/json',
       'x-client-id': clientId,
       'x-api-key': apiKey,
+      'x-signature': signPayoutRequest(params, checksumKey),
     };
-    if (checksumKey) headers['x-signature'] = signPayoutRequest(params, checksumKey);
 
+    let response: Response;
+    let resData: any;
     try {
-      const response = await this.fetchWithTimeout(
+      response = await this.fetchWithTimeout(
         `${this.baseUrl}/v1/payouts/estimate-credit`,
         { method: 'POST', headers, body: JSON.stringify(params) },
         8000,
       );
-      return await response.json();
     } catch (err: any) {
       this.logger.error(`PayOS estimateCredit error: ${err.message}`);
       throw new InternalServerErrorException(`Lỗi kết nối tới PayOS Estimate Credit API: ${err.message}`);
     }
+
+    try {
+      resData = await response.json();
+    } catch (err: any) {
+      throw new PayOSPayoutPreDispatchException(String(response.status), 'Không đọc được phản hồi từ PayOS Estimate Credit API');
+    }
+
+    if (resData?.code !== '00') {
+      throw this.classifyRejection(response.status, resData);
+    }
+
+    return resData;
   }
 
   async getPayoutBalance(): Promise<PayOSPayoutBalanceResult> {

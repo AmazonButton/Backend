@@ -33,9 +33,7 @@ export class CreateVerificationRequestDto {
   })
   @IsNotEmpty({ message: 'Số tài khoản không được để trống' })
   @IsString({ message: 'Số tài khoản phải là chuỗi' })
-  @MinLength(5, { message: 'Số tài khoản tối thiểu 5 ký tự' })
-  @MaxLength(30, { message: 'Số tài khoản tối đa 30 ký tự' })
-  @Matches(/^[0-9a-zA-Z]+$/, { message: 'Số tài khoản chỉ chứa chữ và số' })
+  @Matches(/^[0-9]{6,19}$/, { message: 'Số tài khoản ngân hàng phải gồm từ 6 đến 19 chữ số' })
   accountNumber: string;
 
   @ApiPropertyOptional({
