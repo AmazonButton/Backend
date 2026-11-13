@@ -322,11 +322,28 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
         if (!existingPayoutData && refund.refundCode) {
           try {
             const listRes = await this.payosPayoutService.getPayouts({ referenceId: refund.refundCode });
-            const rawList = listRes?.data?.payouts || listRes?.data || [];
+            
+            // Fail-closed: Xác thực shape danh sách hợp lệ trước.
+            // Response không hợp lệ (data: null, data: {}, code != '00') phải trở thành lỗi lookup,
+            // TUYỆT ĐỐI không chuẩn hóa thành danh sách rỗng [] để tránh dispatch nhầm ở lượt đầu.
+            if (listRes?.code && listRes.code !== '00') {
+              throw new Error(`PayOS getPayouts trả về mã lỗi: ${listRes.code} (${listRes.desc || 'Unknown'})`);
+            }
+
+            const rawList = Array.isArray(listRes?.data?.payouts)
+              ? listRes.data.payouts
+              : Array.isArray(listRes?.data)
+                ? listRes.data
+                : null;
+
+            if (!rawList) {
+              throw new Error(`Phản hồi tra cứu danh sách payout không hợp lệ hoặc thiếu mảng dữ liệu (data.payouts) từ PayOS`);
+            }
+
             // Business reference strictly matches refundCode (no conflation with technical ID p.id)
-            const matched = Array.isArray(rawList)
-              ? rawList.filter((p: any) => p?.referenceId && String(p.referenceId).trim() === String(refund.refundCode).trim())
-              : [];
+            const matched = rawList.filter(
+              (p: any) => p?.referenceId && String(p.referenceId).trim() === String(refund.refundCode).trim(),
+            );
             if (matched.length > 1) {
               this.logger.error(`[OutboxConsumer] Phát hiện nhiều payout trùng mã reference ${refund.refundCode} trên PayOS`);
               throw new Error(`Phát hiện nhiều payout trùng mã tham chiếu ${refund.refundCode} trên PayOS, cần đối soát thủ công`);

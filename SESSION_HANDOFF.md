@@ -1,5 +1,50 @@
 # Project Handoff & Session Context
 
+## 2026-11-13: Resolution of Item F Fail-Closed Validation for PayOS getPayouts Response Shape (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 20/20 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts` 5/5 PASS, `tests/phase3-queues-retry-dlq.spec.ts` 19/19 PASS, CI run 43444118557 100% Green).
+- **Core Invariant & Fail-Closed Guard**:
+  - **Issue**:
+    - At `src/rentals/outbox-consumer.service.ts` line 325, the code previously normalized a missing or malformed response using fallback `|| []`:
+      ```typescript
+      const rawList = listRes?.data?.payouts || listRes?.data || [];
+      const matched = Array.isArray(rawList) ? rawList.filter(...) : [];
+      ```
+    - When PayOS returned malformed shapes such as `{ code: '00', data: null }` or `{ code: '00', data: {} }` or `{ code: '99', ... }`, `rawList` silently defaulted to `[]`, making `matched` empty and setting `listEmpty = true`.
+    - On a clean first attempt (`attempts: 0, status: 'PENDING'`), this unverified empty list caused `canCreate` to evaluate to `true`, erroneously allowing a payout to be dispatched when provider response structure was invalid.
+  - **Remediation**:
+    - Implemented strict response shape and status verification before evaluating matching:
+      ```typescript
+      if (listRes?.code && listRes.code !== '00') {
+        throw new Error(`PayOS getPayouts trả về mã lỗi: ${listRes.code} (${listRes.desc || 'Unknown'})`);
+      }
+
+      const rawList = Array.isArray(listRes?.data?.payouts)
+        ? listRes.data.payouts
+        : Array.isArray(listRes?.data)
+          ? listRes.data
+          : null;
+
+      if (!rawList) {
+        throw new Error(`Phản hồi tra cứu danh sách payout không hợp lệ hoặc thiếu mảng dữ liệu (data.payouts) từ PayOS`);
+      }
+      ```
+    - Any invalid shape or non-00 code throws an error, caught into `lookupFailed = true` and `listEmpty = false`, strictly causing `canCreate` to evaluate to `false` and fail-closed with no payout dispatch.
+  - **Expanded Test Coverage (`tests/audit-run6-payos-fixes.spec.ts`)**:
+    - Added Test 4.7 with 3 test cases:
+      1. `data: null` -> Throws lookup error, blocks dispatch (`createPayout` not called).
+      2. `data: {}` -> Throws lookup error, blocks dispatch (`createPayout` not called).
+      3. `code: '99'` -> Throws lookup error, blocks dispatch (`createPayout` not called).
+- **Verification Commands & Evidence**:
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: 20/20 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`: 30/30 PASS (100%).
+  - `npx tsx tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts`: 5/5 PASS (100%).
+  - `npx tsx tests/phase3-queues-retry-dlq.spec.ts`: 19/19 PASS (100%).
+  - `npm run build`: Exit code 0 (Clean NestJS production build).
+- **Files Modified**:
+  - `src/rentals/outbox-consumer.service.ts`
+  - `tests/audit-run6-payos-fixes.spec.ts`
+  - `SESSION_HANDOFF.md`
+
 ## 2026-11-13: Resolution of Suite 50 Mock Alignment with Strict Dispatch Authority (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 19/19 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, Suite 50 R02 test cases PASSED).
 - **Issue**:

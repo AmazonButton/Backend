@@ -740,6 +740,149 @@ async function runAuditRun6Tests() {
     assert(createPayoutCalledSuccessCase, 'createPayout MUST be called when first attempt lookup is valid and clean empty list');
   });
 
+  await test('4.7 [Item F] OutboxConsumer blocks createPayout when PayOS getPayouts returns invalid shape (e.g. data: null, data: {}, or code != 00) instead of treating it as empty list', async () => {
+    const { OutboxConsumerService } = await import('../src/rentals/outbox-consumer.service');
+    const encValid = CryptoVaultUtil.encryptAccountNumber('12345678');
+    const hashValid = CryptoVaultUtil.computeDeterministicAccountHash('12345678');
+
+    const mockPrismaBuilder = (refundId: bigint, refundCode: string) => ({
+      $transaction: async (cb: any) => cb({
+        $queryRawUnsafe: async () => [{
+          refund_id: refundId,
+          status: 'PENDING_PAYOUT',
+          provider_reference_id: null,
+          refund_code: refundCode,
+          amount: 50000,
+          recipient_bin: '970422',
+          recipient_account_number_encrypted: encValid,
+          recipient_account_number_hash: hashValid,
+          recipient_account_holder_name: 'NGUYEN VAN A',
+          recipient_account_number_masked: '******78',
+        }],
+      }),
+      depositRefund: {
+        findUnique: async () => ({
+          refundId,
+          status: 'PENDING_PAYOUT',
+          refundCode,
+          amount: 50000,
+          recipientBin: '970422',
+          recipientAccountNumberEncrypted: encValid,
+          recipientAccountNumberHash: hashValid,
+          recipientAccountHolderName: 'NGUYEN VAN A',
+          recipientAccountNumberMasked: '******78',
+        }),
+        update: async () => {},
+      },
+    });
+
+    // Ca 1: data: null -> không được chuẩn hóa thành [], phải trở thành lookup error và chặn dispatch
+    let createPayoutCalledNullCase = false;
+    const mockPayosLookupNull = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => ({
+        code: '00',
+        data: null, // Response dị thường, thiếu mảng payouts
+      }),
+      createPayout: async () => {
+        createPayoutCalledNullCase = true;
+        return { data: { id: 'should_not_be_created' } };
+      },
+    };
+
+    const consumerNull = new OutboxConsumerService(mockPrismaBuilder(BigInt(5008), 'REF_DP_5008') as any, {} as any, {} as any, mockPayosLookupNull as any);
+    const firstAttemptEventNull = {
+      id: BigInt(9908),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5008' },
+      attempts: 0,
+      status: 'PENDING',
+      claimToken: 'lease_token_first_null',
+    };
+
+    let caughtErrorNull: any = null;
+    try {
+      await (consumerNull as any).handleSingleEvent(firstAttemptEventNull);
+    } catch (e) {
+      caughtErrorNull = e;
+    }
+
+    assert(caughtErrorNull !== null, 'Must throw error when getPayouts returns data: null');
+    assert(caughtErrorNull.message.includes('tra cứu trạng thái trên PayOS thất bại hoặc gặp lỗi kết nối'), `Expected fail error, got: ${caughtErrorNull.message}`);
+    assert(!createPayoutCalledNullCase, 'createPayout must NEVER be called when getPayouts returns data: null');
+
+    // Ca 2: data: {} -> không có mảng payouts
+    let createPayoutCalledEmptyObjCase = false;
+    const mockPayosLookupEmptyObj = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => ({
+        code: '00',
+        data: {}, // Response không có payouts
+      }),
+      createPayout: async () => {
+        createPayoutCalledEmptyObjCase = true;
+        return { data: { id: 'should_not_be_created' } };
+      },
+    };
+
+    const consumerEmptyObj = new OutboxConsumerService(mockPrismaBuilder(BigInt(5009), 'REF_DP_5009') as any, {} as any, {} as any, mockPayosLookupEmptyObj as any);
+    const firstAttemptEventEmptyObj = {
+      id: BigInt(9909),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5009' },
+      attempts: 0,
+      status: 'PENDING',
+      claimToken: 'lease_token_first_empty_obj',
+    };
+
+    let caughtErrorEmptyObj: any = null;
+    try {
+      await (consumerEmptyObj as any).handleSingleEvent(firstAttemptEventEmptyObj);
+    } catch (e) {
+      caughtErrorEmptyObj = e;
+    }
+
+    assert(caughtErrorEmptyObj !== null, 'Must throw error when getPayouts returns data: {}');
+    assert(caughtErrorEmptyObj.message.includes('tra cứu trạng thái trên PayOS thất bại hoặc gặp lỗi kết nối'), `Expected fail error, got: ${caughtErrorEmptyObj.message}`);
+    assert(!createPayoutCalledEmptyObjCase, 'createPayout must NEVER be called when getPayouts returns data: {}');
+
+    // Ca 3: code != '00' (ví dụ code: '99')
+    let createPayoutCalledErrorCodeCase = false;
+    const mockPayosLookupErrorCode = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => ({
+        code: '99',
+        desc: 'Gateway internal timeout',
+        data: null,
+      }),
+      createPayout: async () => {
+        createPayoutCalledErrorCodeCase = true;
+        return { data: { id: 'should_not_be_created' } };
+      },
+    };
+
+    const consumerErrorCode = new OutboxConsumerService(mockPrismaBuilder(BigInt(5010), 'REF_DP_5010') as any, {} as any, {} as any, mockPayosLookupErrorCode as any);
+    const firstAttemptEventErrorCode = {
+      id: BigInt(9910),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5010' },
+      attempts: 0,
+      status: 'PENDING',
+      claimToken: 'lease_token_first_err_code',
+    };
+
+    let caughtErrorErrorCode: any = null;
+    try {
+      await (consumerErrorCode as any).handleSingleEvent(firstAttemptEventErrorCode);
+    } catch (e) {
+      caughtErrorErrorCode = e;
+    }
+
+    assert(caughtErrorErrorCode !== null, 'Must throw error when getPayouts returns code != 00');
+    assert(caughtErrorErrorCode.message.includes('tra cứu trạng thái trên PayOS thất bại hoặc gặp lỗi kết nối'), `Expected fail error, got: ${caughtErrorErrorCode.message}`);
+    assert(!createPayoutCalledErrorCodeCase, 'createPayout must NEVER be called when getPayouts returns code != 00');
+  });
+
   // ---------------------------------------------------------------------------
   // 5. Item B: Store Inline Refund Dispatch from Claimed Obligation Snapshot
   // ---------------------------------------------------------------------------
