@@ -1,7 +1,11 @@
 # Project Handoff & Session Context
 
-## 2026-11-14: Store Bank Return URL Validation & Wallet Bank Account ID Exposure (COMMITTED & DEPLOYED)
-- **Status**: COMPLETED, COMMITTED & 100% VERIFIED (`npx tsc --noEmit` exit code 0, `npm run build` exit code 0, `tests/store-bank-return-url.spec.ts` PASS, `tests/wallet-bank-contract.spec.ts` PASS, `tests/bank-identifier-normalization.spec.ts` PASS, `tests/store-wallet.spec.ts` PASS, Suite 80 registered in `tests/run_all_suites.ts`).
+## 2026-11-14: Store Bank Return URL Validation & Wallet Bank Account ID Exposure (COMMITTED, PUSHED & DEPLOYED)
+- **Status**: COMPLETED, COMMITTED & 100% VERIFIED LIVE (Commit `0129d8f`, GitHub Actions CI/CD Run ID `43487070537` 100% Green, All 80 Suites Passed, Live deployed across all 3 production instances).
+- **Deployment Status Across 3 Live Production Instances (Commit `0129d8f`)**:
+  - **Render Node-1 (Primary)** (`https://backend-fae8.onrender.com`): 🟢 LIVE (Commit `0129d8f7733df81160a3ffe94908359fcb06e1a5`), `/readyz` HTTP 200 READY (`database`: UP, `queue`: UP).
+  - **Render Node-2 (Secondary)** (`https://backend-node2-ukib.onrender.com`): 🟢 LIVE (Commit `0129d8f7733df81160a3ffe94908359fcb06e1a5`), `/readyz` HTTP 200 READY (`database`: UP, `queue`: UP).
+  - **AWS Node-3 (EC2 Sydney)** (`3.25.136.6` / `http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaws.com`): 🟢 ONLINE (Commit `0129d8f7733df81160a3ffe94908359fcb06e1a5`), PM2 reload successful (`backend-node3` online), `/readyz` HTTP 200 READY (`database`: UP, `queue`: UP).
 - **Core Changes & Invariants**:
   - `src/bank-verification/store-bank-return-url.ts`: Enforces open redirect defense on Store bank verification return/cancel URLs. Only allows trusted origins (`FRONTEND_URL`, `http://localhost:5173`, `http://127.0.0.1:5173`, or `PAYOS_STORE_BANK_ALLOWED_RETURN_ORIGINS`). Enforces `pathname === '/store/wallet'`, disallows user/pass credentials, and requires `http`/`https` protocols.
   - `src/bank-verification/dto/create-verification-request.dto.ts`: Added optional `returnUrl` and `cancelUrl` validated with `@IsOptional()` and `@IsUrl(...)`.
@@ -11,6 +15,10 @@
   - `tests/store-bank-return-url.spec.ts`: Added offline test suite covering default paths, allowed origins, and strict rejection of open redirects (`evil.test`, `/login`, user:pass, `javascript:`).
   - `tests/run_all_suites.ts`: Registered Suite 80 (`80. Store Bank Verification Return URLs (Offline)`).
 - **Verification Commands & Evidence**:
+  - `GitHub Actions CI/CD Pipeline`: **Run ID 43487070537 SUCCESS (100% Green)**.
+    - `🛡️ Code Quality & Build`: PASSED (43s).
+    - `🧪 Isolated DB & Integration Tests`: PASSED (3m11s, All 80/80 suites PASSED, 0 FAILED).
+    - `🚀 Production Deploy & Verification`: PASSED (5s, Deploy hooks triggered & health verified).
   - `npx tsc --noEmit`: Exit code 0 (Clean).
   - `npm run build`: Exit code 0 (Clean NestJS production build).
   - `npx tsx tests/store-bank-return-url.spec.ts`: PASS (100%).
