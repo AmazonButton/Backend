@@ -59,7 +59,8 @@ async function runTask4TestSuite() {
             {
               id: 'TXN-999',
               amount: 200000,
-              reference: 'PAYOS-PAYOUT-REF-99',
+              reference: 'REF-TEST-004',
+              referenceId: 'REF-TEST-004',
               state: 'COMPLETED',
               toBin: '970415',
               toAccountNumber: '123456789',
