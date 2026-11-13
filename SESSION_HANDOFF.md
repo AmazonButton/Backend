@@ -43,6 +43,10 @@
   - `src/rentals/deposit-payout-verifier.ts`
   - `src/rentals/outbox-consumer.service.ts`
   - `tests/audit-run6-payos-fixes.spec.ts`
+- **Deployment Status Across 3 Live Instances (Commit `2aa613b`)**:
+  - **Render Node-1 (Primary)** (`https://backend-fae8.onrender.com`): 🟢 LIVE (Commit `2aa613b`), Healthz ONLINE (283ms, Uptime 51s).
+  - **Render Node-2 (Secondary)** (`https://backend-node2-ukib.onrender.com`): 🟢 LIVE (Commit `2aa613b`), Healthz ONLINE (1135ms, Uptime 49s).
+  - **AWS Node-3 (EC2 Worker)** (`3.25.136.6`): 🟢 ONLINE (Commit `2aa613b`), PM2 reload successful, pid 191145, 0% CPU, 152.7MB RAM.
 
 ## 2026-11-12: Hold conflicting customer refunds before dispatch
 - Status: Implemented; local type/build/mock checks passed; PostgreSQL integration execution pending an isolated test database.
