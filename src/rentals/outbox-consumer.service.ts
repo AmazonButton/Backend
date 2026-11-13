@@ -288,19 +288,25 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
 
         // NV-16 Invariant: Kiểm tra idempotent trên PayOS theo refundCode trước khi dispatch mới để chống chi trùng khi crash retry
         let existingPayoutData: any = null;
+        let lookupFailed = false;
+
         if (refund.providerReferenceId) {
           try {
             const pRes = await this.payosPayoutService.getPayout(refund.providerReferenceId);
             if (pRes?.data) existingPayoutData = pRes.data;
-          } catch {}
+          } catch (lookupErr: any) {
+            lookupFailed = true;
+            this.logger.warn(`[OutboxConsumer] Tra cứu payout theo providerReferenceId ${refund.providerReferenceId} thất bại: ${lookupErr?.message}`);
+          }
         }
-        let lookupFailed = false;
+
         if (!existingPayoutData && refund.refundCode) {
           try {
             const listRes = await this.payosPayoutService.getPayouts({ referenceId: refund.refundCode });
             const rawList = listRes?.data?.payouts || listRes?.data || [];
+            // Business reference strictly matches refundCode (no conflation with technical ID p.id)
             const matched = Array.isArray(rawList)
-              ? rawList.filter((p: any) => p?.referenceId === refund.refundCode || p?.id === refund.refundCode)
+              ? rawList.filter((p: any) => p?.referenceId && String(p.referenceId).trim() === String(refund.refundCode).trim())
               : [];
             if (matched.length > 1) {
               this.logger.error(`[OutboxConsumer] Phát hiện nhiều payout trùng mã reference ${refund.refundCode} trên PayOS`);
@@ -316,10 +322,14 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        // Item F Fix: If this outbox event has been attempted before (attemptCount > 0) and lookup failed with indeterminate error,
-        // do NOT call createPayout blindly. Throw error to retry lookup on the next cycle rather than issuing a new payout.
-        if (!existingPayoutData && Number(event.attemptCount) > 0 && lookupFailed) {
-          throw new Error(`Yêu cầu hoàn cọc #${refundId} đã từng được xử lý trước đó nhưng tra cứu trạng thái trên PayOS thất bại. Giữ trạng thái để đối soát, không dispatch mới.`);
+        // Item F Fix: Dùng đúng attempts từ query outbox_events (và status PROCESSING cho crash recovery).
+        // Nếu outbox event đang retry (attempts > 0) hoặc recovery sau crash (status === 'PROCESSING'),
+        // mà tra cứu trạng thái trên PayOS thất bại hoặc không rõ kết quả, TUYỆT ĐỐI không gọi createPayout mù quáng.
+        const previousAttempts = Number(event.attempts ?? 0);
+        const isRetryOrCrashRecovery = previousAttempts > 0 || event.status === 'PROCESSING';
+
+        if (!existingPayoutData && isRetryOrCrashRecovery && lookupFailed) {
+          throw new Error(`Yêu cầu hoàn cọc #${refundId} đang trong luồng retry/recovery (attempts=${previousAttempts}, status=${event.status}) nhưng tra cứu trạng thái trên PayOS thất bại. Giữ trạng thái để đối soát, không dispatch mới.`);
         }
 
         let payoutResult: any = null;

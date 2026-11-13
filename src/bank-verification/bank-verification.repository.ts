@@ -474,7 +474,7 @@ export class BankVerificationRepository {
           SET status = 'EXPIRED',
               failure_reason = 'EXPIRED',
               received_amount = ${params.receivedAmount},
-              provider_transaction_id = ${params.providerTransactionId},
+              provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
               refund_status = ${refundStatus},
               refund_transaction_id = ${refundRef},
               updated_at = NOW()
@@ -485,7 +485,13 @@ export class BankVerificationRepository {
           reason: 'EXPIRED',
           needsRefund,
           refundReference: refundRef,
-          transaction: { ...lockedTx, status: 'EXPIRED', failure_reason: 'EXPIRED', refund_status: refundStatus },
+          transaction: {
+            ...lockedTx,
+            status: 'EXPIRED',
+            failure_reason: 'EXPIRED',
+            refund_status: refundStatus,
+            provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+          },
           bankAccount: lockedAccount,
         };
       }
@@ -505,7 +511,7 @@ export class BankVerificationRepository {
           SET status = 'FAILED',
               failure_reason = 'AMOUNT_MISMATCH',
               received_amount = ${params.receivedAmount},
-              provider_transaction_id = ${params.providerTransactionId},
+              provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
               refund_status = ${refundStatus},
               refund_transaction_id = ${refundRef},
               updated_at = NOW()
@@ -516,7 +522,13 @@ export class BankVerificationRepository {
           reason: 'AMOUNT_MISMATCH',
           needsRefund,
           refundReference: refundRef,
-          transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'AMOUNT_MISMATCH', refund_status: refundStatus },
+          transaction: {
+            ...lockedTx,
+            status: 'FAILED',
+            failure_reason: 'AMOUNT_MISMATCH',
+            refund_status: refundStatus,
+            provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+          },
           bankAccount: lockedAccount,
         };
       }
@@ -545,7 +557,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_ACCOUNT_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -556,7 +568,13 @@ export class BankVerificationRepository {
             reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'DESTINATION_ACCOUNT_UNVERIFIABLE',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -571,7 +589,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_BANK_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -582,7 +600,13 @@ export class BankVerificationRepository {
             reason: 'DESTINATION_BANK_UNVERIFIABLE',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'DESTINATION_BANK_UNVERIFIABLE',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -599,7 +623,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_ACCOUNT_MISMATCH',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -610,7 +634,13 @@ export class BankVerificationRepository {
             reason: 'DESTINATION_ACCOUNT_MISMATCH',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_ACCOUNT_MISMATCH', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'DESTINATION_ACCOUNT_MISMATCH',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -627,7 +657,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'DESTINATION_BANK_MISMATCH',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -638,7 +668,13 @@ export class BankVerificationRepository {
             reason: 'DESTINATION_BANK_MISMATCH',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'DESTINATION_BANK_MISMATCH', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'DESTINATION_BANK_MISMATCH',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -657,7 +693,7 @@ export class BankVerificationRepository {
           SET status = 'FAILED',
               failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
               received_amount = ${params.receivedAmount},
-              provider_transaction_id = ${params.providerTransactionId},
+              provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
               refund_status = 'PENDING_MANUAL_REFUND',
               refund_transaction_id = ${refundRef},
               updated_at = NOW()
@@ -668,7 +704,13 @@ export class BankVerificationRepository {
           reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
           needsRefund: false,
           refundReference: refundRef,
-          transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+          transaction: {
+            ...lockedTx,
+            status: 'FAILED',
+            failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
+            refund_status: 'PENDING_MANUAL_REFUND',
+            provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+          },
           bankAccount: lockedAccount,
         };
       }
@@ -683,7 +725,7 @@ export class BankVerificationRepository {
           SET status = 'FAILED',
               failure_reason = 'SENDER_BANK_UNVERIFIABLE',
               received_amount = ${params.receivedAmount},
-              provider_transaction_id = ${params.providerTransactionId},
+              provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
               refund_status = 'PENDING_MANUAL_REFUND',
               refund_transaction_id = ${refundRef},
               updated_at = NOW()
@@ -694,7 +736,13 @@ export class BankVerificationRepository {
           reason: 'SENDER_BANK_UNVERIFIABLE',
           needsRefund: false,
           refundReference: refundRef,
-          transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_BANK_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+          transaction: {
+            ...lockedTx,
+            status: 'FAILED',
+            failure_reason: 'SENDER_BANK_UNVERIFIABLE',
+            refund_status: 'PENDING_MANUAL_REFUND',
+            provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+          },
           bankAccount: lockedAccount,
         };
       }
@@ -715,7 +763,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -726,7 +774,13 @@ export class BankVerificationRepository {
             reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -741,7 +795,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'SENDER_ACCOUNT_UNVERIFIABLE',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -752,7 +806,13 @@ export class BankVerificationRepository {
             reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'SENDER_ACCOUNT_UNVERIFIABLE',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -770,7 +830,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'SENDER_ACCOUNT_MASKED',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -781,7 +841,13 @@ export class BankVerificationRepository {
             reason: 'SENDER_ACCOUNT_MASKED',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_MASKED', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'SENDER_ACCOUNT_MASKED',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -798,7 +864,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'SENDER_ACCOUNT_MISMATCH',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -809,7 +875,13 @@ export class BankVerificationRepository {
             reason: 'SENDER_ACCOUNT_MISMATCH',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_ACCOUNT_MISMATCH', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'SENDER_ACCOUNT_MISMATCH',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -826,7 +898,7 @@ export class BankVerificationRepository {
             SET status = 'FAILED',
                 failure_reason = 'SENDER_BANK_MISMATCH',
                 received_amount = ${params.receivedAmount},
-                provider_transaction_id = ${params.providerTransactionId},
+                provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId}),
                 refund_status = 'PENDING_MANUAL_REFUND',
                 refund_transaction_id = ${refundRef},
                 updated_at = NOW()
@@ -837,7 +909,13 @@ export class BankVerificationRepository {
             reason: 'SENDER_BANK_MISMATCH',
             needsRefund: false,
             refundReference: refundRef,
-            transaction: { ...lockedTx, status: 'FAILED', failure_reason: 'SENDER_BANK_MISMATCH', refund_status: 'PENDING_MANUAL_REFUND' },
+            transaction: {
+              ...lockedTx,
+              status: 'FAILED',
+              failure_reason: 'SENDER_BANK_MISMATCH',
+              refund_status: 'PENDING_MANUAL_REFUND',
+              provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
+            },
             bankAccount: lockedAccount,
           };
         }
@@ -906,7 +984,7 @@ export class BankVerificationRepository {
           ...lockedTx,
           status: 'VERIFIED',
           received_amount: params.receivedAmount,
-          provider_transaction_id: params.providerTransactionId,
+          provider_transaction_id: lockedTx.provider_transaction_id || (params.orderCode ? String(params.orderCode) : params.providerTransactionId),
         },
         bankAccount: lockedAccount,
       };

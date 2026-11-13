@@ -69,6 +69,9 @@ async function runPhase5ReturnAndDepositPayoutSuite() {
     getPayout: async (ref: string) => {
       return mockPayoutResponse;
     },
+    getPayouts: async () => {
+      return { data: { payouts: [] } };
+    },
     createPayout: async (payload: any) => {
       return mockCreatePayoutResponse;
     },
@@ -814,7 +817,7 @@ async function runPhase5ReturnAndDepositPayoutSuite() {
               (ev.status === 'PENDING' || ev.status === 'PROCESSING') &&
               ev.next_attempt_at.getTime() <= simulatedNow
             ) {
-              return [ev];
+              return [{ ...ev }];
             }
             return [];
           }

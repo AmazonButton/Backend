@@ -1,5 +1,44 @@
 # Project Handoff & Session Context
 
+## 2026-11-13: Deep Resolution of 5 Audit Run-6 Core Nuances (Attempts Guard, Conflation Elimination, Obligation Snapshot Dispatch, Immutable OrderCode & Response Verification) (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 14/14 PASS, `tests/customer-refund-conflict-dispatch.spec.ts` 1/1 PASS, `tests/customer_bank_penny_deposit_e2e.spec.ts` 22/22 PASS, `tests/http-contract-validation.spec.ts` 20/20 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/bank-account-verification.spec.ts` 40/40 PASS).
+- **Remediated 5 Deep-Audit Invariants**:
+  1. **Outbox Retry Guard & Crash Recovery (`src/rentals/outbox-consumer.service.ts`)**:
+     - Corrected column access to `event.attempts` (selected from `outbox_events.attempts`, replacing undefined `event.attemptCount`).
+     - Evaluates `isRetryOrCrashRecovery = Number(event.attempts ?? 0) > 0 || event.status === 'PROCESSING'`.
+     - When pre-dispatch lookup on PayOS fails or returns indeterminate results, it strictly blocks new dispatch by throwing an error and preserving the outbox event for retry/reconciliation rather than issuing a duplicate payout.
+  2. **Strict Elimination of Technical ID vs Business Reference Conflation (`src/rentals/deposit-payout-verifier.ts`, `src/rentals/outbox-consumer.service.ts`)**:
+     - `matchesRefundCode` strictly evaluates `tRef === expectedRefundCode`; completely removed cross-matching `tId === expectedRefundCode`.
+     - `matchesProviderRef` strictly evaluates `tId === expectedProviderRef`; completely removed cross-matching `tRef === expectedProviderRef`.
+     - Pre-dispatch list lookup in outbox consumer strictly filters by `p?.referenceId === refund.refundCode`, never checking `p.id === refund.refundCode`.
+  3. **Inline Refund Dispatch from Obligation Snapshot (`src/bank-verification/bank-verification.service.ts`)**:
+     - `triggerAutomatedRefund` strictly dispatches from the claimed `StoreBankRefundObligation` snapshot: uses `Number(obligation.refundAmount)` (the exact received amount, e.g. 5.000đ on subsequent transfers) and decrypts `obligation.targetAccountEncrypted` with `obligation.targetBankBin` (the actual sender's bank details).
+     - Never falls back to session expected amount (2.000đ) or Store's registered bank account!
+     - Aborts auto-dispatch immediately if `obligation.refundStatus !== 'PENDING_REFUND'` (e.g. `PENDING_MANUAL_REFUND`) or if target account details are missing/null.
+  4. **Immutable Session orderCode Across ALL Branches (`src/bank-verification/bank-verification.repository.ts`)**:
+     - Applied `provider_transaction_id = COALESCE(bank_account_verification_transactions.provider_transaction_id, ${params.orderCode ? String(params.orderCode) : null}, ${params.providerTransactionId})` across ALL 14 database update branches in `executeAtomicWebhookVerificationTx` (EXPIRED, AMOUNT_MISMATCH, DESTINATION_ACCOUNT_UNVERIFIABLE, DESTINATION_BANK_UNVERIFIABLE, DESTINATION_ACCOUNT_MISMATCH, DESTINATION_BANK_MISMATCH, SENDER_ACCOUNT_UNVERIFIABLE, SENDER_BANK_UNVERIFIABLE, SENDER_ACCOUNT_MASKED, SENDER_ACCOUNT_MISMATCH, SENDER_BANK_MISMATCH, VERIFIED).
+     - Returned transaction object retains `lockedTx.provider_transaction_id || params.orderCode`. Inbound bank transaction reference is exclusively recorded in `store_bank_inbound_receipts.provider_transaction_id`.
+  5. **Response Signature & Combined HTTP Status / Business Code Verification (`src/payments/payos-payout.service.ts`)**:
+     - `estimateCredit`: Checks `checkResponseSignature` when `PAYOS_PAYOUT_ENFORCE_RESPONSE_SIGNATURE=true`, throwing `PayOSPayoutIndeterminateException` if missing or invalid.
+     - `estimateCredit`, `getPayout`, `getPayouts`, `createBatchPayout`, `createPayout`: Combines `!response.ok || resData?.code !== '00'` to classify rejections via `classifyRejection` across both HTTP transport status and provider business codes.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (0 type errors).
+  - `npm run build`: Exit code 0 (Clean production NestJS build).
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: 14/14 PASS (100%).
+  - `npx tsx tests/customer-refund-conflict-dispatch.spec.ts`: 1/1 PASS (100%).
+  - `npx tsx tests/customer_bank_penny_deposit_e2e.spec.ts`: 22/22 PASS (100%).
+  - `npx tsx tests/http-contract-validation.spec.ts`: 20/20 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`: 30/30 PASS (100%).
+  - `npx tsx tests/bank-account-verification.spec.ts`: 40/40 PASS (100%).
+- **Files Modified**:
+  - `src/bank-verification/bank-verification.service.ts`
+  - `src/bank-verification/bank-verification.repository.ts`
+  - `src/payments/payos-payout.service.ts`
+  - `src/rentals/deposit-payout-verifier.ts`
+  - `src/rentals/outbox-consumer.service.ts`
+  - `tests/audit-run6-payos-fixes.spec.ts`
+  - `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`
+
 ## 2026-11-13: Resolution of Audit Run-6 Findings (Store Webhook Boundary, Subsequent Transfer Accounting, Payout Classification & Recovery Contract) (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 9/9 PASS, `tests/customer-refund-conflict-dispatch.spec.ts` 1/1 PASS, `tests/customer_bank_penny_deposit_e2e.spec.ts` 22/22 PASS, `tests/http-contract-validation.spec.ts` 20/20 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/bank-account-verification.spec.ts` 40/40 PASS).
 - **Remediated Findings from Audit Run-6 (`REPORT.md` & `NEEDS-VALIDATION.md`)**:

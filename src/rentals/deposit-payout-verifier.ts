@@ -97,10 +97,10 @@ export function verifyDepositRefundPayoutEvidence(
     const tId = t.id ? String(t.id).trim() : '';
     const tRef = t.referenceId ? String(t.referenceId).trim() : t.reference ? String(t.reference).trim() : '';
 
-    // Business reference matches refundCode
-    const matchesRefundCode = Boolean(expectedRefundCode && (tRef === expectedRefundCode || tId === expectedRefundCode));
-    // Technical ID matches providerReferenceId
-    const matchesProviderRef = Boolean(expectedProviderRef && (tId === expectedProviderRef || tRef === expectedProviderRef));
+    // Business reference strictly matches refundCode (no cross-matching against technical tId)
+    const matchesRefundCode = Boolean(expectedRefundCode && tRef && tRef === expectedRefundCode);
+    // Technical ID strictly matches providerReferenceId (no cross-matching against business tRef)
+    const matchesProviderRef = Boolean(expectedProviderRef && tId && tId === expectedProviderRef);
 
     // If an explicit business reference is present and contradicts expectedRefundCode, reject
     if (expectedRefundCode && tRef && tRef !== expectedRefundCode) {

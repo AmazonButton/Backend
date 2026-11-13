@@ -589,16 +589,9 @@ export class BankVerificationService implements OnModuleInit {
     }
 
     if (txResult.alreadyProcessed) {
-      if (txResult.bankAccount && txResult.needsRefund) {
-        const refundAmount = Number(
-          (txResult.transaction as any)?.expected_amount ||
-          (txResult.transaction as any)?.expectedAmount ||
-          2000,
-        );
+      if (txResult.needsRefund && txResult.refundReference) {
         await this.triggerAutomatedRefund(
           txResult.transaction.id,
-          txResult.bankAccount,
-          refundAmount,
           txResult.refundReference,
         );
       }
@@ -609,16 +602,9 @@ export class BankVerificationService implements OnModuleInit {
     }
 
     // Hoàn tiền tự động ngay sau khi VERIFIED, hoặc khi retry mà nghĩa vụ chưa hoàn tất
-    if (txResult.bankAccount && (txResult.needsRefund || !txResult.alreadyProcessed)) {
-      const refundAmount = Number(
-        (txResult.transaction as any)?.expected_amount ||
-        (txResult.transaction as any)?.expectedAmount ||
-        2000,
-      );
+    if (txResult.needsRefund && txResult.refundReference) {
       await this.triggerAutomatedRefund(
         txResult.transaction.id,
-        txResult.bankAccount,
-        refundAmount,
         txResult.refundReference,
       );
     }
@@ -630,26 +616,44 @@ export class BankVerificationService implements OnModuleInit {
   }
 
   /**
-   * Kích hoạt lệnh hoàn tiền tự động theo số tiền đã xác minh (Không ghi nhận REFUNDED sớm)
+   * Kích hoạt lệnh hoàn tiền tự động từ snapshot của StoreBankRefundObligation đã claim.
+   * TUYỆT ĐỐI không lấy expected amount của phiên hay tài khoản Store đăng ký;
+   * BẮT BUỘC dispatch theo đúng refundAmount thực nhận và targetBankBin / targetAccountEncrypted của người gửi đã lưu trong obligation!
    */
   async triggerAutomatedRefund(
     transactionId: bigint,
-    bankAccount: any,
-    refundAmount?: number,
-    customRefundReference?: string,
+    refundReference?: string,
+    bankAccountFallback?: any,
+    refundAmountFallback?: number,
   ) {
-    const amountToRefund = refundAmount || Number(process.env.BANK_VERIFICATION_AMOUNT_VND || 2000);
-    const refundRef = customRefundReference || `REF_ST_${transactionId}`;
+    const refundRef = refundReference || `REF_ST_${transactionId}`;
 
     // Item D Fix: Store refund dual-path dispatch coordination.
     // Webhook inline dispatch MUST participate in the obligation lease protocol to prevent
     // competing dispatch ownership or conflicting state mutations with the scheduled worker.
     const obligation = await this.prisma.storeBankRefundObligation.findFirst({
       where: { refundReference: refundRef },
+      include: { receipt: true },
     });
 
     if (!obligation) {
       this.logger.warn(`Không tìm thấy obligation hoàn tiền cho mã ref ${refundRef}`);
+      return;
+    }
+
+    // Point B Fix: Chỉ tự động chi hoàn khi obligation ở trạng thái PENDING_REFUND
+    // Nếu là PENDING_MANUAL_REFUND (ví dụ thiếu sender, sender masked, hoặc sai thông tin), TUYỆT ĐỐI không auto-dispatch!
+    if (obligation.refundStatus !== 'PENDING_REFUND') {
+      this.logger.log(`Obligation #${obligation.id} (${refundRef}) có status=${obligation.refundStatus}, không tự động chi.`);
+      return;
+    }
+
+    // Lấy thông tin đích hoàn tiền từ snapshot của obligation (người gửi thực tế)
+    const targetEncrypted = obligation.targetAccountEncrypted || obligation.receipt?.senderAccountNumberEncrypted;
+    const targetBin = obligation.targetBankBin || obligation.receipt?.senderBankBin;
+
+    if (!targetEncrypted || !targetBin) {
+      this.logger.warn(`Obligation #${obligation.id} (${refundRef}) thiếu thông tin tài khoản đích của người gửi, không thể tự động chi.`);
       return;
     }
 
@@ -664,6 +668,30 @@ export class BankVerificationService implements OnModuleInit {
       return;
     }
 
+    const amountToRefund = Number(obligation.refundAmount);
+    let plainAccountNumber = '';
+    try {
+      plainAccountNumber = CryptoVaultUtil.decryptAccountNumber(targetEncrypted).trim();
+    } catch (e: any) {
+      await this.repository.recordObligationTerminalFailure(
+        obligation.id,
+        leaseToken,
+        null,
+        'Lỗi giải mã số tài khoản nhận tiền hoàn',
+      );
+      return;
+    }
+
+    if (!plainAccountNumber) {
+      await this.repository.recordObligationTerminalFailure(
+        obligation.id,
+        leaseToken,
+        null,
+        'Số tài khoản nhận tiền sau giải mã bị rỗng',
+      );
+      return;
+    }
+
     try {
       await this.repository.updateTransactionRefundStatus({
         transactionId,
@@ -671,20 +699,15 @@ export class BankVerificationService implements OnModuleInit {
         refundStatus: 'PROCESSING',
       });
 
-      const plainAccountNumber = CryptoVaultUtil.decryptAccountNumber(
-        bankAccount.account_number_encrypted,
-      ).trim();
-
       const refundResult = await this.provider.createRefund({
-        bankBin: bankAccount.bank_bin,
+        bankBin: targetBin,
         accountNumber: plainAccountNumber,
-        accountName: bankAccount.account_name,
         amount: amountToRefund,
         referenceId: refundRef,
-        description: `Hoan tiền xac minh tai khoan ${amountToRefund} VND`,
+        description: `Hoan tien xac minh tai khoan ${amountToRefund} VND`.slice(0, 50),
       });
 
-      if (refundResult.status === 'SUCCESS' || refundResult.status === 'PENDING_RECONCILIATION') {
+      if (['SUCCESS', 'PENDING', 'PENDING_RECONCILIATION'].includes(refundResult.status)) {
         await this.repository.updateTransactionRefundStatus({
           transactionId,
           status: 'REFUND_PENDING',

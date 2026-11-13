@@ -297,7 +297,7 @@ export class PayOSPayoutService implements OnModuleInit {
       );
     }
 
-    if (result?.code !== '00') {
+    if (!response.ok || result?.code !== '00') {
       throw this.classifyRejection(response.status, result);
     }
 
@@ -343,8 +343,19 @@ export class PayOSPayoutService implements OnModuleInit {
         { method: 'GET', headers: { 'x-client-id': clientId, 'x-api-key': apiKey } },
         8000,
       );
-      const result = await response.json();
-      if (result?.code !== '00') {
+      let result: any;
+      try {
+        result = await response.json();
+      } catch (err: any) {
+        if (PRE_DISPATCH_HTTP_STATUS.has(response.status)) {
+          throw new PayOSPayoutPreDispatchException(String(response.status), `PayOS từ chối tra cứu payout (HTTP ${response.status})`);
+        }
+        throw new PayOSPayoutIndeterminateException(
+          'INVALID_RESPONSE',
+          `Không đọc được phản hồi từ PayOS getPayout API (HTTP ${response.status})`,
+        );
+      }
+      if (!response.ok || result?.code !== '00') {
         throw this.classifyRejection(response.status, result);
       }
       return result;
@@ -403,8 +414,19 @@ export class PayOSPayoutService implements OnModuleInit {
         { method: 'GET', headers: { 'x-client-id': clientId, 'x-api-key': apiKey } },
         8000,
       );
-      const result = await response.json();
-      if (result?.code !== '00') {
+      let result: any;
+      try {
+        result = await response.json();
+      } catch (err: any) {
+        if (PRE_DISPATCH_HTTP_STATUS.has(response.status)) {
+          throw new PayOSPayoutPreDispatchException(String(response.status), `PayOS từ chối tra cứu danh sách payout (HTTP ${response.status})`);
+        }
+        throw new PayOSPayoutIndeterminateException(
+          'INVALID_RESPONSE',
+          `Không đọc được phản hồi từ PayOS getPayouts API (HTTP ${response.status})`,
+        );
+      }
+      if (!response.ok || result?.code !== '00') {
         throw this.classifyRejection(response.status, result);
       }
       return result;
@@ -484,7 +506,7 @@ export class PayOSPayoutService implements OnModuleInit {
       );
     }
 
-    if (resData?.code !== '00') {
+    if (!response.ok || resData?.code !== '00') {
       throw this.classifyRejection(response.status, resData);
     }
 
@@ -526,19 +548,29 @@ export class PayOSPayoutService implements OnModuleInit {
       );
     } catch (err: any) {
       this.logger.error(`PayOS estimateCredit error: ${err.message}`);
-      throw new InternalServerErrorException(`Lỗi kết nối tới PayOS Estimate Credit API: ${err.message}`);
+      throw new PayOSPayoutIndeterminateException(
+        'NETWORK_ERROR',
+        `Lỗi kết nối tới PayOS Estimate Credit API: ${err.message}`,
+      );
     }
 
     try {
       resData = await response.json();
     } catch (err: any) {
-      throw new PayOSPayoutPreDispatchException(String(response.status), 'Không đọc được phản hồi từ PayOS Estimate Credit API');
+      if (PRE_DISPATCH_HTTP_STATUS.has(response.status)) {
+        throw new PayOSPayoutPreDispatchException(String(response.status), 'PayOS từ chối yêu cầu ước tính phí');
+      }
+      throw new PayOSPayoutIndeterminateException(
+        'INVALID_RESPONSE',
+        `Không đọc được phản hồi từ PayOS Estimate Credit API (HTTP ${response.status})`,
+      );
     }
 
-    if (resData?.code !== '00') {
+    if (!response.ok || resData?.code !== '00') {
       throw this.classifyRejection(response.status, resData);
     }
 
+    this.checkResponseSignature(response, resData, checksumKey);
     return resData;
   }
 
