@@ -1,5 +1,30 @@
 # Project Handoff & Session Context
 
+## 2026-11-13: Resolution of Item F Recovery Indeterminate Payout Guard (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 17/17 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts` 5/5 PASS, `tests/phase3-queues-retry-dlq.spec.ts` 19/19 PASS).
+- **Core Invariant & Remediation**:
+  - **Issue**: In `src/rentals/outbox-consumer.service.ts`, when an event was in recovery (`status === 'PROCESSING'` or `attempts > 0`), if PayOS lookup returned a 200 OK response but with empty list (`matched.length === 0`), single match missing technical ID (`!matched[0]?.id`), or detail query returned missing/null data (`!detailRes?.data?.id`), `lookupFailed` remained `false`. The previous guard only evaluated `lookupFailed`, allowing unverified calls to fall through to `createPayout` and risking double-dispatch.
+  - **Remediation**:
+    - Disaggregated into 3 distinct operational states:
+      1. *Chưa từng gửi (Never sent)*: First attempt (`attempts === 0`, `status !== 'PROCESSING'`, no stored `providerReferenceId`). Proceeds safely to `createPayout`.
+      2. *Đã tìm thấy lệnh (Found existing payout)*: Authoritative `existingPayoutData.id` retrieved from PayOS. Reuses evidence without calling `createPayout`.
+      3. *Chưa xác định kết quả lần gửi trước (Indeterminate prior dispatch)*: Recovery state (`status === 'PROCESSING'` or `attempts > 0` or stored `providerReferenceId`) where `existingPayoutData` is missing due to network/API error, empty search list during crash recovery (`listEmpty && isCrashRecovery`), match lacking technical ID (`matchedMissingId`), or detail query lacking valid data (`detailMissingData`). Strictly throws error and preserves outbox event for retry/reconciliation; NEVER dispatches new payout.
+  - **Expanded Test Coverage (`tests/audit-run6-payos-fixes.spec.ts`)**:
+    - Added Test 4.2: Blocks `createPayout` on crash recovery when list is empty (`payouts: []`).
+    - Added Test 4.3: Blocks `createPayout` on recovery when matched payout lacks technical ID (`id: null`).
+    - Added Test 4.4: Blocks `createPayout` on recovery when detail query returns empty data (`data: null`).
+- **Verification Commands & Evidence**:
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: 17/17 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`: 30/30 PASS (100%).
+  - `npx tsx tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts`: 5/5 PASS (100%).
+  - `npx tsx tests/phase3-queues-retry-dlq.spec.ts`: 19/19 PASS (100%).
+  - `npm run build`: Exit code 0 (Clean NestJS build).
+- **Files Modified**:
+  - `src/rentals/outbox-consumer.service.ts`
+  - `tests/audit-run6-payos-fixes.spec.ts`
+  - `SESSION_HANDOFF.md`
+
+
 ## 2026-11-13: CI/CD Pipeline Resolution - Suite 48 Test Fixture & Suite 38 Timing Jitter Hardening (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts` 5/5 PASS, `tests/phase3-queues-retry-dlq.spec.ts` 19/19 PASS, `tests/audit-run6-payos-fixes.spec.ts` 14/14 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS).
 - **Root Cause & Fixes**:

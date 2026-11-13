@@ -286,17 +286,36 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
           throw new Error('Dịch vụ chi hộ PayOSPayoutService chưa sẵn sàng');
         }
 
-        // NV-16 Invariant: Kiểm tra idempotent trên PayOS theo refundCode trước khi dispatch mới để chống chi trùng khi crash retry
+        // NV-16 Invariant: Phân biệt rõ 3 trạng thái:
+        // 1. CHƯA TỪNG GỬI (Never sent): attempts = 0, status != 'PROCESSING', chưa có providerReferenceId.
+        // 2. ĐÃ TÌM THẤY LỆNH (Found existing payout order): existingPayoutData hợp lệ có data.id -> dùng lại bằng chứng, không gọi createPayout.
+        // 3. CHƯA XÁC ĐỊNH KẾT QUẢ LẦN GỬI TRƯỚC (Indeterminate prior dispatch during retry/recovery):
+        //    - Tra cứu bị lỗi mạng/API (lookupFailed), HOẶC
+        //    - Đã có providerReferenceId nhưng tra cứu không lấy được data.id, HOẶC
+        //    - Tìm thấy theo refundCode nhưng kết quả thiếu id kỹ thuật, HOẶC
+        //    - Tìm thấy theo id nhưng getPayout detail thiếu data/id, HOẶC
+        //    - Đang trong luồng phục hồi sau sự cố/crash (status === 'PROCESSING') nhưng danh sách rỗng (matched.length === 0).
+        //    -> Trong tất cả trường hợp này: Ném ngoại lệ giữ trạng thái để đối soát, TUYỆT ĐỐI KHÔNG GỌI createPayout!
         let existingPayoutData: any = null;
         let lookupFailed = false;
+        let matchedMissingId = false;
+        let detailMissingData = false;
+        let listEmpty = false;
 
-        if (refund.providerReferenceId) {
+        const hasStoredProviderRef = Boolean(refund.providerReferenceId || lockedRefund.provider_reference_id);
+        const storedProviderRef = (refund.providerReferenceId || lockedRefund.provider_reference_id)?.toString().trim();
+
+        if (storedProviderRef) {
           try {
-            const pRes = await this.payosPayoutService.getPayout(refund.providerReferenceId);
-            if (pRes?.data) existingPayoutData = pRes.data;
+            const pRes = await this.payosPayoutService.getPayout(storedProviderRef);
+            if (pRes?.data?.id) {
+              existingPayoutData = pRes.data;
+            } else {
+              detailMissingData = true;
+            }
           } catch (lookupErr: any) {
             lookupFailed = true;
-            this.logger.warn(`[OutboxConsumer] Tra cứu payout theo providerReferenceId ${refund.providerReferenceId} thất bại: ${lookupErr?.message}`);
+            this.logger.warn(`[OutboxConsumer] Tra cứu payout theo providerReferenceId ${storedProviderRef} thất bại: ${lookupErr?.message}`);
           }
         }
 
@@ -312,9 +331,25 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
               this.logger.error(`[OutboxConsumer] Phát hiện nhiều payout trùng mã reference ${refund.refundCode} trên PayOS`);
               throw new Error(`Phát hiện nhiều payout trùng mã tham chiếu ${refund.refundCode} trên PayOS, cần đối soát thủ công`);
             }
-            if (matched.length === 1 && matched[0]?.id) {
-              const detailRes = await this.payosPayoutService.getPayout(String(matched[0].id).trim());
-              if (detailRes?.data) existingPayoutData = detailRes.data;
+            if (matched.length === 1) {
+              const matchedId = matched[0]?.id ? String(matched[0].id).trim() : null;
+              if (!matchedId) {
+                matchedMissingId = true;
+              } else {
+                try {
+                  const detailRes = await this.payosPayoutService.getPayout(matchedId);
+                  if (detailRes?.data?.id) {
+                    existingPayoutData = detailRes.data;
+                  } else {
+                    detailMissingData = true;
+                  }
+                } catch (detailErr: any) {
+                  lookupFailed = true;
+                  this.logger.warn(`[OutboxConsumer] Tra cứu chi tiết payout theo ID ${matchedId} thất bại: ${detailErr?.message}`);
+                }
+              }
+            } else {
+              listEmpty = true;
             }
           } catch (lookupErr: any) {
             lookupFailed = true;
@@ -326,10 +361,28 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
         // Nếu outbox event đang retry (attempts > 0) hoặc recovery sau crash (status === 'PROCESSING'),
         // mà tra cứu trạng thái trên PayOS thất bại hoặc không rõ kết quả, TUYỆT ĐỐI không gọi createPayout mù quáng.
         const previousAttempts = Number(event.attempts ?? 0);
-        const isRetryOrCrashRecovery = previousAttempts > 0 || event.status === 'PROCESSING';
+        const isCrashRecovery = event.status === 'PROCESSING';
+        const isRetry = previousAttempts > 0;
+        const isRetryOrCrashRecovery = isRetry || isCrashRecovery || hasStoredProviderRef;
 
-        if (!existingPayoutData && isRetryOrCrashRecovery && lookupFailed) {
-          throw new Error(`Yêu cầu hoàn cọc #${refundId} đang trong luồng retry/recovery (attempts=${previousAttempts}, status=${event.status}) nhưng tra cứu trạng thái trên PayOS thất bại. Giữ trạng thái để đối soát, không dispatch mới.`);
+        // Phân định rõ trạng thái 3: Chưa xác định kết quả lần gửi trước -> Chặn createPayout!
+        if (!existingPayoutData && isRetryOrCrashRecovery) {
+          let indeterminateReason = '';
+          if (lookupFailed) {
+            indeterminateReason = 'tra cứu trạng thái trên PayOS thất bại hoặc gặp lỗi kết nối';
+          } else if (hasStoredProviderRef) {
+            indeterminateReason = `đã có providerReferenceId (${storedProviderRef}) nhưng không lấy được chi tiết hợp lệ`;
+          } else if (matchedMissingId) {
+            indeterminateReason = 'tìm thấy payout theo mã tham chiếu nhưng kết quả thiếu id kỹ thuật từ cổng';
+          } else if (detailMissingData) {
+            indeterminateReason = 'tìm thấy payout nhưng phản hồi chi tiết thiếu dữ liệu hợp lệ';
+          } else if (listEmpty && isCrashRecovery) {
+            indeterminateReason = 'đang phục hồi sau sự cố gián đoạn (status=PROCESSING) nhưng chưa có bằng chứng chi trả được xác nhận trên PayOS';
+          }
+
+          if (indeterminateReason) {
+            throw new Error(`Yêu cầu hoàn cọc #${refundId} đang trong luồng retry/recovery (attempts=${previousAttempts}, status=${event.status}) nhưng ${indeterminateReason}. Giữ trạng thái để đối soát, không dispatch mới.`);
+          }
         }
 
         let payoutResult: any = null;

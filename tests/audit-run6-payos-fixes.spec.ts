@@ -327,6 +327,230 @@ async function runAuditRun6Tests() {
     assert(!createPayoutCalled, 'createPayout must NEVER be called when prior attempt cannot be verified');
   });
 
+  await test('4.2 [Item F] OutboxConsumer blocks createPayout on crash recovery when list is empty (danh sách rỗng)', async () => {
+    const { OutboxConsumerService } = await import('../src/rentals/outbox-consumer.service');
+
+    let createPayoutCalled = false;
+    const mockPayosService = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => ({
+        code: '00',
+        data: { payouts: [] }, // Danh sách rỗng trên PayOS!
+      }),
+      createPayout: async () => {
+        createPayoutCalled = true;
+        return { data: { id: 'payout_new_456' } };
+      },
+    };
+
+    const encValid = CryptoVaultUtil.encryptAccountNumber('12345678');
+    const hashValid = CryptoVaultUtil.computeDeterministicAccountHash('12345678');
+    const mockPrisma = {
+      $transaction: async (cb: any) => cb({
+        $queryRawUnsafe: async () => [{
+          refund_id: BigInt(5002),
+          status: 'PENDING_PAYOUT',
+          provider_reference_id: null,
+          refund_code: 'REF_DP_5002',
+          amount: 50000,
+          recipient_bin: '970422',
+          recipient_account_number_encrypted: encValid,
+          recipient_account_number_hash: hashValid,
+          recipient_account_holder_name: 'NGUYEN VAN A',
+          recipient_account_number_masked: '******78',
+        }],
+      }),
+      depositRefund: {
+        findUnique: async () => ({
+          refundId: BigInt(5002),
+          status: 'PENDING_PAYOUT',
+          refundCode: 'REF_DP_5002',
+          amount: 50000,
+          recipientBin: '970422',
+          recipientAccountNumberEncrypted: encValid,
+          recipientAccountNumberHash: hashValid,
+          recipientAccountHolderName: 'NGUYEN VAN A',
+          recipientAccountNumberMasked: '******78',
+        }),
+      },
+    };
+
+    const consumer = new OutboxConsumerService(mockPrisma as any, {} as any, {} as any, mockPayosService as any);
+    const crashedEvent = {
+      id: BigInt(9902),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5002' },
+      attempts: 0,
+      status: 'PROCESSING', // Crash recovery fingerprint!
+      claimToken: 'lease_token_crash',
+    };
+
+    let caughtError: any = null;
+    try {
+      await (consumer as any).handleSingleEvent(crashedEvent);
+    } catch (e) {
+      caughtError = e;
+    }
+
+    assert(caughtError !== null, 'Must throw error when recovering crashed event with empty payout list');
+    assert(caughtError.message.includes('chưa có bằng chứng chi trả được xác nhận trên PayOS'), `Expected crash recovery guard error, got: ${caughtError.message}`);
+    assert(!createPayoutCalled, 'createPayout must NEVER be called when crash recovery yields empty search list');
+  });
+
+  await test('4.3 [Item F] OutboxConsumer blocks createPayout on recovery when matched payout lacks technical ID (kết quả thiếu id)', async () => {
+    const { OutboxConsumerService } = await import('../src/rentals/outbox-consumer.service');
+
+    let createPayoutCalled = false;
+    const mockPayosService = {
+      getPayout: async () => ({ code: '00', data: null }),
+      getPayouts: async () => ({
+        code: '00',
+        data: {
+          payouts: [
+            {
+              referenceId: 'REF_DP_5003',
+              id: null, // Thiếu id kỹ thuật!
+            },
+          ],
+        },
+      }),
+      createPayout: async () => {
+        createPayoutCalled = true;
+        return { data: { id: 'payout_new_789' } };
+      },
+    };
+
+    const encValid = CryptoVaultUtil.encryptAccountNumber('12345678');
+    const hashValid = CryptoVaultUtil.computeDeterministicAccountHash('12345678');
+    const mockPrisma = {
+      $transaction: async (cb: any) => cb({
+        $queryRawUnsafe: async () => [{
+          refund_id: BigInt(5003),
+          status: 'PENDING_PAYOUT',
+          provider_reference_id: null,
+          refund_code: 'REF_DP_5003',
+          amount: 50000,
+          recipient_bin: '970422',
+          recipient_account_number_encrypted: encValid,
+          recipient_account_number_hash: hashValid,
+          recipient_account_holder_name: 'NGUYEN VAN A',
+          recipient_account_number_masked: '******78',
+        }],
+      }),
+      depositRefund: {
+        findUnique: async () => ({
+          refundId: BigInt(5003),
+          status: 'PENDING_PAYOUT',
+          refundCode: 'REF_DP_5003',
+          amount: 50000,
+          recipientBin: '970422',
+          recipientAccountNumberEncrypted: encValid,
+          recipientAccountNumberHash: hashValid,
+          recipientAccountHolderName: 'NGUYEN VAN A',
+          recipientAccountNumberMasked: '******78',
+        }),
+      },
+    };
+
+    const consumer = new OutboxConsumerService(mockPrisma as any, {} as any, {} as any, mockPayosService as any);
+    const retriedEvent = {
+      id: BigInt(9903),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5003' },
+      attempts: 1,
+      status: 'PROCESSING',
+      claimToken: 'lease_token_missing_id',
+    };
+
+    let caughtError: any = null;
+    try {
+      await (consumer as any).handleSingleEvent(retriedEvent);
+    } catch (e) {
+      caughtError = e;
+    }
+
+    assert(caughtError !== null, 'Must throw error when matched payout lacks technical ID');
+    assert(caughtError.message.includes('thiếu id kỹ thuật từ cổng'), `Expected missing ID guard error, got: ${caughtError.message}`);
+    assert(!createPayoutCalled, 'createPayout must NEVER be called when matched payout is missing technical id');
+  });
+
+  await test('4.4 [Item F] OutboxConsumer blocks createPayout on recovery when detail query returns empty/null data (detail thiếu data)', async () => {
+    const { OutboxConsumerService } = await import('../src/rentals/outbox-consumer.service');
+
+    let createPayoutCalled = false;
+    const mockPayosService = {
+      getPayout: async () => ({ code: '00', data: null }), // Detail query returns null data!
+      getPayouts: async () => ({
+        code: '00',
+        data: {
+          payouts: [
+            {
+              id: 'PAYOUT_TECH_999',
+              referenceId: 'REF_DP_5004',
+            },
+          ],
+        },
+      }),
+      createPayout: async () => {
+        createPayoutCalled = true;
+        return { data: { id: 'payout_new_000' } };
+      },
+    };
+
+    const encValid = CryptoVaultUtil.encryptAccountNumber('12345678');
+    const hashValid = CryptoVaultUtil.computeDeterministicAccountHash('12345678');
+    const mockPrisma = {
+      $transaction: async (cb: any) => cb({
+        $queryRawUnsafe: async () => [{
+          refund_id: BigInt(5004),
+          status: 'PENDING_PAYOUT',
+          provider_reference_id: null,
+          refund_code: 'REF_DP_5004',
+          amount: 50000,
+          recipient_bin: '970422',
+          recipient_account_number_encrypted: encValid,
+          recipient_account_number_hash: hashValid,
+          recipient_account_holder_name: 'NGUYEN VAN A',
+          recipient_account_number_masked: '******78',
+        }],
+      }),
+      depositRefund: {
+        findUnique: async () => ({
+          refundId: BigInt(5004),
+          status: 'PENDING_PAYOUT',
+          refundCode: 'REF_DP_5004',
+          amount: 50000,
+          recipientBin: '970422',
+          recipientAccountNumberEncrypted: encValid,
+          recipientAccountNumberHash: hashValid,
+          recipientAccountHolderName: 'NGUYEN VAN A',
+          recipientAccountNumberMasked: '******78',
+        }),
+      },
+    };
+
+    const consumer = new OutboxConsumerService(mockPrisma as any, {} as any, {} as any, mockPayosService as any);
+    const retriedEvent = {
+      id: BigInt(9904),
+      event_type: 'DEPOSIT_REFUND_APPROVED',
+      payload: { refundId: '5004' },
+      attempts: 1,
+      status: 'PROCESSING',
+      claimToken: 'lease_token_missing_detail',
+    };
+
+    let caughtError: any = null;
+    try {
+      await (consumer as any).handleSingleEvent(retriedEvent);
+    } catch (e) {
+      caughtError = e;
+    }
+
+    assert(caughtError !== null, 'Must throw error when detail query returns empty data');
+    assert(caughtError.message.includes('chi tiết thiếu dữ liệu hợp lệ'), `Expected missing detail data guard error, got: ${caughtError.message}`);
+    assert(!createPayoutCalled, 'createPayout must NEVER be called when detail query returns empty data');
+  });
+
   // ---------------------------------------------------------------------------
   // 5. Item B: Store Inline Refund Dispatch from Claimed Obligation Snapshot
   // ---------------------------------------------------------------------------
