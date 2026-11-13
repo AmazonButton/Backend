@@ -33,7 +33,7 @@
     - Added Test 4.7 with 3 test cases:
       1. `data: null` -> Throws lookup error, blocks dispatch (`createPayout` not called).
       2. `data: {}` -> Throws lookup error, blocks dispatch (`createPayout` not called).
-      3. `code: '99'` -> Throws lookup error, blocks dispatch (`createPayout` not called).
+      3. `code: '99'` với `data: { payouts: [] }` (shape danh sách hợp lệ) -> Throws lookup error từ chối business error code độc lập với shape check, blocks dispatch (`createPayout` không được gọi).
 - **Verification Commands & Evidence**:
   - `GitHub Actions CI/CD Pipeline`: **Run ID 43454019941 SUCCESS (100% Green)**.
     - `🛡️ Code Quality & Build`: PASSED (50s).

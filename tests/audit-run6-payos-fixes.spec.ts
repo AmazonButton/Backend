@@ -846,14 +846,14 @@ async function runAuditRun6Tests() {
     assert(caughtErrorEmptyObj.message.includes('tra cứu trạng thái trên PayOS thất bại hoặc gặp lỗi kết nối'), `Expected fail error, got: ${caughtErrorEmptyObj.message}`);
     assert(!createPayoutCalledEmptyObjCase, 'createPayout must NEVER be called when getPayouts returns data: {}');
 
-    // Ca 3: code != '00' (ví dụ code: '99')
+    // Ca 3: code != '00' (ví dụ code: '99') với data có shape payouts: [] hợp lệ để chứng minh độc lập việc từ chối business code lỗi
     let createPayoutCalledErrorCodeCase = false;
     const mockPayosLookupErrorCode = {
       getPayout: async () => ({ code: '00', data: null }),
       getPayouts: async () => ({
         code: '99',
         desc: 'Gateway internal timeout',
-        data: null,
+        data: { payouts: [] },
       }),
       createPayout: async () => {
         createPayoutCalledErrorCodeCase = true;
