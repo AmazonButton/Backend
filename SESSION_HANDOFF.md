@@ -1,7 +1,11 @@
 # Project Handoff & Session Context
 
-## 2026-11-14: Multi-bank CITAD/BIN snapshot and frontend verification readiness
-- Status: Implemented and verified locally. Supersedes the TPBank-only scope below. Working-tree changes have not been committed, pushed or deployed by this task.
+## 2026-11-14: Multi-bank CITAD/BIN snapshot and frontend verification readiness (COMMITTED, PUSHED & DEPLOYED)
+- **Status**: COMPLETED, COMMITTED & 100% VERIFIED LIVE (Commit `a3ec218`, GitHub Actions CI/CD Run ID `43478566467` 100% Green, All 78 Suites Passed, Live deployed across all 3 production instances).
+- **Deployment Status Across 3 Live Production Instances (Commit `a3ec218`)**:
+  - **Render Node-1 (Primary)** (`https://backend-fae8.onrender.com`): 🟢 LIVE (Commit `a3ec218`), `/readyz` HTTP 200 READY.
+  - **Render Node-2 (Secondary)** (`https://backend-node2-ukib.onrender.com`): 🟢 LIVE (Commit `a3ec218`), `/readyz` HTTP 200 READY.
+  - **AWS Node-3 (EC2 Sydney)** (`3.25.136.6`): 🟢 ONLINE (Commit `a3ec218`), PM2 reload successful (`backend-node3` online), `/readyz` HTTP 200 READY.
 - Catalogue: src/common/utils/bank-citad-catalog.ts contains 2,975 exact CITAD branch codes for 63 bank identities, cross-referenced with the VietQR BIN snapshot retrieved 2026-11-14. Financial/leasing subsidiaries and unresolved institutions are excluded. Runtime does not infer prefixes, merge digital brands into parent banks, or make network calls to resolve bank identifiers.
 - Sources: https://www.uob.com.vn/assets/web-resources/business/pdf/vi/uobv-citad-code-of-all-branches.pdf (Full CITAD Code List, May 2026); https://api.vietqr.io/v2/banks . Parsing used an external tooling directory; no PDF parser dependency was added to the application.
 - Changes: Shared normalization accepts only known BINs and exact listed aliases. Customer raw receipt evidence is retained; comparisons/deduplication and refund targets use canonical identities. Unknown identifiers keep Customer verification pending source evidence. Store unknown sender identifiers record receipt/manual refund liability while keeping verification PENDING with SENDER_BANK_UNVERIFIABLE, rather than claiming a bank mismatch. Store destination comparisons recognize equivalent identifiers too.
