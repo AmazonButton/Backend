@@ -2,6 +2,7 @@ import { CryptoVaultUtil } from '../../common/utils/crypto-vault.util';
 
 export interface WalletResponseDto {
   bankAccount: {
+    id: string;
     bankName: string;
     bankBin: string;
     accountNumber: string;
@@ -70,6 +71,7 @@ export class WalletMapper {
 
     return {
       bankAccount: account && accountMasked ? {
+        id: account.id.toString(),
         bankName: account.bankName,
         bankBin: account.bankBin,
         accountNumber: accountMasked,

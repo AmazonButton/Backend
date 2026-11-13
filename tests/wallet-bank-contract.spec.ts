@@ -26,7 +26,7 @@ async function run() {
         findUnique: async () => oldBin ? { bankBin: oldBin, verificationStatus: 'OWNERSHIP_VERIFIED' } : null,
         upsert: async (args: any) => {
           upsert = args;
-          return { ...args.create, verificationStatus: oldBin && oldBin === body.bankBin ? 'OWNERSHIP_VERIFIED' : 'PENDING' };
+          return { id: 1n, ...args.create, verificationStatus: oldBin && oldBin === body.bankBin ? 'OWNERSHIP_VERIFIED' : 'PENDING' };
         },
       },
       storeWallet: { update: async ({ data }: any) => ({ ...data, walletId: 1n, storeId: 1n }) },

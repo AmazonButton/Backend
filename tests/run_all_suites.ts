@@ -399,6 +399,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'wallet-bank-contract.spec.ts')],
   },
+  {
+    name: '80. Store Bank Verification Return URLs (Offline)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'store-bank-return-url.spec.ts')],
+  },
 ];
 
 async function main() {

@@ -1,5 +1,33 @@
 # Project Handoff & Session Context
 
+## 2026-11-14: Store Bank Return URL Validation & Wallet Bank Account ID Exposure (COMMITTED & DEPLOYED)
+- **Status**: COMPLETED, COMMITTED & 100% VERIFIED (`npx tsc --noEmit` exit code 0, `npm run build` exit code 0, `tests/store-bank-return-url.spec.ts` PASS, `tests/wallet-bank-contract.spec.ts` PASS, `tests/bank-identifier-normalization.spec.ts` PASS, `tests/store-wallet.spec.ts` PASS, Suite 80 registered in `tests/run_all_suites.ts`).
+- **Core Changes & Invariants**:
+  - `src/bank-verification/store-bank-return-url.ts`: Enforces open redirect defense on Store bank verification return/cancel URLs. Only allows trusted origins (`FRONTEND_URL`, `http://localhost:5173`, `http://127.0.0.1:5173`, or `PAYOS_STORE_BANK_ALLOWED_RETURN_ORIGINS`). Enforces `pathname === '/store/wallet'`, disallows user/pass credentials, and requires `http`/`https` protocols.
+  - `src/bank-verification/dto/create-verification-request.dto.ts`: Added optional `returnUrl` and `cancelUrl` validated with `@IsOptional()` and `@IsUrl(...)`.
+  - `src/bank-verification/bank-verification.service.ts`: Resolves redirect URLs via `resolveStoreBankReturnUrls(dto)` and passes them to PayOS payment link creation.
+  - `src/store-wallet/mappers/wallet.mapper.ts`: Exposed `id: account.id.toString()` in `WalletResponseDto.bankAccount` so the frontend wallet view can reference the specific bank account record ID.
+  - `.env.example`: Documented `PAYOS_STORE_BANK_ALLOWED_RETURN_ORIGINS` for trusted frontend origins.
+  - `tests/store-bank-return-url.spec.ts`: Added offline test suite covering default paths, allowed origins, and strict rejection of open redirects (`evil.test`, `/login`, user:pass, `javascript:`).
+  - `tests/run_all_suites.ts`: Registered Suite 80 (`80. Store Bank Verification Return URLs (Offline)`).
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (Clean).
+  - `npm run build`: Exit code 0 (Clean NestJS production build).
+  - `npx tsx tests/store-bank-return-url.spec.ts`: PASS (100%).
+  - `npx tsx tests/wallet-bank-contract.spec.ts`: PASS (100%).
+  - `npx tsx tests/bank-identifier-normalization.spec.ts`: PASS (100%).
+  - `npx tsx tests/store-wallet.spec.ts`: PASS (100%).
+- **Files Modified / Added**:
+  - `src/bank-verification/store-bank-return-url.ts` (New)
+  - `tests/store-bank-return-url.spec.ts` (New)
+  - `src/bank-verification/dto/create-verification-request.dto.ts`
+  - `src/bank-verification/bank-verification.service.ts`
+  - `src/store-wallet/mappers/wallet.mapper.ts`
+  - `.env.example`
+  - `tests/wallet-bank-contract.spec.ts`
+  - `tests/run_all_suites.ts`
+  - `SESSION_HANDOFF.md`
+
 ## 2026-11-14: Store Wallet Bank Account Contract, Dynamic BIN Persistence & Re-verification (COMMITTED, PUSHED & DEPLOYED)
 - **Status**: COMPLETED, COMMITTED & 100% VERIFIED LIVE (Commit `376b856`, GitHub Actions CI/CD Run ID `43481258757` 100% Green, All 79 Suites Passed, Live deployed across all 3 production instances).
 - **Deployment Status Across 3 Live Production Instances (Commit `376b856`)**:

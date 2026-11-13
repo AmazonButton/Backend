@@ -5,10 +5,19 @@ import {
   Matches,
   MinLength,
   MaxLength,
+  IsUrl,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateVerificationRequestDto {
+  @IsOptional()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'], require_protocol: true })
+  returnUrl?: string;
+
+  @IsOptional()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'], require_protocol: true })
+  cancelUrl?: string;
+
   @ApiProperty({
     description: 'Mã định danh Store',
     example: '1',

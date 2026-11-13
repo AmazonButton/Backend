@@ -1,4 +1,5 @@
 import { normalizeBankBin } from '../common/utils/bank-identifier.util';
+import { resolveStoreBankReturnUrls } from './store-bank-return-url';
 import {
   Injectable,
   Logger,
@@ -129,6 +130,7 @@ export class BankVerificationService implements OnModuleInit {
    * Tạo yêu cầu xác minh tài khoản ngân hàng chính chủ bằng 2.000 VND
    */
   async createVerificationRequest(userId: bigint, dto: CreateVerificationRequestDto, userRole?: string) {
+    const redirectUrls = resolveStoreBankReturnUrls(dto);
     const rawStoreId = BigInt(dto.storeId);
 
     // 1. Kiểm tra quyền sở hữu Store (chỉ OWNER hoặc ADMIN)
@@ -202,9 +204,7 @@ export class BankVerificationService implements OnModuleInit {
     if (clientId && apiKey && checksumKey) {
       try {
         const orderCodeNum = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
-        const frontendOrigin = process.env.FRONTEND_URL || 'https://buttontdash.vercel.app';
-        const returnUrl = process.env.PAYOS_STORE_BANK_RETURN_URL || `${frontendOrigin}/store/finance?status=success`;
-        const cancelUrl = process.env.PAYOS_STORE_BANK_CANCEL_URL || `${frontendOrigin}/store/finance?status=cancelled`;
+        const { returnUrl, cancelUrl } = redirectUrls;
         // Issue 7 Fix: PayOS non-integrated bank channel description limit is 9 chars.
         // Store referenceCode (VERIFY_XXXX) is 11+ chars which exceeds the limit.
         // Session identification now relies on stored DB IDs (orderCode/paymentLinkId), NOT description parsing (Issue 3 fix).
