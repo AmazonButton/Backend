@@ -1004,6 +1004,11 @@ async function runDeepFixesTestSuite() {
     let savedBankAccountId: any = null;
 
     const mockPayosPayout: any = {
+      getPayouts: async () => ({
+        code: '00',
+        desc: 'success',
+        data: { payouts: [] },
+      }),
       createPayout: async () => {
         payoutCalled = true;
         return {
@@ -1520,6 +1525,11 @@ async function runDeepFixesTestSuite() {
       },
     };
     const mockPayosPayoutR02_2c: any = {
+      getPayouts: async () => ({
+        code: '00',
+        desc: 'success',
+        data: { payouts: [] },
+      }),
       createPayout: async () => ({
         code: '00',
         desc: 'success',
@@ -1599,6 +1609,11 @@ async function runDeepFixesTestSuite() {
 
     let payoutAttempted = false;
     const mockPayosPayout: any = {
+      getPayouts: async () => ({
+        code: '00',
+        desc: 'success',
+        data: { payouts: [] },
+      }),
       createPayout: async () => {
         payoutAttempted = true;
         return { code: '00' };

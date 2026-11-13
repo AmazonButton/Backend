@@ -1,5 +1,26 @@
 # Project Handoff & Session Context
 
+## 2026-11-13: Resolution of Suite 50 Mock Alignment with Strict Dispatch Authority (COMPLETED & 100% VERIFIED)
+- **Status**: COMPLETED & 100% VERIFIED (`npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 19/19 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, Suite 50 R02 test cases PASSED).
+- **Issue**:
+  - In GitHub Actions CI Run `43442499075`, Suite 50 (`tests/platform-button-rental-deep-fixes-verification.spec.ts`) failed on 2 assertions in Test R02:
+    - `✖ [FAIL] R02: Worker thực sự gọi PayOSPayoutService với payload chi trả`
+    - `✖ [FAIL] R02: Worker chốt snapshot tài khoản nhận VERIFIED vào deposit_refunds`
+  - Cause: With the introduction of the strict `canCreate = !isRetryOrCrashRecovery && listEmpty && !lookupFailed && !matchedMissingId && !detailMissingData` gate in `OutboxConsumerService.processDepositRefund`, `this.payosPayoutService.getPayouts()` is unconditionally invoked on clean first attempts to verify that no duplicate/orphaned payouts exist. In `tests/platform-button-rental-deep-fixes-verification.spec.ts`, `mockPayosPayout` only defined `createPayout` and omitted `getPayouts`, causing `getPayouts is not a function`, setting `lookupFailed = true`, and correctly preventing dispatch under fail-closed security invariants.
+- **Remediation**:
+  - Updated `tests/platform-button-rental-deep-fixes-verification.spec.ts`:
+    - In Test R02 (line 1006), added `getPayouts: async () => ({ code: '00', desc: 'success', data: { payouts: [] } })` to `mockPayosPayout`.
+    - In Test R02.2c (line 1525), added `getPayouts: async () => ({ code: '00', desc: 'success', data: { payouts: [] } })` to `mockPayosPayoutR02_2c`.
+    - In Test R02.4 (line 1609), added `getPayouts: async () => ({ code: '00', desc: 'success', data: { payouts: [] } })` to `mockPayosPayout`.
+- **Verification Commands & Evidence**:
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: 19/19 PASS (100%).
+  - `npx tsx tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`: 30/30 PASS (100%).
+  - `npm run build`: Exit code 0 (Clean NestJS production build).
+  - Suite 50 R02 tests: Verified `payoutCalled === true` and `savedBankAccountId === BigInt(888)`.
+- **Files Modified**:
+  - `tests/platform-button-rental-deep-fixes-verification.spec.ts`
+  - `SESSION_HANDOFF.md`
+
 ## 2026-11-13: Resolution of Item F Direct Dispatch Authority & Retry PENDING Empty List Guard (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 19/19 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts` 5/5 PASS, `tests/phase3-queues-retry-dlq.spec.ts` 19/19 PASS).
 - **Core Invariant & Direct Dispatch Authority (`canCreate`)**:
