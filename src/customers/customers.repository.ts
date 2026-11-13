@@ -1,3 +1,4 @@
+import { normalizeBankBin, bankEvidenceKey, bankBinsMatch } from '../common/utils/bank-identifier.util';
 import { Injectable, Inject, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
@@ -1174,7 +1175,7 @@ export class CustomersRepository {
         }
 
         // e) ĐỐI CHIẾU TÀI KHOẢN NGUỒN (nếu observation có thông tin)
-        if (params.sourceBankBin && obs.source_bank_bin && obs.source_bank_bin !== params.sourceBankBin) {
+        if (params.sourceBankBin && obs.source_bank_bin && bankEvidenceKey(obs.source_bank_bin) !== bankEvidenceKey(params.sourceBankBin)) {
           throw new ConflictException(
             `Mã BIN nguồn của quan sát #${obs.id} (${obs.source_bank_bin}) mâu thuẫn với chứng từ xác nhận (${params.sourceBankBin})`,
           );
@@ -1208,7 +1209,7 @@ export class CustomersRepository {
         // So sánh các thuộc tính bất biến của existingInbound
         const isAmountMatch = Number(existingInbound.amount) === amountNum;
         const isSessionMatch = existingInbound.proofId?.toString() === params.sessionId.toString();
-        const isBinMatch = (existingInbound.sourceBankBin || null) === (params.sourceBankBin || null);
+        const isBinMatch = bankEvidenceKey(existingInbound.sourceBankBin) === bankEvidenceKey(params.sourceBankBin);
         const isAccountMatch = (existingInbound.sourceAccountHash || null) === (params.sourceAccountHash || null);
 
         if (!isAmountMatch || !isSessionMatch || !isBinMatch || !isAccountMatch) {
@@ -1279,11 +1280,11 @@ export class CustomersRepository {
       const isExactPolicyAmount = amountNum === 2000;
       const isAccountUnverified = lockedAccount.verification_status !== 'VERIFIED';
 
-      const isBinMatched = Boolean(params.sourceBankBin && params.sourceBankBin === lockedSession.bank_bin);
+      const isBinMatched = bankBinsMatch(params.sourceBankBin, lockedSession.bank_bin);
       const isAccountMatched = Boolean(
         params.sourceAccountHash && params.sourceAccountHash === lockedSession.account_number_hash,
       );
-      const hasSufficientEvidence = Boolean(params.sourceBankBin && params.sourceAccountHash);
+      const hasSufficientEvidence = Boolean(normalizeBankBin(params.sourceBankBin) && params.sourceAccountHash);
 
       let matchDecision = 'PENDING';
       let reconciliationFlag: string | null = 'RECONCILED_CONFIRMED';
@@ -1357,7 +1358,7 @@ export class CustomersRepository {
           inboundTransactionId: confirmedInbound.id,
           refundAmount: params.amount,
           refundStatus: initialRefundStatus,
-          targetBankBin: params.sourceBankBin,
+          targetBankBin: normalizeBankBin(params.sourceBankBin),
           targetAccountMasked: params.sourceAccountMasked,
           targetAccountHash: params.sourceAccountHash,
           targetAccountEncrypted: params.sourceAccountEncrypted,
@@ -1519,7 +1520,7 @@ export class CustomersRepository {
           const isAccountUnverified = lockedAccount && lockedAccount.verification_status !== 'VERIFIED';
 
           const isBinMatched = params.sourceBankBin
-            ? params.sourceBankBin === lockedSession.bank_bin
+            ? bankBinsMatch(params.sourceBankBin, lockedSession.bank_bin)
             : true; // Cho phép fallback theo orderCode duy nhất nếu ngân hàng phát hành (như TPBank) không truyền thông tin nguồn qua NAPAS
           let isAccountMatched = true;
           if (params.sourceAccountHash || params.sourceAccountNumber) {
@@ -1548,7 +1549,7 @@ export class CustomersRepository {
           if (params.reconciliationFlag === 'FLAGGED_MISSING_PROVIDER_REF') {
             matchDecision = 'MISSING_TRANSACTION_REF';
             shouldActivate = false;
-          } else if (!params.hasSufficientEvidence) {
+          } else if (!params.hasSufficientEvidence || !normalizeBankBin(params.sourceBankBin)) {
             matchDecision = 'INSUFFICIENT_DATA';
             shouldActivate = false;
           } else if (!isBinMatched) {
@@ -1624,7 +1625,7 @@ export class CustomersRepository {
       // tự động payout. Luôn đặt PENDING_MANUAL_REFUND để kế toán đối soát thủ công.
       const isMissingRef = params.reconciliationFlag === 'FLAGGED_MISSING_PROVIDER_REF';
       const isUnmatchedOrNoProof = !params.proofId || matchDecision === 'UNMATCHED_SESSION';
-      const hasDirectSourceEvidence = Boolean(params.sourceBankBin && (params.sourceAccountEncrypted || params.sourceAccountMasked));
+      const hasDirectSourceEvidence = Boolean(normalizeBankBin(params.sourceBankBin) && (params.sourceAccountEncrypted || params.sourceAccountMasked));
       let obligation: any = null;
       if (!isMissingRef) {
         // Option 2 (Security-by-Design Fail-Closed): Nếu ngân hàng phát hành (như TPBank/NAPAS) cắt thông tin người gửi,
@@ -1640,7 +1641,7 @@ export class CustomersRepository {
             inboundTransactionId: inbound.id,
             refundAmount: params.amount,
             refundStatus: initialRefundStatus,
-            targetBankBin: params.sourceBankBin || lockedSession?.bank_bin,
+            targetBankBin: normalizeBankBin(params.sourceBankBin),
             targetAccountMasked: params.sourceAccountMasked || (lockedAccount ? CryptoVaultUtil.maskAccountNumber(CryptoVaultUtil.decryptAccountNumber(lockedAccount.account_number_encrypted)) : null),
             targetAccountHash: params.sourceAccountHash || lockedSession?.account_number_hash,
             targetAccountEncrypted: params.sourceAccountEncrypted || lockedAccount?.account_number_encrypted,

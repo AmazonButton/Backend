@@ -1,3 +1,4 @@
+import { normalizeBankBin, bankEvidenceKey } from '../common/utils/bank-identifier.util';
 import {
   Injectable,
   Logger,
@@ -1037,7 +1038,7 @@ export class CustomerBankPennyVerificationService {
   }> {
     const isAmountConflict = Number(existingTx.amount) !== current.amount;
     const isSourceBinConflict =
-      (existingTx.sourceBankBin || null) !== (current.sourceBankBin || null);
+      bankEvidenceKey(existingTx.sourceBankBin) !== bankEvidenceKey(current.sourceBankBin);
     const isSourceAccountConflict =
       (existingTx.sourceAccountHash || null) !== (current.sourceAccountHash || null);
 
@@ -1226,7 +1227,7 @@ export class CustomerBankPennyVerificationService {
     );
     const hasSufficientEvidence =
       !isMissingRef &&
-      Boolean(sourceBankBin && sourceAccountNumber && !isMaskedAccount);
+      Boolean(normalizeBankBin(sourceBankBin) && sourceAccountNumber && !isMaskedAccount);
 
     let sourceAccountMasked: string | null = null;
     let sourceAccountHash: string | null = null;
@@ -1418,7 +1419,8 @@ export class CustomerBankPennyVerificationService {
           }
         }
 
-        if (!targetAccountNumber || !obligation.targetBankBin) {
+        const payoutBankBin = normalizeBankBin(obligation.targetBankBin);
+        if (!targetAccountNumber || !payoutBankBin) {
           this.logger.warn(
             `Obligation #${obligation.id} thiếu BIN hoặc số tài khoản đích. Chuyển sang PENDING_MANUAL_REFUND.`,
           );
@@ -1446,7 +1448,7 @@ export class CustomerBankPennyVerificationService {
         let payoutResult: any;
         try {
           payoutResult = await this.payosPayoutService.createPayout({
-            toBin: obligation.targetBankBin,
+            toBin: payoutBankBin,
             toAccountNumber: targetAccountNumber,
             amount: Number(obligation.refundAmount),
             description: `Hoan coc xac minh ${obligation.id}`.slice(0, 25),
@@ -1496,7 +1498,7 @@ export class CustomerBankPennyVerificationService {
         const expectedCriteria = {
           amount: Number(obligation.refundAmount),
           payoutReference: attempt.payoutReference,
-          targetBankBin: obligation.targetBankBin,
+          targetBankBin: normalizeBankBin(obligation.targetBankBin),
           targetAccountHash,
           expectedPayoutId: attempt.providerPayoutId || undefined,
         };
@@ -1679,7 +1681,7 @@ export class CustomerBankPennyVerificationService {
         const expectedCriteria = {
           amount: Number(obligation?.refundAmount || 0),
           payoutReference: attempt.payoutReference,
-          targetBankBin: obligation?.targetBankBin,
+          targetBankBin: normalizeBankBin(obligation?.targetBankBin),
           targetAccountHash,
           expectedPayoutId: concretePayoutId || undefined,
         };
@@ -1790,7 +1792,7 @@ export class CustomerBankPennyVerificationService {
       observationIds: params.observationIds.map((id) => BigInt(id)),
       confirmedTransactionRef: params.confirmedTransactionRef.trim(),
       amount: params.amount,
-      sourceBankBin: params.sourceBankBin.trim(),
+      sourceBankBin: bankEvidenceKey(params.sourceBankBin)!,
       sourceAccountMasked,
       sourceAccountHash,
       sourceAccountEncrypted,

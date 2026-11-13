@@ -389,6 +389,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'financial-payout-verification-hardening.spec.ts')],
   },
+  {
+    name: '78. Bank Identifier Normalization (Offline Customer/Store Regression)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'bank-identifier-normalization.spec.ts')],
+  },
 ];
 
 async function main() {

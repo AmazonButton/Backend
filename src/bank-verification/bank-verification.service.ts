@@ -1,3 +1,4 @@
+import { normalizeBankBin } from '../common/utils/bank-identifier.util';
 import {
   Injectable,
   Logger,
@@ -581,7 +582,7 @@ export class BankVerificationService implements OnModuleInit {
             : txResult.reason === 'SENDER_ACCOUNT_UNVERIFIABLE'
             ? 'Không thể xác thực tài khoản ngân hàng của người chuyển'
             : txResult.reason === 'SENDER_BANK_UNVERIFIABLE'
-            ? 'Không thể xác thực ngân hàng của người chuyển'
+            ? 'Đã nhận tiền nhưng chưa nhận diện được mã ngân hàng nguồn. Khoản tiền đang chờ đối soát thủ công.'
             : txResult.reason === 'EXPIRED'
             ? 'Yêu cầu xác minh đã hết hạn'
             : 'Xác minh giao dịch thất bại',
@@ -650,7 +651,7 @@ export class BankVerificationService implements OnModuleInit {
 
     // Lấy thông tin đích hoàn tiền từ snapshot của obligation (người gửi thực tế)
     const targetEncrypted = obligation.targetAccountEncrypted || obligation.receipt?.senderAccountNumberEncrypted;
-    const targetBin = obligation.targetBankBin || obligation.receipt?.senderBankBin;
+    const targetBin = normalizeBankBin(obligation.targetBankBin || obligation.receipt?.senderBankBin);
 
     if (!targetEncrypted || !targetBin) {
       this.logger.warn(`Obligation #${obligation.id} (${refundRef}) thiếu thông tin tài khoản đích của người gửi, không thể tự động chi.`);
@@ -770,7 +771,8 @@ export class BankVerificationService implements OnModuleInit {
           plainAcc = CryptoVaultUtil.decryptAccountNumber(obligation.target_account_encrypted).trim();
         }
 
-        if (!plainAcc || !obligation.target_bank_bin) {
+        const payoutBankBin = normalizeBankBin(obligation.target_bank_bin);
+        if (!plainAcc || !payoutBankBin) {
           await this.repository.recordObligationTerminalFailure(
             obligation.id,
             leaseToken,
@@ -818,7 +820,7 @@ export class BankVerificationService implements OnModuleInit {
             const criteria: PayosPayoutExpectedCriteria = {
               amount: Number(obligation.refund_amount),
               payoutReference: obligation.refund_reference,
-              targetBankBin: obligation.target_bank_bin,
+              targetBankBin: normalizeBankBin(obligation.target_bank_bin),
               targetAccountHash,
               expectedPayoutId: concretePayoutId || undefined,
             };
@@ -868,7 +870,7 @@ export class BankVerificationService implements OnModuleInit {
         }
 
         const refundResult = await this.provider.createRefund({
-          bankBin: obligation.target_bank_bin,
+          bankBin: payoutBankBin,
           accountNumber: plainAcc,
           amount: Number(obligation.refund_amount),
           referenceId: obligation.refund_reference,
@@ -970,7 +972,7 @@ export class BankVerificationService implements OnModuleInit {
         const criteria: PayosPayoutExpectedCriteria = {
           amount: Number(obligation.refund_amount),
           payoutReference: obligation.refund_reference,
-          targetBankBin: obligation.target_bank_bin,
+          targetBankBin: normalizeBankBin(obligation.target_bank_bin),
           targetAccountHash,
           expectedPayoutId: concretePayoutId || undefined,
         };

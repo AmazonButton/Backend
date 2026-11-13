@@ -1,3 +1,4 @@
+import { normalizeBankBin, bankBinsMatch } from '../common/utils/bank-identifier.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
@@ -332,7 +333,7 @@ export class BankVerificationRepository {
       let senderEncrypted: string | null = null;
       let senderHash: string | null = null;
       const cleanSenderAcc = params.senderAccountNumber ? params.senderAccountNumber.trim() : null;
-      const cleanSenderBin = params.senderBankBin ? params.senderBankBin.trim() : null;
+      const cleanSenderBin = normalizeBankBin(params.senderBankBin);
 
       if (cleanSenderAcc && !isMaskedSender) {
         try {
@@ -647,7 +648,7 @@ export class BankVerificationRepository {
       }
 
       if (params.destinationBankBin && platformBin) {
-        if (params.destinationBankBin.trim() !== platformBin && !isPayosIntegratedTx) {
+        if (!bankBinsMatch(params.destinationBankBin, platformBin) && !isPayosIntegratedTx) {
           this.logger.warn(
             `[AtomicWebhookVerification] BIN ngan hang nhan khong khop nen tang (ref: ${params.referenceCode})`,
           );
@@ -887,8 +888,27 @@ export class BankVerificationRepository {
         }
       }
 
+      // An unresolved identifier is insufficient evidence, not proof of a different bank.
+      if (params.senderBankBin && !normalizeBankBin(params.senderBankBin)) {
+        const refundRef = await recordReceiptAndObligation('SENDER_BANK_UNVERIFIABLE', 'PENDING_MANUAL_REFUND');
+        await tx.$executeRaw`
+          UPDATE bank_account_verification_transactions
+          SET status = 'PENDING', failure_reason = 'SENDER_BANK_UNVERIFIABLE',
+              received_amount = ${params.receivedAmount},
+              refund_status = 'PENDING_MANUAL_REFUND', refund_transaction_id = ${refundRef},
+              updated_at = NOW()
+          WHERE id = ${lockedTx.id}
+        `;
+        return {
+          success: false, reason: 'SENDER_BANK_UNVERIFIABLE', needsRefund: false,
+          refundReference: refundRef,
+          transaction: { ...lockedTx, status: 'PENDING', failure_reason: 'SENDER_BANK_UNVERIFIABLE', refund_status: 'PENDING_MANUAL_REFUND' },
+          bankAccount: lockedAccount,
+        };
+      }
+
       if (params.senderBankBin && lockedAccount.bank_bin) {
-        if (params.senderBankBin.trim() !== lockedAccount.bank_bin.trim()) {
+        if (!bankBinsMatch(params.senderBankBin, lockedAccount.bank_bin)) {
           this.logger.warn(
             `[AtomicWebhookVerification] BIN ngan hang gui khong khop tai khoan can xac minh (ref: ${params.referenceCode})`,
           );
