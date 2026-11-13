@@ -1,7 +1,11 @@
 # Project Handoff & Session Context
 
-## 2026-11-14: Store Wallet Bank Account Contract, Dynamic BIN Persistence & Re-verification (COMPLETED & 100% VERIFIED)
-- **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` exit code 0, `npm run build` exit code 0, `tests/wallet-bank-contract.spec.ts` PASS, `tests/store-wallet.spec.ts` PASS, Suite 79 added to `tests/run_all_suites.ts`).
+## 2026-11-14: Store Wallet Bank Account Contract, Dynamic BIN Persistence & Re-verification (COMMITTED, PUSHED & DEPLOYED)
+- **Status**: COMPLETED, COMMITTED & 100% VERIFIED LIVE (Commit `376b856`, GitHub Actions CI/CD Run ID `43481258757` 100% Green, All 79 Suites Passed, Live deployed across all 3 production instances).
+- **Deployment Status Across 3 Live Production Instances (Commit `376b856`)**:
+  - **Render Node-1 (Primary)** (`https://backend-fae8.onrender.com`): 🟢 LIVE (Commit `376b856b2b212ab89806697d0bc31342b1291b55`), `/readyz` HTTP 200 READY (`database`: UP, `queue`: UP).
+  - **Render Node-2 (Secondary)** (`https://backend-node2-ukib.onrender.com`): 🟢 LIVE (Commit `376b856b2b212ab89806697d0bc31342b1291b55`), `/readyz` HTTP 200 READY (`database`: UP, `queue`: UP).
+  - **AWS Node-3 (EC2 Sydney)** (`3.25.136.6` / `http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaws.com`): 🟢 ONLINE (Commit `376b856b2b212ab89806697d0bc31342b1291b55`), PM2 reload successful (`backend-node3` online), `/readyz` HTTP 200 READY (`database`: UP, `queue`: UP).
 - **Core Changes & Invariants**:
   - `src/store-wallet/dto/wallet.dto.ts`: Added required `bankBin` with strict 6-digit regex validation (`/^[0-9]{6}$/`). Added numeric format validation for `bankAccountNumber` (`/^[0-9]{6,19}$/`).
   - `src/store-wallet/mappers/wallet.mapper.ts`: Extended `WalletResponseDto` to return structured `bankAccount` containing `bankName`, `bankBin`, masked `accountNumber`, `accountHolderName`, and `verificationStatus`.
@@ -14,6 +18,10 @@
   - `tests/wallet-bank-contract.spec.ts`: Added Suite 79 covering DTO validation, selected BIN persistence, bank-change re-verification trigger, and masked response isolation.
   - `tests/store-wallet.spec.ts` & `tests/master-superpowers-qa.spec.ts`: Updated test fixtures with valid 6-digit `bankBin` (`970436` / `970422`).
 - **Verification Commands & Evidence**:
+  - `GitHub Actions CI/CD Pipeline`: **Run ID 43481258757 SUCCESS (100% Green)**.
+    - `🛡️ Code Quality & Build`: PASSED (56s).
+    - `🧪 Isolated DB & Integration Tests`: PASSED (2m27s, All 79/79 suites PASSED, 0 FAILED).
+    - `🚀 Production Deploy & Verification`: PASSED (5s, Deploy hooks triggered & health verified).
   - `npx tsc --noEmit`: Exit code 0 (Clean).
   - `npm run build`: Exit code 0 (Clean NestJS production build).
   - `npx tsx tests/wallet-bank-contract.spec.ts`: PASS (100%).
