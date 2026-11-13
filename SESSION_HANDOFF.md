@@ -44,6 +44,10 @@
   - `npx tsx tests/platform-button-rental-task4-return-and-deposit-refund.spec.ts`: 5/5 PASS (100%).
   - `npx tsx tests/phase3-queues-retry-dlq.spec.ts`: 19/19 PASS (100%).
   - `npm run build`: Exit code 0 (Clean NestJS production build).
+  - **Deployment Status Across 3 Live Production Instances (Commit `1d750c0`)**:
+    - **Render Node-1 (Primary)** (`https://backend-fae8.onrender.com`): 🟢 LIVE (Commit `1d750c0`), `/readyz` HTTP 200 READY (DB: UP, Queue: UP).
+    - **Render Node-2 (Secondary)** (`https://backend-node2-ukib.onrender.com`): 🟢 LIVE (Commit `1d750c0`), `/readyz` HTTP 200 READY (DB: UP, Queue: UP).
+    - **AWS Node-3 (EC2 Sydney)** (`3.25.136.6`): 🟢 LIVE (Commit `1d750c0`), PM2 reload successful (`backend-node3` online), `/readyz` HTTP 200 READY.
 - **Files Modified**:
   - `src/rentals/outbox-consumer.service.ts`
   - `tests/audit-run6-payos-fixes.spec.ts`
