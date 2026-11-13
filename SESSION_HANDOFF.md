@@ -38,6 +38,10 @@
   - `src/rentals/outbox-consumer.service.ts`
   - `tests/audit-run6-payos-fixes.spec.ts`
   - `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts`
+- **Deployment Status Across 3 Live Production Instances (Commit `bf34db7`)**:
+  - **Render Node-1 (Primary)** (`https://backend-fae8.onrender.com`): 🟢 LIVE (Commit `bf34db7`), Healthz ONLINE (824ms, Uptime 25s).
+  - **Render Node-2 (Secondary)** (`https://backend-node2-ukib.onrender.com`): 🟢 LIVE (Commit `bf34db7`), Healthz ONLINE (2911ms, Uptime 35s).
+  - **AWS Node-3 (EC2 Worker)** (`3.25.136.6`): 🟢 ONLINE (Commit `bf34db7`), PM2 reload successful, pid 191697, 0% CPU, 152.3MB RAM.
 
 ## 2026-11-13: Resolution of Audit Run-6 Findings (Store Webhook Boundary, Subsequent Transfer Accounting, Payout Classification & Recovery Contract) (COMPLETED & 100% VERIFIED)
 - **Status**: COMPLETED & 100% VERIFIED (`npx tsc --noEmit` PASS exit code 0, `npm run build` PASS exit code 0, `tests/audit-run6-payos-fixes.spec.ts` 9/9 PASS, `tests/customer-refund-conflict-dispatch.spec.ts` 1/1 PASS, `tests/customer_bank_penny_deposit_e2e.spec.ts` 22/22 PASS, `tests/http-contract-validation.spec.ts` 20/20 PASS, `tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` 30/30 PASS, `tests/bank-account-verification.spec.ts` 40/40 PASS).
