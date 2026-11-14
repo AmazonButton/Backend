@@ -1,5 +1,57 @@
 # Project Handoff & Session Context
 
+## 2026-11-15: Customer Bank Verification VietQR Support for Mobile (Flutter)
+- **Status**: COMPLETED, VERIFIED & COMMITTED.
+- **Problem & Requirement**:
+  - Flutter Mobile team requested `qrCode: string | null` in `POST /api/v1/customers/me/bank-accounts/:id/initiate-verification` to render VietQR natively on device screens instead of redirecting to browser (`HUONG_DAN_BACKEND_VIETQR_XAC_MINH_2000.md`).
+- **Fixes Applied**:
+  1. `prisma/schema.prisma` & Migration `20261115000000_add_customer_bank_verification_payment_qr_code`:
+     - Added nullable column `payment_qr_code TEXT` to table `customer_bank_verification_proofs`.
+     - Deployed migration via `npx prisma migrate deploy` (Neon Postgres).
+  2. `src/customers/customers.repository.ts`:
+     - Updated `getOrCreatePennyVerificationSessionTx` SQL projection and session mapping to select and return `payment_qr_code`.
+     - Extended `attachPaymentLinkToSessionCAS` to conditionally upsert `paymentQrCode` without overwriting with null.
+  3. `src/customers/customer-bank-penny-verification.service.ts`:
+     - Captured `resData.data.qrCode` from PayOS link creation and propagated through `inFlightLinkCreations`, CAS update, and session response.
+     - Handled fallback: returns `qrCode: null` for already verified accounts, reused sessions without QR, or timeout recoveries.
+     - Added `qrCode` to `getVerificationStatus` session object and `getVerificationHistory` items.
+  4. `src/customers/dto/customer-bank-verification-response.dto.ts`:
+     - Added `qrCode: string | null` to `CustomerBankVerificationSessionResponseDto`, `CustomerBankVerificationStatusResponseDto`, and `CustomerBankVerificationHistoryItemDto`.
+- **Verification Evidence**:
+  - `npx prisma migrate deploy`: 50 migrations applied successfully.
+  - `npm run build`: Exit code 0 (Clean NestJS build).
+- **Files Modified**:
+  - `prisma/schema.prisma`
+  - `prisma/migrations/20261115000000_add_customer_bank_verification_payment_qr_code/migration.sql`
+  - `src/customers/dto/customer-bank-verification-response.dto.ts`
+  - `src/customers/customers.repository.ts`
+  - `src/customers/customer-bank-penny-verification.service.ts`
+  - `SESSION_HANDOFF.md`
+
+
+## 2026-11-14: Frontend Remote Dev Sync & Tris's Local Stash Integration
+- **Status**: COMPLETED & VERIFIED.
+- **Problem & Context**:
+  - Tris had valuable uncommitted local modifications in `F:\Learning\SEM9-FPTu\Frontend` (device & product pagination, warehouse inventory analytics, notification popover cooldown, test files).
+  - Remote `origin/dev` diverged with 12 new commits up to `47fa74d` (Firebase auth integration, masked bank cards, session recovery).
+  - Tris needed to pull upstream `origin/dev` without losing his local code.
+- **Actions Taken**:
+  1. Preserved safety snapshots before pull:
+     - Branch: `backup-local-dev-before-pull` (at commit `d61e17e`).
+     - Stash: `stash@{0}: On dev: backup-uncommitted-changes-20261114`.
+  2. Synced upstream `origin/dev` via hard reset, resolved dependencies with `npm install`.
+  3. Re-applied `stash@{0}` onto current `dev` and cleanly resolved all merge conflicts:
+     - `package.json`: Preserved all custom test scripts alongside upstream Firebase dependencies.
+     - `src/services/wallet.service.ts`: Combined masked bank account typings with bank verification service methods.
+     - `src/pages/store/StoreDevicesPage.tsx`: Integrated server-side pagination, fleet stats, and modal product search/infinite scroll with telemetry cache.
+     - `src/pages/store/StoreProductsPage.tsx`: Harmonized server-side pagination, search/category query params, and inventory analytics summary metrics.
+     - `src/pages/store/StoreWalletPage.tsx`: Kept upstream's masked card UI and recovery while ensuring clean transaction/withdrawal mappings.
+  4. Verified TypeScript build: `npx tsc --noEmit` passed with 0 errors (Exit code 0).
+  5. Kept all merged files staged without committing, strictly honoring the user rule: "DO NOT run git commit in Frontend without explicit user permission".
+- **Verification Evidence**:
+  - `Set-Location "F:\Learning\SEM9-FPTu\Frontend"; npx tsc --noEmit`: Exit code 0.
+
+
 ## 2026-11-14: Store Bank Verification 2,000 VND Automated Refund Flow & Description Normalization
 - **Status**: COMPLETED & VERIFIED.
 - **Problem & Root Cause**:

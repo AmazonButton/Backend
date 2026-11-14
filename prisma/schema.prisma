@@ -1308,6 +1308,7 @@ model CustomerBankVerificationProof {
   paymentOrderCode    BigInt?   @unique(map: "uq_cust_bank_payment_order_code") @map("payment_order_code")
   paymentLinkId       String?   @map("payment_link_id") @db.VarChar(128)
   paymentCheckoutUrl  String?   @map("payment_checkout_url") @db.Text
+  paymentQrCode       String?   @map("payment_qr_code") @db.Text
 
   // Business Verification Status (Decoupled)
   verificationStatus      String    @default("PENDING") @map("verification_status") @db.VarChar(32)

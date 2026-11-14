@@ -3,6 +3,7 @@ export class CustomerBankVerificationSessionResponseDto {
   sessionReference: string;
   orderCode: string;
   checkoutUrl: string;
+  qrCode: string | null;
   amount: number;
   sessionStatus: string;
   verificationStatus: string;
@@ -35,6 +36,7 @@ export class CustomerBankVerificationStatusResponseDto {
     isExpired: boolean;
     rejectionReason?: string | null;
     checkoutUrl?: string | null;
+    qrCode?: string | null;
   } | null;
   message: string;
 }
@@ -49,6 +51,7 @@ export class CustomerBankVerificationHistoryItemDto {
   accountNumberMasked?: string | null;
   accountName?: string | null;
   checkoutUrl?: string | null;
+  qrCode?: string | null;
   sessionStatus: string;
   verificationStatus: string;
   paymentReceived: boolean;

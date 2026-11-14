@@ -730,11 +730,12 @@ export class CustomersRepository {
         payment_order_code: bigint | null;
         payment_checkout_url: string | null;
         payment_link_id: string | null;
+        payment_qr_code: string | null;
         session_status: string;
         verification_status: string;
         expires_at: Date;
       }>>`
-        SELECT id, proof_reference, payment_order_code, payment_checkout_url, payment_link_id,
+        SELECT id, proof_reference, payment_order_code, payment_checkout_url, payment_link_id, payment_qr_code,
                session_status, verification_status, expires_at
         FROM customer_bank_verification_proofs
         WHERE customer_id = ${data.customerId}
@@ -758,6 +759,7 @@ export class CustomersRepository {
             paymentOrderCode: existing.payment_order_code,
             paymentLinkId: existing.payment_link_id,
             paymentCheckoutUrl: existing.payment_checkout_url,
+            paymentQrCode: existing.payment_qr_code,
             sessionStatus: existing.session_status,
             verificationStatus: existing.verification_status,
             expiresAt: existing.expires_at,
@@ -783,6 +785,7 @@ export class CustomersRepository {
           paymentOrderCode,
           paymentLinkId: null,
           paymentCheckoutUrl: null,
+          paymentQrCode: null,
           expiresAt: data.expiresAt,
         },
       });
@@ -796,6 +799,7 @@ export class CustomersRepository {
           paymentOrderCode: created.paymentOrderCode,
           paymentLinkId: created.paymentLinkId,
           paymentCheckoutUrl: created.paymentCheckoutUrl,
+          paymentQrCode: created.paymentQrCode,
           sessionStatus: created.sessionStatus,
           verificationStatus: created.verificationStatus,
           expiresAt: created.expiresAt,
@@ -805,7 +809,20 @@ export class CustomersRepository {
     });
   }
 
-  async attachPaymentLinkToSessionCAS(sessionId: bigint, paymentLinkId: string, paymentCheckoutUrl: string) {
+  async attachPaymentLinkToSessionCAS(
+    sessionId: bigint,
+    paymentLinkId: string,
+    paymentCheckoutUrl: string,
+    paymentQrCode?: string | null,
+  ) {
+    const updateData: any = {
+      paymentLinkId,
+      paymentCheckoutUrl,
+      updatedAt: new Date(),
+    };
+    if (paymentQrCode !== undefined && paymentQrCode !== null && paymentQrCode.trim()) {
+      updateData.paymentQrCode = paymentQrCode.trim();
+    }
     const updated = await this.prisma.customerBankVerificationProof.updateMany({
       where: {
         id: sessionId,
@@ -815,11 +832,7 @@ export class CustomersRepository {
           { paymentCheckoutUrl: paymentCheckoutUrl },
         ],
       },
-      data: {
-        paymentLinkId,
-        paymentCheckoutUrl,
-        updatedAt: new Date(),
-      },
+      data: updateData,
     });
     return updated.count > 0;
   }

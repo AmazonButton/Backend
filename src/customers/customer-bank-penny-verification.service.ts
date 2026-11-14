@@ -42,7 +42,7 @@ export class CustomerBankPennyVerificationService {
   );
   private readonly inFlightLinkCreations = new Map<
     string,
-    Promise<{ paymentLinkId: string; checkoutUrl: string }>
+    Promise<{ paymentLinkId: string; checkoutUrl: string; qrCode: string | null }>
   >();
 
   constructor(
@@ -59,7 +59,7 @@ export class CustomerBankPennyVerificationService {
     orderCode: number,
     clientId: string,
     apiKey: string,
-  ): Promise<{ paymentLinkId: string; checkoutUrl: string } | null> {
+  ): Promise<{ paymentLinkId: string; checkoutUrl: string; qrCode: string | null } | null> {
     try {
       const queryController = new AbortController();
       const queryTimeout = setTimeout(() => queryController.abort(), 6000);
@@ -96,6 +96,7 @@ export class CustomerBankPennyVerificationService {
         return {
           paymentLinkId,
           checkoutUrl,
+          qrCode: null,
         };
       }
     } catch (e: any) {
@@ -137,6 +138,7 @@ export class CustomerBankPennyVerificationService {
         sessionReference: "",
         orderCode: "0",
         checkoutUrl: "",
+        qrCode: null,
         amount: 0,
         sessionStatus: "CONSUMED",
         verificationStatus: "VERIFIED",
@@ -237,6 +239,7 @@ export class CustomerBankPennyVerificationService {
         sessionReference: session.proofReference,
         orderCode: session.paymentOrderCode!.toString(),
         checkoutUrl: session.paymentCheckoutUrl,
+        qrCode: session.paymentQrCode || null,
         amount: 2000,
         sessionStatus: session.sessionStatus,
         verificationStatus: session.verificationStatus,
@@ -314,9 +317,15 @@ export class CustomerBankPennyVerificationService {
 
           const resData: any = await response.json();
           if (resData?.code === "00" && resData?.data?.checkoutUrl) {
+            const rawQr =
+              typeof resData.data.qrCode === "string" &&
+              resData.data.qrCode.trim().length > 0
+                ? resData.data.qrCode.trim()
+                : null;
             return {
               paymentLinkId: resData.data.paymentLinkId,
               checkoutUrl: resData.data.checkoutUrl,
+              qrCode: rawQr,
             };
           }
 
@@ -361,7 +370,7 @@ export class CustomerBankPennyVerificationService {
       this.inFlightLinkCreations.set(leaseKey, linkPromise);
     }
 
-    let linkResult: { paymentLinkId: string; checkoutUrl: string };
+    let linkResult: { paymentLinkId: string; checkoutUrl: string; qrCode: string | null };
     try {
       linkResult = await linkPromise;
     } finally {
@@ -370,10 +379,12 @@ export class CustomerBankPennyVerificationService {
 
     // 4. [Step 4] Lưu kết quả payment link vào phiên bằng CAS
     let finalCheckoutUrl = linkResult.checkoutUrl;
+    let finalQrCode = linkResult.qrCode || null;
     const casSuccess = await this.customersRepo.attachPaymentLinkToSessionCAS(
       session.id,
       linkResult.paymentLinkId,
       linkResult.checkoutUrl,
+      linkResult.qrCode,
     );
     if (!casSuccess) {
       // Instance thua CAS hoặc link đã được gắn trước đó bởi instance khác: lấy lại link đã lưu trong DB
@@ -381,6 +392,9 @@ export class CustomerBankPennyVerificationService {
         await this.customersRepo.findVerificationSessionById(session.id);
       if (currentSession?.paymentCheckoutUrl) {
         finalCheckoutUrl = currentSession.paymentCheckoutUrl;
+      }
+      if (currentSession?.paymentQrCode) {
+        finalQrCode = currentSession.paymentQrCode;
       }
     }
 
@@ -390,6 +404,7 @@ export class CustomerBankPennyVerificationService {
       sessionReference: session.proofReference,
       orderCode: session.paymentOrderCode!.toString(),
       checkoutUrl: finalCheckoutUrl,
+      qrCode: finalQrCode,
       amount: 2000,
       sessionStatus: session.sessionStatus,
       verificationStatus: session.verificationStatus,
@@ -681,6 +696,7 @@ export class CustomerBankPennyVerificationService {
         isExpired,
         rejectionReason: latestSession.rejectionReason,
         checkoutUrl: latestSession.paymentCheckoutUrl || null,
+        qrCode: latestSession.paymentQrCode || null,
       };
 
       // Chuẩn hóa thông điệp người dùng
@@ -832,6 +848,7 @@ export class CustomerBankPennyVerificationService {
           accountNumberMasked: s.bankAccount?.accountNumberMasked || null,
           accountName: s.bankAccount?.accountName || null,
           checkoutUrl: s.paymentCheckoutUrl || null,
+          qrCode: s.paymentQrCode || null,
           sessionStatus:
             s.sessionStatus === "ACTIVE" &&
             new Date(s.expiresAt).getTime() < Date.now()
