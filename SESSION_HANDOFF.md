@@ -1,5 +1,24 @@
 # Project Handoff & Session Context
 
+## 2026-11-14: Store Bank Verification 2,000 VND Automated Refund Flow & Description Normalization
+- **Status**: COMPLETED & VERIFIED.
+- **Problem & Root Cause**:
+  - Store bank identity verification requires automatic refund of 2,000 VND penny deposit after successful verification (`OWNERSHIP_VERIFIED`).
+  - PayOS Payout API requires strictly unaccented ASCII `description` <= 25 characters. Previously, `BankVerificationService` and `PayOSBankVerificationProvider` sliced descriptions to 50 characters, potentially causing `PAYOUT_INVALID_DESCRIPTION` rejections.
+  - Verification failures (account mismatch) safely retain funds with `refundStatus = 'PENDING_MANUAL_REFUND'` without auto-disbursing, matching administrative security requirements.
+- **Fixes Applied**:
+  - `src/bank-verification/bank-verification.service.ts`:
+    - Normalized refund payout description to `Hoan tien ${refundRef}` sliced to <= 25 characters.
+  - `src/bank-verification/providers/payos-bank-verification.provider.ts`:
+    - Strictly sliced PayOS payout description to <= 25 characters.
+- **Verification Commands & Evidence**:
+  - `npm run build`: Exit code 0.
+- **Files Modified**:
+  - `src/bank-verification/bank-verification.service.ts`
+  - `src/bank-verification/providers/payos-bank-verification.provider.ts`
+  - `SESSION_HANDOFF.md`
+
+
 ## 2026-11-14: Store Withdrawal Auto-Payout & Sync-Status Trigger Enhancement
 - **Status**: COMPLETED & VERIFIED.
 - **Problem & Root Cause**:

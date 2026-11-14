@@ -217,7 +217,7 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
         toBin: params.bankBin,
         toAccountNumber: params.accountNumber,
         amount: params.amount,
-        description: params.description.slice(0, 50),
+        description: params.description.slice(0, 25),
         referenceId: params.referenceId,
       });
 

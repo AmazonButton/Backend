@@ -729,7 +729,7 @@ export class BankVerificationService implements OnModuleInit {
         accountNumber: plainAccountNumber,
         amount: amountToRefund,
         referenceId: refundRef,
-        description: `Hoan tien xac minh tai khoan ${amountToRefund} VND`.slice(0, 50),
+        description: `Hoan tien ${refundRef}`.slice(0, 25),
       });
 
       if (['SUCCESS', 'PENDING', 'PENDING_RECONCILIATION'].includes(refundResult.status)) {
@@ -898,7 +898,7 @@ export class BankVerificationService implements OnModuleInit {
           accountNumber: plainAcc,
           amount: Number(obligation.refund_amount),
           referenceId: obligation.refund_reference,
-          description: `Hoan tien xac minh ${obligation.id}`.slice(0, 50),
+          description: `Hoan tien ${obligation.refund_reference}`.slice(0, 25),
         });
 
         // Bất kể code=00 hay nhận lệnh thành công, KHÔNG ghi nhận REFUNDED ngay
