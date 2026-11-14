@@ -1,5 +1,38 @@
 # Project Handoff & Session Context
 
+## 2026-11-14: Store Bank Verification Transfer Description Synchronization (COMMITTED & DEPLOYED)
+- **Status**: COMPLETED, COMMITTED & DEPLOYED TO AWS NODE 3.
+- **Problem & Root Cause**:
+  - The UI instructions text rendered `với nội dung "VERIFY_XXXXXX"` using the 13-character system referenceCode, while PayOS non-integrated bank channel limits descriptions to <= 9 alphanumeric characters (e.g. `STRYXW9`).
+  - Users scanning VietQR had PayOS description auto-filled (`STRYXW9`), but manual copy-pasters saw `VERIFY_XXXXXX`. If copied manually, PayOS wouldn't match the orderCode. Users were also confused by the discrepancy between the QR content and the displayed text instructions.
+- **Fixes Applied**:
+  - `src/bank-verification/bank-verification.service.ts`:
+    - Added `getTransferDescription(referenceCode, isPayos)`: Produces clean compact description `S${cleanSuffix}` (e.g. `STRYXW9`, 7 chars, purely alphanumeric, no underscore).
+    - `createVerificationRequest`: Generates `transferDescription` and uses it in `instructions`, `defaultQrUrl.addInfo`, and returns `transferDescription` in payload.
+    - `formatVerificationTransaction`: Dynamically computes `transferDescription` if transaction is PayOS-linked and embeds it in `instructions` and `qrCodeUrl`.
+    - `handleVerificationWebhook`: In addition to `VERIFY_...` regex, added fallback matching for compact description `/(?:^|[^A-Z0-9])S([A-Z0-9]{6,8})(?=[^A-Z0-9]|$)/i` resolving via `repository.findReferenceCodeByCompactSuffix`.
+  - `src/bank-verification/bank-verification.repository.ts`:
+    - Added `findReferenceCodeByCompactSuffix(suffix)` to look up transactions where `referenceCode` ends with the compact suffix (case-insensitive).
+  - `src/payments/payments.service.ts`:
+    - Updated `isStoreVerification` to recognize both `VERIFY_...` and `S[A-Z0-9]{6,8}` in incoming webhook descriptions.
+  - `tests/bank-verification-description-sync.spec.ts`:
+    - Added Suite 81 testing description generation, instruction text synchronization, QR URL embedding, and webhook compact description resolution.
+  - `tests/run_all_suites.ts`:
+    - Registered Suite 81 (`81. Store Bank Verification Description Sync (Offline)`).
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (Clean).
+  - `npx tsx tests/bank-verification-description-sync.spec.ts`: PASS (100%).
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: PASS (20/20 test cases).
+  - `npx tsx tests/store-bank-return-url.spec.ts`: PASS (100%).
+  - `npm run build`: Exit code 0 (Clean NestJS build).
+- **Files Modified / Added**:
+  - `src/bank-verification/bank-verification.repository.ts`
+  - `src/bank-verification/bank-verification.service.ts`
+  - `src/payments/payments.service.ts`
+  - `tests/bank-verification-description-sync.spec.ts` (New)
+  - `tests/run_all_suites.ts`
+  - `SESSION_HANDOFF.md`
+
 ## 2026-11-14: Fix Reverse Proxy 429 Cascades & Diagnose BIDV Alias Mismatch in Bank Verification (COMMITTED & DEPLOYED)
 - **Status**: COMPLETED, COMMITTED & DEPLOYED TO AWS NODE 3 (Commit `529fcfb`).
 - **Core Investigation & Findings**:

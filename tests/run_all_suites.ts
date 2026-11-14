@@ -404,6 +404,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'store-bank-return-url.spec.ts')],
   },
+  {
+    name: '81. Store Bank Verification Description Sync (Offline)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'bank-verification-description-sync.spec.ts')],
+  },
 ];
 
 async function main() {

@@ -127,6 +127,16 @@ export class BankVerificationService implements OnModuleInit {
   }
 
   /**
+   * Sinh mã nội dung chuyển khoản tương thích PayOS (tối đa 9 ký tự, không dấu gạch dưới).
+   * Ví dụ: 'VERIFY_TRYXW9' -> 'STRYXW9'
+   */
+  getTransferDescription(referenceCode: string, isPayos = true): string {
+    if (!isPayos) return referenceCode;
+    const cleanSuffix = referenceCode.replace(/^VERIFY_/i, '').replace(/[^A-Z0-9]/gi, '');
+    return `S${cleanSuffix}`.slice(0, 9);
+  }
+
+  /**
    * Tạo yêu cầu xác minh tài khoản ngân hàng chính chủ bằng 2.000 VND
    */
   async createVerificationRequest(userId: bigint, dto: CreateVerificationRequestDto, userRole?: string) {
@@ -200,6 +210,7 @@ export class BankVerificationService implements OnModuleInit {
     let payosOrderCode: number | null = null;
     let payosCheckoutUrl: string | null = null;
     let payosQrCode: string | null = null;
+    let payosDescription: string | null = null;
 
     if (clientId && apiKey && checksumKey) {
       try {
@@ -208,8 +219,9 @@ export class BankVerificationService implements OnModuleInit {
         // Issue 7 Fix: PayOS non-integrated bank channel description limit is 9 chars.
         // Store referenceCode (VERIFY_XXXX) is 11+ chars which exceeds the limit.
         // Session identification now relies on stored DB IDs (orderCode/paymentLinkId), NOT description parsing (Issue 3 fix).
-        // Use compact description: 'S' + last 8 chars of referenceCode for <= 9 chars.
-        const description = `S${referenceCode.slice(-8)}`.slice(0, 9);
+        // Use compact description: 'S' + alphanumeric random code (<= 9 chars, no underscore).
+        const description = this.getTransferDescription(referenceCode, true);
+        payosDescription = description;
 
         const signature = signPaymentRequest(
           {
@@ -279,7 +291,8 @@ export class BankVerificationService implements OnModuleInit {
     const recipientAccountNumber = process.env.PLATFORM_BANK_ACCOUNT_NUMBER || '0339898989';
     const recipientAccountHolder = process.env.PLATFORM_BANK_ACCOUNT_HOLDER || 'CONG TY CP SMART ORDER';
 
-    const defaultQrUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(referenceCode)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
+    const transferDescription = payosOrderCode && payosDescription ? payosDescription : referenceCode;
+    const defaultQrUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(transferDescription)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
 
     return {
       verificationId: transaction.id.toString(),
@@ -289,6 +302,7 @@ export class BankVerificationService implements OnModuleInit {
       accountName: bankAccount.accountName,
       amount: expectedAmount,
       referenceCode,
+      transferDescription,
       expiresAt: expiresAt.toISOString(),
       recipientBankBin,
       recipientBankName,
@@ -296,7 +310,7 @@ export class BankVerificationService implements OnModuleInit {
       recipientAccountHolder,
       qrCodeUrl: defaultQrUrl,
       checkoutUrl: payosCheckoutUrl || undefined,
-      instructions: `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`,
+      instructions: `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${transferDescription}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`,
     };
   }
 
@@ -466,9 +480,14 @@ export class BankVerificationService implements OnModuleInit {
         resolvedRef = await this.repository.findReferenceCodeByOrderCode(dto.data.orderCode);
       }
       if (!resolvedRef && description) {
-        const match = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
-        if (match) {
-          resolvedRef = match[0].toUpperCase();
+        const verifyMatch = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
+        if (verifyMatch) {
+          resolvedRef = verifyMatch[0].toUpperCase();
+        } else {
+          const compactMatch = description.match(/(?:^|[^A-Z0-9])S([A-Z0-9]{6,8})(?=[^A-Z0-9]|$)/i);
+          if (compactMatch) {
+            resolvedRef = await this.repository.findReferenceCodeByCompactSuffix(compactMatch[1]);
+          }
         }
       }
       if (!resolvedRef && dto.data.paymentLinkId) {
@@ -517,9 +536,14 @@ export class BankVerificationService implements OnModuleInit {
     } else {
       // Direct raw-body signed webhook where the entire top-level body is authenticated
       if (!referenceCode && description) {
-        const match = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
-        if (match) {
-          referenceCode = match[0].toUpperCase();
+        const verifyMatch = description.match(/VERIFY_[A-Z0-9]{4,10}/i);
+        if (verifyMatch) {
+          referenceCode = verifyMatch[0].toUpperCase();
+        } else {
+          const compactMatch = description.match(/(?:^|[^A-Z0-9])S([A-Z0-9]{6,8})(?=[^A-Z0-9]|$)/i);
+          if (compactMatch) {
+            referenceCode = await this.repository.findReferenceCodeByCompactSuffix(compactMatch[1]);
+          }
         }
       }
 
@@ -1104,8 +1128,15 @@ export class BankVerificationService implements OnModuleInit {
     const recipientAccountHolder = process.env.PLATFORM_BANK_ACCOUNT_HOLDER || 'CONG TY CP SMART ORDER';
     const expectedAmount = Number(tx.expectedAmount);
     const referenceCode = tx.referenceCode;
-    const qrCodeUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(referenceCode)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
-    const instructions = `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${referenceCode}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`;
+    const hasPayos = Boolean(
+      tx.providerTransactionId ||
+      this.storeCheckoutUrls.get(tx.id?.toString()) ||
+      this.storeCheckoutUrls.get(tx.referenceCode),
+    );
+    const transferDescription = hasPayos ? this.getTransferDescription(referenceCode, true) : referenceCode;
+
+    const qrCodeUrl = `https://img.vietqr.io/image/${recipientBankBin}-${recipientAccountNumber}-compact2.png?amount=${expectedAmount}&addInfo=${encodeURIComponent(transferDescription)}&accountName=${encodeURIComponent(recipientAccountHolder)}`;
+    const instructions = `Vui lòng chuyển chính xác ${expectedAmount.toLocaleString()} VND đến số tài khoản ${recipientAccountNumber} (${recipientBankName}) với nội dung "${transferDescription}" để xác minh chính chủ. Số tiền sẽ được hoàn trả tự động sau khi xác minh thành công.`;
     const actualAmount = tx.receivedAmount ? Number(tx.receivedAmount) : (tx.actualAmount ? Number(tx.actualAmount) : null);
     const checkoutUrl =
       this.storeCheckoutUrls.get(tx.id?.toString()) ||
@@ -1123,6 +1154,7 @@ export class BankVerificationService implements OnModuleInit {
       accountNumberMasked: masked,
       accountName: tx.bankAccount?.accountName || '',
       referenceCode,
+      transferDescription,
       expectedAmount,
       actualAmount,
       receivedAmount: actualAmount,

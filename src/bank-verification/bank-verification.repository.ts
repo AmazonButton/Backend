@@ -143,6 +143,25 @@ export class BankVerificationRepository {
     return receipt?.verificationTx?.referenceCode ?? null;
   }
 
+  /**
+   * Look up a Store verification transaction by its compact suffix (e.g. 'TRYXW9' from 'STRYXW9').
+   */
+  async findReferenceCodeByCompactSuffix(suffix: string): Promise<string | null> {
+    if (!suffix) return null;
+    const cleanSuffix = suffix.trim().toUpperCase();
+    const tx = await this.prisma.bankAccountVerificationTransaction.findFirst({
+      where: {
+        referenceCode: {
+          endsWith: cleanSuffix,
+          mode: 'insensitive',
+        },
+      },
+      select: { referenceCode: true },
+      orderBy: { id: 'desc' },
+    });
+    return tx?.referenceCode ?? null;
+  }
+
   async updateTransactionRefundStatus(params: {
     transactionId: bigint;
     status: string;

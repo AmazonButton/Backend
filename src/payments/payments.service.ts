@@ -426,7 +426,9 @@ export class PaymentsService {
       }
 
       const webhookDesc = data?.description || (body as any)?.description || '';
-      let isStoreVerification = /VERIFY_[A-Z0-9]{4,10}/i.test(webhookDesc);
+      let isStoreVerification =
+        /VERIFY_[A-Z0-9]{4,10}/i.test(webhookDesc) ||
+        /(?:^|[^A-Z0-9])S[A-Z0-9]{6,8}(?=[^A-Z0-9]|$)/i.test(webhookDesc);
 
       // Nếu description không chứa VERIFY_, kiểm tra thêm xem orderCode có thuộc về giao dịch Store Verification không
       if (!isStoreVerification && orderCodeStr) {
