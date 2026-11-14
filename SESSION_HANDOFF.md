@@ -1,5 +1,35 @@
 # Project Handoff & Session Context
 
+## 2026-11-14: Fix Reverse Proxy 429 Cascades & Diagnose BIDV Alias Mismatch in Bank Verification (COMMITTED & DEPLOYED)
+- **Status**: COMPLETED, COMMITTED & DEPLOYED TO AWS NODE 3 (Commit `529fcfb`).
+- **Core Investigation & Findings**:
+  - **Lý do thẻ ngân hàng hiển thị "Chưa xác minh chính chủ"**:
+    - Khi đăng ký tài khoản ngân hàng trên Store Wallet, số tài khoản được đăng ký là **số điện thoại / alias BIDV** (`0971...841`).
+    - Khi quét mã VietQR và chuyển tiền từ app BIDV qua cổng Napas 24/7 đến MBBank, hệ thống Napas luôn truyền **số tài khoản gốc (Core Account Number)**, cụ thể là `1680567701`.
+    - PayOS ghi nhận giao dịch thành công (orderCode `1794646205936`, providerTxId `FT26318402781441`) với `counterAccountNumber: 1680567701`, `counterAccountName: TRAN TAN PHAT`, `counterAccountBankId: 01202001` (BIDV).
+    - Logic so khớp `cleanSender === plainRegisteredAcc` nhận thấy `'1680567701' !== '0971...841'` nên kích hoạt cơ chế an toàn `SENDER_ACCOUNT_MISMATCH`. Tài khoản ngân hàng ID 180 vẫn giữ trạng thái `PENDING`.
+    - Giao dịch 2.000đ được ghi nhận vào `store_bank_inbound_receipts` (id: 1) và tạo nghĩa vụ hoàn trả `store_bank_refund_obligations` (ref: `REF_ST_1`, status: `PENDING_MANUAL_REFUND`), bảo toàn tiền cho chủ cửa hàng.
+  - **Lý do Console báo lỗi 429 Too Many Requests liên tiếp**:
+    - `useOrderSync.ts` trong frontend chạy polling `/api/v1/orders` mỗi 5 giây.
+    - Cấu hình `authLimiter` tại `src/main.ts` ban đầu giới hạn 15 req/phút trên toàn bộ `/api/v1/auth`.
+    - Khi chạy qua reverse proxy (Cloudflare Worker -> AWS Node 3), nếu `trust proxy: 1` chưa được kích hoạt mặc định, tất cả request bị tính chung IP.
+    - Axios interceptor gọi liên tiếp `/api/v1/auth/refresh` khiến `authLimiter` chặn 429. Khi token refresh bị chặn, các request tiếp theo (`/auth/me`, `/orders`) cascading lỗi 429 / 401.
+- **Fixes Applied**:
+  - `src/main.ts`:
+    - Bật `trust proxy: 1` mặc định cho reverse proxy.
+    - Nâng `authLimiter` từ 15 lên 60 req/min.
+    - Thêm `skip: (req) => ...` miễn trừ kiểm tra rate-limit đối với `req.path === '/refresh'` và `/auth/refresh`.
+  - Database: Đã áp dụng DDL tạo `store_bank_inbound_receipts` và `store_bank_refund_obligations` trên Supabase production database.
+- **Verification Commands & Evidence**:
+  - `npx tsc --noEmit`: Exit code 0 (Clean).
+  - `npx tsx tests/wallet-bank-contract.spec.ts`: PASS (100%).
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts`: PASS (20/20 test cases).
+  - `npm run aws:deploy`: Deployed to AWS Node 3, PM2 reload `backend-node3` success.
+  - `curl -s http://localhost:3000/readyz` on AWS Node 3: `{"status":"READY","checks":{"database":"UP","queue":"UP"}}`.
+- **Files Modified**:
+  - `src/main.ts`
+  - `SESSION_HANDOFF.md`
+
 ## 2026-11-14: Store Bank Return URL Validation & Wallet Bank Account ID Exposure (COMMITTED, PUSHED & DEPLOYED)
 - **Status**: COMPLETED, COMMITTED & 100% VERIFIED LIVE (Commit `0129d8f`, GitHub Actions CI/CD Run ID `43487070537` 100% Green, All 80 Suites Passed, Live deployed across all 3 production instances).
 - **Deployment Status Across 3 Live Production Instances (Commit `0129d8f`)**:
