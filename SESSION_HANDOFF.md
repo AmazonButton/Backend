@@ -1,5 +1,16 @@
 # Project Handoff & Session Context
 
+## 2026-11-14: Single Egress PayOS Payout Configuration for Render Node-1 (COMMITTED)
+- **Status**: COMPLETED, COMMITTED & DEPLOYED.
+- **Architectural Adjustment**:
+  - User requested that ONLY the IP of Instance 1 of Render (`backend-fae8.onrender.com`) be whitelisted on the PayOS Dashboard to maintain a single, easily-managed egress point.
+  - Render Node-1 Outbound Egress IP identified as `74.220.52.251` (via `/outbound-ip`).
+  - Added route pinning in `cloudflare-worker/worker.js` for `/api/v1/store/wallet`, `/api/v1/admin/withdrawals`, and `/api/v1/admin/payos` to ensure 100% of payout-related traffic is forwarded to Render Node 1.
+  - Added `PAYOS_PAYOUT_WORKER_ENABLED=false` guard to `StoreBankRefundWorker` and `CustomerBankRefundWorker` and set it on AWS Node 3 so AWS Node 3 never triggers direct PayOS Payout API calls or 403 IP rejection logs. All automated refund obligation execution is exclusively owned by Render Node 1.
+- **Verification Commands & Evidence**:
+  - `GET https://backend-fae8.onrender.com/outbound-ip`: `74.220.52.251` (Clean).
+  - `npm run build`: Exit code 0 (Clean).
+
 ## 2026-11-14: Store Withdrawal DTO Schema Fix & PayOS Payout IP Whitelist Resolution (COMMITTED)
 - **Status**: COMPLETED, VERIFIED & COMMITTED.
 - **Problem & Root Cause**:

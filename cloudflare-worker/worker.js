@@ -25,6 +25,9 @@ const THIRD_PARTY_ROUTES = [
   '/api/v1/banks',
   '/api/v1/stores/bank-accounts',
   '/api/v1/identity-verifications',
+  '/api/v1/store/wallet',
+  '/api/v1/admin/withdrawals',
+  '/api/v1/admin/payos',
 ];
 
 // Public read-only endpoints suitable for Cloudflare Edge Caching (60s TTL)
