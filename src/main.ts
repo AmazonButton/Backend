@@ -39,7 +39,8 @@ async function bootstrap() {
       const parsed = isNaN(Number(trustProxyEnv)) ? trustProxyEnv : Number(trustProxyEnv);
       (app.getHttpAdapter().getInstance() as any).set('trust proxy', parsed);
     }
-  } else if (process.env.NODE_ENV === 'production') {
+  } else {
+    // Behind Cloudflare Worker / Render / AWS reverse proxy, trust the first proxy hop by default
     (app.getHttpAdapter().getInstance() as any).set('trust proxy', 1);
   }
 
@@ -90,10 +91,14 @@ async function bootstrap() {
   // Tiered Rate Limiters: Defend sensitive authentication & order simulation endpoints against brute-force & spam
   const authLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute window
-    max: isTestEnv ? 1000 : 15, // 15 requests / min / IP across auth mutations
+    max: isTestEnv ? 1000 : 60, // 60 requests / min / IP across auth mutations (prevents 429 during active background polling)
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.method === 'GET', // Exempt read-only endpoints like GET /auth/me from brute-force throttling
+    skip: (req) =>
+      req.method === 'GET' ||
+      req.path === '/refresh' ||
+      req.path === '/auth/refresh' ||
+      (typeof req.originalUrl === 'string' && req.originalUrl.includes('/auth/refresh')), // Exempt read-only and token refresh endpoints
     message: {
       success: false,
       message: 'Quá nhiều yêu cầu xác thực từ IP của bạn. Vui lòng thử lại sau 1 phút.',
