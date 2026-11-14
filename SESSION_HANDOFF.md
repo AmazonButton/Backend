@@ -1,15 +1,25 @@
 # Project Handoff & Session Context
 
-## 2026-11-14: Single Egress PayOS Payout Configuration for Render Node-1 (COMMITTED)
-- **Status**: COMPLETED, COMMITTED & DEPLOYED.
-- **Architectural Adjustment**:
-  - User requested that ONLY the IP of Instance 1 of Render (`backend-fae8.onrender.com`) be whitelisted on the PayOS Dashboard to maintain a single, easily-managed egress point.
-  - Render Node-1 Outbound Egress IP identified as `74.220.52.251` (via `/outbound-ip`).
-  - Added route pinning in `cloudflare-worker/worker.js` for `/api/v1/store/wallet`, `/api/v1/admin/withdrawals`, and `/api/v1/admin/payos` to ensure 100% of payout-related traffic is forwarded to Render Node 1.
-  - Added `PAYOS_PAYOUT_WORKER_ENABLED=false` guard to `StoreBankRefundWorker` and `CustomerBankRefundWorker` and set it on AWS Node 3 so AWS Node 3 never triggers direct PayOS Payout API calls or 403 IP rejection logs. All automated refund obligation execution is exclusively owned by Render Node 1.
+## 2026-11-14: Store Withdrawal Auto-Payout & Sync-Status Trigger Enhancement
+- **Status**: COMPLETED & VERIFIED.
+- **Problem & Root Cause**:
+  1. **Pending Withdrawal Stalled in Backend (`PENDING`)**:
+     - When a withdrawal was requested, `store-wallet.service.ts` previously defaulted `shouldAutoPayout = dto.autoPayout ?? options?.autoPayout ?? false;`.
+     - Frontend did not pass `autoPayout: true`, causing the 50,000 VND withdrawal to sit in `PENDING` without dispatching to PayOS Payout.
+     - When clicking "Đồng bộ trạng thái", `syncWithdrawalPayoutStatus` previously returned early if `status !== 'PROCESSING' && status !== 'PENDING_RECONCILIATION'`, leaving `PENDING` withdrawals unable to be dispatched.
+  2. **PayOS Payout Account Balance Prerequisite**:
+     - PayOS Kênh chi tiền `IOT_BUTTON` (Ví Bảo Kim `ttphatt_2403`) has `balance: 0 VND`.
+     - PayOS Payout API requires positive balance in the payout channel to disburse funds.
+- **Fixes Applied**:
+  - `src/store-wallet/store-wallet.service.ts`:
+    - Updated `requestWithdrawal`: Changed default `shouldAutoPayout` to `true` (`dto.autoPayout ?? options?.autoPayout ?? true`), so verified store withdrawals automatically disburse via PayOS.
+    - Updated `syncWithdrawalPayoutStatus`: When withdrawal is in `PENDING` and lacks `providerPayoutId`, clicking "Đồng bộ trạng thái" automatically invokes `triggerPayosPayout(withdrawal.withdrawalId)` to dispatch to PayOS immediately.
 - **Verification Commands & Evidence**:
-  - `GET https://backend-fae8.onrender.com/outbound-ip`: `74.220.52.251` (Clean).
-  - `npm run build`: Exit code 0 (Clean).
+  - `npm run build`: Exit code 0 (Clean NestJS build).
+- **Files Modified**:
+  - `src/store-wallet/store-wallet.service.ts`
+  - `SESSION_HANDOFF.md`
+
 
 ## 2026-11-14: Store Withdrawal DTO Schema Fix & PayOS Payout IP Whitelist Resolution (COMMITTED)
 - **Status**: COMPLETED, VERIFIED & COMMITTED.

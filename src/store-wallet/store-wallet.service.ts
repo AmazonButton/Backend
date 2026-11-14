@@ -374,7 +374,7 @@ export class StoreWalletService {
 
     await this.invalidateWalletCaches(rawStoreId);
 
-    const shouldAutoPayout = dto.autoPayout ?? options?.autoPayout ?? false;
+    const shouldAutoPayout = dto.autoPayout ?? options?.autoPayout ?? true;
     if (shouldAutoPayout && this.payosPayoutService) {
       return this.triggerPayosPayout(withdrawal.withdrawalId);
     }
@@ -714,6 +714,14 @@ export class StoreWalletService {
         code: 'ACCESS_DENIED',
         message: 'Bạn không có quyền thao tác trên yêu cầu rút tiền của cửa hàng khác.',
       });
+    }
+
+    if (withdrawal.status === 'PENDING') {
+      if (!withdrawal.providerPayoutId && this.payosPayoutService) {
+        this.logger.log(`Yêu cầu rút tiền #${withdrawal.withdrawalCode} đang ở PENDING, kích hoạt gửi PayOS Payout...`);
+        return await this.triggerPayosPayout(withdrawal.withdrawalId);
+      }
+      return withdrawal;
     }
 
     if (withdrawal.status !== 'PROCESSING' && withdrawal.status !== 'PENDING_RECONCILIATION') {
