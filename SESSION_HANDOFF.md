@@ -1,5 +1,37 @@
 # Project Handoff & Session Context
 
+## 2026-11-14: Store Withdrawal DTO Schema Fix & PayOS Payout IP Whitelist Resolution (COMMITTED)
+- **Status**: COMPLETED, VERIFIED & COMMITTED.
+- **Problem & Root Cause**:
+  1. **Frontend 400 Bad Request when requesting withdrawal (`POST /api/v1/store/wallet/withdrawals`)**:
+     - Frontend `wallet.service.ts` line 103-116 sends `{ amount, note, bankName, accountNumber, bankAccountNumber, accountHolderName, bankAccountHolder }`.
+     - Backend `RequestWithdrawalDto` in `src/store-wallet/dto/withdrawal.dto.ts` previously only declared `amount`, `bankAccountId`, `bankCode`, `bankName`, `bankAccountNumber`, `bankAccountHolder`.
+     - Because `ValidationPipe` in `main.ts` enforces `forbidNonWhitelisted: true`, any request containing `note`, `accountNumber`, or `accountHolderName` was rejected with `400 Bad Request: property note should not exist`.
+  2. **PayOS Payout 403 "Địa chỉ IP không được phép truy cập hệ thống"**:
+     - PayOS Payout API strictly enforces IP whitelisting in production.
+     - The automated 2.000đ refund flow (`BankVerificationService.triggerAutomatedRefund` and `RefundObligationCron`) is running every 2 minutes attempting to refund 2.000đ back to the verified account, but was blocked by PayOS returning HTTP 403 `Địa chỉ IP không được phép truy cập hệ thống`.
+     - Server outbound IP `3.25.136.6` (AWS Node-3) and developer IP `171.248.97.196` must be added to the PayOS Merchant Dashboard under Payout IP Whitelist.
+  3. **Failed Verifications Refund Policy**:
+     - For failed verifications (`SENDER_ACCOUNT_MISMATCH`), the system records `refundStatus = 'PENDING_MANUAL_REFUND'`. The automated refund cron deliberately aborts and does NOT disburse funds automatically, safely retaining the funds for administrative review, exactly matching business requirements.
+- **Fixes Applied**:
+  - `src/store-wallet/dto/withdrawal.dto.ts`:
+    - Added `@IsString() @IsOptional() note?: string;`
+    - Added `@IsString() @IsOptional() accountNumber?: string;`
+    - Added `@IsString() @IsOptional() accountHolderName?: string;`
+  - `src/store-wallet/store-wallet.service.ts`:
+    - Updated `requestWithdrawal` to append `dto.note` to the wallet debit transaction description.
+  - `tests/withdrawal-dto-validation.spec.ts`:
+    - Created unit tests verifying `RequestWithdrawalDto` accepts frontend payload with `forbidNonWhitelisted: true`, enforces minimum 50,000 VND limit, and handles minimal payloads.
+- **Verification Commands & Evidence**:
+  - `npx tsx tests/withdrawal-dto-validation.spec.ts`: PASS (100%).
+  - `npx tsx tests/bank-verification-description-sync.spec.ts`: PASS (100%).
+  - `npm run build`: Exit code 0 (Clean NestJS build).
+- **Files Modified / Added**:
+  - `src/store-wallet/dto/withdrawal.dto.ts`
+  - `src/store-wallet/store-wallet.service.ts`
+  - `tests/withdrawal-dto-validation.spec.ts` (New)
+  - `SESSION_HANDOFF.md`
+
 ## 2026-11-14: Store Bank Verification Transfer Description Synchronization (COMMITTED & DEPLOYED)
 - **Status**: COMPLETED, COMMITTED & DEPLOYED TO AWS NODE 3.
 - **Problem & Root Cause**:

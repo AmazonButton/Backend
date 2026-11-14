@@ -24,6 +24,18 @@ export class RequestWithdrawalDto {
   @IsString()
   @IsOptional()
   bankAccountHolder?: string;
+
+  @IsString()
+  @IsOptional()
+  note?: string;
+
+  @IsString()
+  @IsOptional()
+  accountNumber?: string;
+
+  @IsString()
+  @IsOptional()
+  accountHolderName?: string;
 }
 
 export class ConfirmTransferDto {

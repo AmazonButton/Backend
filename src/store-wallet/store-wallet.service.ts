@@ -347,6 +347,7 @@ export class StoreWalletService {
           },
         });
 
+        const descPrefix = `Yêu cầu rút tiền #${withdrawalCode} về ${verifiedAccount.bankName} (${CryptoVaultUtil.maskAccountNumber(verifiedPlainAcc)})`;
         await tx.walletTransaction.create({
           data: {
             walletId: wallet.walletId,
@@ -355,7 +356,7 @@ export class StoreWalletService {
             balanceBefore: currentBalance,
             balanceAfter,
             referenceId: withdrawalCode,
-            description: `Yêu cầu rút tiền #${withdrawalCode} về ${verifiedAccount.bankName} (${CryptoVaultUtil.maskAccountNumber(verifiedPlainAcc)})`,
+            description: dto.note?.trim() ? `${descPrefix}: ${dto.note.trim()}` : descPrefix,
           },
         });
 
