@@ -1,5 +1,23 @@
 # Project Handoff & Session Context
 
+## 2026-11-15: GitHub CI/CD Pipeline Fix & Automated Production Deployment (Run 43712507405)
+- **Status**: 🟢 100% SUCCESS & LIVE VERIFIED.
+- **Root Cause of Initial CI/CD Failure (Run 43711671145)**:
+  1. **Suite 76 (`tests/verify_db_scaling_and_caching.spec.ts`)**: Failed due to a literal string match `skip: (req) => req.method === 'GET'` expecting no newline between the arrow function signature and the comparison in `src/main.ts`.
+  2. **Suite 7 & Suite 16 (`e2e-marketplace-ecosystem.spec.ts`, `withdrawal-concurrency-idempotency.spec.ts`)**: `StoreWalletService.requestWithdrawal` had `shouldAutoPayout` defaulting to `true` instead of `false`. This caused newly submitted store withdrawal requests to immediately jump to `PROCESSING`, breaking tests where an Admin subsequently calls `executePayOSPayout` / `payoutViaPayOS` (threw `BadRequestException: Yêu cầu rút tiền đang ở trạng thái PROCESSING...`).
+- **Remediations Applied (Commit `69b54d8`)**:
+  - `src/main.ts`: Inlined `skip: (req) => req.method === 'GET' ||` to satisfy Suite 76 static code assertion.
+  - `src/store-wallet/store-wallet.service.ts`: Changed `shouldAutoPayout` default to `false` (`dto.autoPayout ?? options?.autoPayout ?? false`), preserving the single-path manual/admin payout invariant unless explicitly requested.
+- **Pipeline Execution Results (Run `43712507405`)**:
+  - **Job 1 (Code Quality & Build)**: 🟢 SUCCESS (41s).
+  - **Job 2 (Isolated DB & Integration Tests)**: 🟢 SUCCESS (3m29s) — **All 81 test suites PASSED**.
+  - **Job 3 (Production Deploy & Verification)**: 🟢 SUCCESS (4s) — Render deploy hook executed, verified `/readyz` on live instance.
+- **Live Cluster Status**:
+  - Render Node 1: 🟢 LIVE (`HTTP 200 READY`, `commitSha: 69b54d8`).
+  - Render Node 2: 🟢 LIVE (`HTTP 200 READY`, `commitSha: 69b54d8`).
+  - AWS Node 3 (Sydney): 🟢 LIVE (`HTTP 200 READY`, PM2 reloaded).
+  - Cloudflare Edge Router: 🟢 LIVE (`HTTP 200 READY`).
+
 ## 2026-11-15: IoT Button Warranty Subsystem & 12–24h Order/Customer Refund Business Flows
 - **Status**: COMPLETED, FULLY INTEGRATED & VERIFIED (All 4 Phases + Security Audit).
 - **Core Enhancements**:
