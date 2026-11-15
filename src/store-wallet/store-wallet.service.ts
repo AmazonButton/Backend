@@ -374,7 +374,7 @@ export class StoreWalletService {
 
     await this.invalidateWalletCaches(rawStoreId);
 
-    const shouldAutoPayout = dto.autoPayout ?? options?.autoPayout ?? true;
+    const shouldAutoPayout = dto.autoPayout ?? options?.autoPayout ?? false;
     if (shouldAutoPayout && this.payosPayoutService) {
       return this.triggerPayosPayout(withdrawal.withdrawalId);
     }

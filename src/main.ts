@@ -94,8 +94,7 @@ async function bootstrap() {
     max: isTestEnv ? 1000 : 60, // 60 requests / min / IP across auth mutations (prevents 429 during active background polling)
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) =>
-      req.method === 'GET' ||
+    skip: (req) => req.method === 'GET' ||
       req.path === '/refresh' ||
       req.path === '/auth/refresh' ||
       (typeof req.originalUrl === 'string' && req.originalUrl.includes('/auth/refresh')), // Exempt read-only and token refresh endpoints
