@@ -1,5 +1,37 @@
 # Project Handoff & Session Context
 
+## 2026-11-15: Database Migration & Schema Sync for Render Multi-Cloud Instance (payment_qr_code)
+- **Status**: COMPLETED, ROOT-CAUSE RESOLVED, VERIFIED & COMMITTED.
+- **Problem & Root Cause**:
+  - Issue Report: `The column customer_bank_verification_proofs.payment_qr_code does not exist in the current database`.
+  - Root Cause Analysis:
+    1. Multi-cloud database divergence: Local environment was pointed to Neon PostgreSQL (`ep-winter-haze-b36uyvah-pooler...neon.tech`), whereas Render Node-1 and Node-2 are connected to Supabase PostgreSQL (`aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres`).
+    2. Render's `buildCommand` was originally configured as `npm ci && npx prisma generate && npm run build` (lacking `npx prisma migrate deploy`).
+    3. Therefore, while Neon received migration `20261115000000_add_customer_bank_verification_payment_qr_code`, the Supabase database that Render communicates with had never been migrated.
+    4. Furthermore, unhandled Prisma exceptions exposed model queries and internal build paths (`/opt/render/project/src/dist/...`) to the client when `NODE_ENV` was set to `development`.
+- **Fixes Applied**:
+  1. Database Schema Migration on Supabase (`scripts/deploy_supabase_migration.js`):
+     - Executed `ALTER TABLE "customer_bank_verification_proofs" ADD COLUMN IF NOT EXISTS "payment_qr_code" TEXT;` on the live Supabase PostgreSQL database.
+     - Recorded migration `20261115000000_add_customer_bank_verification_payment_qr_code` into `_prisma_migrations` table with SHA-256 checksum.
+     - Verified table column schema: `payment_qr_code` (data_type: `text`, is_nullable: `YES`).
+     - Executed sample queries for `findFirst()` and `findMany()`; both succeeded, returning existing session records with `paymentQrCode: null` without any errors.
+  2. Render Infrastructure Automation:
+     - Updated Render Node-1 (`srv-dbdom8gm7kps73ebg5fg`) and Node-2 (`srv-dbgqpgugekts738lbreg`) `buildCommand` via Render API to:
+       `npm install && npx prisma generate && npx prisma migrate deploy && npm run build`
+     - Ensures every future commit automatically migrates the target Supabase database.
+  3. Information Leakage Protection (`src/common/filters/http-exception.filter.ts`):
+     - Enhanced `AllExceptionsFilter` to catch all Prisma and database exceptions.
+     - Enforces Security-by-Design Rule 9: Strips all internal server paths (`/opt/render/...`), SQL details, and Prisma model names.
+     - Replaces technical errors with a clean, user-friendly response:
+       `"Chưa thể tải trạng thái xác minh ngân hàng. Vui lòng thử lại sau."` with error code `DATABASE_ERROR`.
+- **Verification Evidence**:
+  - `node scripts/verify_bank_queries.js`:
+    - `findFirst()` (used by `findLatestVerificationSessionByAccount`): 100% SUCCESS.
+    - `findMany()` (used by `findVerificationSessionHistory`): 10 records returned with 100% SUCCESS.
+  - `npm run build`: Exit code 0.
+
+
+
 ## 2026-11-15: POD Architecture Implementation (Shopee / Grab / Amazon Logistics Standard)
 - **Status**: COMPLETED, VERIFIED & COMMITTED.
 - **Problem & Requirement**:

@@ -64,13 +64,30 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = 'Kích thước dữ liệu gửi lên vượt quá giới hạn cho phép (Payload Too Large: tối đa 10kb)';
         errorCode = 'PAYLOAD_TOO_LARGE';
       } else {
+        const isPrismaError =
+          errAny.name?.includes('Prisma') ||
+          exception.constructor?.name?.includes('Prisma') ||
+          (typeof exception.message === 'string' &&
+            (exception.message.includes('prisma') ||
+              exception.message.includes('The column') ||
+              exception.message.includes('does not exist in the current database')));
+
         this.logger.error(`Unhandled Exception at ${request.method} ${request.url}: ${exception.message}`, exception.stack);
 
-        // Protect sensitive database/server errors in production
-        if (process.env.NODE_ENV === 'production') {
+        // Security-by-Design Rule 9: Never leak internal database schema, queries, or server filesystem paths
+        if (isPrismaError) {
+          status = HttpStatus.INTERNAL_SERVER_ERROR;
+          errorCode = 'DATABASE_ERROR';
+          message = request.url.includes('bank-accounts')
+            ? 'Chưa thể tải trạng thái xác minh ngân hàng. Vui lòng thử lại sau.'
+            : 'Đã có lỗi xảy ra khi truy vấn dữ liệu. Vui lòng thử lại sau.';
+        } else if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
           message = 'Đã có lỗi xảy ra. Vui lòng liên hệ quản trị viên hoặc thử lại sau.';
         } else {
-          message = exception.message;
+          // In development, strip any internal file paths like /opt/render/... to prevent PII/system leak
+          message = exception.message
+            ? exception.message.replace(/\/opt\/render\/[^\s:]+/g, '[server-path]')
+            : 'Lỗi hệ thống máy chủ';
         }
       }
     }
