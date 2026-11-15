@@ -881,38 +881,88 @@ export class OrdersRepository {
         throw new BadRequestException(`Chỉ có thể hoàn tất giao hàng từ trạng thái SHIPPING (hiện tại: ${order.order_status})`);
       }
 
-      let isValidPodUrl = false;
-      let canonicalPodUrl = '';
+      let isValidPod = false;
+      let canonicalPodRef = '';
       let canonicalSubpath = '';
-      try {
-        const parsed = new URL(dto.podImageUrl);
-        const configuredCloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-        const isSecure = parsed.protocol === 'https:';
-        const isCloudinaryHost = parsed.hostname === 'res.cloudinary.com' || parsed.hostname.endsWith('.cloudinary.com');
-        const uploadIdx = parsed.pathname.indexOf('/image/upload/');
 
-        if (isSecure && isCloudinaryHost && uploadIdx !== -1) {
-          const cloudNameInUrl = parsed.pathname.slice(1, uploadIdx);
-          if (!configuredCloudName || cloudNameInUrl === configuredCloudName) {
-            const rawAfterUpload = parsed.pathname.slice(uploadIdx + '/image/upload/'.length);
-            // Split segments to strip transformation options and version prefix (v12345)
-            const segments = rawAfterUpload.split('/');
-            const cleanSegments = segments.filter((seg) => !seg.includes(',') && !/^v\d+$/.test(seg));
-            canonicalSubpath = cleanSegments.join('/');
+      if (dto.podObjectKey && typeof dto.podObjectKey === 'string') {
+        const cleanKey = dto.podObjectKey.trim().replace(/^\/+/, '');
+        if (cleanKey.startsWith(`stores/${order.store_id}/pod/`) && !cleanKey.includes('..')) {
+          isValidPod = true;
+          canonicalSubpath = cleanKey;
+          canonicalPodRef = cleanKey;
+        }
+      } else if (dto.podImageUrl && typeof dto.podImageUrl === 'string') {
+        try {
+          const parsed = new URL(dto.podImageUrl);
+          const configuredCloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+          const isSecure = parsed.protocol === 'https:';
+          const isCloudinaryHost = parsed.hostname === 'res.cloudinary.com' || parsed.hostname.endsWith('.cloudinary.com');
+          const uploadIdx = parsed.pathname.indexOf('/image/upload/');
 
-            if (canonicalSubpath.startsWith(`stores/${order.store_id}/pod/`)) {
-              isValidPodUrl = true;
-              const effectiveCloud = configuredCloudName || cloudNameInUrl;
-              canonicalPodUrl = `https://res.cloudinary.com/${effectiveCloud}/image/upload/${canonicalSubpath}`;
+          if (isSecure && isCloudinaryHost && uploadIdx !== -1) {
+            const cloudNameInUrl = parsed.pathname.slice(1, uploadIdx);
+            if (!configuredCloudName || cloudNameInUrl === configuredCloudName) {
+              const rawAfterUpload = parsed.pathname.slice(uploadIdx + '/image/upload/'.length);
+              // Split segments to strip transformation options and version prefix (v12345)
+              const segments = rawAfterUpload.split('/');
+              const cleanSegments = segments.filter((seg) => !seg.includes(',') && !/^v\d+$/.test(seg));
+              canonicalSubpath = cleanSegments.join('/');
+
+              if (canonicalSubpath.startsWith(`stores/${order.store_id}/pod/`)) {
+                isValidPod = true;
+                const effectiveCloud = configuredCloudName || cloudNameInUrl;
+                canonicalPodRef = `https://res.cloudinary.com/${effectiveCloud}/image/upload/${canonicalSubpath}`;
+              }
+            }
+          } else if (isSecure && (parsed.hostname.includes('r2.cloudflarestorage.com') || parsed.hostname.includes('s3.') || parsed.hostname.includes('amazonaws.com'))) {
+            const rawPath = parsed.pathname.replace(/^\/+/, '');
+            const subpath = rawPath.replace(/^[^\/]+\//, '');
+            if (rawPath.startsWith(`stores/${order.store_id}/pod/`)) {
+              canonicalSubpath = rawPath;
+              canonicalPodRef = rawPath;
+              isValidPod = true;
+            } else if (subpath.startsWith(`stores/${order.store_id}/pod/`)) {
+              canonicalSubpath = subpath;
+              canonicalPodRef = subpath;
+              isValidPod = true;
             }
           }
+        } catch (e) {
+          isValidPod = false;
         }
-      } catch (e) {
-        isValidPodUrl = false;
       }
 
-      if (!isValidPodUrl || !canonicalSubpath) {
-        throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải là URL Cloudinary HTTPS hợp lệ thuộc thư mục stores/${order.store_id}/pod/`);
+      if (!isValidPod || !canonicalSubpath) {
+        throw new BadRequestException(`Ảnh xác thực giao hàng (POD) phải thuộc thư mục stores/${order.store_id}/pod/`);
+      }
+
+      // Geofencing verification (Haversine formula)
+      let geofenceNote: string | null = null;
+      if (
+        dto.driverLatitude != null &&
+        dto.driverLongitude != null &&
+        order.shipping_latitude != null &&
+        order.shipping_longitude != null
+      ) {
+        const toRad = (deg: number) => (deg * Math.PI) / 180;
+        const lat1 = toRad(Number(order.shipping_latitude));
+        const lon1 = toRad(Number(order.shipping_longitude));
+        const lat2 = toRad(Number(dto.driverLatitude));
+        const lon2 = toRad(Number(dto.driverLongitude));
+        const dLat = lat2 - lat1;
+        const dLon = lon2 - lon1;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const R = 6371000;
+        const distanceMeters = Math.round(R * c);
+        if (distanceMeters > 500) {
+          geofenceNote = `[GEOFENCE_ALERT] Giao hàng cách điểm nhận ${distanceMeters}m (GPS tài xế: ${dto.driverLatitude}, ${dto.driverLongitude})`;
+        } else {
+          geofenceNote = `[GEOFENCE_OK] Vị trí giao hàng khớp thực tế (${distanceMeters}m)`;
+        }
       }
 
       // NV-07: Acquire transaction-level advisory lock on canonical POD subpath to serialize concurrent claims
@@ -969,8 +1019,15 @@ export class OrdersRepository {
           orderStatus: 'DELIVERED',
           paymentStatus: 'PAID',
           paymentMethod: isPaidGateway ? order.payment_method : dto.paymentMethod,
-          podImageUrl: canonicalPodUrl || dto.podImageUrl,
+          podImageUrl: canonicalPodRef,
           deliveredAt: deliveredAtDate,
+          ...(geofenceNote
+            ? {
+                orderNote: order.order_note
+                  ? `${order.order_note}\n${geofenceNote}`
+                  : geofenceNote,
+              }
+            : {}),
         },
       });
 

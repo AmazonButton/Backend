@@ -1,4 +1,5 @@
 import { PrismaService } from '../prisma/prisma.service';
+import crypto from 'crypto';
 import {
   Controller,
   Get,
@@ -26,7 +27,9 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { MediaService } from './media.service';
+import { ObjectStorageService } from './object-storage.service';
 import { ProductsRepository } from '../products/products.repository';
+import { PresignedUploadDto } from './dto/presigned-upload.dto';
 
 @ApiTags('Media & Cloud Storage')
 @ApiBearerAuth('JWT-auth')
@@ -35,6 +38,7 @@ import { ProductsRepository } from '../products/products.repository';
 export class MediaController {
   constructor(
     @Inject(MediaService) private readonly mediaService: MediaService,
+    @Inject(ObjectStorageService) private readonly objectStorageService: ObjectStorageService,
     @Inject(ProductsRepository) private readonly productsRepo: ProductsRepository,
     @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
@@ -231,4 +235,63 @@ export class MediaController {
     };
   }
 
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Post('pod/presigned-upload')
+  @ApiOperation({
+    summary: 'Tạo URL ký sẵn (Presigned URL) để App/Web tải trực tiếp ảnh POD lên Cloud Storage (R2/S3)',
+    description: 'Tài xế/nhân viên gọi API này để lấy URL tải ảnh trực tiếp, không làm tốn RAM/băng thông của Backend API.',
+  })
+  async getPodPresignedUpload(
+    @Body() dto: PresignedUploadDto,
+    @Request() req: any,
+  ) {
+    const user = req?.user;
+    if (!user) {
+      throw new ForbiddenException('Không xác định được danh tính người dùng');
+    }
+
+    const orderId = dto.orderId;
+    const order = await this.prisma.order.findUnique({
+      where: { orderId: BigInt(orderId) },
+    });
+    if (!order) {
+      throw new NotFoundException('Đơn hàng không tồn tại');
+    }
+
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (!user.storeId || order.storeId.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang làm việc');
+      }
+      if (user.role === 'STAFF_DELIVERY') {
+        if (!order.assignedDriverId || order.assignedDriverId.toString() !== user.userId.toString()) {
+          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+        }
+        if (order.orderStatus !== 'SHIPPING') {
+          throw new BadRequestException(`Chỉ có thể xin URL tải ảnh POD khi đơn hàng đang ở trạng thái SHIPPING (hiện tại: ${order.orderStatus})`);
+        }
+      }
+    }
+
+    const now = new Date();
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const randomHex = crypto.randomBytes(6).toString('hex');
+    const ext = dto.contentType === 'image/jpeg' ? 'jpg' : dto.contentType === 'image/png' ? 'png' : 'webp';
+    const objectKey = `stores/${order.storeId}/pod/${yyyy}/${mm}/order_${orderId}_${randomHex}.${ext}`;
+
+    const presignedData = await this.objectStorageService.generatePresignedUploadUrl(
+      objectKey,
+      dto.contentType || 'image/webp',
+      300,
+    );
+
+    return {
+      success: true,
+      message: 'Tạo Presigned URL tải ảnh POD thành công',
+      data: {
+        ...presignedData,
+        orderId: dto.orderId,
+      },
+    };
+  }
 }

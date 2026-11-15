@@ -25,6 +25,7 @@ import { SimulateButtonPressDto } from './dto/simulate-button-press.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { OrderTimelineResponseDto } from './dto/order-timeline-response.dto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
+import { ObjectStorageService } from '../media/object-storage.service';
 
 @Injectable()
 export class OrdersService {
@@ -37,6 +38,7 @@ export class OrdersService {
     @Inject(StoreWalletService) private readonly storeWalletService: StoreWalletService,
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
     @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
+    @Optional() @Inject(ObjectStorageService) private readonly objectStorageService?: ObjectStorageService,
   ) {}
 
   private async invalidateDashboardCaches(storeId?: string | number | bigint, customerUserId?: string | number | bigint) {
@@ -920,6 +922,66 @@ export class OrdersService {
         })),
         createdAt: createdOrder.createdAt,
       },
+    };
+  }
+
+  async getPodViewUrl(orderIdStr: string, user: any) {
+    if (!orderIdStr || !/^\d+$/.test(orderIdStr)) {
+      throw new BadRequestException('Mã đơn hàng không hợp lệ');
+    }
+    const orderId = BigInt(orderIdStr);
+    const order = await this.ordersRepo.findOrderById(orderId);
+    if (!order) {
+      throw new NotFoundException('Đơn hàng không tồn tại');
+    }
+
+    // BOLA validation
+    if (user.role === 'CUSTOMER') {
+      const customerUserId = order.customer?.userId || (order as any).customer_id;
+      if (!customerUserId || customerUserId.toString() !== user.userId?.toString()) {
+        throw new ForbiddenException('Bạn không có quyền xem thông tin đơn hàng của người khác');
+      }
+    } else if (
+      ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_DELIVERY'].includes(user.role)
+    ) {
+      if (user.storeId && order.storeId.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang quản lý');
+      }
+    } else if (user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      throw new ForbiddenException('Bạn không có quyền truy cập thông tin bằng chứng đơn hàng');
+    }
+
+    const podRef = order.podImageUrl || order.evidenceImageUrl;
+    if (!podRef) {
+      throw new NotFoundException('Đơn hàng chưa có ảnh bằng chứng giao hàng (POD)');
+    }
+
+    const isDirectStorage = !podRef.startsWith('http://') && !podRef.startsWith('https://');
+    let viewUrl = podRef;
+    let expiresAt: string;
+
+    if (isDirectStorage && this.objectStorageService) {
+      const presigned = await this.objectStorageService.generatePresignedViewUrl(podRef, 900);
+      viewUrl = presigned.viewUrl;
+      expiresAt = presigned.expiresAt;
+    } else {
+      expiresAt = new Date(Date.now() + 900 * 1000).toISOString();
+    }
+
+    return {
+      orderId: order.orderId.toString(),
+      orderStatus: order.orderStatus,
+      viewUrl,
+      expiresAt,
+      deliveredAt: order.deliveredAt || null,
+      isPrivateStorage: isDirectStorage,
+      driver: order.assignedDriver
+        ? {
+            userId: order.assignedDriver.userId.toString(),
+            fullName: order.assignedDriver.fullName,
+            phone: order.assignedDriver.phone,
+          }
+        : null,
     };
   }
 }

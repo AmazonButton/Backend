@@ -29,6 +29,8 @@
     "probe:capacity": "tsx tests/safe_capacity_limit_probe.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1169.0",
+    "@aws-sdk/s3-request-presigner": "^3.1169.0",
     "@neon/env": "^0.0.0",
     "@nestjs/common": "^10.4.22",
     "@nestjs/core": "^10.4.22",

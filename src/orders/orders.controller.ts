@@ -134,6 +134,13 @@ export class OrdersController {
     return { success: true, message: 'Đã ghi nhận giao hàng thất bại', data };
   }
 
+  @Roles('CUSTOMER', 'STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Get(':id/pod-view')
+  async getPodView(@Param('id') id: string, @Request() req: any) {
+    const data = await this.ordersService.getPodViewUrl(id, req.user);
+    return { success: true, message: 'Lấy link xem ảnh xác thực giao hàng thành công', data };
+  }
+
   @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/status')
   async updateStatus(@Param('id') id: string, @Body() body: UpdateOrderStatusDto, @Request() req: any) {

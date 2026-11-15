@@ -1,5 +1,49 @@
 # Project Handoff & Session Context
 
+## 2026-11-15: POD Architecture Implementation (Shopee / Grab / Amazon Logistics Standard)
+- **Status**: COMPLETED, VERIFIED & COMMITTED.
+- **Problem & Requirement**:
+  - Proposal document: `DE_XUAT_KIEN_TRUC_LUU_TRU_ANH_BANG_CHUNG_POD_CHUAN_SHOPEE_GRAB.md`.
+  - Replaced high-cost Cloudinary public storage with high-performance Private Object Storage (Cloudflare R2 / AWS S3) via Presigned URLs.
+  - Eliminated backend RAM bottlenecks by introducing Direct Client Upload (`PUT` directly to Object Storage).
+  - Protected customer PII (home door, address, parcel photo) by serving POD images strictly via private buckets and temporary Presigned View URLs (15-minute TTL).
+  - Implemented anti-fraud Geofencing (Haversine formula, 500m threshold) and enforced live camera capture with client-side WebP compression (< 300KB).
+- **Backend Fixes & Implementations**:
+  1. `src/media/object-storage.service.ts`:
+     - Integrated `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner`.
+     - Supports Cloudflare R2 and AWS S3 with environment configurations.
+     - Implemented `generatePresignedUploadUrl` (300s TTL) and `generatePresignedViewUrl` (900s TTL) with graceful fallback.
+  2. `src/media/dto/presigned-upload.dto.ts` & `src/media/media.controller.ts`:
+     - Added endpoint `POST /api/v1/media/pod/presigned-upload`.
+     - Strictly validates order ownership and `SHIPPING` status before issuing upload credentials.
+  3. `src/orders/dto/deliver-order.dto.ts` & `src/orders/orders.repository.ts`:
+     - Supported `podObjectKey`, `driverLatitude`, `driverLongitude`, `deliveredAt` while maintaining full backward compatibility with legacy `podImageUrl`.
+     - Added Geofencing distance calculation via Haversine formula; auto-flags `[GEOFENCE_ALERT]` if driver delivers > 500m away from shipping address.
+     - Preserved PostgreSQL advisory lock (`pg_advisory_xact_lock`) and duplicate POD prevention.
+  4. `src/orders/orders.controller.ts` & `src/orders/orders.service.ts`:
+     - Added endpoint `GET /api/v1/orders/:id/pod-view` protected by BOLA (Order Customer, Store Staff, or Admin).
+     - Generates 15-minute secure view URL for private storage.
+  5. `tests/pod-architecture-shopee-grab.spec.ts`:
+     - Added test suite verifying Presigned Upload (300s), Presigned View (900s), DTO validation, backward compatibility, and Geofencing calculations. All 7 tests passed.
+- **Frontend Implementations**:
+  1. `src/services/media.service.ts`:
+     - Added `getPodPresignedUpload`, `uploadDirectToStorage`, and `getPodView`.
+  2. `src/services/driver-workflow.ts`:
+     - Added `compressImageToWebP` (browser Canvas WebP compression < 300KB) and `getDriverCoordinates` (GPS geolocation).
+     - Updated `buildDeliveryPayload` to package GPS coordinates and `podObjectKey`.
+  3. `src/pages/operations/DriverDeliveryPage.tsx`:
+     - Integrated browser WebP compression, Direct Presigned Upload with multipart fallback, GPS coordinates submission, and image preview.
+  4. `src/pages/store/StoreDashboard.tsx`:
+     - Added "Xem ảnh POD" button for delivered/completed orders.
+     - Created `PodViewModal` popup displaying the delivery proof photo, delivery time, driver info, and safety notice.
+- **Verification Evidence**:
+  - Backend: `npm run build` -> Exit code 0.
+  - Backend tests: `node node_modules\tsx\dist\cli.mjs tests/pod-architecture-shopee-grab.spec.ts` -> 7 passed, 0 failed.
+  - Frontend: `npx tsc --noEmit` -> Exit code 0.
+  - Frontend: `npm run build` -> Exit code 0 (`vite v6.4.3 building for production... ✓ built in 27.77s`).
+
+
+
 ## 2026-11-15: Customer Bank Verification VietQR Support for Mobile (Flutter)
 - **Status**: COMPLETED, VERIFIED & COMMITTED.
 - **Problem & Requirement**:
