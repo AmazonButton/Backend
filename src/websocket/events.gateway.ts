@@ -123,6 +123,11 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(`user_${payload.userId}`);
       client.join(`driver:${payload.userId}`);
 
+      if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(payload.role)) {
+        client.join('admin');
+        client.join(`role:${payload.role}`);
+      }
+
       const targetStoreIds = new Set<string>();
 
       // Query database for all stores owned by this user or where they are active staff
@@ -305,6 +310,13 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (this.server) {
       this.server.to(`customer_${customerId}`).emit(event, payload);
       this.logger.log(`📢 [WS -> Customer ${customerId}] ${event}`);
+    }
+  }
+
+  emitToAdmin(event: string, payload: any) {
+    if (this.server) {
+      this.server.to('admin').emit(event, payload);
+      this.logger.log(`📢 [WS -> Admin] ${event}`);
     }
   }
 

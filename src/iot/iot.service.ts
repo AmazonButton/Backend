@@ -193,6 +193,15 @@ export class IotService {
       throw new InternalServerErrorException('Lỗi hệ thống khi xác thực tính duy nhất của yêu cầu (Fail-Closed)');
     }
 
+    // Check low battery / hardware faults and dispatch alerts
+    await this.checkAndDispatchDeviceAlerts(device, {
+      battery,
+      eventType,
+      faultCode: body.faultCode,
+      rssi,
+      pressCount: body.pressCount,
+    });
+
     // 5. Emit real-time tactile pressing animation to web UI
     const pressingPayload = {
       deviceId: device.deviceId,
@@ -213,6 +222,8 @@ export class IotService {
         requestId,
         paymentMethod: body.paymentMethod || 'COD',
         shippingFee: body.shippingFee || 0,
+        battery,
+        rssi,
       });
 
       const targetCreatedOrderId = (orderResult as any)?.order?.orderId || (orderResult as any)?.orderId;
@@ -263,6 +274,12 @@ export class IotService {
 
   async handleTelemetry(device: any, body: any) {
     const { battery = 100, rssi = -50 } = body;
+    await this.checkAndDispatchDeviceAlerts(device, {
+      battery,
+      eventType: 'TELEMETRY',
+      rssi,
+    });
+
     return {
       success: true,
       message: 'Ghi nhận thông số telemetry thành công',
@@ -273,6 +290,91 @@ export class IotService {
         timestamp: new Date(),
       },
     };
+  }
+
+  /**
+   * Helper phát hiện cảnh báo lỗi phần cứng & pin yếu (< 20%)
+   * Tự động phát WebSocket DEVICE_FAULT_ALERT tới Admin/Store/Customer
+   * và ghi record vào Notification database.
+   */
+  async checkAndDispatchDeviceAlerts(
+    device: any,
+    info: { battery?: number; eventType?: string; faultCode?: string; rssi?: number; pressCount?: number },
+  ) {
+    try {
+      const numBattery = info.battery !== undefined ? Number(info.battery) : 100;
+
+      // 1. Cập nhật batteryLevel trên iot_button
+      if (device?.buttonId && info.battery !== undefined) {
+        await this.prisma.ioTButton.update({
+          where: { buttonId: BigInt(device.buttonId) },
+          data: { batteryLevel: numBattery },
+        }).catch(() => {});
+      }
+
+      const isLowBattery = numBattery > 0 && numBattery < 20;
+      const isFaultEvent =
+        ['BUTTON_STUCK', 'HARDWARE_FAULT', 'CHILD_SPAM_DETECTED'].includes(info.eventType || '') ||
+        Boolean(info.faultCode);
+
+      if (!isLowBattery && !isFaultEvent) {
+        return;
+      }
+
+      const faultType = isLowBattery ? 'LOW_BATTERY' : (info.faultCode || info.eventType || 'UNKNOWN_FAULT');
+      const alertData = {
+        deviceId: device?.deviceId || String(device?.buttonId || ''),
+        batteryLevel: numBattery,
+        rssi: Number(info.rssi || -50),
+        pressCount: Number(info.pressCount || 1),
+        faultType,
+        occurredAt: new Date(),
+      };
+
+      // Realtime WebSocket broadcast
+      const gateway = this.ordersService['eventsGateway'];
+      if (gateway) {
+        if (typeof gateway.emitToAdmin === 'function') {
+          gateway.emitToAdmin('DEVICE_FAULT_ALERT', alertData);
+        }
+        if (device?.storeId && typeof gateway.emitToStore === 'function') {
+          gateway.emitToStore(device.storeId.toString(), 'DEVICE_FAULT_ALERT', alertData);
+        }
+        if (device?.customerId && typeof gateway.emitToCustomer === 'function') {
+          gateway.emitToCustomer(device.customerId.toString(), 'DEVICE_FAULT_ALERT', alertData);
+        }
+      }
+
+      // Persist Notification to DB for store owner
+      if (device?.storeId) {
+        const store = await this.prisma.store.findUnique({
+          where: { storeId: BigInt(device.storeId) },
+          select: { ownerUserId: true, name: true },
+        });
+
+        if (store?.ownerUserId) {
+          const notifTitle = isLowBattery
+            ? `[Cảnh báo] Nút bấm ${device.buttonCode || device.deviceId} pin yếu (${numBattery}%)`
+            : `[Cảnh báo sự cố] Nút bấm ${device.buttonCode || device.deviceId}: ${faultType}`;
+          const notifBody = isLowBattery
+            ? `Nút bấm tại cửa hàng ${store.name || ''} sắp hết pin (${numBattery}% < 20%). Vui lòng kiểm tra sạc hoặc gửi bảo hành.`
+            : `Phát hiện sự cố trên nút bấm: ${faultType}. Vui lòng kiểm tra tình trạng thiết bị.`;
+
+          await this.prisma.notification.create({
+            data: {
+              userId: store.ownerUserId,
+              type: faultType,
+              title: notifTitle,
+              body: notifBody,
+              data: alertData,
+              idempotencyKey: `alert:${device.deviceId || device.buttonId}:${faultType}:${Math.floor(Date.now() / 300000)}`,
+            },
+          }).catch(() => {});
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Lỗi khi xử lý cảnh báo thiết bị IoT: ${err.message}`);
+    }
   }
 
   async getConfig(device: any) {

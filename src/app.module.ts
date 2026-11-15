@@ -32,6 +32,7 @@ import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { BankVerificationModule } from './bank-verification/bank-verification.module';
+import { WarrantyModule } from './warranty/warranty.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { QueueModule } from './common/queues/queue.module';
 import { AppController } from './app.controller';
@@ -73,6 +74,7 @@ import { AppController } from './app.controller';
     StaffModule,
     BillingChargesModule,
     StoreCashModule,
+    WarrantyModule,
   ],
   controllers: [AppController],
 })

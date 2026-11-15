@@ -166,13 +166,19 @@ export class OrdersService {
 
     let newOrderId: any = null;
 
+    const baseNote = requestId ? `Đơn hàng tự động từ nút bấm IoT [REQ:${requestId}]` : 'Đơn hàng tự động từ nút bấm IoT';
+    const numBattery = eventPayload.battery !== undefined ? Number(eventPayload.battery) : (button.batteryLevel !== null && button.batteryLevel !== undefined ? Number(button.batteryLevel) : null);
+    const orderNote = (numBattery !== null && numBattery > 0 && numBattery < 20)
+      ? `[CẢNH BÁO PIN YẾU: ${numBattery}%] ${baseNote}`
+      : baseNote;
+
     // 1. Cố gắng thực thi qua Stored Procedure PostgreSQL (Atomic với iot_request_id)
     try {
       newOrderId = await this.ordersRepo.executeSpCreateOrder(
         button.buttonId,
         paymentMethod,
         shippingFee,
-        requestId ? `Đơn hàng tự động từ nút bấm IoT [REQ:${requestId}]` : 'Đơn hàng tự động từ nút bấm IoT',
+        orderNote,
         requestId,
       );
     } catch (procErr: any) {
@@ -211,7 +217,7 @@ export class OrdersService {
         procErr?.code === '42883';
       if (isMissingProcedure) {
         try {
-          newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee, requestId);
+          newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee, requestId, orderNote);
         } catch (fallbackErr: any) {
           if (fallbackErr instanceof BadRequestException) {
             throw fallbackErr;
@@ -617,6 +623,90 @@ export class OrdersService {
       this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_CANCELLED', cancelPayload);
     }
     const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
+    await this.invalidateDashboardCaches(order.storeId, customerUserId);
+
+    return formattedOrder;
+  }
+
+  /**
+   * Xử lý hoàn tiền cho đơn hàng online đã hủy (REFUND_PENDING -> REFUNDED)
+   * Kèm ghi nhận lịch sử trạng thái, thông báo khách hàng và phát sự kiện realtime.
+   */
+  async refundOrder(
+    orderId: string | number | bigint,
+    refundDto: { refundReference?: string; adminNote?: string },
+    user?: any,
+  ) {
+    const targetOrderId = BigInt(orderId);
+    const order = await this.ordersRepo.findOrderById(targetOrderId);
+
+    if (!order) {
+      throw new NotFoundException('Đơn hàng không tồn tại');
+    }
+
+    // BOLA check: Chỉ SUPER_ADMIN, SYSTEM_ADMIN hoặc chủ Store sở hữu đơn hàng
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
+      if (!isStoreOwner) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'ACCESS_DENIED',
+          message: 'Bạn không có quyền xử lý hoàn tiền cho đơn hàng của cửa hàng khác.',
+        });
+      }
+    }
+
+    if (order.paymentStatus === 'REFUNDED') {
+      return toOrderResponseDto(order);
+    }
+
+    if (order.paymentStatus !== 'REFUND_PENDING') {
+      throw new BadRequestException(
+        `Đơn hàng không ở trạng thái chờ hoàn tiền (Trạng thái thanh toán hiện tại: ${order.paymentStatus})`,
+      );
+    }
+
+    const note = refundDto?.adminNote
+      ? (refundDto?.refundReference ? `${refundDto.adminNote} [REF:${refundDto.refundReference}]` : refundDto.adminNote)
+      : (refundDto?.refundReference
+        ? `Đã hoàn tiền PayOS/Ngân hàng [REF:${refundDto.refundReference}]`
+        : 'Đã hoàn tất chuyển hoàn tiền đơn hàng cho khách');
+
+    const updated = await this.ordersRepo.refundOrderAtomicTx(
+      targetOrderId,
+      note,
+      user?.userId ? BigInt(user.userId) : null,
+    );
+
+    // Tạo thông báo cho khách hàng nếu có
+    const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
+    if (customerUserId && this.notificationsService) {
+      const refundVnd = Number(order.totalAmount).toLocaleString('vi-VN');
+      await this.notificationsService.createAndDispatchNotification({
+        userId: customerUserId,
+        type: 'ORDER_REFUNDED',
+        title: 'Hoàn tiền đơn hàng thành công',
+        body: `Đơn hàng #${order.orderCode} đã được hoàn tiền thành công (${refundVnd} ₫).`,
+        data: {
+          orderId: order.orderId.toString(),
+          orderCode: order.orderCode,
+          refundAmount: Number(order.totalAmount),
+        },
+        idempotencyKey: `order_refund:${order.orderId.toString()}`,
+      }).catch(() => {});
+    }
+
+    const formattedOrder = toOrderResponseDto(updated);
+    const refundPayload = {
+      order: formattedOrder,
+      storeId: order.storeId.toString(),
+      customerId: order.customerId ? order.customerId.toString() : null,
+    };
+    this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_REFUNDED', refundPayload);
+    if (order.customerId) {
+      this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_REFUNDED', refundPayload);
+    }
+
     await this.invalidateDashboardCaches(order.storeId, customerUserId);
 
     return formattedOrder;

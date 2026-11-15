@@ -60,7 +60,13 @@ export class OrdersRepository {
     return result[0]?.order_id;
   }
 
-  async createOrderFallbackTx(button: any, paymentMethod: string, shippingFee: number, iotRequestId?: string): Promise<bigint> {
+  async createOrderFallbackTx(
+    button: any,
+    paymentMethod: string,
+    shippingFee: number,
+    iotRequestId?: string,
+    orderNote?: string,
+  ): Promise<bigint> {
     return this.prisma.$transaction(async (tx) => {
       // 0. Idempotency Check (Safe Hit)
       if (iotRequestId) {
@@ -240,7 +246,7 @@ export class OrdersRepository {
           shippingAddress,
           shippingLatitude: address?.latitude || null,
           shippingLongitude: address?.longitude || null,
-          orderNote: 'Đơn hàng tự động từ nút bấm IoT',
+          orderNote: orderNote || 'Đơn hàng tự động từ nút bấm IoT',
           iotRequestId: iotRequestId || null,
         },
       });
@@ -760,6 +766,29 @@ export class OrdersRepository {
       });
 
       // Lịch sử trạng thái được tự động ghi nhận bởi DB trigger trg_sync_inventory_on_order_status_change
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
+  async refundOrderAtomicTx(orderId: bigint, note: string, changedByUserId?: bigint | null) {
+    return this.prisma.$transaction(async (tx) => {
+      const updatedOrder = await tx.order.update({
+        where: { orderId },
+        data: {
+          paymentStatus: 'REFUNDED',
+        },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          oldStatus: updatedOrder.orderStatus,
+          newStatus: updatedOrder.orderStatus,
+          changedByUserId: changedByUserId || null,
+          reason: note,
+        },
+      });
 
       return this.findOrderByIdTx(tx, orderId);
     });

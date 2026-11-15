@@ -1723,11 +1723,16 @@ export class CustomersRepository {
     });
   }
 
-  async findPendingRefundObligations(limit = 20) {
+  async findPendingRefundObligations(limit = 20, minAgeHours?: number) {
+    const rawHours = minAgeHours !== undefined ? minAgeHours : Number(process.env.CUSTOMER_REFUND_COOLING_OFF_HOURS || 12);
+    const coolingOffHours = Number.isFinite(rawHours) && rawHours >= 0 ? rawHours : 12;
+    const cutoff = new Date(Date.now() - coolingOffHours * 60 * 60 * 1000);
+
     return this.prisma.customerBankRefundObligation.findMany({
       where: {
         refundStatus: 'PENDING_REFUND',
         activePayoutAttemptId: null,
+        createdAt: { lte: cutoff },
         inboundTransaction: { OR: [
           { reconciliationFlag: null },
           { NOT: { reconciliationFlag: { startsWith: 'FLAGGED_CONFLICTING_' } } },

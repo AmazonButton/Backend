@@ -59,6 +59,7 @@ model User {
   apiIdempotencyKeys           ApiIdempotencyKey[]
   authIdentities               UserAuthIdentity[]
   collectedCashReceipts         StoreCashReceipt[]
+  reportedWarrantyTickets       WarrantyTicket[]              @relation("UserReportedWarrantyTickets")
 
   @@unique([authProvider, providerSubject], map: "uq_users_auth_provider_subject")
   @@map("users")
@@ -97,6 +98,7 @@ model Store {
   fulfillmentRentals          ButtonRental[]                @relation("StoreFulfillmentRentals")
   cashVouchers                StoreCashVoucher[]
   payerBillingCharges         BillingCharge[]               @relation("StoreBillingCharges")
+  warrantyTickets             WarrantyTicket[]
 
   @@map("store")
 }
@@ -135,6 +137,7 @@ model CustomerProfile {
   customerBankAccounts   CustomerBankAccount[]
   rentalRefunds          DepositRefund[]
   bankVerificationProofs CustomerBankVerificationProof[]
+  warrantyTickets        WarrantyTicket[]
 
   @@map("customer_profile")
 }
@@ -302,11 +305,13 @@ model IoTButton {
   inventoryState      String           @default("IN_PLATFORM_WAREHOUSE") @map("inventory_state") @db.VarChar(30)
   canOrder            Boolean          @default(true) @map("can_order")
 
-  buttonProducts  ButtonProduct[]
-  orders          Order[]
-  idempotencyKeys IotIdempotencyKey[]
-  deviceMovements DeviceMovement[]
-  rentalReturns   RentalReturn[]
+  buttonProducts              ButtonProduct[]
+  orders                      Order[]
+  idempotencyKeys             IotIdempotencyKey[]
+  deviceMovements             DeviceMovement[]
+  rentalReturns               RentalReturn[]
+  warrantyTickets             WarrantyTicket[]  @relation("ButtonWarrantyTickets")
+  replacementWarrantyTickets  WarrantyTicket[]  @relation("ReplacementButtonWarrantyTickets")
 
   @@unique([buttonId, customerId, storeId], name: "uq_iot_button_context")
   @@index([storeId, status, batteryLevel], map: "idx_iot_button_store_status_battery")
@@ -1475,4 +1480,38 @@ model RentalAuditLog {
   @@index([targetType, targetId], map: "idx_rental_audit_target")
   @@index([action, createdAt], map: "idx_rental_audit_action_created")
   @@map("rental_audit_logs")
+}
+
+model WarrantyTicket {
+  ticketId            BigInt           @id @default(autoincrement()) @map("ticket_id")
+  ticketCode          String           @unique @map("ticket_code") @db.VarChar(32)
+  buttonId            BigInt           @map("button_id")
+  button              IoTButton        @relation("ButtonWarrantyTickets", fields: [buttonId], references: [buttonId], onDelete: Restrict)
+  replacementButtonId BigInt?          @map("replacement_button_id")
+  replacementButton   IoTButton?       @relation("ReplacementButtonWarrantyTickets", fields: [replacementButtonId], references: [buttonId], onDelete: SetNull)
+  storeId             BigInt?          @map("store_id")
+  store               Store?           @relation(fields: [storeId], references: [storeId], onDelete: SetNull)
+  customerId          BigInt?          @map("customer_id")
+  customer            CustomerProfile? @relation(fields: [customerId], references: [customerId], onDelete: SetNull)
+  reportedByUserId    BigInt           @map("reported_by_user_id")
+  reportedByUser      User             @relation("UserReportedWarrantyTickets", fields: [reportedByUserId], references: [userId], onDelete: Restrict)
+
+  faultGroup          String           @map("fault_group") @db.VarChar(20)
+  faultCode           String           @map("fault_code") @db.VarChar(50)
+  depositAmount       Decimal          @default(100000) @map("deposit_amount") @db.Decimal(15, 2)
+  deductionPercent    Int              @default(0) @map("deduction_percent")
+  deductionAmount     Decimal          @default(0) @map("deduction_amount") @db.Decimal(15, 2)
+  refundAmount        Decimal          @default(100000) @map("refund_amount") @db.Decimal(15, 2)
+
+  inspectionNote      String?          @map("inspection_note") @db.Text
+  adminNote           String?          @map("admin_note") @db.Text
+  status              String           @default("PENDING") @map("status") @db.VarChar(30)
+
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([storeId, status], map: "idx_warranty_tickets_store_status")
+  @@index([buttonId, createdAt(sort: Desc)], map: "idx_warranty_tickets_button")
+  @@index([reportedByUserId], map: "idx_warranty_tickets_reporter")
+  @@map("warranty_tickets")
 }

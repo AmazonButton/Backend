@@ -1,6 +1,73 @@
 # Project Handoff & Session Context
 
-## 2026-11-15: Full Proof of Delivery (POD) Architecture Alignment (Shopee / Grab / Amazon Standard)
+## 2026-11-15: IoT Button Warranty Subsystem & 12–24h Order/Customer Refund Business Flows
+- **Status**: COMPLETED, FULLY INTEGRATED & VERIFIED (All 4 Phases + Security Audit).
+- **Core Enhancements**:
+  1. **IoT Button Warranty Subsystem (`WarrantyTicket` & `DeviceMovement`)**:
+     - Schema & Migrations: Added `WarrantyTicket` and `DeviceMovement` models in `prisma/schema.prisma`. Migrated both Neon (`npx prisma migrate deploy`) and Supabase PostgreSQL (`scripts/deploy_supabase_warranty.js`).
+     - Module: `src/warranty/` with 6-layer architecture (`WarrantyModule`, `WarrantyController`, `WarrantyService`, `WarrantyRepository`).
+     - Server-side Financial Invariant Math (4 Fault Groups):
+       - Group A (Natural/Tech): `LOW_BATTERY`, `BUTTON_STUCK`, `HARDWARE_FAULT` -> 0% deduction (100.000 VND refund / 1-1 swap).
+       - Group B (Network/Child): `WIFI_CHANGED`, `CHILD_SPAM_DETECTED` -> 0% deduction (0 VND fee, BLE config / 2s child lock).
+       - Group C (Minor Shell Crack): `TIER_C_SHELL_CRACK_30%` -> 30% deduction (30.000 VND fee, 70.000 VND refund).
+       - Group D (Heavy/Lost): `WATER_DAMAGE`, `FIRE_HEAT_DAMAGE`, `PCB_CRUSHED`, `DEVICE_LOST` -> 70%–100% deduction.
+     - Security & Concurrency: BOLA tenant isolation enforced. Atomic transactions `approveSwapAtomicTx` (marks old button `DEFECTIVE_RETURN`, assigns replacement button `WITH_CUSTOMER`) and `lockDeviceAtomicTx` (`DISABLED`).
+     - Telemetry & Alerting: Low battery (< 20%) telemetry automatically broadcasts `DEVICE_FAULT_ALERT` to Admin and Store, creates debounced `Notification`, and prepends `[CẢNH BÁO PIN YẾU: XX%]` into orders placed via button press.
+     - Frontend Integration: `Frontend/src/services/warranty.ts` and `WarrantyPanel.tsx` connected to live endpoints with WebSocket listeners.
+     - Test Suite: `tests/warranty-and-notifications.spec.ts` (13/13 PASSED, 100%).
+
+  2. **Customer Bank & Deposit Refund Cooling-Off Window (12–24h Anti-Fraud Hold)**:
+     - Implemented configurable `CUSTOMER_REFUND_COOLING_OFF_HOURS=12` in `CustomersRepository.findPendingRefundObligations`.
+     - Uses SQL cutoff `createdAt <= NOW() - INTERVAL 'X hours'` so background workers strictly wait until the 12–24h cooling-off window matures before executing payouts.
+     - Frontend: Updated `banking-flow.ts` and `CustomerRentalsPage.tsx` with clear 12–24h SLA text.
+     - Test Suite: `tests/customer-refund-cooling-off.spec.ts` (5/5 PASSED, 100%).
+
+  3. **Order Cancellation & Refund Flow (`REFUND_PENDING` -> `REFUNDED`)**:
+     - When online paid orders (PayOS) are cancelled or rejected, `OrdersRepository.cancelOrderAtomicTx` transitions `paymentStatus = 'REFUND_PENDING'`.
+     - Added endpoint `POST /api/v1/orders/:id/refund` (`RefundOrderDto` with `refundReference` and `adminNote`).
+     - `OrdersService.refundOrder`: BOLA protected (`SUPER_ADMIN`, `SYSTEM_ADMIN`, or order's store owner). Calls atomic transaction `refundOrderAtomicTx`, logs into `orderStatusHistory`, dispatches `ORDER_REFUNDED` realtime event to store and customer, and sends customer notification.
+     - Frontend: Updated `CustomerOrdersPage.tsx` so cancelled orders with `REFUND_PENDING` display `"Đơn đã hủy · Chờ hoàn tiền (12–24h)"` and detail `"Khoản thanh toán trực tuyến sẽ được hoàn về tài khoản sau 12–24 giờ làm việc."`, while `REFUNDED` displays `"Đơn đã hủy · Đã hoàn tiền"`, eliminating user confusion from `"Không cần thanh toán"`.
+     - Test Suite: `tests/order-refund-and-cooling-off.spec.ts` (15/15 PASSED, 100%).
+
+  4. **Security Audit & Invariant Regression Suite Results**:
+     - `tests/warranty-and-notifications.spec.ts`: 13/13 PASSED.
+     - `tests/customer-refund-cooling-off.spec.ts`: 5/5 PASSED.
+     - `tests/order-refund-and-cooling-off.spec.ts`: 15/15 PASSED.
+     - `tests/data_isolation_bola.spec.ts`: PASSED (BOLA & Tenant Isolation intact).
+     - `tests/auth_authority_hardening.spec.ts`: PASSED (Auth role resolution & Inactive user protection).
+     - `tests/security-audit-waves-fixes.spec.ts`: ALL WAVES 1-4 PASSED.
+     - `tests/security-audit-p1-fixes.spec.ts`: 27/27 PASSED.
+     - `tests/notifications-http.spec.ts`: 14/14 PASSED.
+     - Backend Build: `npm run build` completed with code 0.
+     - Frontend Typecheck: `npx tsc --noEmit` completed with code 0.
+
+
+## 2026-11-15: IoT Button Warranty Subsystem & Real-Time Notifications Full 4-Phase Implementation
+- **Status**: COMPLETED, FULLY INTEGRATED & VERIFIED (Phase 1 -> 4).
+- **Context & Architecture**:
+  - Implemented the complete 4-phase IoT Button Warranty Subsystem & Real-Time Alerting stream based on the Frontend (`WarrantyPanel.tsx`, `warranty.ts`) and Hardware/Telemetry specification.
+  - **Phase 1: Multi-Cloud Database Schema & Migrations**:
+    - Added `WarrantyTicket` model to `prisma/schema.prisma` with relations to `IoTButton` (`button`, `replacementButton`), `Store`, `CustomerProfile`, and `User` (`reportedByUser`).
+    - Applied migration `20261115143000_add_warranty_tickets_table` across both Neon PostgreSQL (`npx prisma migrate deploy`) and Supabase PostgreSQL (`scripts/deploy_supabase_warranty.js`).
+  - **Phase 2: Warranty Backend Module (6-Layer Architecture)**:
+    - Module: `src/warranty/` (`WarrantyModule`, `WarrantyController`, `WarrantyService`, `WarrantyRepository`, DTOs).
+    - Server-side Financial Invariant Math (4 Fault Groups):
+      - **Group A (Natural & Tech Faults)**: `LOW_BATTERY`, `BUTTON_STUCK`, `HARDWARE_FAULT` -> 0% deduction (100.000 VND refund / 1-1 swap).
+      - **Group B (Network & Child Mispress)**: `WIFI_CHANGED`, `CHILD_SPAM_DETECTED` -> 0% deduction (0 VND fee, BLE support / 2s child lock).
+      - **Group C (Minor Shell Crack)**: `TIER_C_SHELL_CRACK_30%` -> 30% deduction (30.000 VND fee, 70.000 VND refund).
+      - **Group D (Heavy Damage / Lost)**: `WATER_DAMAGE`, `FIRE_HEAT_DAMAGE`, `PCB_CRUSHED`, `DEVICE_LOST` -> 70%–100% deduction.
+    - Security-by-Design: BOLA Tenant Isolation enforced; atomic transactions (`approveSwapAtomicTx`, `lockDeviceAtomicTx`) maintain device inventory states (`WITH_CUSTOMER`, `DEFECTIVE_RETURN`) and audit logs in `device_movements`.
+  - **Phase 3: Real-Time Event Streams & Low Battery Alerting**:
+    - WebSocket: `EventsGateway` joined to `admin` room; methods `emitToAdmin`, `emitToStore`, `emitToCustomer`.
+    - Real-time broadcasts: `WARRANTY_TICKET_CREATED`, `WARRANTY_TICKET_UPDATED`, `DEVICE_FAULT_ALERT`.
+    - IoT Hardware/Telemetry Ingestion:
+      - `IotService.checkAndDispatchDeviceAlerts`: When battery < 20% or fault event occurred, broadcasts `DEVICE_FAULT_ALERT` and records `Notification` in DB with debounce.
+      - Order Note Rule: Orders placed with battery < 20% automatically prepend `[CẢNH BÁO PIN YẾU: XX%]` into `order.orderNote`.
+    - Test Suite: `tests/warranty-and-notifications.spec.ts` -> 13/13 tests PASSED (100%).
+  - **Phase 4: Frontend Live Integration**:
+    - `Frontend/src/services/warranty.ts`: Replaced mock storage with live HTTP calls (`fetchWarrantyTickets`, `createWarrantyTicketAsync`, `approveSwapTicketAsync`, `lockDeviceTicketAsync`, `resolveTicketAsync`, `rejectTicketAsync`) with offline LocalStorage fallback.
+    - `Frontend/src/components/devices/WarrantyPanel.tsx`: Live API binding for ticket creation and admin actions; real-time WebSocket listeners for fault alerts and ticket lifecycle changes.
+    - Verification: Frontend `npx tsc --noEmit` and `npm run build` completed with zero errors (built in 47.71s). Backend `npm run build` completed with code 0.
 - **Status**: COMPLETED, VERIFIED & COMMITTED.
 - **Context & Objective**:
   - Implemented the 6 core pillars of enterprise Proof of Delivery (POD) architecture based on Shopee, Grab, and Amazon Logistics standards:

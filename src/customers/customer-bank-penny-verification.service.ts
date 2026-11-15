@@ -1413,8 +1413,9 @@ export class CustomerBankPennyVerificationService {
       return { processed: 0, succeeded: 0, failed: 0 };
     }
 
+    const coolingHours = Number(process.env.CUSTOMER_REFUND_COOLING_OFF_HOURS || 12);
     const obligations =
-      await this.customersRepo.findPendingRefundObligations(limit);
+      await this.customersRepo.findPendingRefundObligations(limit, coolingHours);
     let processed = 0;
     let succeeded = 0;
     let failed = 0;

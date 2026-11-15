@@ -19,6 +19,7 @@ import { DeliveryFailureDto } from './dto/delivery-failure.dto';
 import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { SimulateButtonPressDto } from './dto/simulate-button-press.dto';
+import { RefundOrderDto } from './dto/refund-order.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -153,5 +154,13 @@ export class OrdersController {
   async cancel(@Param('id') id: string, @Request() req: any, @Body('reason') reason?: string) {
     const data = await this.ordersService.cancelOrder(id, reason || 'Khách hàng hủy đơn', req.user);
     return { success: true, message: 'Đã hủy đơn hàng thành công', data };
+  }
+
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @HttpCode(200)
+  @Post(':id/refund')
+  async refund(@Param('id') id: string, @Request() req: any, @Body() body: RefundOrderDto) {
+    const data = await this.ordersService.refundOrder(id, body, req.user);
+    return { success: true, message: 'Đã hoàn tất hoàn tiền đơn hàng', data };
   }
 }
