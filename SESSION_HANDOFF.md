@@ -1,5 +1,27 @@
 # Project Handoff & Session Context
 
+## 2026-11-15: Full Proof of Delivery (POD) Architecture Alignment (Shopee / Grab / Amazon Standard)
+- **Status**: COMPLETED, VERIFIED & COMMITTED.
+- **Context & Objective**:
+  - Implemented the 6 core pillars of enterprise Proof of Delivery (POD) architecture based on Shopee, Grab, and Amazon Logistics standards:
+    1. **Storage Layer**: Direct-to-Storage via Cloudflare R2 / AWS S3 private bucket (`ObjectStorageService`) with fallback to Cloudinary.
+    2. **Retention Policy (TTL)**: Configured 60-day auto-expiration lifecycle rule for POD images.
+    3. **PII Security & Link Expiration**: Private storage bucket with short-lived Presigned View URLs (15-minute TTL, `GET /api/v1/orders/:id/pod-view`) restricted strictly to order owner (`CUSTOMER`), store staff/owner (`STORE_*`), and `ADMIN`.
+    4. **Live Camera Enforcement**: Mobile `capture="environment"` attribute to invoke back camera directly.
+    5. **Anti-Fraud & Verification**:
+       - Client-side Canvas Watermarking: permanently burns Order #, real-time VN timestamp, and GPS coordinates into the image canvas before WebP compression.
+       - Backend Advisory Lock: `pg_advisory_xact_lock(hashtext('pod_claim:' || $canonicalSubpath))` prevents concurrent image reuse attacks.
+       - Geofencing: Haversine distance comparison between driver GPS coordinates and order shipping address (>500m alerts recorded in order note).
+    6. **Client Compression**: WebP compression (`compressImageToWebP`) to reduce image size from ~1.5MB down to ~200-300KB prior to upload.
+- **Frontend Enhancements**:
+  - `src/services/driver-workflow.ts`: Added `PodWatermarkOptions` and automated canvas watermarking; strengthened URL protocol and host whitelist validation.
+  - `src/pages/operations/DriverDeliveryPage.tsx`: Integrated GPS capture before upload to stamp watermark into WebP file directly.
+  - `src/pages/customer/CustomerOrdersPage.tsx`: Added "Xem ảnh bằng chứng giao hàng (POD)" button and secure modal for customers on `DELIVERED` and `COMPLETED` orders via `mediaService.getPodView`.
+  - `tests/delivery-workflow.test.mjs`: Updated test harness to run on Node 20 ESM; 18/18 tests passing 100%.
+- **Backend & Tests**:
+  - `tests/pod-architecture-shopee-grab.spec.ts`: 7/7 tests passed (Presigned Upload 300s TTL, Presigned View 900s TTL, DTO validations, Legacy Cloudinary fallback, Geofencing Haversine calculation).
+  - AWS Node-3 and Render services fully aligned.
+
 ## 2026-11-15: Database Migration & Schema Sync for Render Multi-Cloud Instance (payment_qr_code)
 - **Status**: COMPLETED, ROOT-CAUSE RESOLVED, VERIFIED & COMMITTED.
 - **Problem & Root Cause**:
