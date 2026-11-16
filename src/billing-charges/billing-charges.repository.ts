@@ -8,6 +8,8 @@ export interface CreateChargeInput {
   storeId?: bigint;
   customerId?: bigint;
   payerStoreId?: bigint;
+  planId?: bigint;
+  planSnapshot?: Record<string, any>;
   purpose: 'RENTAL_INITIAL' | 'RENTAL_EXTENSION' | 'STORE_SUBSCRIPTION';
   targetType: 'RENTAL' | 'STORE';
   targetId: bigint;
@@ -52,6 +54,8 @@ export class BillingChargesRepository {
         targetType: data.targetType,
         targetId: data.targetId,
         payerStoreId: data.payerStoreId,
+        planId: data.planId,
+        planSnapshot: data.planSnapshot,
         currency: 'VND',
         totalAmount: data.totalAmount,
         status: 'PENDING',
@@ -212,12 +216,43 @@ export class BillingChargesRepository {
         // Khóa bi quan gian hàng
         await tx.$queryRawUnsafe('SELECT * FROM store WHERE store_id = $1 FOR UPDATE', storeId);
 
-        const plan = await tx.subscriptionPlan.findFirst({
-          where: { price: 60000, isActive: true },
-        });
+        let targetPlanId: bigint | null = null;
+        let durationDays = 30;
 
-        if (!plan) {
-          throw new NotFoundException('Không tìm thấy gói duy trì kệ 60.000đ/tháng đang hoạt động');
+        let snapshot = rawCharge.plan_snapshot;
+        if (typeof snapshot === 'string') {
+          try {
+            snapshot = JSON.parse(snapshot);
+          } catch {
+            snapshot = null;
+          }
+        }
+
+        if (snapshot && snapshot.planId) {
+          targetPlanId = BigInt(snapshot.planId);
+          if (typeof snapshot.durationDays === 'number' && snapshot.durationDays > 0) {
+            durationDays = snapshot.durationDays;
+          }
+        } else if (rawCharge.plan_id) {
+          targetPlanId = BigInt(rawCharge.plan_id);
+          const p = await tx.subscriptionPlan.findUnique({ where: { planId: targetPlanId } });
+          if (p && p.durationDays) {
+            durationDays = p.durationDays;
+          }
+        } else {
+          // Fallback cho historical/legacy charges trước khi có dynamic plan snapshot
+          const fallbackPlan = await tx.subscriptionPlan.findFirst({
+            where: { price: 60000, isActive: true },
+          }) || await tx.subscriptionPlan.findFirst({
+            where: { isActive: true },
+            orderBy: { planId: 'asc' },
+          });
+
+          if (!fallbackPlan) {
+            throw new NotFoundException('Không tìm thấy gói duy trì kệ phù hợp để cấp quyền');
+          }
+          targetPlanId = fallbackPlan.planId;
+          durationDays = fallbackPlan.durationDays || 30;
         }
 
         const now = new Date();
@@ -232,12 +267,12 @@ export class BillingChargesRepository {
         });
 
         const startDate = currentSub ? currentSub.endDate : now;
-        const endDate = new Date(startDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+        const endDate = new Date(startDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
         subscriptionUpdated = await tx.storeSubscription.create({
           data: {
             storeId,
-            planId: plan.planId,
+            planId: targetPlanId,
             startDate,
             endDate,
             status: 'ACTIVE',

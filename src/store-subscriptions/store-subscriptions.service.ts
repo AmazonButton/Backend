@@ -123,4 +123,22 @@ export class StoreSubscriptionsService {
     }
     return StoreSubscriptionResponseDto.fromEntity(sub);
   }
+
+  async getPlanForCheckout(planId: bigint) {
+    const plan = await this.subscriptionsRepo.findPlanById(planId);
+    if (!plan) {
+      throw new NotFoundException('Không tìm thấy gói dịch vụ gian hàng');
+    }
+    if (!plan.isActive) {
+      throw new BadRequestException('Gói dịch vụ đã tạm dừng, không thể tạo thanh toán mới');
+    }
+    const price = Number(plan.price);
+    if (price === 0) {
+      throw new BadRequestException('Gói dịch vụ miễn phí (0đ). Vui lòng sử dụng tính năng đăng ký trực tiếp thay vì thanh toán qua PayOS');
+    }
+    if (price < 2000) {
+      throw new BadRequestException('Số tiền thanh toán qua PayOS tối thiểu là 2.000đ');
+    }
+    return plan;
+  }
 }

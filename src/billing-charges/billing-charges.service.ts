@@ -50,14 +50,34 @@ export class BillingChargesService {
 
   async createStoreSubscriptionCharge(params: {
     storeId: bigint;
+    planId?: bigint;
+    planCode?: string;
+    planName?: string;
     amount?: number;
     durationDays?: number;
+    maxProducts?: number;
     paymentMethod?: string;
+    planSnapshot?: Record<string, any>;
   }) {
     const amount = params.amount || 60000;
+    const durationDays = params.durationDays || 30;
+    const planName = params.planName || 'Gói duy trì gian hàng';
+
+    const snapshot = params.planSnapshot || (params.planId ? {
+      planId: params.planId.toString(),
+      planCode: params.planCode,
+      planName: params.planName,
+      price: amount,
+      durationDays: durationDays,
+      maxProducts: params.maxProducts,
+      snapshotAt: new Date().toISOString(),
+    } : null);
 
     const chargeInput: CreateChargeInput = {
       storeId: params.storeId,
+      payerStoreId: params.storeId,
+      planId: params.planId,
+      planSnapshot: snapshot,
       purpose: 'STORE_SUBSCRIPTION',
       targetType: 'STORE',
       targetId: params.storeId,
@@ -66,9 +86,9 @@ export class BillingChargesService {
         {
           lineType: 'STORE_SUBSCRIPTION',
           amount,
-          description: `Phí duy trì gian hàng (${params.durationDays || 30} ngày)`,
+          description: `Phí duy trì gian hàng - ${planName} (${durationDays} ngày)`,
           durationUnit: 'DAY',
-          durationCount: params.durationDays || 30,
+          durationCount: durationDays,
           quantity: 1,
           unitPrice: amount,
         },

@@ -508,6 +508,7 @@ model SubscriptionPlan {
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
 
   subscriptions StoreSubscription[]
+  billingCharges BillingCharge[]
 
   @@map("subscription_plans")
 }
@@ -1084,9 +1085,12 @@ model BillingCharge {
   paymentLinkId           String?              @map("payment_link_id") @db.VarChar(128)
   checkoutUrl             String?              @map("checkout_url") @db.VarChar(1024)
   providerTransactionCode String?              @unique(map: "uq_billing_charges_provider_tx") @map("provider_transaction_code") @db.VarChar(128)
+  planId                  BigInt?              @map("plan_id")
+  planSnapshot            Json?                @map("plan_snapshot")
   createdAt               DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  plan                    SubscriptionPlan?    @relation(fields: [planId], references: [planId], onDelete: SetNull)
   lines                   BillingChargeLine[]
   cashVouchers            StoreCashVoucher[]
   paymentReceipts         BillingPaymentReceipt[]
@@ -1095,6 +1099,7 @@ model BillingCharge {
   @@index([targetType, targetId, status], map: "idx_billing_charges_target")
   @@index([status, createdAt(sort: Desc)], map: "idx_billing_charges_status_created")
   @@index([payerStoreId], map: "idx_billing_charges_payer_store")
+  @@index([planId], map: "idx_billing_charges_plan")
   @@map("billing_charges")
 }
 

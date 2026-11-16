@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, BadRequestException, Query, Param, Inject, Optional, forwardRef } from '@nestjs/common';
 import { StoreSubscriptionsService } from './store-subscriptions.service';
 import { SubscribePlanDto } from './dto/subscription.dto';
+import { RenewSubscriptionChargeDto } from './dto/renew-subscription-charge.dto';
 import { StoreSubscriptionQueryDto } from './dto/store-subscription-query.dto';
 import { StoreQueryDto } from '../store-wallet/dto/wallet.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -100,7 +101,7 @@ export class StoreSubscriptionsController {
   @Post('renew-charge')
   async createRenewCharge(
     @Request() req: any,
-    @Body() body: { returnUrl?: string; cancelUrl?: string },
+    @Body() body: RenewSubscriptionChargeDto,
     @Query() query?: StoreQueryDto,
   ) {
     const storeId = this.extractStoreId(req, query);
@@ -108,10 +109,27 @@ export class StoreSubscriptionsController {
       throw new BadRequestException('Dịch vụ thu tiền BillingChargesService chưa sẵn sàng');
     }
 
+    if (!body?.planId) {
+      throw new BadRequestException('Mã gói dịch vụ (planId) là bắt buộc để tạo thanh toán PayOS');
+    }
+
+    let planIdBigInt: bigint;
+    try {
+      planIdBigInt = BigInt(body.planId);
+    } catch {
+      throw new BadRequestException('Mã gói dịch vụ (planId) không hợp lệ');
+    }
+
+    const plan = await this.subscriptionsService.getPlanForCheckout(planIdBigInt);
+
     const charge = await this.billingChargesService.createStoreSubscriptionCharge({
       storeId,
-      amount: 60000,
-      durationDays: 30,
+      planId: plan.planId,
+      planCode: plan.planCode,
+      planName: plan.planName,
+      amount: Number(plan.price),
+      durationDays: plan.durationDays,
+      maxProducts: plan.maxProducts,
     });
 
     const paymentLink = await this.billingChargesService.createPayosPaymentRequestForCharge(
@@ -123,7 +141,7 @@ export class StoreSubscriptionsController {
 
     return {
       success: true,
-      message: 'Tạo liên kết thanh toán phí duy trì gian hàng 60.000đ/tháng thành công',
+      message: `Tạo liên kết thanh toán gói ${plan.planName} (${Number(plan.price).toLocaleString('vi-VN')}đ / ${plan.durationDays} ngày) thành công`,
       data: paymentLink,
     };
   }
