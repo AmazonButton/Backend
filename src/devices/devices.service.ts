@@ -529,6 +529,15 @@ export class DevicesService {
         updateData.status = body.status;
       }
     }
+    if (body.holdDurationMs !== undefined) {
+      updateData.holdDurationMs = Number(body.holdDurationMs);
+    }
+    if (body.canOrder !== undefined) {
+      updateData.canOrder = Boolean(body.canOrder);
+    }
+    if (body.cancelWindowSeconds !== undefined) {
+      updateData.cancelWindowSeconds = Number(body.cancelWindowSeconds);
+    }
     if (body.location) {
       DevicesService.deviceLocations.set(existing.deviceId, body.location);
     }

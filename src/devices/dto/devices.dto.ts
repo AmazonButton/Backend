@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsArray,
   IsNumber,
+  IsBoolean,
   Min,
   Max,
   ValidateNested,
@@ -227,10 +228,26 @@ export class UpdateDeviceDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'RETIRED'], {
-    message: 'Trạng thái phải là một trong: ACTIVE, INACTIVE, MAINTENANCE, RETIRED',
+  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'RETIRED', 'DISABLED'], {
+    message: 'Trạng thái phải là một trong: ACTIVE, INACTIVE, MAINTENANCE, RETIRED, DISABLED',
   })
   status?: string;
+
+  @IsOptional()
+  @IsInt({ message: 'holdDurationMs phải là số nguyên mili-giây' })
+  @Min(500, { message: 'holdDurationMs tối thiểu là 500ms' })
+  @Max(10000, { message: 'holdDurationMs tối đa là 10.000ms' })
+  holdDurationMs?: number;
+
+  @IsOptional()
+  @IsBoolean({ message: 'canOrder phải là giá trị boolean (true/false)' })
+  canOrder?: boolean;
+
+  @IsOptional()
+  @IsInt({ message: 'cancelWindowSeconds phải là số nguyên giây' })
+  @Min(0, { message: 'cancelWindowSeconds tối thiểu là 0' })
+  @Max(3600, { message: 'cancelWindowSeconds tối đa là 3.600 giây' })
+  cancelWindowSeconds?: number;
 
   @IsOptional()
   @IsInt({ message: 'batteryLevel phải là số nguyên' })
@@ -307,10 +324,26 @@ export class UpdateConfigDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'RETIRED'], {
-    message: 'Trạng thái phải là một trong: ACTIVE, INACTIVE, MAINTENANCE, RETIRED',
+  @IsIn(['ACTIVE', 'INACTIVE', 'MAINTENANCE', 'RETIRED', 'DISABLED'], {
+    message: 'Trạng thái phải là một trong: ACTIVE, INACTIVE, MAINTENANCE, RETIRED, DISABLED',
   })
   status?: string;
+
+  @IsOptional()
+  @IsInt({ message: 'holdDurationMs phải là số nguyên mili-giây' })
+  @Min(500, { message: 'holdDurationMs tối thiểu là 500ms' })
+  @Max(10000, { message: 'holdDurationMs tối đa là 10.000ms' })
+  holdDurationMs?: number;
+
+  @IsOptional()
+  @IsBoolean({ message: 'canOrder phải là giá trị boolean (true/false)' })
+  canOrder?: boolean;
+
+  @IsOptional()
+  @IsInt({ message: 'cancelWindowSeconds phải là số nguyên giây' })
+  @Min(0, { message: 'cancelWindowSeconds tối thiểu là 0' })
+  @Max(3600, { message: 'cancelWindowSeconds tối đa là 3.600 giây' })
+  cancelWindowSeconds?: number;
 }
 
 export class ExtendWarrantyDto {

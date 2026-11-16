@@ -95,7 +95,7 @@ export class OrdersRepository {
         throw new BadRequestException('Nút bấm không ở trạng thái ACTIVE');
       }
       if (lockedButton.can_order === false) {
-        throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+        throw new BadRequestException('Nút bấm thông minh đang bị tạm khóa tính năng đặt hàng (Khóa trẻ em từ xa hoặc tạm ngưng). Vui lòng kiểm tra trên ứng dụng để tiếp tục đặt hàng.');
       }
       if (lockedButton.inventory_state === 'RETURN_IN_TRANSIT') {
         throw new BadRequestException('Nút bấm đang trong quá trình yêu cầu trả hàng, không thể đặt hàng');

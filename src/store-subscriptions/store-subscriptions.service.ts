@@ -71,7 +71,7 @@ export class StoreSubscriptionsService {
 
     if (!currentSub || currentSub.isExpired || currentSub.status !== 'ACTIVE' || new Date(currentSub.endDate) < new Date()) {
       throw new ForbiddenException(
-        'Gian hàng đã hết hạn hoặc chưa đăng ký gói duy trì kệ (60.000đ/tháng). Vui lòng thanh toán phí duy trì để tiếp tục đăng bán sản phẩm.',
+        'Gian hàng đã hết hạn hoặc chưa đăng ký gói dịch vụ. Vui lòng đăng ký hoặc gia hạn gói dịch vụ để tiếp tục đăng bán sản phẩm.',
       );
     }
 
