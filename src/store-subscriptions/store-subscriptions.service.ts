@@ -42,6 +42,10 @@ export class StoreSubscriptionsService {
     };
   }
 
+  async hasUsedTrialSubscription(storeId: string | number | bigint): Promise<boolean> {
+    return this.subscriptionsRepo.hasUsedTrialSubscription(BigInt(storeId));
+  }
+
   async subscribeWithWallet(
     storeId: string | number | bigint,
     planId: string | number | bigint,
@@ -53,6 +57,14 @@ export class StoreSubscriptionsService {
     const plan = await this.subscriptionsRepo.findPlanById(rawPlanId);
     if (!plan || !plan.isActive) {
       throw new NotFoundException('Gói cước không tồn tại hoặc đã tạm dừng cung cấp');
+    }
+
+    const isTrial = Number(plan.price) === 0 || plan.durationDays <= 7 || plan.planCode.toUpperCase().includes('TRIAL');
+    if (isTrial) {
+      const hasUsed = await this.subscriptionsRepo.hasUsedTrialSubscription(rawStoreId);
+      if (hasUsed) {
+        throw new BadRequestException('Cửa hàng đã từng sử dụng gói dùng thử 7 ngày. Mỗi tài khoản chỉ được dùng thử 1 lần duy nhất.');
+      }
     }
 
     const wallet = await this.walletService.getOrCreateStoreWallet(rawStoreId);
@@ -75,14 +87,7 @@ export class StoreSubscriptionsService {
       );
     }
 
-    const currentProductsCount = await this.subscriptionsRepo.countStoreProducts(rawStoreId);
-
-    if (currentProductsCount >= currentSub.plan.maxProducts) {
-      throw new ForbiddenException(
-        `Gian hàng đã đạt giới hạn tối đa ${currentSub.plan.maxProducts} sản phẩm của gói ${currentSub.plan.planName}. Vui lòng nâng cấp gói để đăng thêm.`,
-      );
-    }
-
+    // Nghiệp vụ mới: Không giới hạn số lượng sản phẩm cho từng gói, chỉ cần gói dịch vụ còn hạn hợp lệ là được đăng bán.
     return true;
   }
 

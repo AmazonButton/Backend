@@ -122,6 +122,27 @@ export class StoreSubscriptionsController {
 
     const plan = await this.subscriptionsService.getPlanForCheckout(planIdBigInt);
 
+    // Xử lý riêng cho gói dùng thử / 0đ: Không gọi PayOS vì cổng thanh toán không hỗ trợ giao dịch 0đ.
+    const isTrial = Number(plan.price) === 0 || plan.durationDays <= 7 || plan.planCode.toUpperCase().includes('TRIAL');
+    if (isTrial || Number(plan.price) === 0) {
+      const hasUsed = await this.subscriptionsService.hasUsedTrialSubscription(storeId);
+      if (hasUsed) {
+        throw new BadRequestException(
+          'Cửa hàng đã từng sử dụng gói dùng thử 7 ngày. Mỗi tài khoản chỉ được dùng thử 1 lần duy nhất.',
+        );
+      }
+
+      const sub = await this.subscriptionsService.subscribeWithWallet(storeId, plan.planId);
+      return {
+        success: true,
+        message: `Kích hoạt thành công gói dùng thử 7 ngày miễn phí (${plan.planName})!`,
+        data: {
+          isTrial: true,
+          subscription: sub,
+        },
+      };
+    }
+
     const charge = await this.billingChargesService.createStoreSubscriptionCharge({
       storeId,
       planId: plan.planId,

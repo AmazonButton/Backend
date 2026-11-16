@@ -24,6 +24,25 @@ export class RentalsRepository {
     });
   }
 
+  async countCustomerPriorRentals(customerId: bigint): Promise<number> {
+    const customer = await this.prisma.customerProfile.findUnique({
+      where: { customerId },
+      select: { userId: true },
+    });
+
+    const where: any = {
+      status: { not: 'CANCELLED' },
+    };
+
+    if (customer?.userId) {
+      where.customer = { userId: customer.userId };
+    } else {
+      where.customerId = customerId;
+    }
+
+    return this.prisma.buttonRental.count({ where });
+  }
+
   async createRental(data: any) {
     const { pricing, policy, ...rentalData } = data;
     const computedPricing = pricing || calculateRentalPricing({

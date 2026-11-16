@@ -1,5 +1,37 @@
 # Project Handoff & Session Context
 
+## 2026-11-16: Store Subscriptions (No Product Limit, 7-Day Trial), Button Rentals (37-Day First Month, 200k Deposit) & Admin Configuration
+- **Status**: 🟢 100% COMPLETED, TESTED & VERIFIED.
+- **Scope**: Backend ONLY (per user instruction: "mình chỉ cần bạn review backend thôi nhé không cần frontend").
+- **Business Flows Implemented & Verified**:
+  1. **Store Subscriptions (Gói Thuê Gian Hàng / Thuê Sàn)**:
+     - **Bỏ giới hạn sản phẩm**: Xóa bỏ rào cản `maxProducts` trong `StoreSubscriptionsService.validateStoreCanListProducts`. Mọi gian hàng có gói dịch vụ đang hoạt động (`status = 'ACTIVE'` và `startDate <= now <= endDate`) đều được tự do đăng bán sản phẩm không bị giới hạn số lượng.
+     - **Gói dùng thử 7 ngày (1 lần duy nhất cho mỗi tài khoản / chủ gian hàng)**:
+       - Trong `StoreSubscriptionsRepository.hasUsedTrialSubscription`: Kiểm tra lịch sử thuê gói dùng thử (`price = 0` hoặc `durationDays <= 7` hoặc `TRIAL`) theo cả `storeId` và toàn bộ các gian hàng của `ownerUserId`.
+       - Trong `StoreSubscriptionsService.subscribeWithWallet` & `subscribeWithWalletAtomicTx`: Chặn lạm dụng dùng thử bằng `BadRequestException('Cửa hàng đã từng sử dụng gói dùng thử 7 ngày. Mỗi tài khoản chỉ được dùng thử 1 lần duy nhất.')`.
+       - Trong `StoreSubscriptionsController.createRenewCharge`: Nhận diện gói 0đ / trial, tự động kích hoạt trực tiếp không qua PayOS (tránh lỗi cổng thanh toán với giao dịch 0đ).
+     - **Thiết lập danh mục gói chuẩn**:
+       - `TRIAL_7D`: 0đ / 7 ngày (Dùng thử miễn phí 1 lần).
+       - `STORE_1M`: 60.000đ / 30 ngày.
+       - `STORE_6M`: 320.000đ / 180 ngày.
+       - `STORE_12M`: 600.000đ / 365 ngày.
+  2. **Button Rentals (Gói Thuê Nút Bấm IoT)**:
+     - **Tháng đầu tiên = 37 ngày cho khách hàng mới**:
+       - Trong `RentalsRepository.countCustomerPriorRentals`: Kiểm tra số hợp đồng thuê trước đó của khách hàng (theo `customerId` và `userId`).
+       - Trong `RentalsService.createRentalContract`: Nếu khách hàng chưa từng thuê nút (`priorRentalsCount === 0`), hệ thống tự động cộng thêm 7 ngày dùng thử vào kỳ đầu tiên: `totalDays = (months * 30) + 7` (1 tháng = 37 ngày, 6 tháng = 187 ngày, 12 tháng = 367 ngày). Các hợp đồng tiếp theo hoặc kỳ gia hạn chỉ nhận đúng 30 ngày/tháng tiêu chuẩn.
+       - Trong `rental-handover.transaction.ts`: Khi bàn giao thiết bị, thời hạn quyền sử dụng `effectiveExpiry` được tính trọn vẹn theo số ngày thực tế của hợp đồng ban đầu (bao gồm 37 ngày kể từ ngày bàn giao).
+     - **Tiền cọc nút bấm chuẩn = 200.000đ/nút**:
+       - Trong `AdminService.createRentalPackage`: Tiền cọc mặc định tự động tính `buttonQuantity * 200.000đ` (1 nút = 200k, 3 nút = 600k, 5 nút = 1.000.000đ).
+       - Cập nhật các gói thuê nút chuẩn: `KIT1_STANDARD` (cọc 200k), `KIT3_STANDARD` (cọc 600k), `KIT5_STANDARD` (cọc 1.000.000đ).
+  3. **Admin Tự Do Cấu Hình Gói (Giải đáp & kiểm chứng)**:
+     - Toàn quyền Admin: Đổi giá, đổi số ngày, tạo thêm gói mới với giá khác qua các API chuẩn:
+       - `POST /api/v1/admin/plans`, `PUT /api/v1/admin/plans/:id`, `GET /api/v1/admin/plans`.
+       - `POST /api/v1/admin/rentals/packages`, `PUT /api/v1/admin/rentals/packages/:id`, `GET /api/v1/admin/rentals/packages`.
+     - Nhờ cơ chế Snapshot trên `BillingCharge`, việc Admin sửa giá hay số ngày không làm ảnh hưởng đến các giao dịch hay hợp đồng đã tạo trong quá khứ.
+- **Verification Evidence**:
+  - `tests/trial-and-rental-duration.spec.ts`: **19/19 PASSED (100%)**.
+  - `npm run build`: **Exit code 0 (Build thành công sạch sẽ)**.
+
 ## 2026-11-16: Comprehensive Business Logic Audit, Child Lock Device Config & Multi-Cloud Deployment
 - **Status**: 🟢 100% COMPLETED, TESTED & DEPLOYED (Commit `66bc98c`).
 - **Remediations & Logic Alignment Applied**:

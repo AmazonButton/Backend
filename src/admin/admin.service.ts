@@ -234,13 +234,16 @@ export class AdminService {
       throw new BadRequestException('Mã gói thuê thiết bị đã tồn tại');
     }
 
+    const qty = buttonQuantity ?? 1;
+    const defaultDepositFee = qty * 200000;
+
     const created = await this.adminRepo.createRentalPackage({
       packageCode,
       packageName,
       description,
-      buttonQuantity: buttonQuantity ?? 1,
+      buttonQuantity: qty,
       monthlyPrice,
-      depositFee: depositFee ?? depositAmount ?? 0,
+      depositFee: depositFee !== undefined ? depositFee : (depositAmount !== undefined ? depositAmount : defaultDepositFee),
       minRentalMonths: minRentalMonths || 1,
       features: features || [],
       status: 'ACTIVE',

@@ -107,8 +107,15 @@ export class RentalsService {
       packageDepositFee: pkg.depositFee || 0,
     });
 
+    // Nghiệp vụ: Khách hàng mới thuê lần đầu được tặng 7 ngày dùng thử vào kỳ đầu tiên (tháng đầu = 37 ngày).
+    // Các lần thuê tiếp theo chỉ tính đúng số ngày tiêu chuẩn (30 ngày/tháng).
+    const priorRentalsCount = await this.rentalsRepo.countCustomerPriorRentals(rawCustomerId);
+    const isFirstTimeRenter = priorRentalsCount === 0;
+    const bonusTrialDays = isFirstTimeRenter ? 7 : 0;
+    const totalDays = (months * 30) + bonusTrialDays;
+
     const startDate = new Date();
-    const endDate = new Date(startDate.getTime() + months * 30 * 24 * 60 * 60 * 1000);
+    const endDate = new Date(startDate.getTime() + totalDays * 24 * 60 * 60 * 1000);
     const rentalCode = `RNT-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
     const created = await this.rentalsRepo.createRental({

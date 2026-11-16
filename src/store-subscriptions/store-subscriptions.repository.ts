@@ -64,6 +64,41 @@ export class StoreSubscriptionsRepository {
     });
   }
 
+  async hasUsedTrialSubscription(storeId: bigint): Promise<boolean> {
+    const store = await this.prisma.store.findUnique({
+      where: { storeId },
+      select: { ownerUserId: true },
+    });
+
+    let storeCondition: any = { storeId };
+    if (store?.ownerUserId) {
+      const ownerStores = await this.prisma.store.findMany({
+        where: { ownerUserId: store.ownerUserId },
+        select: { storeId: true },
+      });
+      const storeIds = ownerStores.map((s) => s.storeId);
+      if (storeIds.length > 0) {
+        storeCondition = { storeId: { in: storeIds } };
+      }
+    }
+
+    const trialSub = await this.prisma.storeSubscription.findFirst({
+      where: {
+        ...storeCondition,
+        plan: {
+          OR: [
+            { price: 0 },
+            { durationDays: { lte: 7 } },
+            { planCode: { contains: 'TRIAL', mode: 'insensitive' } },
+          ],
+        },
+      },
+      select: { subscriptionId: true },
+    });
+
+    return Boolean(trialSub);
+  }
+
   async getCurrentSubscription(storeId: bigint) {
     const now = new Date();
     // 1. Prioritize currently running subscription: startDate <= now AND endDate >= now
@@ -191,6 +226,17 @@ export class StoreSubscriptionsRepository {
       });
       if (!plan || !plan.isActive) {
         throw new NotFoundException('Gói cước không tồn tại hoặc đã tạm dừng cung cấp');
+      }
+
+      // 3.1. Trial Package Restriction (Mỗi tài khoản/gian hàng chỉ được dùng thử 1 lần duy nhất)
+      const isTrial = Number(plan.price) === 0 || plan.durationDays <= 7 || plan.planCode.toUpperCase().includes('TRIAL');
+      if (isTrial) {
+        const hasUsed = await this.hasUsedTrialSubscription(params.storeId);
+        if (hasUsed) {
+          throw new BadRequestException(
+            'Cửa hàng đã từng sử dụng gói dùng thử 7 ngày. Mỗi tài khoản chỉ được dùng thử 1 lần duy nhất.',
+          );
+        }
       }
 
       // 4. Financial math strictly using Prisma.Decimal
