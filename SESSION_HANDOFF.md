@@ -1,5 +1,46 @@
 # Project Handoff & Session Context
 
+## 2026-11-16: Dynamic PayOS Store Subscription Checkout, Plan Snapshots & Multi-Cloud Deployment
+- **Status**: 🟢 100% COMPLETED, TESTED & DEPLOYED (Commit `cc3025c`).
+- **User Requirement Addressed**:
+  - Replaced legacy fixed 60.000đ / 30-day store subscription renew-charge flow with dynamic checkout supporting any active admin-configured plan (e.g. 2.000đ, 30.000đ, 60.000đ, or arbitrary durations like 14, 30, 90 days).
+  - Enforced Zero Client Trust: Price, duration, and product limits are fetched directly from the database by `planId` and never accepted from client inputs.
+  - Snapshot Immutability Invariant: `plan_id` and complete `plan_snapshot` JSONB are captured on `billing_charges` at charge creation. Future admin edits to plan price, quota, duration, or active status do not mutate created payment requests or granted entitlements.
+  - Webhook Settlement Invariant: PayOS webhook settlement reads `plan_snapshot` to grant the exact plan purchased and exact duration (`startDate = currentSub ? currentSub.endDate : now; endDate = startDate + durationDays`), completely replacing the legacy `price = 60000` lookup with a backward-compatible fallback for historical records.
+  - Boundary Validations:
+    - Non-existent plan -> `NotFoundException` (404).
+    - Inactive / paused plan -> `BadRequestException` (400, "Gói dịch vụ đã tạm dừng...").
+    - 0 VND plan -> `BadRequestException` (400, guidance to use free direct subscribe flow).
+    - Plan < 2.000 VND -> `BadRequestException` (400, PayOS minimum transaction threshold).
+- **Multi-Cloud Database Migration**:
+  - Added `plan_id BigInt?` and `plan_snapshot Json?` to `BillingCharge` in `prisma/schema.prisma`.
+  - Migration `20261116043000_add_billing_charges_plan_snapshot`:
+    - Neon PostgreSQL: Deployed cleanly via `npx prisma migrate deploy`.
+    - Supabase PostgreSQL: Deployed and verified via `scripts/deploy_supabase_billing_plan_snapshot.js`.
+- **Backend Architecture (6-Layer)**:
+  - `src/store-subscriptions/dto/renew-subscription-charge.dto.ts`: New DTO with `planId` (number | string), `returnUrl`, `cancelUrl`.
+  - `src/store-subscriptions/store-subscriptions.controller.ts`: Added plan lookup and boundary checks before calling billing service.
+  - `src/store-subscriptions/store-subscriptions.service.ts`: Implemented `getPlanForCheckout(planId)`.
+  - `src/billing-charges/billing-charges.service.ts`: Updated `createStoreSubscriptionCharge` to capture plan snapshot.
+  - `src/billing-charges/billing-charges.repository.ts`: Persisted `planId` and `planSnapshot`, updated `settleChargeAtomicTx` to grant exact entitlements from snapshot with idempotent replay protection.
+- **Frontend Architecture (`F:\Learning\SEM9-FPTu\Frontend`)**:
+  - `src/services/store-service-plans.ts` and `frontend/src/services/store-service-plans.ts`:
+    - `eligibleStorePayosPlan`: Replaced 60.000đ / 30-day filter with `plan.isActive && plan.price >= 2000`.
+    - `createPayosCharge`: Accepts `planId`, transmits `planId` to backend, asserts `amount >= 2000` and `currency === 'VND'`.
+    - `charge`: Removed fixed 60.000đ check; validates positive finite amount.
+  - `src/components/store/StorePlanPayosPayment.tsx` and mirror: Transmits `selected.planId` to `flow.createPayosCharge`.
+  - Frontend Build: `tsc && vite build` succeeded in 52.62s with 0 errors. Pushed to `origin/dev` (`59e94aa`).
+- **Automated Verification & Test Evidence**:
+  - `tests/store-subscription-dynamic-payos.spec.ts`: **18/18 PASSED (100%)**.
+  - `tests/withdrawal-concurrency-idempotency.spec.ts`: **16/16 PASSED (100%)**.
+  - `tests/security-audit-waves-fixes.spec.ts`: **ALL WAVES 1-4 PASSED (100%)**.
+  - Backend Build: `npm run build` completed with code 0.
+- **Production Infrastructure & Deployment**:
+  - GitHub Repo: Backend pushed to `origin/main` (`cc3025c`), Frontend pushed to `origin/dev` (`59e94aa`).
+  - AWS Node 3 (Sydney): Deployed via `npm run aws:deploy`, PM2 process `backend-node3` reloaded cleanly.
+  - Render Node 1 & Node 2: Auto-deploying commit `cc3025c`.
+
+
 ## 2026-11-15: GitHub CI/CD Pipeline Fix & Automated Production Deployment (Run 43712507405)
 - **Status**: 🟢 100% SUCCESS & LIVE VERIFIED.
 - **Root Cause of Initial CI/CD Failure (Run 43711671145)**:
