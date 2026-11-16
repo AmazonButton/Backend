@@ -1,5 +1,22 @@
 # Project Handoff & Session Context
 
+## 2026-11-16: Comprehensive Business Logic Audit, Child Lock Device Config & Multi-Cloud Deployment
+- **Status**: 🟢 100% COMPLETED, TESTED & DEPLOYED (Commit `66bc98c`).
+- **Remediations & Logic Alignment Applied**:
+  1. **IoT Button Child Lock & Remote Config**:
+     - Updated `UpdateDeviceDto` to accept `status: 'DISABLED'`, `holdDurationMs` (500–10000ms), `canOrder` (boolean), and `cancelWindowSeconds`.
+     - Updated `DevicesService.update` to persist `holdDurationMs`, `canOrder`, and `cancelWindowSeconds` to `iot_button`.
+     - Corrected `OrdersRepository` error message when `can_order === false` to clarify that button ordering is temporarily paused / locked by child lock, eliminating confusing "lease expired" text.
+  2. **Subscription Error Message Generalization**:
+     - Updated `StoreSubscriptionsService.validateStoreCanListProducts` to remove hardcoded `(60.000đ/tháng)`, matching dynamic subscription capabilities.
+- **Verification & Deployment Evidence**:
+  - `tests/warranty-and-notifications.spec.ts`: **13/13 PASSED (100%)**.
+  - `tests/store-subscription-dynamic-payos.spec.ts`: **18/18 PASSED (100%)**.
+  - Backend Build: `npm run build` completed with code 0.
+  - AWS Node 3 (Sydney): Pulled `66bc98c`, built and reloaded PM2 `backend-node3` with code 0.
+  - Render Node 1 & Node 2: Live and building `66bc98c`.
+
+
 ## 2026-11-16: Dynamic PayOS Store Subscription Checkout, Plan Snapshots & Multi-Cloud Deployment
 - **Status**: 🟢 100% COMPLETED, TESTED & DEPLOYED (Commit `cc3025c`).
 - **User Requirement Addressed**:
