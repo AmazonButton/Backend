@@ -717,10 +717,7 @@ export class StoreWalletService {
     }
 
     if (withdrawal.status === 'PENDING') {
-      if (!withdrawal.providerPayoutId && this.payosPayoutService) {
-        this.logger.log(`Yêu cầu rút tiền #${withdrawal.withdrawalCode} đang ở PENDING, kích hoạt gửi PayOS Payout...`);
-        return await this.triggerPayosPayout(withdrawal.withdrawalId);
-      }
+      // Mọi lệnh rút tiền của chủ quán ở trạng thái PENDING phải chờ Admin kiểm tra và bấm nút duyệt chi thủ công
       return withdrawal;
     }
 

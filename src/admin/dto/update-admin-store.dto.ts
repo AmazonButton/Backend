@@ -1,5 +1,5 @@
-import { IsOptional, IsString, IsEmail, MaxLength, MinLength, Matches, IsIn } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { IsOptional, IsString, IsEmail, MaxLength, MinLength, Matches, IsIn, IsNumber, Min, Max } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateAdminStoreDto {
@@ -25,6 +25,22 @@ export class UpdateAdminStoreDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @ApiPropertyOptional({ description: 'Vĩ độ cửa hàng (latitude)', example: 10.776889 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Vĩ độ (latitude) phải là số' })
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({ description: 'Kinh độ cửa hàng (longitude)', example: 106.700806 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Kinh độ (longitude) phải là số' })
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
 
   @ApiPropertyOptional({ description: 'Trạng thái hoạt động của cửa hàng (ACTIVE, INACTIVE, SUSPENDED)', example: 'ACTIVE' })
   @IsOptional()

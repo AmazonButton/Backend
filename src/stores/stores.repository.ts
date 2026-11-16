@@ -40,6 +40,8 @@ export class StoresRepository {
     if (data.email !== undefined) payload.email = data.email;
     if (data.phone !== undefined) payload.phone = data.phone;
     if (data.address !== undefined) payload.address = data.address;
+    if (data.latitude !== undefined) payload.latitude = data.latitude;
+    if (data.longitude !== undefined) payload.longitude = data.longitude;
 
     return this.prisma.store.update({
       where: { storeId },

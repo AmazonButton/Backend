@@ -59,7 +59,7 @@ export class StoreSubscriptionsService {
       throw new NotFoundException('Gói cước không tồn tại hoặc đã tạm dừng cung cấp');
     }
 
-    const isTrial = Number(plan.price) === 0 || plan.durationDays <= 7 || plan.planCode.toUpperCase().includes('TRIAL');
+    const isTrial = Number(plan.price) === 0 || plan.planCode.toUpperCase().includes('TRIAL');
     if (isTrial) {
       const hasUsed = await this.subscriptionsRepo.hasUsedTrialSubscription(rawStoreId);
       if (hasUsed) {
@@ -81,7 +81,14 @@ export class StoreSubscriptionsService {
     const rawStoreId = BigInt(storeId);
     const currentSub = await this.getCurrentSubscription(rawStoreId);
 
-    if (!currentSub || currentSub.isExpired || currentSub.status !== 'ACTIVE' || new Date(currentSub.endDate) < new Date()) {
+    if (
+      !currentSub ||
+      currentSub.isExpired ||
+      currentSub.isUpcoming ||
+      currentSub.status !== 'ACTIVE' ||
+      new Date(currentSub.startDate) > new Date() ||
+      new Date(currentSub.endDate) < new Date()
+    ) {
       throw new ForbiddenException(
         'Gian hàng đã hết hạn hoặc chưa đăng ký gói dịch vụ. Vui lòng đăng ký hoặc gia hạn gói dịch vụ để tiếp tục đăng bán sản phẩm.',
       );
@@ -129,7 +136,7 @@ export class StoreSubscriptionsService {
     return StoreSubscriptionResponseDto.fromEntity(sub);
   }
 
-  async getPlanForCheckout(planId: bigint) {
+  async getPlanForCheckout(planId: bigint, options?: { allowFreeTrial?: boolean }) {
     const plan = await this.subscriptionsRepo.findPlanById(planId);
     if (!plan) {
       throw new NotFoundException('Không tìm thấy gói dịch vụ gian hàng');
@@ -139,6 +146,9 @@ export class StoreSubscriptionsService {
     }
     const price = Number(plan.price);
     if (price === 0) {
+      if (options?.allowFreeTrial) {
+        return plan;
+      }
       throw new BadRequestException('Gói dịch vụ miễn phí (0đ). Vui lòng sử dụng tính năng đăng ký trực tiếp thay vì thanh toán qua PayOS');
     }
     if (price < 2000) {

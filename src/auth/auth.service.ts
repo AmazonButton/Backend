@@ -1151,14 +1151,16 @@ export class AuthService {
     const email = body.email?.trim().toLowerCase();
     if (email) {
       const user = await this.authRepo.findByEmail(email);
-      if (user && user.status === 'PENDING_VERIFICATION') {
+      if (
+        user &&
+        (user.status === 'PENDING_VERIFICATION' || (user.status === 'ACTIVE' && !user.emailVerifiedAt))
+      ) {
         const otpCode = crypto.randomInt(100000, 1_000_000).toString();
         const tokenHash = this.hashOtp(otpCode, 'EMAIL_VERIFICATION');
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-        // P2 Invariant Fix (auth/password-reset-otp-reissue-resets-guess-budget):
-      // Vô hiệu hóa toàn bộ mã OTP PASSWORD_RESET chưa sử dụng trước đó để tránh brute-force song song
-      await this.authRepo.invalidateUnconsumedOtps(user.userId, 'PASSWORD_RESET');
+        // Vô hiệu hóa toàn bộ mã OTP EMAIL_VERIFICATION chưa sử dụng trước đó để tránh brute-force song song
+        await this.authRepo.invalidateUnconsumedOtps(user.userId, 'EMAIL_VERIFICATION');
 
       await this.authRepo.createAuthOtp({
           userId: user.userId,

@@ -183,7 +183,11 @@ async function runTests() {
     assert(days1 === 37, 'Hợp đồng đầu tiên của khách hàng mới phải có thời hạn đúng 37 ngày (30 + 7 ngày dùng thử)');
     assert(contract1.depositAmount === 200000, 'Tiền cọc hợp đồng 1 nút đúng 200.000 VND');
 
-    // Giả lập hợp đồng 1 đã tạo xong, tạo hợp đồng 2 của cùng khách hàng
+    // Giả lập hợp đồng 1 đã thanh toán/kích hoạt xong, tạo hợp đồng 2 của cùng khách hàng
+    await prisma.buttonRental.update({
+      where: { rentalId: BigInt(contract1.rentalId) },
+      data: { status: 'ACTIVE' },
+    });
     const contract2 = await rentalsService.createRentalContract(customerProfile.customerId, {
       packageId: kit1Pkg!.packageId.toString(),
       monthsRented: 1,

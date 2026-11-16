@@ -41,14 +41,14 @@ export class WarrantyRepository {
   async findButtonByDeviceId(deviceId: string) {
     return this.prisma.ioTButton.findUnique({
       where: { deviceId },
-      include: { store: true, customer: true },
+      include: { store: true, customer: true, rental: true },
     });
   }
 
   async findButtonById(buttonId: bigint) {
     return this.prisma.ioTButton.findUnique({
       where: { buttonId },
-      include: { store: true, customer: true },
+      include: { store: true, customer: true, rental: true },
     });
   }
 
@@ -126,6 +126,11 @@ export class WarrantyRepository {
       if (ticket.status !== 'PENDING') {
         throw new BadRequestException(`Phiếu bảo hành đang ở trạng thái ${ticket.status}, không thể duyệt đổi`);
       }
+      if (ticket.faultGroup !== 'GROUP_A') {
+        throw new BadRequestException(
+          'Chỉ hỗ trợ duyệt đổi 1-1 miễn phí cho thiết bị thuộc Nhóm A (Lỗi kỹ thuật tự nhiên 0% khấu trừ).',
+        );
+      }
 
       const oldButton = ticket.button;
       const newButton = await tx.ioTButton.findUnique({
@@ -133,7 +138,7 @@ export class WarrantyRepository {
       });
       if (!newButton) throw new NotFoundException('Không tìm thấy thiết bị thay thế');
 
-      // 2. Chuyển nút cũ sang DEFECTIVE_RETURN
+      // 2. Chuyển nút cũ sang DEFECTIVE_RETURN và gỡ liên kết hợp đồng/khách hàng
       await tx.ioTButton.update({
         where: { buttonId: oldButton.buttonId },
         data: {
@@ -141,19 +146,32 @@ export class WarrantyRepository {
           status: 'INACTIVE',
           canOrder: false,
           customerId: null,
+          rentalId: null,
+          addressId: null,
         },
       });
 
-      // 3. Gán nút mới cho Store/Customer
+      // 3. Gán nút mới kế thừa đầy đủ Store, Customer, Rental, Address và trạng thái IN_CUSTOMER_CUSTODY
       await tx.ioTButton.update({
         where: { buttonId: newButton.buttonId },
         data: {
           storeId: ticket.storeId || oldButton.storeId,
           customerId: ticket.customerId || oldButton.customerId,
-          inventoryState: 'WITH_CUSTOMER',
+          rentalId: oldButton.rentalId,
+          addressId: oldButton.addressId,
+          inventoryState: 'IN_CUSTOMER_CUSTODY',
           status: 'ACTIVE',
           canOrder: true,
         },
+      });
+
+      // 3.1. Chuyển cấu hình sản phẩm đặt hàng (buttonProducts) từ nút cũ sang nút mới
+      await tx.buttonProduct.deleteMany({
+        where: { buttonId: newButton.buttonId },
+      });
+      await tx.buttonProduct.updateMany({
+        where: { buttonId: oldButton.buttonId },
+        data: { buttonId: newButton.buttonId },
       });
 
       // 4. Ghi nhận lịch sử điều chuyển thiết bị
@@ -214,17 +232,78 @@ export class WarrantyRepository {
       });
       if (!ticket) throw new NotFoundException('Không tìm thấy phiếu bảo hành');
 
-      // Khóa nút cũ
+      const oldRentalId = ticket.button?.rentalId || null;
+      const oldCustomerId = ticket.customerId || ticket.button?.customerId || null;
+
+      // 1. Khóa nút hỏng và gỡ khỏi hợp đồng thuê / khách hàng
       await tx.ioTButton.update({
         where: { buttonId: ticket.buttonId },
         data: {
           status: 'DISABLED',
           inventoryState: 'DEFECTIVE_RETURN',
           canOrder: false,
+          rentalId: null,
+          customerId: null,
+          addressId: null,
         },
       });
 
-      // Ghi log luân chuyển
+      // 2. Khấu trừ tiền phạt vào sổ cái tiền cọc (rental_deposits) và tạo lệnh hoàn phần cọc dư nếu có
+      if (oldRentalId) {
+        const lockedLedgers = await tx.$queryRawUnsafe<any[]>(
+          'SELECT * FROM rental_deposits WHERE rental_id = $1 FOR UPDATE',
+          oldRentalId,
+        );
+        const ledger = lockedLedgers && lockedLedgers.length > 0 ? lockedLedgers[0] : null;
+        if (ledger) {
+          const heldBefore = Number(ledger.held_amount || 0);
+          const deductionAmt = Math.max(0, Number(ticket.deductionAmount || 0));
+          const requestedRefundAmt = Math.max(0, Number(ticket.refundAmount || 0));
+          const buttonCollateral = Math.min(heldBefore, deductionAmt + requestedRefundAmt);
+          const actualRefundReserved = Math.max(0, buttonCollateral - deductionAmt);
+
+          if (buttonCollateral > 0) {
+            await tx.$executeRawUnsafe(
+              `UPDATE rental_deposits
+               SET held_amount = GREATEST(0, held_amount - $1),
+                   refund_reserved_amount = refund_reserved_amount + $2,
+                   updated_at = NOW()
+               WHERE rental_id = $3`,
+              buttonCollateral,
+              actualRefundReserved,
+              oldRentalId,
+            );
+          }
+
+          if (actualRefundReserved > 0 && oldCustomerId) {
+            const refundCode = `REF-WRT-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+            await tx.depositRefund.create({
+              data: {
+                refundCode,
+                rentalId: oldRentalId,
+                customerId: oldCustomerId,
+                amount: actualRefundReserved,
+                status: 'PENDING_APPROVAL',
+              },
+            });
+          }
+        }
+
+        const remainingButtons = await tx.ioTButton.count({
+          where: { rentalId: oldRentalId },
+        });
+        if (remainingButtons === 0) {
+          await tx.buttonRental.update({
+            where: { rentalId: oldRentalId },
+            data: {
+              status: 'RETURNED',
+              returnedAt: new Date(),
+            },
+          });
+        }
+      }
+
+      // 3. Ghi log luân chuyển
       await tx.deviceMovement.create({
         data: {
           buttonId: ticket.buttonId,
@@ -232,12 +311,13 @@ export class WarrantyRepository {
           sourceStoreId: ticket.storeId,
           destType: 'LOCKED',
           destStoreId: null,
+          rentalId: oldRentalId,
           actorUserId: adminUserId,
-          reason: `Khóa nút hư hỏng nặng (Nhóm D) theo phiếu #${ticket.ticketCode}`,
+          reason: `Khóa nút hư hỏng/bồi thường (${ticket.faultGroup}) theo phiếu #${ticket.ticketCode}`,
         },
       });
 
-      // Cập nhật phiếu sang RESOLVED
+      // 4. Cập nhật phiếu sang RESOLVED
       return tx.warrantyTicket.update({
         where: { ticketId },
         data: {

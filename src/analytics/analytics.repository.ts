@@ -49,7 +49,12 @@ export class AnalyticsRepository {
       ? Prisma.sql`WHERE ${Prisma.join(orderConditions, ' AND ')}`
       : Prisma.empty;
 
-    const paidConditions = [Prisma.sql`pt.status = 'PAID'`, ...orderConditions];
+    const paidConditions = [
+      Prisma.sql`pt.status = 'PAID'`,
+      Prisma.sql`o.order_status NOT IN ('CANCELLED', 'REJECTED')`,
+      Prisma.sql`o.payment_status <> 'REFUNDED'`,
+      ...orderConditions,
+    ];
     const paidWhere = Prisma.sql`WHERE ${Prisma.join(paidConditions, ' AND ')}`;
     const deviceWhere = storeId ? Prisma.sql`WHERE b.store_id = ${storeId}` : Prisma.empty;
 

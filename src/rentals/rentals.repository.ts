@@ -31,7 +31,7 @@ export class RentalsRepository {
     });
 
     const where: any = {
-      status: { not: 'CANCELLED' },
+      status: { notIn: ['CANCELLED', 'PENDING_PAYMENT'] },
     };
 
     if (customer?.userId) {
@@ -69,6 +69,32 @@ export class RentalsRepository {
     rentalData.billingPolicyReviewRequired = false;
 
     return this.prisma.$transaction(async (tx) => {
+      // Tự động hủy (CANCELLED) các đơn nháp PENDING_PAYMENT cũ chưa thanh toán của cùng khách hàng
+      if (rentalData.customerId) {
+        const staleDrafts = await tx.buttonRental.findMany({
+          where: {
+            customerId: rentalData.customerId,
+            status: 'PENDING_PAYMENT',
+          },
+          select: { rentalId: true },
+        });
+        if (staleDrafts.length > 0) {
+          const staleIds = staleDrafts.map((d) => d.rentalId);
+          await tx.buttonRental.updateMany({
+            where: { rentalId: { in: staleIds }, status: 'PENDING_PAYMENT' },
+            data: { status: 'CANCELLED', updatedAt: new Date() },
+          });
+          await tx.billingCharge.updateMany({
+            where: {
+              targetType: 'RENTAL',
+              targetId: { in: staleIds },
+              status: 'PENDING',
+            },
+            data: { status: 'CANCELLED', updatedAt: new Date() },
+          });
+        }
+      }
+
       const created = await tx.buttonRental.create({
         data: rentalData,
         include: {

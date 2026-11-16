@@ -74,6 +74,8 @@ model Store {
   email          String?  @db.VarChar(255)
   phone          String   @db.VarChar(20)
   address        String
+  latitude       Decimal? @map("latitude") @db.Decimal(10, 7)
+  longitude      Decimal? @map("longitude") @db.Decimal(10, 7)
   commissionRate Decimal? @default(8.0) @map("commission_rate") @db.Decimal(5, 2)
   status         String   @default("ACTIVE") @db.VarChar(20)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -368,8 +370,11 @@ model Order {
   failureReasonCode     String?          @map("failure_reason_code") @db.VarChar(50)
   failureNote           String?          @map("failure_note")
   evidenceImageUrl      String?          @map("evidence_image_url") @db.VarChar(1000)
-  shippingLatitude      Decimal?         @map("shipping_latitude") @db.Decimal(10, 7)
-  shippingLongitude     Decimal?         @map("shipping_longitude") @db.Decimal(10, 7)
+  shippingLatitude       Decimal?         @map("shipping_latitude") @db.Decimal(10, 7)
+  shippingLongitude      Decimal?         @map("shipping_longitude") @db.Decimal(10, 7)
+  deliveryAddressId      BigInt?          @map("delivery_address_id")
+  deliveryDistanceMeters Int?             @map("delivery_distance_meters")
+  deliveryDistanceSource String?          @map("delivery_distance_source") @db.VarChar(50)
 
   items               OrderItem[]
   statusHistories     OrderStatusHistory[]

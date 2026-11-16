@@ -94,10 +94,10 @@ export class IotService {
         lastSeenAt: new Date(),
       };
       if (device.storeId) {
-        this.ordersService['eventsGateway'].emitToStore(device.storeId.toString(), 'DEVICE_HEARTBEAT', hbPayload);
+        this.ordersService['eventsGateway']?.emitToStore(device.storeId.toString(), 'DEVICE_HEARTBEAT', hbPayload);
       }
       if (device.customerId) {
-        this.ordersService['eventsGateway'].emitToCustomer(device.customerId.toString(), 'DEVICE_HEARTBEAT', hbPayload);
+        this.ordersService['eventsGateway']?.emitToCustomer(device.customerId.toString(), 'DEVICE_HEARTBEAT', hbPayload);
       }
       return {
         success: true,
@@ -209,10 +209,10 @@ export class IotService {
       message: 'Nút vật lý đang được bấm...',
     };
     if (device.customerId) {
-      this.ordersService['eventsGateway'].emitToCustomer(device.customerId.toString(), 'BUTTON_PRESSING', pressingPayload);
+      this.ordersService['eventsGateway']?.emitToCustomer(device.customerId.toString(), 'BUTTON_PRESSING', pressingPayload);
     }
     if (device.storeId) {
-      this.ordersService['eventsGateway'].emitToStore(device.storeId.toString(), 'BUTTON_PRESSING', pressingPayload);
+      this.ordersService['eventsGateway']?.emitToStore(device.storeId.toString(), 'BUTTON_PRESSING', pressingPayload);
     }
 
     // 6. Create Order with atomic completion & failure recovery in PostgreSQL
@@ -252,19 +252,46 @@ export class IotService {
         data: orderResult,
       };
     } catch (orderErr: any) {
-      // Order creation failed: mark key as FAILED to unlock retry (checked against lease_token)
-      this.logger.warn(`Order creation failed for requestId ${requestId}: ${orderErr.message}. Marking key as FAILED for retry.`);
-      try {
-        await this.prisma.$executeRawUnsafe(
-          `UPDATE iot_idempotency_keys
-           SET status = 'FAILED', updated_at = NOW()
-           WHERE device_id = $1 AND request_id = $2 AND lease_token = $3 AND status = 'PROCESSING'`,
-          deviceId,
-          requestId,
-          leaseToken,
-        );
-      } catch (updateErr: any) {
-        this.logger.error(`Failed to update key status to FAILED: ${updateErr.message}`);
+      const errRes = typeof orderErr?.getResponse === 'function' ? orderErr.getResponse() : null;
+      const errCode = errRes?.errorCode || errRes?.code || orderErr?.errorCode;
+      const isDeliveryEligibilityRejection = [
+        'ADDRESS_OUTSIDE_DELIVERY_AREA',
+        'DELIVERY_ROUTE_NOT_FOUND',
+        'STORE_COORDINATES_MISSING',
+        'ADDRESS_COORDINATES_MISSING',
+        'DELIVERY_ADDRESS_REQUIRED',
+        'DELIVERY_DISTANCE_UNAVAILABLE',
+      ].includes(errCode);
+
+      if (isDeliveryEligibilityRejection) {
+        // Spec requirement: When rejected by delivery eligibility, leave NO idempotency residue
+        this.deviceCooldowns.delete(device.deviceId || rawDeviceId.toString());
+        try {
+          await this.prisma.$executeRawUnsafe(
+            `DELETE FROM iot_idempotency_keys
+             WHERE device_id = $1 AND request_id = $2 AND lease_token = $3`,
+            deviceId,
+            requestId,
+            leaseToken,
+          );
+        } catch (delErr: any) {
+          this.logger.error(`Failed to delete idempotency residue on delivery rejection: ${delErr.message}`);
+        }
+      } else {
+        // Order creation failed: mark key as FAILED to unlock retry (checked against lease_token)
+        this.logger.warn(`Order creation failed for requestId ${requestId}: ${orderErr.message}. Marking key as FAILED for retry.`);
+        try {
+          await this.prisma.$executeRawUnsafe(
+            `UPDATE iot_idempotency_keys
+             SET status = 'FAILED', updated_at = NOW()
+             WHERE device_id = $1 AND request_id = $2 AND lease_token = $3 AND status = 'PROCESSING'`,
+            deviceId,
+            requestId,
+            leaseToken,
+          );
+        } catch (updateErr: any) {
+          this.logger.error(`Failed to update key status to FAILED: ${updateErr.message}`);
+        }
       }
       throw orderErr;
     } finally {

@@ -29,6 +29,9 @@ export interface OrderResponseDto {
   recipientPhone?: string | null;
   shippingLatitude?: number | null;
   shippingLongitude?: number | null;
+  deliveryAddressId?: string | null;
+  deliveryDistanceMeters?: number | null;
+  deliveryDistanceSource?: string | null;
   assignedDriverId?: string | null;
   podImageUrl?: string | null;
   deliveredAt?: Date | string | null;
@@ -118,6 +121,9 @@ export function toOrderResponseDto(raw: any): OrderResponseDto {
     recipientPhone: raw.shippingPhone || raw.shipping_phone || raw.customer?.phone || raw.customer?.user?.phone || null,
     shippingLatitude: raw.shippingLatitude != null ? Number(raw.shippingLatitude) : (raw.shipping_latitude != null ? Number(raw.shipping_latitude) : null),
     shippingLongitude: raw.shippingLongitude != null ? Number(raw.shippingLongitude) : (raw.shipping_longitude != null ? Number(raw.shipping_longitude) : null),
+    deliveryAddressId: raw.deliveryAddressId != null ? raw.deliveryAddressId.toString() : (raw.delivery_address_id != null ? raw.delivery_address_id.toString() : null),
+    deliveryDistanceMeters: raw.deliveryDistanceMeters != null ? Number(raw.deliveryDistanceMeters) : (raw.delivery_distance_meters != null ? Number(raw.delivery_distance_meters) : null),
+    deliveryDistanceSource: raw.deliveryDistanceSource || raw.delivery_distance_source || null,
     assignedDriverId: raw.assignedDriverId ? raw.assignedDriverId.toString() : (raw.assigned_driver_id ? raw.assigned_driver_id.toString() : null),
     podImageUrl: raw.podImageUrl || raw.pod_image_url || null,
     deliveredAt: raw.deliveredAt || raw.delivered_at || null,

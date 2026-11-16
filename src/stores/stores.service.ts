@@ -103,6 +103,8 @@ export class StoresService {
         email: s.email,
         phone: s.phone,
         address: s.address,
+        latitude: s.latitude != null ? Number(s.latitude) : null,
+        longitude: s.longitude != null ? Number(s.longitude) : null,
         commissionRate: s.commissionRate ? Number(s.commissionRate) : 8.0,
         status: s.status,
         productCount: s._count.products,

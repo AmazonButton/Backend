@@ -111,9 +111,14 @@ export async function handoverRentalButtonsInTx(
 
     const effectiveStart = handoverDate || new Date();
     // Đồng bộ thời hạn quyền sử dụng: Giữ trọn vẹn số ngày của hợp đồng ban đầu (bao gồm 7 ngày dùng thử tặng cho khách mới)
-    const initialContractDays = rental.end_date && rental.start_date
+    // Tránh cộng trùng extensionMonths nếu rental.end_date đã được cộng gia hạn trước bàn giao
+    const rawSpanDays = rental.end_date && rental.start_date
       ? Math.round((new Date(rental.end_date).getTime() - new Date(rental.start_date).getTime()) / (24 * 60 * 60 * 1000))
       : initialGrantedMonths * 30;
+    const hasTrialBonus = rawSpanDays % 30 === 7;
+    const initialContractDays = extensionMonths > 0
+      ? (initialGrantedMonths * 30) + (hasTrialBonus ? 7 : 0)
+      : rawSpanDays;
     const totalEntitlementDays = initialContractDays + (extensionMonths * 30);
     const effectiveExpiry = new Date(effectiveStart.getTime() + totalEntitlementDays * 24 * 60 * 60 * 1000);
       // R08 & P1: Đồng bộ paidThrough theo snapshot chính sách thống nhất với renewal:

@@ -26,6 +26,9 @@ import { OrderQueryDto } from './dto/order-query.dto';
 import { OrderTimelineResponseDto } from './dto/order-timeline-response.dto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { ObjectStorageService } from '../media/object-storage.service';
+import { DeliveryEligibilityService, VerifiedDeliverySnapshot } from './delivery-eligibility.service';
+import { DeliveryQuoteDto } from './dto/delivery-quote.dto';
+import { QuickReorderDto } from './dto/quick-reorder.dto';
 
 @Injectable()
 export class OrdersService {
@@ -33,12 +36,13 @@ export class OrdersService {
 
   constructor(
     @Inject(OrdersRepository) private readonly ordersRepo: OrdersRepository,
-    @Inject(CryptoService) private readonly crypto: CryptoService,
-    @Inject(EventsGateway) private readonly eventsGateway: EventsGateway,
-    @Inject(StoreWalletService) private readonly storeWalletService: StoreWalletService,
+    @Optional() @Inject(CryptoService) private readonly crypto?: CryptoService,
+    @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
+    @Optional() @Inject(StoreWalletService) private readonly storeWalletService?: StoreWalletService,
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
     @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
     @Optional() @Inject(ObjectStorageService) private readonly objectStorageService?: ObjectStorageService,
+    @Optional() @Inject(DeliveryEligibilityService) private readonly deliveryEligibilityService?: DeliveryEligibilityService,
   ) {}
 
   private async invalidateDashboardCaches(storeId?: string | number | bigint, customerUserId?: string | number | bigint) {
@@ -123,7 +127,7 @@ export class OrdersService {
       }
     }
     if ((button as any).canOrder === false) {
-      throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+      throw new BadRequestException('Nút bấm thông minh đang bị tạm khóa tính năng đặt hàng (Khóa trẻ em từ xa hoặc tạm ngưng). Vui lòng kiểm tra trên ứng dụng để tiếp tục đặt hàng.');
     }
 
     if (!button.buttonProducts || button.buttonProducts.length === 0) {
@@ -165,6 +169,56 @@ export class OrdersService {
     }
 
     let newOrderId: any = null;
+    let verifiedDeliverySnapshot: VerifiedDeliverySnapshot | null =
+      eventPayload.verifiedDeliverySnapshot || null;
+
+    // Physical IoT button press: run Goong 5 km delivery eligibility service on customer's default address
+    if (
+      !verifiedDeliverySnapshot &&
+      this.deliveryEligibilityService &&
+      button.customerId &&
+      eventType !== 'APP_QUICK_REORDER'
+    ) {
+      const defaultAddress = (button.customer as any)?.addresses?.[0] || null;
+      const buttonAddress = (button as any).address || null;
+      try {
+        verifiedDeliverySnapshot =
+          await this.deliveryEligibilityService.verifyAndResolveForPhysicalButton({
+            customerId: button.customerId,
+            store: button.store,
+            buttonAddress,
+            defaultAddress,
+            requestId,
+          });
+      } catch (eligibilityErr: any) {
+        const customerUserId = button.customer?.userId || (button.customer as any)?.user?.userId;
+        if (customerUserId) {
+          const errRes =
+            typeof eligibilityErr?.getResponse === 'function'
+              ? eligibilityErr.getResponse()
+              : null;
+          const errCode = errRes?.errorCode || errRes?.code || 'DELIVERY_INELIGIBLE';
+          const reasonMessage =
+            errRes?.message ||
+            eligibilityErr?.message ||
+            'Địa chỉ giao hàng mặc định nằm ngoài phạm vi 5 km của cửa hàng.';
+          await this.ordersRepo
+            .createCustomerDeliveryRejectionNotification({
+              userId: BigInt(customerUserId),
+              buttonCode: button.buttonCode || button.deviceId,
+              reasonMessage,
+              errorCode: errCode,
+              requestId,
+            })
+            .catch((notifErr) => {
+              this.logger.warn(
+                `Failed to create customer delivery rejection notification: ${notifErr.message}`,
+              );
+            });
+        }
+        throw eligibilityErr;
+      }
+    }
 
     const baseNote = requestId ? `Đơn hàng tự động từ nút bấm IoT [REQ:${requestId}]` : 'Đơn hàng tự động từ nút bấm IoT';
     const numBattery = eventPayload.battery !== undefined ? Number(eventPayload.battery) : (button.batteryLevel !== null && button.batteryLevel !== undefined ? Number(button.batteryLevel) : null);
@@ -172,71 +226,98 @@ export class OrdersService {
       ? `[CẢNH BÁO PIN YẾU: ${numBattery}%] ${baseNote}`
       : baseNote;
 
-    // 1. Cố gắng thực thi qua Stored Procedure PostgreSQL (Atomic với iot_request_id)
-    try {
-      newOrderId = await this.ordersRepo.executeSpCreateOrder(
-        button.buttonId,
-        paymentMethod,
-        shippingFee,
-        orderNote,
-        requestId,
-      );
-    } catch (procErr: any) {
-      // Bắt lỗi ràng buộc giá trị đơn hàng tối thiểu từ Stored Procedure (P0010)
-      const isBelowMinimum =
-        procErr?.code === 'P0010' ||
-        procErr?.meta?.code === 'P0010' ||
-        procErr?.message?.includes('P0010') ||
-        procErr?.message?.includes('Giá trị đơn hàng tối thiểu');
-      if (isBelowMinimum) {
-        throw new BadRequestException({
-          errorCode: 'ORDER_TOTAL_BELOW_MINIMUM',
-          message: 'Giá trị đơn hàng tối thiểu là 2.000 VND',
-        });
-      }
-
-      // Bắt vi phạm Unique Constraint (button_id, iot_request_id) -> Idempotency Safe Hit
-      const isUniqueConflict =
-        procErr?.code === '23505' ||
-        procErr?.meta?.code === '23505' ||
-        procErr?.message?.includes('uq_orders_button_request');
-      if (isUniqueConflict && requestId) {
-        const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
-        if (existingOrder) {
-          return {
-            order: toOrderResponseDto(existingOrder),
-            isDuplicate: true,
-            message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
-          };
+    if (verifiedDeliverySnapshot) {
+      // When delivery snapshot is verified (Mobile quick-reorder or Physical IoT with Goong 5km check),
+      // execute atomic transaction with pessimistic row locks and persist full delivery snapshot
+      try {
+        newOrderId = await this.ordersRepo.createOrderFallbackTx(
+          button,
+          paymentMethod,
+          0,
+          requestId,
+          orderNote,
+          verifiedDeliverySnapshot,
+        );
+      } catch (fallbackErr: any) {
+        if ((fallbackErr?.code === 'P2002' || fallbackErr?.message?.includes('uq_orders_button_request')) && requestId) {
+          const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
+          if (existingOrder) {
+            return {
+              order: toOrderResponseDto(existingOrder),
+              isDuplicate: true,
+              message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
+            };
+          }
         }
+        throw fallbackErr;
       }
+    } else {
+      // 1. Cố gắng thực thi qua Stored Procedure PostgreSQL (Atomic với iot_request_id)
+      try {
+        newOrderId = await this.ordersRepo.executeSpCreateOrder(
+          button.buttonId,
+          paymentMethod,
+          shippingFee,
+          orderNote,
+          requestId,
+        );
+      } catch (procErr: any) {
+        // Bắt lỗi ràng buộc giá trị đơn hàng tối thiểu từ Stored Procedure (P0010)
+        const isBelowMinimum =
+          procErr?.code === 'P0010' ||
+          procErr?.meta?.code === 'P0010' ||
+          procErr?.message?.includes('P0010') ||
+          procErr?.message?.includes('Giá trị đơn hàng tối thiểu');
+        if (isBelowMinimum) {
+          throw new BadRequestException({
+            errorCode: 'ORDER_TOTAL_BELOW_MINIMUM',
+            message: 'Giá trị đơn hàng tối thiểu là 2.000 VND',
+          });
+        }
 
-      // Chỉ fallback khi stored procedure chưa được nạp (mã lỗi 42883 hoặc không tìm thấy function)
-      const isMissingProcedure =
-        procErr?.meta?.code === '42883' ||
-        procErr?.code === '42883';
-      if (isMissingProcedure) {
-        try {
-          newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee, requestId, orderNote);
-        } catch (fallbackErr: any) {
-          if (fallbackErr instanceof BadRequestException) {
+        // Bắt vi phạm Unique Constraint (button_id, iot_request_id) -> Idempotency Safe Hit
+        const isUniqueConflict =
+          procErr?.code === '23505' ||
+          procErr?.meta?.code === '23505' ||
+          procErr?.message?.includes('uq_orders_button_request');
+        if (isUniqueConflict && requestId) {
+          const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
+          if (existingOrder) {
+            return {
+              order: toOrderResponseDto(existingOrder),
+              isDuplicate: true,
+              message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
+            };
+          }
+        }
+
+        // Chỉ fallback khi stored procedure chưa được nạp (mã lỗi 42883 hoặc không tìm thấy function)
+        const isMissingProcedure =
+          procErr?.meta?.code === '42883' ||
+          procErr?.code === '42883';
+        if (isMissingProcedure) {
+          try {
+            newOrderId = await this.ordersRepo.createOrderFallbackTx(button, paymentMethod, shippingFee, requestId, orderNote);
+          } catch (fallbackErr: any) {
+            if (fallbackErr instanceof BadRequestException) {
+              throw fallbackErr;
+            }
+            if ((fallbackErr?.code === 'P2002' || fallbackErr?.message?.includes('uq_orders_button_request')) && requestId) {
+              const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
+              if (existingOrder) {
+                return {
+                  order: toOrderResponseDto(existingOrder),
+                  isDuplicate: true,
+                  message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
+                };
+              }
+            }
             throw fallbackErr;
           }
-          if ((fallbackErr?.code === 'P2002' || fallbackErr?.message?.includes('uq_orders_button_request')) && requestId) {
-            const existingOrder = await this.ordersRepo.findOrderByButtonAndRequestId(button.buttonId, requestId);
-            if (existingOrder) {
-              return {
-                order: toOrderResponseDto(existingOrder),
-                isDuplicate: true,
-                message: 'Đơn hàng đã được tạo trước đó cho yêu cầu này (Idempotent Hit)',
-              };
-            }
-          }
-          throw fallbackErr;
+        } else {
+          // Bảo lưu các lỗi nghiệp vụ từ stored procedure (hết hàng, store không hoạt động, v.v.)
+          throw new BadRequestException(procErr.message || 'Lỗi khi tạo đơn hàng');
         }
-      } else {
-        // Bảo lưu các lỗi nghiệp vụ từ stored procedure (hết hàng, store không hoạt động, v.v.)
-        throw new BadRequestException(procErr.message || 'Lỗi khi tạo đơn hàng');
       }
     }
 
@@ -258,8 +339,8 @@ export class OrdersService {
     };
 
     // Emit Realtime WebSockets to authorized rooms ONLY (no emitGlobal)
-    this.eventsGateway.emitToStore(button.storeId.toString(), 'ORDER_CREATED', orderPayload);
-    this.eventsGateway.emitToCustomer(button.customerId.toString(), 'ORDER_CREATED', orderPayload);
+    this.eventsGateway?.emitToStore(button.storeId.toString(), 'ORDER_CREATED', orderPayload);
+    this.eventsGateway?.emitToCustomer(button.customerId.toString(), 'ORDER_CREATED', orderPayload);
 
     // Send FCM Push Notification
     if (this.notificationsService) {
@@ -325,7 +406,7 @@ export class OrdersService {
       }
     }
     if ((button as any).canOrder === false) {
-      throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
+      throw new BadRequestException('Nút bấm thông minh đang bị tạm khóa tính năng đặt hàng (Khóa trẻ em từ xa hoặc tạm ngưng). Vui lòng kiểm tra trên ứng dụng để tiếp tục đặt hàng.');
     }
 
     // BOLA Check
@@ -359,9 +440,68 @@ export class OrdersService {
   }
 
   /**
-   * Đặt hàng nhanh từ App dựa trên Nút bấm
+   * Kiểm tra điều kiện giao hàng miễn phí 5 km qua Goong trước khi đặt (Endpoint 1: POST /api/v1/orders/delivery-quote)
    */
-  async quickReorder(user: any, deviceId: string) {
+  async getDeliveryQuote(dto: DeliveryQuoteDto, user: any) {
+    if (!user || user.role !== 'CUSTOMER' || !user.customerProfileId) {
+      throw new ForbiddenException('Chỉ khách hàng đã xác thực mới có thể kiểm tra khoảng cách giao hàng');
+    }
+
+    const deviceId = dto?.deviceId ? String(dto.deviceId).trim() : '';
+    if (!deviceId) {
+      throw new BadRequestException('Thiếu mã định danh nút bấm (deviceId)');
+    }
+
+    const button = await this.ordersRepo.findButtonByDeviceId(deviceId);
+    if (!button) {
+      throw new NotFoundException('Thiết bị không tồn tại');
+    }
+
+    if (button.customerId?.toString() !== user.customerProfileId.toString()) {
+      throw new ForbiddenException('Thiết bị không thuộc sở hữu của bạn');
+    }
+
+    if (!this.deliveryEligibilityService) {
+      throw new BadRequestException('Dịch vụ kiểm tra khoảng cách giao hàng chưa được khởi tạo');
+    }
+
+    return this.deliveryEligibilityService.evaluateQuote({
+      userId: String(user.userId || user.customerProfileId),
+      customerId: BigInt(user.customerProfileId),
+      deviceId,
+      store: button.store,
+      addressIdRaw: dto?.addressId,
+    });
+  }
+
+  /**
+   * Đặt hàng nhanh từ App dựa trên Nút bấm (Endpoint 2: POST /api/v1/orders/quick-reorder)
+   * Hỗ trợ cả chữ ký mới quickReorder(dto, user) và chữ ký cũ quickReorder(user, deviceId, addressId)
+   */
+  async quickReorder(arg1: QuickReorderDto | any, arg2?: any, arg3?: string) {
+    let dto: QuickReorderDto;
+    let user: any;
+
+    if (arg1 && typeof arg1 === 'object' && ('deviceId' in arg1 || 'addressId' in arg1) && !('role' in arg1)) {
+      dto = arg1 as QuickReorderDto;
+      user = arg2;
+    } else {
+      user = arg1;
+      dto =
+        typeof arg2 === 'string'
+          ? { deviceId: arg2, addressId: arg3 }
+          : (arg2 || {});
+    }
+
+    if (!user) {
+      throw new ForbiddenException('Thiếu thông tin người dùng');
+    }
+
+    const deviceId = dto?.deviceId ? String(dto.deviceId).trim() : '';
+    if (!deviceId) {
+      throw new BadRequestException('Thiếu mã định danh nút bấm (deviceId)');
+    }
+
     const button = await this.ordersRepo.findButtonByDeviceId(deviceId);
 
     if (!button) {
@@ -379,9 +519,29 @@ export class OrdersService {
       throw new ForbiddenException('Chỉ khách hàng mới có thể đặt hàng nhanh qua thiết bị');
     }
 
+    if (!this.deliveryEligibilityService) {
+      throw new BadRequestException('Dịch vụ kiểm tra khoảng cách giao hàng chưa được khởi tạo');
+    }
+
+    const targetCustomerId = button.customerId
+      ? BigInt(button.customerId)
+      : BigInt(user.customerProfileId);
+
+    const requestId = `app_req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+    const verifiedDeliverySnapshot =
+      await this.deliveryEligibilityService.verifyAndResolveForMobileOrder({
+        customerId: targetCustomerId,
+        store: button.store,
+        addressIdRaw: dto?.addressId,
+        requestId,
+      });
+
     const data = await this.handleButtonEvent(button, {
       eventType: 'APP_QUICK_REORDER',
-      requestId: `app_req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      requestId,
+      shippingFee: 0,
+      verifiedDeliverySnapshot,
     });
 
     return data;
@@ -509,7 +669,7 @@ export class OrdersService {
     }
 
     // BOLA / IDOR Protection: verify ownership
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+    if (user && !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
       const isCustomerOwner =
         user.customerProfileId && order.customerId === BigInt(user.customerProfileId);
       const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
@@ -536,7 +696,7 @@ export class OrdersService {
     if (!order) return null;
 
     // BOLA / IDOR Protection: verify ownership
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+    if (user && !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
       const isCustomerOwner = user.customerProfileId && order.customerId === BigInt(user.customerProfileId);
       const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
       if (!isCustomerOwner && !isStoreOwner) {
@@ -560,7 +720,7 @@ export class OrdersService {
     }
 
     // BOLA / IDOR Protection: verify ownership BEFORE checking status or returning order details
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+    if (user && !['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
       const isCustomerOwner = user.customerProfileId && order.customerId === BigInt(user.customerProfileId);
       const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
       if (!isCustomerOwner && !isStoreOwner) {
@@ -1037,7 +1197,7 @@ export class OrdersService {
       if (user.storeId && order.storeId.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang quản lý');
       }
-    } else if (user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+    } else if (!['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
       throw new ForbiddenException('Bạn không có quyền truy cập thông tin bằng chứng đơn hàng');
     }
 

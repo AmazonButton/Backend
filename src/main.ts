@@ -119,6 +119,7 @@ async function bootstrap() {
 
   app.use('/api/v1/auth', authLimiter);
   app.use('/api/v1/orders/simulate-button-press', orderSimLimiter);
+  app.use('/api/v1/orders/delivery-quote', orderSimLimiter);
 
   // Enable global validation pipeline — activates all class-validator DTOs
   app.useGlobalPipes(

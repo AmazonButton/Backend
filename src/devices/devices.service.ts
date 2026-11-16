@@ -533,7 +533,23 @@ export class DevicesService {
       updateData.holdDurationMs = Number(body.holdDurationMs);
     }
     if (body.canOrder !== undefined) {
-      updateData.canOrder = Boolean(body.canOrder);
+      const nextCanOrder = Boolean(body.canOrder);
+      if (nextCanOrder) {
+        const effectiveStatus = updateData.status || button.status;
+        if (effectiveStatus !== 'ACTIVE') {
+          throw new BadRequestException('Không thể bật tính năng đặt hàng khi thiết bị chưa kích hoạt hoặc đang bị khóa');
+        }
+        if (button.inventoryState === 'RETURN_IN_TRANSIT') {
+          throw new BadRequestException('Không thể bật tính năng đặt hàng khi thiết bị đang trong quá trình trả hàng');
+        }
+        if (button.rental) {
+          const expiry = button.rental.effectiveExpiresAt || button.rental.paidThrough || button.rental.endDate;
+          if (button.rental.status !== 'ACTIVE' || (expiry && new Date(expiry) <= new Date())) {
+            throw new BadRequestException('Không thể bật tính năng đặt hàng khi hợp đồng thuê đã hết hạn hoặc không hoạt động');
+          }
+        }
+      }
+      updateData.canOrder = nextCanOrder;
     }
     if (body.cancelWindowSeconds !== undefined) {
       updateData.cancelWindowSeconds = Number(body.cancelWindowSeconds);

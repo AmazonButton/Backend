@@ -5,6 +5,8 @@ export class StoreMeResponseDto {
   email: string | null;
   phone: string;
   address: string;
+  latitude: number | null;
+  longitude: number | null;
   status: string;
   commissionRate: number;
   productCount: number;
@@ -43,6 +45,8 @@ export class StoreMeResponseDto {
       email: store.email || null,
       phone: store.phone,
       address: store.address,
+      latitude: store.latitude != null ? Number(store.latitude) : null,
+      longitude: store.longitude != null ? Number(store.longitude) : null,
       status: store.status,
       commissionRate: store.commissionRate ? Number(store.commissionRate) : 8.0,
       productCount: store._count?.products ?? (store.products?.length || 0),

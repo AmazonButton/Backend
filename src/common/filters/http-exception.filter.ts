@@ -21,6 +21,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let message = 'Đã có lỗi nội bộ xảy ra trên máy chủ';
     let errorCode = 'INTERNAL_SERVER_ERROR';
     let errors: any = undefined;
+    let data: any = undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -32,6 +33,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const resObj = res as Record<string, any>;
         message = resObj.message || message;
         errorCode = resObj.code || resObj.errorCode || resObj.error || `HTTP_${status}`;
+        if (resObj.data !== undefined) {
+          data = resObj.data;
+        }
         if (Array.isArray(resObj.message)) {
           errors = resObj.message;
           message = resObj.message[0] || message;
@@ -92,11 +96,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     }
 
+    // Defense-in-depth: never leak third-party API keys in error messages or paths
+    const safeMessage =
+      typeof message === 'string'
+        ? message.replace(/([?&]api_key=)[^&\s]+/gi, '$1[REDACTED]')
+        : 'Đã có lỗi nội bộ xảy ra trên máy chủ';
+
     response.status(status).json({
       success: false,
-      message,
+      message: safeMessage,
       errorCode,
       code: errorCode,
+      ...(data !== undefined ? { data } : {}),
       ...(errors ? { errors } : {}),
       path: request.url,
       timestamp: new Date().toISOString(),

@@ -22,7 +22,16 @@ export class OrdersRepository {
       },
       include: {
         store: true,
-        customer: { include: { user: true } },
+        address: true,
+        customer: {
+          include: {
+            user: true,
+            addresses: {
+              where: { isDefault: true },
+              take: 1,
+            },
+          },
+        },
         buttonProducts: { include: { product: true } },
         rental: true,
       },
@@ -30,13 +39,49 @@ export class OrdersRepository {
   }
 
   async findButtonByDeviceId(deviceId: string) {
-    return this.prisma.ioTButton.findUnique({
-      where: { deviceId },
+    return this.prisma.ioTButton.findFirst({
+      where: {
+        OR: [{ deviceId }, { buttonCode: deviceId }],
+      },
       include: {
-        customer: true,
+        customer: {
+          include: {
+            user: true,
+            addresses: {
+              where: { isDefault: true },
+              take: 1,
+            },
+          },
+        },
+        address: true,
         store: true,
         buttonProducts: { include: { product: true } },
         rental: true,
+      },
+    });
+  }
+
+  async createCustomerDeliveryRejectionNotification(params: {
+    userId: bigint;
+    buttonCode: string;
+    reasonMessage: string;
+    errorCode: string;
+    requestId?: string;
+  }) {
+    const idempotencyKey = `iot-deliv-reject:${params.userId.toString()}:${params.buttonCode}:${params.requestId || Date.now()}`;
+    return this.prisma.notification.upsert({
+      where: { idempotencyKey },
+      update: {},
+      create: {
+        userId: params.userId,
+        type: 'DELIVERY_INELIGIBLE',
+        title: 'Không thể tạo đơn từ nút bấm thông minh',
+        body: `${params.reasonMessage} Vui lòng kiểm tra và cập nhật địa chỉ giao hàng mặc định trong phạm vi 5 km của cửa hàng trên ứng dụng.`,
+        data: {
+          buttonCode: params.buttonCode,
+          errorCode: params.errorCode,
+        },
+        idempotencyKey,
       },
     });
   }
@@ -66,6 +111,16 @@ export class OrdersRepository {
     shippingFee: number,
     iotRequestId?: string,
     orderNote?: string,
+    deliverySnapshot?: {
+      deliveryAddressId?: bigint | null;
+      shippingRecipientName?: string;
+      shippingPhone?: string;
+      shippingAddress?: string;
+      shippingLatitude?: number | null;
+      shippingLongitude?: number | null;
+      deliveryDistanceMeters?: number | null;
+      deliveryDistanceSource?: string | null;
+    },
   ): Promise<bigint> {
     return this.prisma.$transaction(async (tx) => {
       // 0. Idempotency Check (Safe Hit)
@@ -208,14 +263,40 @@ export class OrdersRepository {
       // 4. Create order directly with correct subtotal, discount, and total
       const orderCode = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      const address = await tx.customerAddress.findFirst({
-        where: { addressId: button.addressId },
-      });
-      const shippingAddress = address
-        ? `${address.addressDetail}${address.ward ? ', ' + address.ward : ''}${address.district ? ', ' + address.district : ''}${address.province ? ', ' + address.province : ''}`
-        : 'Địa chỉ mặc định của khách hàng';
-      const recipientName = address?.recipientName || button.customer?.user?.fullName || 'Khách hàng';
-      const phone = address?.phone || button.customer?.user?.phone || '';
+      const address = deliverySnapshot
+        ? null
+        : button.addressId
+        ? await tx.customerAddress.findFirst({
+            where: { addressId: button.addressId },
+          })
+        : null;
+      const shippingAddress =
+        deliverySnapshot?.shippingAddress ||
+        (address
+          ? `${address.addressDetail}${address.ward ? ', ' + address.ward : ''}${address.district ? ', ' + address.district : ''}${address.province ? ', ' + address.province : ''}`
+          : 'Địa chỉ mặc định của khách hàng');
+      const recipientName =
+        deliverySnapshot?.shippingRecipientName ||
+        address?.recipientName ||
+        button.customer?.user?.fullName ||
+        'Khách hàng';
+      const phone =
+        deliverySnapshot?.shippingPhone ||
+        address?.phone ||
+        button.customer?.user?.phone ||
+        '';
+      const shippingLat =
+        deliverySnapshot?.shippingLatitude !== undefined
+          ? deliverySnapshot.shippingLatitude
+          : address?.latitude || null;
+      const shippingLng =
+        deliverySnapshot?.shippingLongitude !== undefined
+          ? deliverySnapshot.shippingLongitude
+          : address?.longitude || null;
+      const resolvedDeliveryAddressId =
+        deliverySnapshot?.deliveryAddressId !== undefined
+          ? deliverySnapshot.deliveryAddressId
+          : address?.addressId || button.addressId || null;
 
       const store = await tx.store.findUnique({
         where: { storeId: button.storeId },
@@ -244,8 +325,17 @@ export class OrdersRepository {
           shippingRecipientName: recipientName,
           shippingPhone: phone,
           shippingAddress,
-          shippingLatitude: address?.latitude || null,
-          shippingLongitude: address?.longitude || null,
+          shippingLatitude: shippingLat,
+          shippingLongitude: shippingLng,
+          deliveryAddressId: resolvedDeliveryAddressId,
+          deliveryDistanceMeters:
+            deliverySnapshot?.deliveryDistanceMeters !== undefined
+              ? deliverySnapshot.deliveryDistanceMeters
+              : null,
+          deliveryDistanceSource:
+            deliverySnapshot?.deliveryDistanceSource !== undefined
+              ? deliverySnapshot.deliveryDistanceSource
+              : null,
           orderNote: orderNote || 'Đơn hàng tự động từ nút bấm IoT',
           iotRequestId: iotRequestId || null,
         },
@@ -545,43 +635,51 @@ export class OrdersRepository {
         throw new BadRequestException(`Không thể hoàn tất đơn hàng từ trạng thái ${order.order_status}`);
       }
 
-      // 2. Lock & Deduct inventory with reserved_quantity check
+      // 2. Lock & Deduct inventory with reserved_quantity check (skip if already settled at DELIVERED stage)
+      const alreadySettledInv = await tx.orderStatusHistory.findFirst({
+        where: {
+          orderId,
+          reason: { contains: '[INV_SETTLED]' },
+        },
+      });
       const items = await tx.orderItem.findMany({ where: { orderId } });
-      for (const item of items) {
-        await tx.$executeRawUnsafe(
-          `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
-          item.productId,
-        );
-        const invRows = await tx.$queryRawUnsafe<any[]>(
-          `SELECT quantity_on_hand, reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
-          item.productId,
-        );
-        const inv = invRows[0];
-        if (!inv) {
-          throw new BadRequestException(`Không tìm thấy tồn kho cho sản phẩm ${item.productId}`);
-        }
-        if (Number(inv.quantity_on_hand) < Number(item.quantity)) {
-          throw new BadRequestException(`Số lượng tồn kho thực tế không đủ cho sản phẩm ${item.productId}`);
-        }
-        const currentReserved = Number(inv.reserved_quantity);
-        const deductReserved = Math.min(currentReserved, Number(item.quantity));
+      if (!alreadySettledInv) {
+        for (const item of items) {
+          await tx.$executeRawUnsafe(
+            `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
+            item.productId,
+          );
+          const invRows = await tx.$queryRawUnsafe<any[]>(
+            `SELECT quantity_on_hand, reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+            item.productId,
+          );
+          const inv = invRows[0];
+          if (!inv) {
+            throw new BadRequestException(`Không tìm thấy tồn kho cho sản phẩm ${item.productId}`);
+          }
+          if (Number(inv.quantity_on_hand) < Number(item.quantity)) {
+            throw new BadRequestException(`Số lượng tồn kho thực tế không đủ cho sản phẩm ${item.productId}`);
+          }
+          const currentReserved = Number(inv.reserved_quantity);
+          const deductReserved = Math.min(currentReserved, Number(item.quantity));
 
-        if (currentReserved < Number(item.quantity)) {
-          console.warn(
-            `[OrdersRepository.completeOrderAtomicTx] Data discrepancy for product ${item.productId}: reserved_quantity (${currentReserved}) < item quantity (${item.quantity}). Clamping reserved deduction to ${deductReserved}.`,
+          if (currentReserved < Number(item.quantity)) {
+            console.warn(
+              `[OrdersRepository.completeOrderAtomicTx] Data discrepancy for product ${item.productId}: reserved_quantity (${currentReserved}) < item quantity (${item.quantity}). Clamping reserved deduction to ${deductReserved}.`,
+            );
+          }
+
+          await tx.$executeRawUnsafe(
+            `UPDATE inventory
+             SET quantity_on_hand = GREATEST(0, quantity_on_hand - $1),
+                 reserved_quantity = GREATEST(0, reserved_quantity - $2),
+                 updated_at = NOW()
+             WHERE product_id = $3`,
+            item.quantity,
+            deductReserved,
+            item.productId,
           );
         }
-
-        await tx.$executeRawUnsafe(
-          `UPDATE inventory
-           SET quantity_on_hand = GREATEST(0, quantity_on_hand - $1),
-               reserved_quantity = GREATEST(0, reserved_quantity - $2),
-               updated_at = NOW()
-           WHERE product_id = $3`,
-          item.quantity,
-          deductReserved,
-          item.productId,
-        );
       }
 
       // 3. Credit store wallet strictly if paid via PayOS online gateway
@@ -773,10 +871,32 @@ export class OrdersRepository {
 
   async refundOrderAtomicTx(orderId: bigint, note: string, changedByUserId?: bigint | null) {
     return this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+      if (order.payment_status === 'REFUNDED') {
+        return this.findOrderByIdTx(tx, orderId);
+      }
+
       const updatedOrder = await tx.order.update({
         where: { orderId },
         data: {
           paymentStatus: 'REFUNDED',
+        },
+      });
+
+      await tx.paymentTransaction.updateMany({
+        where: {
+          orderId,
+          status: { in: ['PAID', 'REFUND_PENDING'] },
+        },
+        data: {
+          status: 'REFUNDED',
         },
       });
 
@@ -1041,13 +1161,108 @@ export class OrdersRepository {
       }
 
       const deliveredAtDate = dto.deliveredAt ? new Date(dto.deliveredAt) : new Date();
+      const effectivePaymentMethod = isPaidGateway ? order.payment_method : dto.paymentMethod;
+
+      // Deduct physical inventory (quantity_on_hand & reserved_quantity) immediately on DELIVERED
+      const alreadySettledInv = await tx.orderStatusHistory.findFirst({
+        where: {
+          orderId,
+          reason: { contains: '[INV_SETTLED]' },
+        },
+      });
+      if (!alreadySettledInv) {
+        const items = await tx.orderItem.findMany({ where: { orderId } });
+        for (const item of items) {
+          const invRows = await tx.$queryRawUnsafe<any[]>(
+            `SELECT quantity_on_hand, reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+            item.productId,
+          );
+          const inv = invRows[0];
+          if (inv) {
+            const currentReserved = Number(inv.reserved_quantity || 0);
+            const deductReserved = Math.min(currentReserved, Number(item.quantity));
+            await tx.$executeRawUnsafe(
+              `UPDATE inventory
+               SET quantity_on_hand = GREATEST(0, quantity_on_hand - $1),
+                   reserved_quantity = GREATEST(0, reserved_quantity - $2),
+                   updated_at = NOW()
+               WHERE product_id = $3`,
+              item.quantity,
+              deductReserved,
+              item.productId,
+            );
+          }
+        }
+      }
+
+      // Credit store wallet immediately on DELIVERED if paid via PayOS online gateway
+      if (effectivePaymentMethod === 'PAYOS') {
+        const payosTx = await tx.paymentTransaction.findFirst({
+          where: {
+            orderId: BigInt(orderId),
+            provider: 'PAYOS',
+            status: 'PAID',
+          },
+        });
+        if (payosTx && order.store_id) {
+          const storeId = order.store_id;
+          const wallets = await tx.$queryRawUnsafe<any[]>(
+            `SELECT * FROM store_wallets WHERE store_id = $1 FOR UPDATE`,
+            storeId,
+          );
+          let wallet = wallets[0];
+          if (!wallet) {
+            wallet = await tx.storeWallet.create({
+              data: {
+                storeId,
+                balance: 0,
+                frozenBalance: 0,
+              },
+            });
+          }
+
+          const orderRef = `ORDER:${orderId}`;
+          const existingTx = await tx.walletTransaction.findFirst({
+            where: {
+              walletId: wallet.walletId || wallet.wallet_id,
+              referenceId: orderRef,
+              type: 'ORDER_REVENUE',
+            },
+          });
+
+          if (!existingTx) {
+            const currentBal = Number(wallet.balance);
+            const payoutAmount = order.net_amount
+              ? Number(order.net_amount)
+              : Math.round(Number(order.total_amount) * 0.92);
+            const newBal = currentBal + payoutAmount;
+
+            await tx.storeWallet.update({
+              where: { walletId: wallet.walletId || wallet.wallet_id },
+              data: { balance: newBal },
+            });
+
+            await tx.walletTransaction.create({
+              data: {
+                walletId: wallet.walletId || wallet.wallet_id,
+                amount: payoutAmount,
+                type: 'ORDER_REVENUE',
+                balanceBefore: currentBal,
+                balanceAfter: newBal,
+                referenceId: orderRef,
+                description: `Doanh thu thực nhận đơn hàng #${order.order_code || orderId} (sau hoa hồng)`,
+              },
+            });
+          }
+        }
+      }
 
       await tx.order.update({
         where: { orderId },
         data: {
           orderStatus: 'DELIVERED',
           paymentStatus: 'PAID',
-          paymentMethod: isPaidGateway ? order.payment_method : dto.paymentMethod,
+          paymentMethod: effectivePaymentMethod,
           podImageUrl: canonicalPodRef,
           deliveredAt: deliveredAtDate,
           ...(geofenceNote
@@ -1057,6 +1272,16 @@ export class OrdersRepository {
                   : geofenceNote,
               }
             : {}),
+        },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          oldStatus: order.order_status,
+          newStatus: 'DELIVERED',
+          changedByUserId: driverUser?.userId ? BigInt(driverUser.userId) : null,
+          reason: 'Giao hàng thành công kèm bằng chứng ảnh POD [INV_SETTLED]',
         },
       });
 

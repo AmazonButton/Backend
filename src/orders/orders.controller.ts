@@ -20,6 +20,8 @@ import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { SimulateButtonPressDto } from './dto/simulate-button-press.dto';
 import { RefundOrderDto } from './dto/refund-order.dto';
+import { DeliveryQuoteDto } from './dto/delivery-quote.dto';
+import { QuickReorderDto } from './dto/quick-reorder.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -103,9 +105,23 @@ export class OrdersController {
   }
 
   @Roles('CUSTOMER')
+  @HttpCode(200)
+  @Post('delivery-quote')
+  async getDeliveryQuote(@Body() body: DeliveryQuoteDto, @Request() req: any) {
+    const data = await this.ordersService.getDeliveryQuote(body, req.user);
+    return {
+      success: true,
+      message: data.eligible
+        ? 'Địa chỉ nằm trong phạm vi giao hàng miễn phí'
+        : 'Địa chỉ nằm ngoài phạm vi giao hàng 5 km',
+      data,
+    };
+  }
+
+  @Roles('CUSTOMER')
   @Post('quick-reorder')
-  async quickReorder(@Request() req: any, @Body('deviceId') deviceId: string) {
-    const data = await this.ordersService.quickReorder(req.user, deviceId);
+  async quickReorder(@Request() req: any, @Body() body: QuickReorderDto) {
+    const data = await this.ordersService.quickReorder(body, req.user);
     return { success: true, message: 'Đặt hàng thành công!', data };
   }
 

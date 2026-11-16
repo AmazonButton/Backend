@@ -88,7 +88,6 @@ export class StoreSubscriptionsRepository {
         plan: {
           OR: [
             { price: 0 },
-            { durationDays: { lte: 7 } },
             { planCode: { contains: 'TRIAL', mode: 'insensitive' } },
           ],
         },
@@ -229,7 +228,7 @@ export class StoreSubscriptionsRepository {
       }
 
       // 3.1. Trial Package Restriction (Mỗi tài khoản/gian hàng chỉ được dùng thử 1 lần duy nhất)
-      const isTrial = Number(plan.price) === 0 || plan.durationDays <= 7 || plan.planCode.toUpperCase().includes('TRIAL');
+      const isTrial = Number(plan.price) === 0 || plan.planCode.toUpperCase().includes('TRIAL');
       if (isTrial) {
         const hasUsed = await this.hasUsedTrialSubscription(params.storeId);
         if (hasUsed) {

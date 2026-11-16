@@ -120,11 +120,11 @@ export class StoreSubscriptionsController {
       throw new BadRequestException('Mã gói dịch vụ (planId) không hợp lệ');
     }
 
-    const plan = await this.subscriptionsService.getPlanForCheckout(planIdBigInt);
+    const plan = await this.subscriptionsService.getPlanForCheckout(planIdBigInt, { allowFreeTrial: true });
 
     // Xử lý riêng cho gói dùng thử / 0đ: Không gọi PayOS vì cổng thanh toán không hỗ trợ giao dịch 0đ.
-    const isTrial = Number(plan.price) === 0 || plan.durationDays <= 7 || plan.planCode.toUpperCase().includes('TRIAL');
-    if (isTrial || Number(plan.price) === 0) {
+    const isTrial = Number(plan.price) === 0 || plan.planCode.toUpperCase().includes('TRIAL');
+    if (isTrial && Number(plan.price) === 0) {
       const hasUsed = await this.subscriptionsService.hasUsedTrialSubscription(storeId);
       if (hasUsed) {
         throw new BadRequestException(

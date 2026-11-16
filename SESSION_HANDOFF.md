@@ -1,5 +1,77 @@
 # Project Handoff & Session Context
 
+## 2026-11-17: Goong 5 km Free Delivery (`POST /orders/delivery-quote`, `POST /orders/quick-reorder` & Physical IoT Button Eligibility)
+- **Status**: 🟢 100% COMPLETED, TESTED & VERIFIED WITH LIVE GOONG API V2 (TDD Red-Green-Refactor).
+- **Plan Document**: `docs/superpowers/plans/2026-11-16-goong-5km-free-delivery.md`
+- **Test Suite**: `tests/goong-5km-delivery.spec.ts` (**18/18 PASSED, 100%** — including live Goong REST API V2 integration test).
+- **Environment Configuration**:
+  - `GOONG_API_KEY đã cấu hình` trong `.env` local (gitignored), `.env.example` (chỉ chứa biến mẫu), và đã đồng bộ lên cả **Render Node 1** (`srv-dbdom8gm7kps73ebg5fg`) & **Render Node 2** (`srv-dbgqpgugekts738lbreg`) với `HTTP 200`.
+- **Database Schema & Multi-Cloud Migration (`20261116160000_add_store_coords_and_order_delivery_distance`)**:
+  - Added nullable `latitude DECIMAL(10,7)` and `longitude DECIMAL(10,7)` to `store` (backfilled default coordinates for existing `ACTIVE` stores).
+  - Added nullable `delivery_address_id BIGINT`, `delivery_distance_meters INTEGER`, and `delivery_distance_source VARCHAR(50)` to `orders`.
+  - Applied and verified on both **Neon PostgreSQL** (`smart_order_test`) and **Supabase PostgreSQL** (`aws-0-ap-northeast-1.pooler.supabase.com`).
+- **Core Implementation**:
+  1. **Goong REST API V2 Client & `DeliveryEligibilityService` (`src/orders/delivery-eligibility.service.ts`)**:
+     - Enforces fixed server policy `MAX_FREE_DELIVERY_DISTANCE_METERS = 5_000` and `DELIVERY_DISTANCE_SOURCE = 'GOONG_DISTANCE_MATRIX_V2'`.
+     - Uses `vehicle=bike` (Goong Distance Matrix V2's valid enum for motorcycle in Vietnam; automatically normalizes `'motorcycle' -> 'bike'` to prevent Goong HTTP 400 deserialize error).
+     - Calls `GET https://rsapi.goong.io/v2/distancematrix` with a 6s `AbortController` timeout, strict integer validation on `rows[0].elements[0].distance.value`, and coordinate-versioned caching (`15 minutes` TTL; any store or address coordinate change automatically invalidates cache).
+     - Never logs or leaks `GOONG_API_KEY` or raw URLs containing `api_key`.
+  2. **Endpoint 1 (`POST /api/v1/orders/delivery-quote`)**:
+     - Validates `CUSTOMER` role, button ownership, `addressId` presence (`400 DELIVERY_ADDRESS_REQUIRED`), address ownership (`403 DELIVERY_ADDRESS_ACCESS_DENIED`), store coordinates (`400 STORE_COORDINATES_MISSING`), and address coordinates (`400 ADDRESS_COORDINATES_MISSING`).
+     - Returns HTTP 200 `{ eligible: true/false, distanceMeters, maxDistanceMeters: 5000, shippingFee: 0, reasonCode: null | 'ADDRESS_OUTSIDE_DELIVERY_AREA' }`.
+  3. **Endpoint 2 (`POST /api/v1/orders/quick-reorder`)**:
+     - Requires `{ deviceId, addressId }` (`400 DELIVERY_ADDRESS_REQUIRED` if `addressId` is omitted).
+     - Re-verifies ownership and Goong distance inside the order creation flow (Zero Client Trust: ignores client-supplied `shippingFee`, `distanceMeters`, or coordinates).
+     - Rejects distances `> 5000m` with HTTP `409 Conflict` (`errorCode: 'ADDRESS_OUTSIDE_DELIVERY_AREA'`, `data: { distanceMeters, maxDistanceMeters: 5000 }`).
+     - Persists full order snapshot (`deliveryAddressId`, `shippingRecipientName`, `shippingPhone`, `shippingAddress`, `shippingLatitude`, `shippingLongitude`, `deliveryDistanceMeters`, `deliveryDistanceSource = 'GOONG_DISTANCE_MATRIX_V2'`, `shippingFee = 0`).
+  4. **Physical IoT Button Press (`OrdersService.handleButtonEvent` & `IotService.handleEvent`)**:
+     - Resolves the customer's current default address (`isDefault = true`) and evaluates eligibility via the shared `DeliveryEligibilityService`.
+     - When rejected (`> 5000m` or missing coordinates/route), deletes any `iot_idempotency_keys` residue, reserves/deducts zero stock, and creates a customer `Notification` (`type: 'DELIVERY_INELIGIBLE'`) explaining the 5 km policy and guiding them to update their default address.
+  5. **Exception Filter & Store DTOs**:
+     - Updated `AllExceptionsFilter` (`src/common/filters/http-exception.filter.ts`) to preserve `data` on error responses and redact `api_key=` from messages.
+     - Updated `UpdateStoreMeDto`, `StoreMeResponseDto`, `UpdateAdminStoreDto`, and `OrderResponseDto` to expose and update store `latitude`/`longitude` and order delivery distance fields.
+- **Verification Evidence**:
+  - `npx tsx tests/goong-5km-delivery.spec.ts`: **18/18 PASSED (100%)** (including `Live 1` real Goong Distance Matrix V2 call: District 1 `1403m -> eligible: true`, Thảo Điền `11324m -> eligible: false, ADDRESS_OUTSIDE_DELIVERY_AREA`).
+  - `npx tsx tests/business-logic-13-fixes.spec.ts`: **19/19 PASSED (100%)**.
+  - `npm run build`: **Exit code 0**.
+
+## 2026-11-16: 13-Point Business Logic Remediation (Subscriptions, Rentals, Warranty Collateral, POD Settlement, Inventory, Auth & BOLA)
+- **Status**: 🟢 100% COMPLETED, TESTED & VERIFIED (TDD Red-Green-Refactor).
+- **Plan Document**: `docs/superpowers/plans/2026-11-16-business-logic-13-fixes.md`
+- **Test Suite**: `tests/business-logic-13-fixes.spec.ts` (**19/19 PASSED, 100%**).
+- **13 Business Logic Fixes Applied**:
+  1. **Point 1 (`StoreSubscriptionsController.createRenewCharge` & `StoreSubscriptionsService.getPlanForCheckout`)**:
+     - Added `{ allowFreeTrial?: boolean }` option to `getPlanForCheckout` so 0 VND `TRIAL_7D` plans passed to `createRenewCharge` activate directly instead of hitting dead code after a 400 exception.
+     - Narrowed `isTrial` detection strictly to `Number(plan.price) === 0 || plan.planCode.toUpperCase().includes('TRIAL')` (removed `durationDays <= 7` so paid short-duration plans proceed to PayOS checkout normally).
+  2. **Point 2 (`StoreSubscriptionsService.validateStoreCanListProducts` & `hasUsedTrialSubscription`)**:
+     - Added `currentSub.isUpcoming || new Date(currentSub.startDate) > new Date()` guard in `validateStoreCanListProducts` to prevent listing products on future-dated prepaid subscriptions.
+     - Removed `{ durationDays: { lte: 7 } }` from `hasUsedTrialSubscription` so purchasing a paid short-term plan does not forfeit a store's 1-time free trial eligibility.
+  3. **Point 3 (`WarrantyService` & `WarrantyRepository` Collateral Conservation & 1-1 Swap Integrity)**:
+     - Standardized default warranty deposit fallback to `200.000 VND` and enforced Zero Client Trust by reading `button.rental.depositPerButton` from the database when available.
+     - Restricted 1-1 free swap (`approveSwap`) strictly to `GROUP_A` (0% natural/technical fault deduction) to prevent collateral deficit (`140k` deposit vs `200k` new device).
+     - Updated `approveSwapAtomicTx` to detach `rentalId` and `addressId` from the old button, transfer `rentalId`, `addressId`, and `buttonProducts` to the replacement button, and set `inventoryState = 'IN_CUSTOMER_CUSTODY'`.
+     - Updated `lockDeviceAtomicTx` for damaged/lost devices (Group C/D) to deduct `deductionAmount` from `rental_deposits.held_amount`, reserve any remaining `refundAmount > 0` in `refund_reserved_amount`, create a `DepositRefund` (`PENDING_APPROVAL`), detach the button from the rental, and transition the rental to `RETURNED` when no active buttons remain.
+  4. **Point 4 (`OrdersService.handleButtonEvent` & `simulateButtonPress` Child Lock Error Message)**:
+     - Aligned `canOrder === false` error message in `OrdersService` with `OrdersRepository` to clearly report Child Lock / temporarily paused ordering instead of expired lease.
+  5. **Point 5 (`DevicesService.update` `canOrder` Guard)**:
+     - Prevented re-enabling `canOrder: true` via `PUT /api/v1/devices/:id` when the device is not `ACTIVE`, is `RETURN_IN_TRANSIT`, or has an expired/inactive rental contract.
+  6. **Point 6 (`OrdersRepository.refundOrderAtomicTx` & `AnalyticsRepository.getDashboardData`)**:
+     - Added pessimistic row lock (`SELECT ... FOR UPDATE`) and idempotency check to `refundOrderAtomicTx`, transitioned associated `payment_transaction` rows to `'REFUNDED'`, and excluded refunded orders from `paidRevenue` in `AnalyticsRepository`.
+  7. **Point 7 (`StoreWalletService.syncWithdrawalPayoutStatus`)**:
+     - Removed auto-dispatch of `triggerPayosPayout` on `PENDING` withdrawals inside `syncWithdrawalPayoutStatus`, ensuring all store withdrawal requests remain in `PENDING` until an Admin reviews and approves payout manually.
+  8. **Point 8 (`RentalsRepository.countCustomerPriorRentals` & `createRental`)**:
+     - Excluded unpaid `PENDING_PAYMENT` drafts from `countCustomerPriorRentals` (`status NOT IN ('CANCELLED', 'PENDING_PAYMENT')`) and auto-cancelled stale `PENDING_PAYMENT` draft rentals (and their pending initial charges) when a customer creates a new rental contract, preserving the 37-day first-time bonus.
+  9. **Point 9 (`handoverRentalButtonsInTx` Entitlement Days Calculation)**:
+     - Prevented double-counting `extensionMonths * 30` during handover when `rental.end_date` already included pre-handover extensions.
+  10. **Point 10 (`ProductsRepository.updateInventoryStock`, `updateProductAtomicTx` & `hasActiveOrders`)**:
+      - Enforced reservation floor so `quantityOnHand` cannot be set below `reservedQuantity`, and added `'DELIVERED'` to `hasActiveOrders`.
+  11. **Point 11 (`OrdersRepository.completeDeliveryAtomicTx` & `completeOrderAtomicTx`)**:
+      - Settled physical inventory (`quantity_on_hand` & `reserved_quantity`) and credited PayOS `ORDER_REVENUE` (`netAmount`) to `store_wallets` immediately when a driver completes delivery with valid POD (`DELIVERED`), while preventing double inventory deduction or double wallet credit when subsequently transitioning `DELIVERED -> COMPLETED`.
+  12. **Point 12 (`AuthService.resendVerification`)**:
+      - Allowed `resendVerification` for unverified users with `status === 'ACTIVE' && !user.emailVerifiedAt`, and fixed OTP invalidation purpose from `'PASSWORD_RESET'` to `'EMAIL_VERIFICATION'`.
+  13. **Point 13 (`OrdersService` Admin Role BOLA Alignment)**:
+      - Added `'ADMIN'` role alongside `'SUPER_ADMIN'` and `'SYSTEM_ADMIN'` in `getTimeline`, `getById`, `cancelOrder`, and `getPodViewUrl`.
+
 ## 2026-11-16: Store Subscriptions (No Product Limit, 7-Day Trial), Button Rentals (37-Day First Month, 200k Deposit) & Admin Configuration
 - **Status**: 🟢 100% COMPLETED, TESTED & VERIFIED.
 - **Scope**: Backend ONLY (per user instruction: "mình chỉ cần bạn review backend thôi nhé không cần frontend").

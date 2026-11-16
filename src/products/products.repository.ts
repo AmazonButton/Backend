@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
@@ -193,6 +193,14 @@ export class ProductsRepository {
 
       // 3. Update inventory stock atomically
       if (params.stock !== undefined && !isNaN(params.stock)) {
+        const existingInv = await tx.inventory.findUnique({
+          where: { productId: params.productId },
+        });
+        if (existingInv && params.stock < Number(existingInv.reservedQuantity)) {
+          throw new BadRequestException(
+            `Không thể cập nhật tổng tồn kho (${params.stock}) nhỏ hơn số lượng đang được giữ chỗ cho đơn hàng đang xử lý (${existingInv.reservedQuantity})`,
+          );
+        }
         await tx.inventory.upsert({
           where: { productId: params.productId },
           update: { quantityOnHand: params.stock },
@@ -274,6 +282,15 @@ export class ProductsRepository {
     availableStock: number,
     lowStockThreshold?: number,
   ) {
+    const existingInv = await this.prisma.inventory.findUnique({
+      where: { productId },
+    });
+    if (existingInv && availableStock < Number(existingInv.reservedQuantity)) {
+      throw new BadRequestException(
+        `Không thể cập nhật tổng tồn kho (${availableStock}) nhỏ hơn số lượng đang được giữ chỗ cho đơn hàng đang xử lý (${existingInv.reservedQuantity})`,
+      );
+    }
+
     return this.prisma.inventory.upsert({
       where: {
         productId,
@@ -372,7 +389,7 @@ export class ProductsRepository {
         productId,
         order: {
           orderStatus: {
-            in: ['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING', 'READY_FOR_DELIVERY', 'SHIPPING'],
+            in: ['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING', 'READY_FOR_DELIVERY', 'SHIPPING', 'DELIVERED'],
           },
         },
       },

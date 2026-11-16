@@ -35,7 +35,7 @@ export class WarrantyService {
     group: string,
     customPercent?: number,
   ): { percent: number; deductionAmount: number; refundAmount: number } {
-    const safeDeposit = Math.max(0, Number(depositAmount) || 100000);
+    const safeDeposit = Math.max(0, Number(depositAmount) || 200000);
     let min = 0;
     let max = 0;
     let defaultPct = 0;
@@ -88,8 +88,16 @@ export class WarrantyService {
     const effectiveStoreId = button.storeId || (dto.storeId ? BigInt(dto.storeId) : (user.storeId ? BigInt(user.storeId) : null));
     const effectiveCustomerId = button.customerId || null;
 
-    // Tính toán cọc và khấu trừ chuẩn
-    const baseDeposit = dto.depositAmount !== undefined ? dto.depositAmount : 100000;
+    // Tính toán cọc và khấu trừ chuẩn (Zero Client Trust: ưu tiên lấy tiền cọc thực tế từ hợp đồng thuê)
+    const rentalDeposit = (button as any).rental?.depositPerButton
+      ? Number((button as any).rental.depositPerButton)
+      : null;
+    const baseDeposit =
+      rentalDeposit && rentalDeposit > 0
+        ? rentalDeposit
+        : dto.depositAmount !== undefined
+          ? dto.depositAmount
+          : 200000;
     const { percent, deductionAmount, refundAmount } = this.calculateWarrantyDeduction(
       baseDeposit,
       dto.faultGroup,
@@ -204,6 +212,11 @@ export class WarrantyService {
     const ticket = await this.warrantyRepo.findTicketById(ticketId);
     if (!ticket) {
       throw new NotFoundException('Không tìm thấy phiếu bảo hành');
+    }
+    if (ticket.faultGroup !== WarrantyFaultGroupEnum.GROUP_A) {
+      throw new BadRequestException(
+        'Chỉ hỗ trợ duyệt đổi 1-1 miễn phí cho thiết bị thuộc Nhóm A (Lỗi kỹ thuật tự nhiên 0% khấu trừ). Với lỗi hư hỏng do người dùng (Nhóm C/D), vui lòng thu hồi/khóa thiết bị và tất toán cọc.',
+      );
     }
 
     // Tìm nút thay thế

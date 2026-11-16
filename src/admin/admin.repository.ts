@@ -87,7 +87,18 @@ export class AdminRepository {
     });
   }
 
-  async updateStoreById(storeId: bigint, data: { name?: string; email?: string; phone?: string; address?: string; status?: string }) {
+  async updateStoreById(
+    storeId: bigint,
+    data: {
+      name?: string;
+      email?: string;
+      phone?: string;
+      address?: string;
+      latitude?: number;
+      longitude?: number;
+      status?: string;
+    },
+  ) {
     return this.prisma.store.update({
       where: { storeId },
       data: {
@@ -95,6 +106,8 @@ export class AdminRepository {
         ...(data.email !== undefined && { email: data.email ? data.email.trim() : null }),
         ...(data.phone && { phone: data.phone.trim() }),
         ...(data.address && { address: data.address.trim() }),
+        ...(data.latitude !== undefined && { latitude: data.latitude }),
+        ...(data.longitude !== undefined && { longitude: data.longitude }),
         ...(data.status && { status: data.status }),
       },
     });
