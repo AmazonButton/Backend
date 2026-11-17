@@ -26,6 +26,7 @@ async function runTask3TestSuite() {
     // -------------------------------------------------------------
     const mockRentalsRepo: any = {
       listAvailablePackages: async () => [],
+      countCustomerPriorRentals: async () => 0,
       findPackageById: async () => ({
         packageId: BigInt(1),
         monthlyPrice: 30000,

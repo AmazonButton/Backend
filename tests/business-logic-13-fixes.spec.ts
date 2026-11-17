@@ -662,7 +662,6 @@ async function runBusinessLogic13FixesSuite() {
         startDate: new Date(Date.now() - 3600000),
         endDate: new Date(Date.now() - 3600000 + 67 * 86400000),
         status: 'PENDING_HANDOVER',
-        pricingReviewRequired: false,
         billingPolicyReviewRequired: false,
       },
     });
@@ -854,6 +853,7 @@ async function runBusinessLogic13FixesSuite() {
       shippingOrder.orderId,
       { userId: ownerUser.userId, role: 'STORE_OWNER', storeId: delivStore.storeId },
       {
+        status: 'DELIVERED',
         podObjectKey: `stores/${delivStore.storeId}/pod/2026/11/order_${shippingOrder.orderId}_proof.webp`,
         paymentMethod: 'PAYOS' as any,
       },

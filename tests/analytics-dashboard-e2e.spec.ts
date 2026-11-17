@@ -534,6 +534,7 @@ async function runAnalyticsDashboardE2ESuite() {
     const RentalsService = (await import('../src/rentals/rentals.service')).RentalsService;
     const mockRentalsRepo: any = {
       listAvailablePackages: async () => [],
+      countCustomerPriorRentals: async () => 0,
       createRental: async (data: any) => ({
         rentalId: 101n,
         rentalCode: data.rentalCode,

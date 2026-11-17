@@ -153,7 +153,8 @@ async function runPhase3StoreSubscriptionSuite() {
       assert(false, '3.4 Chặn cửa hàng chưa đóng phí hoặc chưa kích hoạt gói khi đăng bài sản phẩm');
     } catch (e: any) {
       assert(
-        e instanceof ForbiddenException && e.message.includes('60.000đ/tháng'),
+        e instanceof ForbiddenException &&
+          (e.message.includes('chưa đăng ký gói dịch vụ') || e.message.includes('hết hạn')),
         '3.4 Chặn cửa hàng chưa đóng phí hoặc chưa kích hoạt gói khi đăng bài sản phẩm',
       );
     }
