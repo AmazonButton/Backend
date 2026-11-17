@@ -122,7 +122,8 @@ function runNode3Benchmark() {
   `;
 
   try {
-    const output = execSync(`"${sshBinary}" -i "${keyPath}" -o StrictHostKeyChecking=no ${host} "${remoteCmd}"`, {
+    const output = execSync(`"${sshBinary}" -i "${keyPath}" -o StrictHostKeyChecking=no ${host} "bash -s"`, {
+      input: remoteCmd,
       encoding: 'utf8',
     });
     console.log(output);

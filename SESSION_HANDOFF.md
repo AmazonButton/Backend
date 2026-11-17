@@ -1,5 +1,91 @@
 # Project Handoff & Session Context
 
+## 2026-11-17: Mail Delivery Hardening (HTTPS Port 443 + IPv4 SMTP) & DLQ/Outbox Database Triage
+- **Status**: 🟢 COMPLETED & VERIFIED (DB cleaned, TypeScript/build & targeted suites passed; Render Free SMTP port block requires `RESEND_API_KEY` or `BREVO_API_KEY` in Render env for production port-443 email delivery).
+- **Root Cause Observed**:
+  - `3` expired OTP emails in `dead_letter_jobs` on Supabase Production (`status = 'DEAD'`) failed on Render Node 1 (`plan: 'free'`) with `Connection timeout` (`2026-10-30`, `2026-11-14`) and `connect ENETUNREACH 2404:6800:4003:c03::6c:465 - Local (:::0)` (`2026-11-08`) because Render Free Web Services block outbound SMTP ports (`25/465/587`), causing IPv4 timeout and IPv6 fallback `ENETUNREACH`.
+- **Changes**:
+  1. `src/mail/mail.service.ts`:
+     - Added optional HTTPS Port-443 email transport via `RESEND_API_KEY` (`api.resend.com/emails`) and `BREVO_API_KEY` (`api.brevo.com/v3/smtp/email`) with graceful SMTP fallback if both HTTPS and SMTP are configured.
+     - Added `MailService.resolveSmtpConnectionTarget` (IPv4-first DNS resolution preserving TLS `servername` SNI) to bypass `nodemailer` IPv6 fallback (`ENETUNREACH`), increased SMTP socket/connection timeouts (`10s/8s/12s`, `15s` outer race with `clearTimeout`), and fixed `maskEmailAddress` redaction.
+  2. `src/common/utils/pii-mask.util.ts` & `src/common/queues/queue.service.ts`:
+     - Extracted shared `maskEmailAddress` helper; updated `QueueService.sanitizePayload` to mask OTP email recipient `to` and redact raw OTP `text`/`html` (`[REDACTED_OTP_CONTENT]`) before persisting to `dead_letter_jobs`.
+  3. `.env.example` & `tests/mail-and-dlq-hardening.spec.ts`:
+     - Documented `RESEND_API_KEY`, `BREVO_API_KEY`, `SMTP_FROM` placeholders; added TDD test suite (`5` cases).
+  4. **Database Triage Executed**:
+     - **Supabase Production DB**: Transitioned all `3` expired OTP `dead_letter_jobs` rows (`2026-10-30..2026-11-14`) to `status = 'RESOLVED'` with PII/OTP payload redacted (`remainingDeadCount: 0`); verified `outbox_events` has `0` pending/failed rows (`3` `COMPLETED`).
+     - **Neon Test DB (`smart_order_test`)**: Deleted `89` stale `PENDING` (`attempts = 0`) test leftover rows in `outbox_events` (`remainingOutboxCount: 0`).
+- **Verification**:
+  - `npx tsx tests/mail-and-dlq-hardening.spec.ts` — PASS (`5 passed, 0 failed`).
+  - `npx tsx tests/superpower-security-unit.spec.ts` — PASS (`44 passed, 0 failed`).
+  - `npx tsx tests/phase3-queues-retry-dlq.spec.ts` — PASS (`19 passed, 0 failed`).
+  - `npx tsx tests/firebase-phone-auth.spec.ts` — PASS (`45 Passed, 0 Failed`).
+  - `npx tsx tests/analytics-dashboard-e2e.spec.ts` — PASS (`87/87 assertions`).
+  - `npx tsc --noEmit` — PASS (Exit code `0`).
+  - `npm run build` — PASS (Exit code `0`).
+- **Remaining / Operational Note**:
+  - Render Node 1 (`plan: 'free'`) blocks outbound SMTP (`465/587`); add `RESEND_API_KEY` (or `BREVO_API_KEY`) to Render Node 1 & Node 2 environment variables when ready for HTTPS port-443 email delivery.
+  - Changes are in local working tree (not yet committed/pushed/deployed to Render or AWS Node 3).
+
+## 2026-11-17: System Architecture Diagram Update (Draw.io Page 3 / Index 2)
+- **Status**: 🟢 COMPLETED & VERIFIED VIA DRAW.IO MCP.
+- **Target File**: `BRD/ERD_Level_3_Editable.drawio` — Page index `2` (`id: R-9b4pvMf1gg9_v2ZBtu`, `"System Architecture"`); all other 25 pages untouched (`list_pages`: 26 total pages).
+- **Changes Applied (Aligned to `Frontend`, `Mobile`, `Backend`, and `Hardware` codebases)**:
+  - **Left Column (`Frontend (Client Apps & IoT)`)**: Updated tech stack (`React 18`, `Vite 6`, `TypeScript 5`, `Flutter 3`) across **Customer** (Flutter Mobile App & Portal Web), **Store Owner & Staff** (Merchant Management Web), **Delivery Staff** (Driver Shift & POD Web), **Admin** (System & Payout Web), and added **IoT Smart Order Button** (ESP32 Firmware: `BLE 5`, `Wi-Fi`, `HMAC-SHA256` with `BLE 5` link from Customer and `HTTPS / HMAC /api/v1/iot/events` link to Backend).
+  - **Center Column (`Backend (Smart Order Button System)`)**: Updated to `NestJS Cluster (Render Node 1 & 2 · AWS EC2 Node 3)` (`NestJS 10.4 · Node.js 20 · Prisma 5.22 · Socket.IO 4.8`) with **API / Controllers & Gateways**, **Services / Business Logic**, **Repositories & Cache / Queue Access**, **PostgreSQL** (`Supabase Cloud (Prod)`, `Neon DB (Test) · 67 Tables`), and **Redis & Async Workers** (`ioredis` Cache/Rate Limit, `BullMQ` Queues, In-Memory fallback).
+  - **Right Column (`Third-Party Services`)**: Replaced template placeholders with **PayOS & VietQR**, **Firebase & Google OAuth**, **Didit eKYC**, **Goong Maps & OSM**, **SMTP Mail Server**, and **Cloudflare R2 / S3 & Cloudinary**.
+  - **Cross-Boundary Links**: Kept WebSocket (`Socket.IO`), REST HTTPS/JSON, top client <-> 3rd-party bypass links (`Auth / Goong UI / Presigned PUT`, `FCM Push / OAuth & PayOS Callback`), Backend <-> 3rd-party API/Webhook links, and Worker -> 3rd-party async dispatch.
+- **Verification Evidence**:
+  - Draw.io MCP `list_pages` (`26` pages intact) & `get_page` (`page: "2"`): PASS.
+  - Geometry & XML check: `totalCells: 55`, `edges: 18`, `brokenEdges: 0`, `outOfBounds: 0`, `overlaps: 0`, full `.drawio` XML parse `DRAWIO_XML_VALID=true`.
+
+## 2026-11-17: Remove Daily DB Backup Workflow & Fix GitHub CI / Test Failures
+- **Status**: 🟢 COMPLETED (local typecheck, build, and targeted test suites verified; pending commit/push & full 81-suite CI re-run).
+- **Changes**:
+  1. **Removed failing backup cron workflow**: Deleted `.github/workflows/database-backup.yml` per user request to postpone database backup setup (eliminates daily `BACKUP_ENCRYPTION_PASSPHRASE` fail-closed failure).
+  2. **Fixed `tsc --noEmit` compile errors in `tests/business-logic-13-fixes.spec.ts`**:
+     - Removed duplicate `pricingReviewRequired: false` key at line 665 (`TS1117`, already defined at line 657).
+     - Added required `status: 'DELIVERED'` field to the `DeliverOrderDto` argument passed to `ordersRepo.completeDeliveryAtomicTx` (`TS2345`).
+  3. **Fixed 3 failing suites from CI Run `43853917578`**:
+     - Suite 44 (`tests/analytics-dashboard-e2e.spec.ts`): Added `countCustomerPriorRentals: async () => 0` to `mockRentalsRepo`.
+     - Suite 47 (`tests/platform-button-rental-task3-lifecycle-and-expiry.spec.ts`): Added `countCustomerPriorRentals: async () => 0` to `mockRentalsRepo`.
+     - Suite 54 (`tests/platform-button-rental-phase3-store-subscription.spec.ts`): Updated test `3.4` assertion from legacy `'60.000đ/tháng'` substring to match `StoreSubscriptionsService.validateStoreCanListProducts` (`'chưa đăng ký gói dịch vụ'` / `'hết hạn'`).
+- **Verification**:
+  - `npx tsc --noEmit` — PASS (Exit code `0`, run after all test edits).
+  - `npm run build` — PASS (Exit code `0`, run after all test edits).
+  - `npx tsx tests/analytics-dashboard-e2e.spec.ts` (Suite 44) — PASS (`87/87` assertions, Exit code `0`).
+  - `npx tsx tests/platform-button-rental-task3-lifecycle-and-expiry.spec.ts` (Suite 47) — PASS (`5 passed, 0 failed`, Exit code `0`).
+  - `npx ts-node tests/platform-button-rental-phase3-store-subscription.spec.ts` (Suite 54) — PASS (`6 passed, 0 failed`, Exit code `0`).
+  - `npx tsx tests/business-logic-13-fixes.spec.ts` (against Neon `smart_order_test`) — PASS (`19 PASSED | 0 FAILED`, Exit code `0`).
+- **Remaining / Unverified Scope**:
+  - Full 81-suite `npm run test:all` (including HTTP server-dependent suites) was not executed locally; only CI run `43853917578` results (`78/81` passed before these fixes) were inspected.
+  - Changes are working-tree edits (not yet committed or pushed to GitHub).
+- **Next**: Commit & push to `main` when ready so GitHub Actions re-runs `quality-and-build`, all `81` suites in `database-and-tests`, and production deploy.
+
+## 2026-11-17: Draw.io ERD Level 3 & Conceptual Diagram (CDM) Incremental Update
+- **Status**: 🟢 100% COMPLETED & VERIFIED VIA DRAW.IO MCP.
+- **Target File**: `BRD/ERD_Level_3_Editable.drawio` (25 pages; pages 2–24 verified untouched `23/23`).
+- **Page 0 (`ERD_Level_3_Optimized`, renamed `[ERD] 64 Tables Schema` -> `[ERD] 67 Tables Schema`)**:
+  - **3 Missing Tables Added**:
+    - `STORE_BANK_INBOUND_RECEIPTS` (`tbl_store_bank_inbound_receipts` @ `7250,1548`, 10 columns).
+    - `STORE_BANK_REFUND_OBLIGATIONS` (`tbl_store_bank_refund_obligations` @ `7250,1910`, 17 columns).
+    - `WARRANTY_TICKETS` (`tbl_warranty_tickets` @ `5350,3600`, 18 columns).
+  - **7 Existing Tables Enriched**:
+    - `USERS` (`+email_verified_at`), `STORE` (`+latitude, longitude`), `ORDERS` (`+delivery_address_id, delivery_distance_meters, delivery_distance_source`), `BUTTON_RENTALS` (`+billing_policy, billing_policy_review_required`, with `RENTAL_DEPOSITS` shifted down `+36px` to preserve spacing), `BILLING_CHARGES` (aligned all 19 Prisma columns including `payer_store_id`, `plan_id`, `plan_snapshot`), `CUSTOMER_BANK_VERIFICATION_PROOFS` (`+payment_qr_code`), `CUSTOMER_BANK_REFUND_PAYOUT_ATTEMPTS` (`+next_reconcile_at, reconcile_attempts`).
+  - **Edges Fixed & Added (`110` total edges, `0` broken)**:
+    - Re-attached 5 previously disconnected edge endpoints (`edge_users_fcm`, `edge_refund_to_customer`, `edge_bank_acc_to_proof`, `edge_inbound_tx_to_obligation`, `30A9bzpUEQ7j0Tngwrvw-1204`).
+    - Added 9 new relationship edges (`verification_tx_id`, `receipt_id`, `plan_id`, `delivery_address_id (snapshot)`, and 5 `WARRANTY_TICKETS` FKs).
+- **Page 1 (`page_conceptual_diagram` — `[CDM] Conceptual Architecture & Domain Model`, Peter Chen B&W Notation)**:
+  - Preserved all 13 existing entities and 15 relationships untouched.
+  - Added Goong 5 km delivery attributes: `geo_coordinates` (`latitude`, `longitude`) on `STORE`, and `delivery_distance_meters` + `shipping_fee` on `ORDER`.
+  - Added 3 domain entities + Peter Chen relationships: `CUSTOMER_ADDRESS` (`HAS_ADDRESS`), `STORE_SUBSCRIPTION` (`SUBSCRIBES`), and `WARRANTY_TICKET` (`CLAIMS_WARRANTY`, `DEDUCTS_DEPOSIT`).
+- **Verification Evidence**:
+  - Draw.io MCP `list_pages` & `get_page` on Page 0 and Page 1: PASS (all 25 pages valid).
+  - Live PostgreSQL Schema & Type Audit (`information_schema` on **Neon DB** & **Supabase Prod DB**):
+    - Polished `device_movements` (10 columns), `customer_bank_refund_obligations` (15 columns, `bigint`/`decimal`), `customer_bank_inbound_transactions` (`bigint`/`decimal`/`timestamptz`), `iot_button.device_id`, `wallet_transactions.reference_id`, `store_withdrawals.provider_payout_id`/`provider_reference_id`/`approved_by_user_id (FK)`, `category.parent_category_id (FK)`, and composite FK tags.
+    - **Neon DB / Prisma Parity**: `67/67` tables, `0` missing columns, `0` stale columns, `0` type mismatches, `0` key-tag mismatches, `110` edges (`0` broken), `0` table overlaps.
+    - **Supabase Prod DB**: `67/67` tables and all active Prisma columns match; retains legacy un-dropped nullable columns (`billing_charges`: `store_id`, `customer_id`, `paid_amount`, `due_date`; `customer_bank_verification_proofs`: `transfer_amount`, `transfer_content`, `qr_data_url`, `metadata`; `customer_bank_refund_payout_attempts`: `raw_response`; `customer_bank_refund_obligations`: `metadata`; `device_movements`: legacy custody/inventory state cols) kept for zero-downtime backward compatibility.
+
 ## 2026-11-17: Goong 5 km Free Delivery (`POST /orders/delivery-quote`, `POST /orders/quick-reorder` & Physical IoT Button Eligibility)
 - **Status**: 🟢 100% COMPLETED, TESTED & VERIFIED WITH LIVE GOONG API V2 (TDD Red-Green-Refactor).
 - **Plan Document**: `docs/superpowers/plans/2026-11-16-goong-5km-free-delivery.md`
