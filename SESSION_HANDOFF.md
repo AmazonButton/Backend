@@ -1,5 +1,14 @@
 # Project Handoff & Session Context
 
+## 2026-11-17: Fix CI Run 44078724861 Suite 69 (`rental-renewal-receipt.spec.ts`)
+- **Status**: 🟢 LOCAL VERIFIED (`80/81` CI suites passed on Run `44078724861`; Suite 69 fixed & verified locally, pushing to re-verify full `81/81` CI + Render deploy).
+- **Root Cause**: `RentalsRepository.createRental` (`src/rentals/rentals.repository.ts:74`) queries `tx.buttonRental.findMany` / `updateMany` and `tx.billingCharge.updateMany` to auto-cancel stale `PENDING_PAYMENT` drafts, which were absent from the two transaction mocks in `tests/rental-renewal-receipt.spec.ts`.
+- **Changes**: Added `createTxRepoMock` helper in `tests/rental-renewal-receipt.spec.ts` supplying `buttonRental.findMany`, `buttonRental.updateMany`, and `billingCharge.updateMany`.
+- **Verification**:
+  - `npx tsx tests/rental-renewal-receipt.spec.ts` (Suite 69) — PASS (`Exit code 0`).
+  - `npx tsc --noEmit` — PASS (`Exit code 0`).
+  - `npm run build` — PASS (`Exit code 0`).
+
 ## 2026-11-17: Mail Delivery Hardening (HTTPS Port 443 + IPv4 SMTP) & DLQ/Outbox Database Triage
 - **Status**: 🟢 COMPLETED & VERIFIED (DB cleaned, TypeScript/build & targeted suites passed; Render Free SMTP port block requires `RESEND_API_KEY` or `BREVO_API_KEY` in Render env for production port-443 email delivery).
 - **Root Cause Observed**:

@@ -250,13 +250,23 @@ async function main() {
     /chưa được kích hoạt/,
   );
   // --- Group 1: Legacy bundled policy (Khách đóng cả RENT + DEPOSIT) ---
+  const createTxRepoMock = (onRental: (data: any) => void, onCharge: (data: any) => void, rentalId: bigint) =>
+    new RentalsRepository({
+      $transaction: async (fn: any) => fn({
+        buttonRental: {
+          findMany: async () => [],
+          updateMany: async () => ({ count: 0 }),
+          create: async ({ data }: any) => { onRental(data); return { rentalId, ...data }; },
+        },
+        billingCharge: {
+          updateMany: async () => ({ count: 0 }),
+          create: async ({ data }: any) => { onCharge(data); return data; },
+        },
+      }),
+    } as any);
+
   let createdRental: any, createdInitial: any;
-  const initialRepo = new RentalsRepository({
-    $transaction: async (fn: any) => fn({
-      buttonRental: { create: async ({ data }: any) => { createdRental = data; return { rentalId: 44n, ...data }; } },
-      billingCharge: { create: async ({ data }: any) => { createdInitial = data; return data; } },
-    })
-  } as any);
+  const initialRepo = createTxRepoMock((d) => { createdRental = d; }, (d) => { createdInitial = d; }, 44n);
   await initialRepo.createRental({
     rentalCode: 'fixture-legacy', customerId: 7n, packageId: 1n, buttonQuantity: 3,
     monthsRented: 3, startDate: new Date(), endDate: new Date(), status: 'PENDING_PAYMENT',
@@ -271,12 +281,7 @@ async function main() {
 
   // --- Group 2: New policy (CUSTOMER chỉ đóng cọc DEPOSIT; Store chịu phí thuê) ---
   let createdRentalNew: any, createdInitialNew: any;
-  const newRepo = new RentalsRepository({
-    $transaction: async (fn: any) => fn({
-      buttonRental: { create: async ({ data }: any) => { createdRentalNew = data; return { rentalId: 45n, ...data }; } },
-      billingCharge: { create: async ({ data }: any) => { createdInitialNew = data; return data; } },
-    })
-  } as any);
+  const newRepo = createTxRepoMock((d) => { createdRentalNew = d; }, (d) => { createdInitialNew = d; }, 45n);
   await newRepo.createRental({
     rentalCode: 'fixture-new', customerId: 8n, packageId: 1n, buttonQuantity: 3,
     monthsRented: 3, startDate: new Date(), endDate: new Date(), status: 'PENDING_PAYMENT',
