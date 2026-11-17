@@ -3,6 +3,7 @@ import { QueueJob, DeadLetterJob, JobOptions, QueueStats } from './queue.interfa
 import { PrismaService } from '../../prisma/prisma.service';
 import { Queue as BullQueue, Worker as BullWorker, Job as BullJob } from 'bullmq';
 import Redis from 'ioredis';
+import { maskEmailAddress } from '../utils/pii-mask.util';
 
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
@@ -637,6 +638,22 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     }
     try {
       const sanitized = Array.isArray(data) ? [...data] : { ...data };
+      const isOtpEmailPayload =
+        !Array.isArray(sanitized) &&
+        typeof sanitized.to === 'string' &&
+        typeof sanitized.subject === 'string' &&
+        /otp|xác minh|mật khẩu|password/i.test(sanitized.subject);
+
+      if (isOtpEmailPayload) {
+        return {
+          to: maskEmailAddress(sanitized.to),
+          subject: sanitized.subject,
+          text: '[REDACTED_OTP_CONTENT]',
+          html: '[REDACTED_OTP_CONTENT]',
+          redacted: true,
+        };
+      }
+
       for (const key of Object.keys(sanitized)) {
         const lower = key.toLowerCase();
         if (

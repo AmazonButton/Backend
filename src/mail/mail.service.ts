@@ -1,16 +1,60 @@
 import { Injectable, Logger, Optional, Inject, OnModuleDestroy } from '@nestjs/common';
+import * as dns from 'node:dns';
+import * as net from 'node:net';
 import * as nodemailer from 'nodemailer';
 import { QueueService } from '../common/queues/queue.service';
+import { maskEmailAddress } from '../common/utils/pii-mask.util';
+
+export interface MailPayload {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}
 
 @Injectable()
 export class MailService implements OnModuleDestroy {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter | null = null;
+  private smtpHost = '';
+  private smtpPort = 465;
+  private smtpUser = '';
+  private smtpPass = '';
   private isConfigured = false;
+  private isSmtpConfigured = false;
+
+  static maskEmail(email: string): string {
+    return maskEmailAddress(email);
+  }
+
+  /**
+   * Resolves SMTP hostname to IPv4 while keeping the original hostname for TLS SNI.
+   * Passing an IPv4 literal avoids nodemailer's built-in IPv6 fallback (ENETUNREACH on IPv4-only hosts).
+   */
+  static async resolveSmtpConnectionTarget(
+    host: string,
+    lookupFn: (hostname: string, opts: { family: number }) => Promise<{ address: string; family: number }> = (
+      h,
+      opts,
+    ) => dns.promises.lookup(h, opts),
+  ): Promise<{ connectHost: string; servername: string }> {
+    const cleanHost = (host || '').trim();
+    if (!cleanHost || net.isIP(cleanHost)) {
+      return { connectHost: cleanHost, servername: cleanHost };
+    }
+    try {
+      const resolved = await lookupFn(cleanHost, { family: 4 });
+      if (resolved?.address && net.isIP(resolved.address) === 4) {
+        return { connectHost: resolved.address, servername: cleanHost };
+      }
+    } catch {
+      // Graceful fallback to original hostname when DNS lookup fails
+    }
+    return { connectHost: cleanHost, servername: cleanHost };
+  }
 
   private maskEmail(email: string): string {
-    if (!email || typeof email !== 'string') return '';
-    return email.replace(/(?<=^.{2}).(?=[^@]*?@)/g, '*');
+    return MailService.maskEmail(email);
   }
 
   constructor(
@@ -53,26 +97,107 @@ export class MailService implements OnModuleDestroy {
     return 'direct-dispatch';
   }
 
+  private getHttpsProvider(): 'resend' | 'brevo' | null {
+    if (process.env.RESEND_API_KEY?.trim()) return 'resend';
+    if (process.env.BREVO_API_KEY?.trim()) return 'brevo';
+    return null;
+  }
+
   private initTransporter() {
-    const user = process.env.SMTP_USER?.trim();
-    const pass = (process.env.SMTP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s+/g, '');
+    const user = process.env.SMTP_USER?.trim() || '';
+    const pass = (process.env.SMTP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s+/g, '') || '';
     const host = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
     const port = Number(process.env.SMTP_PORT) || 465;
 
+    this.smtpHost = host;
+    this.smtpPort = port;
+    this.smtpUser = user;
+    this.smtpPass = pass;
+
+    const httpsProvider = this.getHttpsProvider();
+
     if (user && pass) {
-      this.transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: { user, pass },
-        connectionTimeout: 4000,
-        greetingTimeout: 3000,
-        socketTimeout: 5000,
-      });
+      this.transporter = this.buildSmtpTransporter(host, host, port, user, pass);
+      this.isSmtpConfigured = true;
       this.isConfigured = true;
       this.logger.log(`MailService initialized with SMTP host ${host}:${port} (User: ${this.maskEmail(user)})`);
-    } else {
-      this.logger.warn('SMTP_USER or SMTP_PASSWORD not set. MailService operating in DEV FALLBACK MODE.');
+    }
+
+    if (httpsProvider) {
+      this.isConfigured = true;
+      this.logger.log(`MailService enabled HTTPS port-443 email provider (${httpsProvider.toUpperCase()}).`);
+    }
+
+    if (!this.isConfigured) {
+      this.logger.warn('No mail provider configured (RESEND_API_KEY / BREVO_API_KEY / SMTP). MailService operating in DEV FALLBACK MODE.');
+    }
+  }
+
+  private buildSmtpTransporter(
+    connectHost: string,
+    servername: string,
+    port: number,
+    user: string,
+    pass: string,
+  ): nodemailer.Transporter {
+    return nodemailer.createTransport({
+      host: connectHost,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+      tls: servername && !net.isIP(servername) ? { servername } : undefined,
+      connectionTimeout: 10000,
+      greetingTimeout: 8000,
+      socketTimeout: 12000,
+    });
+  }
+
+  private async sendViaHttpsApi(provider: 'resend' | 'brevo', options: MailPayload, fromHeader: string): Promise<void> {
+    if (provider === 'resend') {
+      const apiKey = process.env.RESEND_API_KEY!.trim();
+      const resendFrom = process.env.SMTP_FROM?.trim() || 'Smart Order Platform <onboarding@resend.dev>';
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: resendFrom,
+          to: [options.to],
+          subject: options.subject,
+          text: options.text,
+          html: options.html,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) {
+        const bodyText = await res.text().catch(() => '');
+        throw new Error(`Resend API error HTTP ${res.status}: ${bodyText.slice(0, 200)}`);
+      }
+      return;
+    }
+
+    const brevoKey = process.env.BREVO_API_KEY!.trim();
+    const senderEmail = this.smtpUser || process.env.SMTP_FROM?.match(/<([^>]+)>/)?.[1] || 'no-reply@smartorder.vn';
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': brevoKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { name: 'Smart Order Platform', email: senderEmail },
+        to: [{ email: options.to }],
+        subject: options.subject,
+        textContent: options.text,
+        htmlContent: options.html,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '');
+      throw new Error(`Brevo API error HTTP ${res.status}: ${bodyText.slice(0, 200)}`);
     }
   }
 
@@ -97,7 +222,7 @@ export class MailService implements OnModuleDestroy {
     `;
   }
 
-  async sendMail(options: { to: string; subject: string; text: string; html: string }, throwOnError = false): Promise<boolean> {
+  async sendMail(options: MailPayload, throwOnError = false): Promise<boolean> {
     // Mask OTP digits in all environment logs
     const maskedText = options.text.replace(/\b\d{6}\b/g, '******');
 
@@ -105,38 +230,75 @@ export class MailService implements OnModuleDestroy {
                           /@(smartorder\.local|smartorder\.test|localhost|example\.com|realdomain\.com|test\.com)$/i.test(options.to);
     const isTestEnv = process.env.NODE_ENV === 'test' || process.env.DISABLE_REAL_EMAIL === 'true';
 
-    // In production without configured SMTP: fail fast
-    if (process.env.NODE_ENV === 'production' && (!this.isConfigured || !this.transporter)) {
-      this.logger.error(`[CRITICAL] SMTP not configured in production. Cannot send email to ${this.maskEmail(options.to)}`);
+    const httpsProvider = this.getHttpsProvider();
+    const hasActiveTransport = Boolean(httpsProvider || (this.isSmtpConfigured && this.transporter));
+
+    // In production without configured mail transport: fail fast
+    if (process.env.NODE_ENV === 'production' && !hasActiveTransport) {
+      this.logger.error(`[CRITICAL] Mail provider not configured in production. Cannot send email to ${this.maskEmail(options.to)}`);
       if (throwOnError) {
-        throw new Error('SMTP not configured in production');
+        throw new Error('Mail provider (HTTPS API or SMTP) not configured in production');
       }
       return false;
     }
 
-    if (!this.isConfigured || !this.transporter || isDummyDomain || isTestEnv) {
+    if (!hasActiveTransport || isDummyDomain || isTestEnv) {
       this.logger.log(`[SIMULATED EMAIL DISPATCH] TO: ${this.maskEmail(options.to)} | SUBJECT: ${options.subject}`);
       this.logger.log(`[SIMULATED EMAIL CONTENT] ${maskedText}`);
       return true;
     }
+
+    const rawFrom = process.env.SMTP_FROM || this.smtpUser || 'no-reply@smartorder.vn';
+    const from = rawFrom.includes('<') ? rawFrom : `"Smart Order Platform" <${rawFrom}>`;
+
     try {
-      const rawFrom = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@smartorder.vn';
-      const from = rawFrom.includes('<') ? rawFrom : `"Smart Order Platform" <${rawFrom}>`;
+      if (httpsProvider) {
+        try {
+          await this.sendViaHttpsApi(httpsProvider, options, from);
+          this.logger.log(`Email dispatched via ${httpsProvider.toUpperCase()} HTTPS API to ${this.maskEmail(options.to)}`);
+          return true;
+        } catch (httpsErr: any) {
+          if (!this.isSmtpConfigured) {
+            throw httpsErr;
+          }
+          this.logger.warn(`HTTPS mail provider (${httpsProvider}) failed (${httpsErr.message}); falling back to IPv4 SMTP...`);
+        }
+      }
 
-      const sendPromise = this.transporter.sendMail({
-        from,
-        to: options.to,
-        subject: options.subject,
-        text: options.text,
-        html: options.html,
-      });
+      const target = await MailService.resolveSmtpConnectionTarget(this.smtpHost);
+      const activeTransporter =
+        target.connectHost !== this.smtpHost
+          ? this.buildSmtpTransporter(target.connectHost, target.servername, this.smtpPort, this.smtpUser, this.smtpPass)
+          : this.transporter!;
 
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('SMTP timeout (outbound connection blocked or unacknowledged)')), 4500),
-      );
+      let timeoutId: NodeJS.Timeout | undefined;
+      try {
+        const sendPromise = activeTransporter.sendMail({
+          from,
+          to: options.to,
+          subject: options.subject,
+          text: options.text,
+          html: options.html,
+        });
 
-      await Promise.race([sendPromise, timeoutPromise]);
-      this.logger.log(`Email dispatched successfully to ${this.maskEmail(options.to)}`);
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('SMTP timeout (outbound connection blocked or unacknowledged)')),
+            15000,
+          );
+        });
+
+        await Promise.race([sendPromise, timeoutPromise]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (activeTransporter !== this.transporter) {
+          try {
+            activeTransporter.close();
+          } catch (_) {}
+        }
+      }
+
+      this.logger.log(`Email dispatched successfully via SMTP to ${this.maskEmail(options.to)}`);
       return true;
     } catch (err: any) {
       this.logger.warn(`Failed to send email to ${this.maskEmail(options.to)}: ${err.message}`);
