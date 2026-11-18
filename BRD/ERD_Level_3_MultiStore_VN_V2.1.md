@@ -1,4 +1,4 @@
-﻿# Sơ Đồ ERD Level 3 - Thiết Kế Vật Lý Cơ Sở Dữ Liệu (Physical Database Schema)
+# Sơ Đồ ERD Level 3 - Thiết Kế Vật Lý Cơ Sở Dữ Liệu (Physical Database Schema)
 **Hệ Thống Đặt Hàng Qua Nút Bấm IoT Đa Cửa Hàng & Sàn Thương Mại Điện Tử (Enterprise Multi-Store Marketplace V2.2)**
 **Môi trường triển khai:** PostgreSQL 15+ (Supabase Production Engine) & Prisma ORM
 
@@ -11,8 +11,8 @@ Khác với ERD Level 1 (Khái niệm) và Level 2 (Logic), **ERD Level 3 (Vật
 2. **Khóa và Ràng buộc toàn vẹn (Keys & Integrity Constraints)**: Khóa chính `PK`, khóa ngoại `FK`, tính duy nhất `UK`, tự tăng `BIGSERIAL / IDENTITY`.
 3. **Quy tắc dọn dẹp quan hệ (Referential Action)**: `ON DELETE CASCADE`, `ON DELETE SET NULL`, `ON DELETE RESTRICT`.
 4. **Phân vùng 6 Nhóm Nghiệp Vụ Cốt Lõi**:
-   - **Nhóm 1**: Danh tính & Bảo mật phiên (`users`, `roles`, `user_roles`, `refresh_tokens`).
-   - **Nhóm 2**: Gian hàng, Nhân viên & Thành viên (`store`, `store_staff`, `store_customer`).
+   - **Nhóm 1**: Danh tính & Bảo mật phiên (`users`, `roles`, `platform_memberships`, `refresh_tokens`).
+   - **Nhóm 2**: Gian hàng & Thành viên (`store`, `store_staff [LEGACY AUDIT]`, `store_customer`).
    - **Nhóm 3**: Hồ sơ Khách hàng & Địa chỉ giao hàng (`customer_profile`, `customer_address`).
    - **Nhóm 4**: Danh mục, Sản phẩm, Hình ảnh Cloudinary & Kho hàng (`category`, `product`, `product_image`, `product_price_history`, `product_discount`, `inventory`).
    - **Nhóm 5**: Thiết bị IoT, Thuê phần cứng & Lịch sử cấu hình (`iot_button`, `button_product`, `device_templates`, `rental_packages`, `button_rentals`, `button_config_history`).
@@ -28,8 +28,8 @@ erDiagram
     %% 1. QUAN HỆ DANH TÍNH & PHÂN QUYỀN
     %% =========================================================================
     users ||--o{ refresh_tokens : "user_id"
-    users ||--o{ user_roles : "user_id"
-    roles ||--o{ user_roles : "role_id"
+    users ||--o{ platform_memberships : "user_id"
+    roles ||--o{ platform_memberships : "role_id"
     users ||--o| customer_profile : "user_id"
     users ||--o{ store : "owner_user_id"
     users ||--o{ store_staff : "user_id"
@@ -111,6 +111,7 @@ erDiagram
         varchar email_verification_token "VARCHAR(255) SHA-256"
         timestamptz email_verification_expires_at "TIMESTAMPTZ"
         varchar status "VARCHAR(20) DEFAULT 'ACTIVE'"
+        timestamptz tokens_invalid_before "TIMESTAMPTZ (Monotonic watermark)"
         timestamptz created_at "TIMESTAMPTZ DEFAULT now()"
         timestamptz updated_at "TIMESTAMPTZ DEFAULT now()"
     }
@@ -131,10 +132,15 @@ erDiagram
         text description "TEXT"
     }
 
-    user_roles {
-        bigint user_id PK,FK "BIGINT NOT NULL (CASCADE)"
-        bigint role_id PK,FK "BIGINT NOT NULL (RESTRICT)"
-        timestamptz assigned_at "TIMESTAMPTZ DEFAULT now()"
+    platform_memberships {
+        bigint membership_id PK "BIGINT IDENTITY"
+        bigint user_id FK "BIGINT NOT NULL (RESTRICT)"
+        bigint role_id FK "BIGINT NOT NULL (RESTRICT)"
+        bigint granted_by_user_id FK "BIGINT (SET NULL)"
+        bigint revoked_by_user_id FK "BIGINT (SET NULL)"
+        varchar status "VARCHAR(20) DEFAULT 'ACTIVE'"
+        timestamptz granted_at "TIMESTAMPTZ DEFAULT now()"
+        timestamptz revoked_at "TIMESTAMPTZ"
     }
 
     store {
@@ -152,11 +158,12 @@ erDiagram
     }
 
     store_staff {
-        bigint staff_id PK "BIGINT IDENTITY"
-        bigint store_id FK "BIGINT NOT NULL (CASCADE)"
-        bigint user_id FK "BIGINT NOT NULL (CASCADE)"
+        bigint store_staff_id PK "BIGINT IDENTITY (LEGACY AUDIT)"
+        bigint store_id FK "BIGINT NOT NULL (RESTRICT)"
+        bigint user_id FK "BIGINT NOT NULL (RESTRICT)"
         bigint role_id FK "BIGINT NOT NULL (RESTRICT)"
-        boolean is_active "BOOLEAN DEFAULT TRUE NOT NULL"
+        varchar status "VARCHAR(30) DEFAULT 'ACTIVE' (TERMINATED on Step 7)"
+        timestamptz left_at "TIMESTAMPTZ"
         timestamptz created_at "TIMESTAMPTZ DEFAULT now()"
     }
 
@@ -475,9 +482,9 @@ erDiagram
 | `users` | `user_id` | - | `username`, `email`, `auth_id` | - |
 | `refresh_tokens` | `id` | `user_id -> users` | `token_hash` | CASCADE |
 | `roles` | `role_id` | - | `role_code` | - |
-| `user_roles` | `(user_id, role_id)` | `user_id -> users`, `role_id -> roles` | PK Composite | CASCADE / RESTRICT |
+| `platform_memberships` | `membership_id` | `user_id -> users`, `role_id -> roles` | Partial UK `(user_id, role_id)` WHERE `status='ACTIVE'` | RESTRICT |
 | `store` | `store_id` | `owner_user_id -> users` | `code` | RESTRICT |
-| `store_staff` | `staff_id` | `store_id -> store`, `user_id -> users`, `role_id -> roles` | - | CASCADE / RESTRICT |
+| `store_staff` _(Legacy Audit)_ | `store_staff_id` | `store_id -> store`, `user_id -> users`, `role_id -> roles` | `(store_id, user_id)` | RESTRICT |
 | `customer_profile` | `customer_id` | `user_id -> users` | `customer_code`, `user_id` | CASCADE |
 | `customer_address` | `address_id` | `customer_id -> customer_profile` | - | CASCADE |
 | `store_customer` | `store_customer_id` | `store_id -> store`, `customer_id -> customer_profile` | `(store_id, customer_id)` | CASCADE |

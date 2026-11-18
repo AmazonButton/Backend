@@ -118,7 +118,7 @@ export class RentalsController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post('returns/:returnId/confirm-receipt')
   async confirmReturnReceipt(
     @Param('returnId') returnId: string,

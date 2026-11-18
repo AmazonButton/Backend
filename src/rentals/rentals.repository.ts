@@ -530,25 +530,34 @@ export class RentalsRepository {
       // Kiểm tra fulfillmentStoreId
       const targetStoreId = rental.fulfillmentStoreId;
       if (!targetStoreId) throw new BadRequestException('Rental has no authorized fulfillment store for returns');
+      const actorRole = storeStaffUser.role || storeStaffUser.roleCode;
       const staffStoreId = storeStaffUser.storeId ? BigInt(storeStaffUser.storeId) : null;
-      const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(storeStaffUser.role || storeStaffUser.roleCode);
+      const isPlatformOperator = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(actorRole);
 
-      if (!isAdmin && (!staffStoreId || staffStoreId.toString() !== targetStoreId.toString())) {
+      if (!isPlatformOperator && (!staffStoreId || staffStoreId.toString() !== targetStoreId.toString())) {
         throw new ForbiddenException('Bạn không thuộc cửa hàng chịu trách nhiệm nhận trả thiết bị cho hợp đồng này');
       }
 
       if (!storeStaffUser.userId) throw new ForbiddenException('Authenticated return receiver required');
-      if (!isAdmin) {
+      if (actorRole === 'SYSTEM_STAFF') {
+        const staffAuth = await tx.$queryRawUnsafe<any[]>(
+          `SELECT pm.membership_id FROM platform_memberships pm
+           JOIN roles ro ON ro.role_id = pm.role_id
+           JOIN users u ON u.user_id = pm.user_id
+           WHERE pm.user_id = $1 AND pm.status = 'ACTIVE' AND u.status = 'ACTIVE'
+             AND ro.role_code IN ('SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')`,
+          BigInt(storeStaffUser.userId),
+        );
+        if (!staffAuth.length) throw new ForbiddenException('Active SYSTEM_STAFF membership required');
+      } else if (!isPlatformOperator) {
         const authority = await tx.$queryRawUnsafe<any[]>(
           `SELECT s.store_id FROM store s JOIN users u ON u.user_id = $2
            WHERE s.store_id = $1 AND s.status = 'ACTIVE' AND u.status = 'ACTIVE'
-             AND (s.owner_user_id = u.user_id OR EXISTS (
-               SELECT 1 FROM store_staff ss JOIN roles ro ON ro.role_id = ss.role_id
-               WHERE ss.store_id = s.store_id AND ss.user_id = u.user_id AND ss.status = 'ACTIVE'
-                 AND ro.role_code IN ('STORE_MANAGER', 'STAFF_BUTTON')
-             ))`, targetStoreId, BigInt(storeStaffUser.userId),
+             AND s.owner_user_id = u.user_id`,
+          targetStoreId,
+          BigInt(storeStaffUser.userId),
         );
-        if (!authority.length) throw new ForbiddenException('Active return receiver membership required');
+        if (!authority.length) throw new ForbiddenException('Active store owner authority required');
       }
 
       const receiptStoreId = staffStoreId || targetStoreId;
@@ -724,24 +733,91 @@ export class RentalsRepository {
       const ledger = lockedLedgers[0];
 
       const adminUserId = adminUser.userId ? BigInt(adminUser.userId) : null;
-      const refundAmount = Number(refund.amount);
+      const refundAmount = Number(refund.amount || 0);
+      const deductionAmount = Number(refund.deduction_amount || 0);
+      const totalCollateralToSettle = refundAmount + deductionAmount;
 
-      if (Number(ledger.held_amount) < refundAmount) {
-        throw new BadRequestException('Số dư tiền cọc đang giữ không đủ để thực hiện yêu cầu hoàn cọc');
+      if (Number(ledger.held_amount) < totalCollateralToSettle) {
+        throw new BadRequestException('Số dư tiền cọc đang giữ không đủ để thực hiện yêu cầu hoàn/khấu trừ cọc');
       }
 
-      // 3. Atomic CAS update chuyển tiền từ held_amount sang refund_reserved_amount
+      // 3. Atomic CAS update duy nhất: trừ tổng cọc tất toán khỏi held_amount và đưa phần hoàn vào refund_reserved_amount
       const ledgerRowsUpdated = await tx.$executeRawUnsafe(
         `UPDATE rental_deposits
          SET held_amount = held_amount - $1,
-             refund_reserved_amount = refund_reserved_amount + $1,
+             refund_reserved_amount = refund_reserved_amount + $2,
              updated_at = NOW()
-         WHERE rental_id = $2 AND held_amount >= $1`,
+         WHERE rental_id = $3 AND held_amount >= $1`,
+        totalCollateralToSettle,
         refundAmount,
         refund.rental_id,
       );
       if (ledgerRowsUpdated === 0) {
         throw new BadRequestException('Không thể khóa số dư hoàn cọc do tranh chấp hoặc số dư không đủ');
+      }
+
+      const refundIdStr = (refund.refund_id ?? refund.refundId ?? refundId).toString();
+      const rentalIdStr = (refund.rental_id ?? refund.rentalId ?? '').toString();
+      const customerIdStr = (refund.customer_id ?? refund.customerId ?? '').toString();
+
+      // Trường hợp khấu trừ 100% (refundAmount = 0, deductionAmount > 0): không cần chi trả ngân hàng, chốt REFUNDED/settled ngay
+      if (refundAmount === 0) {
+        const zeroRows = await tx.$executeRawUnsafe(
+          `UPDATE deposit_refunds
+           SET status = 'REFUNDED',
+               approved_by_user_id = $1,
+               provider_reference_id = $2,
+               refunded_at = NOW(),
+               updated_at = NOW()
+           WHERE refund_id = $3 AND status = 'PENDING_APPROVAL'`,
+          adminUserId,
+          `WARRANTY_DEDUCTION_${refundIdStr}`,
+          refundId,
+        );
+        if (zeroRows === 0) {
+          throw new BadRequestException('Trạng thái yêu cầu hoàn cọc đã bị thay đổi bởi giao dịch khác');
+        }
+
+        const updatedLedger = await tx.rentalDeposit.findUnique({
+          where: { rentalId: refund.rental_id },
+        });
+        if ((tx as any).rentalAuditLog) {
+          await (tx as any).rentalAuditLog.create({
+            data: {
+              actorType: adminUser?.role ? (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(adminUser.role) ? 'ADMIN' : 'STAFF') : 'ADMIN',
+              actorUserId: adminUserId,
+              action: 'APPROVE_DEPOSIT_REFUND',
+              targetType: 'DEPOSIT_REFUND',
+              targetId: refundId,
+              beforeState: 'PENDING_APPROVAL',
+              afterState: 'REFUNDED',
+              amount: new Decimal(0),
+              correlationId: refund.refund_code,
+              metadata: {
+                rentalId: rentalIdStr,
+                customerId: customerIdStr,
+                amount: 0,
+                deductionAmount,
+                warrantyTicketId: refund.warranty_ticket_id?.toString() || null,
+              },
+            },
+          });
+        }
+
+        return {
+          refundId,
+          status: 'REFUNDED',
+          amount: 0,
+          deductionAmount,
+          depositLedger: {
+            rentalId: updatedLedger?.rentalId,
+            collectedAmount: Number(updatedLedger?.collectedAmount),
+            heldAmount: Number(updatedLedger?.heldAmount),
+            refundReservedAmount: Number(updatedLedger?.refundReservedAmount),
+            refundedAmount: Number(updatedLedger?.refundedAmount),
+          },
+          storeWalletDebited: false,
+        };
       }
 
       // 4. Lock & snapshot verified recipient bank account
@@ -804,10 +880,6 @@ export class RentalsRepository {
       });
 
       // 5. Outbox Event phát lệnh chi trả Payout
-      const refundIdStr = (refund.refund_id ?? refund.refundId ?? refundId).toString();
-      const rentalIdStr = (refund.rental_id ?? refund.rentalId ?? '').toString();
-      const customerIdStr = (refund.customer_id ?? refund.customerId ?? '').toString();
-
       await tx.outboxEvent.create({
         data: {
           eventType: 'DEPOSIT_REFUND_APPROVED',
@@ -816,6 +888,7 @@ export class RentalsRepository {
             rentalId: rentalIdStr,
             customerId: customerIdStr,
             amount: refundAmount,
+            deductionAmount,
           },
           status: 'PENDING',
         },
@@ -835,9 +908,11 @@ export class RentalsRepository {
             amount: new Decimal(refundAmount),
             correlationId: refund.refund_code,
             metadata: {
-              rentalId: refund.rental_id.toString(),
-              customerId: refund.customer_id.toString(),
+              rentalId: rentalIdStr,
+              customerId: customerIdStr,
               amount: refundAmount,
+              deductionAmount,
+              warrantyTicketId: refund.warranty_ticket_id?.toString() || null,
             },
           },
         });
@@ -847,6 +922,7 @@ export class RentalsRepository {
         refundId,
         status: 'PENDING_PAYOUT',
         amount: refundAmount,
+        deductionAmount,
         depositLedger: {
           rentalId: updatedLedger?.rentalId,
           collectedAmount: Number(updatedLedger?.collectedAmount),

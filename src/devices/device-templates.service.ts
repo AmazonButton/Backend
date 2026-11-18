@@ -110,13 +110,13 @@ export class DeviceTemplatesService {
 
   async list(user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    const isPlatformOps = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role);
 
     let where: any = {};
-    if (!isAdmin) {
+    if (!isPlatformOps) {
       if (user.role === 'CUSTOMER') {
         where = { storeId: null };
-      } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+      } else if (user.role === 'STORE_OWNER') {
         if (!user.storeId) {
           throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin storeId');
         }
@@ -150,8 +150,8 @@ export class DeviceTemplatesService {
       throw new NotFoundException('Không tìm thấy template mẫu');
     }
 
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
-    if (!isAdmin && template.storeId !== null) {
+    const isPlatformOps = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role);
+    if (!isPlatformOps && template.storeId !== null) {
       if (!user.storeId || user.storeId.toString() !== template.storeId.toString()) {
         throw new ForbiddenException('Bạn không có quyền truy cập template của cửa hàng khác');
       }
@@ -298,7 +298,7 @@ export class DeviceTemplatesService {
     }
 
     const template = await this.getById(id, user);
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    const isPlatformOps = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role);
     const templateBigIntId = template.templateId
       ? BigInt(template.templateId)
       : (template.id && !isNaN(Number(template.id)) ? BigInt(template.id) : null);
@@ -313,7 +313,7 @@ export class DeviceTemplatesService {
           continue;
         }
 
-        if (!isAdmin) {
+        if (!isPlatformOps) {
           if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
             results.push({ deviceId: dId, success: false, reason: 'Thiết bị không thuộc quyền quản lý của cửa hàng bạn' });
             continue;

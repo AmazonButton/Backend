@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { TokenBlacklist } from './token-blacklist';
+import { isTokenInvalidatedByTimestamps, resolveAuthority } from './authority.policy';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -55,6 +56,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           customerProfile: true,
           ownedStores: true,
           storeStaffs: { include: { role: true, store: true } },
+          platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
         },
       });
 
@@ -62,71 +64,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị vô hiệu hóa');
       }
 
-      if (user.passwordChangedAt && payload.iat) {
-        const passwordChangedSec = Math.floor(new Date(user.passwordChangedAt).getTime() / 1000);
-        if (payload.iat <= passwordChangedSec) {
-          throw new UnauthorizedException('Phiên đăng nhập đã bị thu hồi hoặc mật khẩu đã đổi. Vui lòng đăng nhập lại.');
-        }
+      if (isTokenInvalidatedByTimestamps(payload.iat, user.passwordChangedAt, user.tokensInvalidBefore)) {
+        throw new UnauthorizedException('Phiên đăng nhập đã bị thu hồi hoặc mật khẩu đã đổi. Vui lòng đăng nhập lại.');
       }
 
-      let role = payload.role || 'CUSTOMER';
-      let storeId = payload.storeId || null;
-      let customerProfileId = user.customerProfile?.customerId?.toString() || payload.customerProfileId || null;
-
-      const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
-        .split(',')
-        .map((e) => e.trim().toLowerCase());
-      const isExplicitSuperAdmin =
-        superAdminEmails.includes((user.email || '').toLowerCase()) ||
-        user.username === 'admin';
-      const activePlatformStaff = user.storeStaffs?.find(
-        (s: any) =>
-          s.status === 'ACTIVE' &&
-          (s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN' || s.role?.roleCode === 'ADMIN'),
-      );
-
-      if (isExplicitSuperAdmin) {
-        role = 'SUPER_ADMIN';
-      } else if (activePlatformStaff) {
-        role = activePlatformStaff.role?.roleCode || payload.role || 'SYSTEM_ADMIN';
-      } else if (user.ownedStores && user.ownedStores.length > 0) {
-        storeId = user.ownedStores[0].storeId.toString();
-        role = 'STORE_OWNER';
-      } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-        // P1 Fix: Involuntary Role Override Prevention
-        // If user logged in as a CUSTOMER without explicitly requesting staff store scope, maintain CUSTOMER role!
-        if (payload.role === 'CUSTOMER' && !payload.storeId) {
-          role = 'CUSTOMER';
-          storeId = null;
-        } else {
-          // If payload had a storeId, ensure it matches an active membership
-          const activeMembership = payload.storeId
-            ? user.storeStaffs.find(
-                (s: any) => s.storeId.toString() === payload.storeId.toString() && s.status === 'ACTIVE',
-              )
-            : user.storeStaffs.find((s: any) => s.status === 'ACTIVE');
-
-          if (activeMembership) {
-            storeId = activeMembership.storeId.toString();
-            role = activeMembership.role?.roleCode || payload.role || 'STORE_STAFF';
-          } else {
-            // Stale authority revocation: Staff member has records in DB, but NONE are ACTIVE (e.g. TERMINATED/INACTIVE)
-            storeId = null;
-            role = 'CUSTOMER';
-          }
-        }
-      } else {
-        // P2 Fix (auth/jwt-strategy-payload-role-fallback):
-        // Khi user không còn membership trong DB, hạ role về CUSTOMER.
-        // Chỉ cho phép fallback từ token payload khi chạy dưới môi trường test độc lập (NODE_ENV === 'test').
-        if (process.env.NODE_ENV === 'test') {
-          role = payload.role || 'CUSTOMER';
-          storeId = payload.storeId || null;
-        } else {
-          role = 'CUSTOMER';
-          storeId = null;
-        }
-      }
+      const customerProfileId = user.customerProfile?.customerId?.toString() || payload.customerProfileId || null;
+      const authority = resolveAuthority(user, {
+        payloadRole: payload.role,
+        payloadStoreId: payload.storeId,
+        allowTestPayloadFallback: true,
+      });
 
       return {
         id: user.userId.toString(),
@@ -135,8 +82,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         username: user.username,
         fullName: user.fullName,
         avatarUrl: user.avatarUrl || null,
-        role,
-        storeId,
+        role: authority.role,
+        storeId: authority.storeId,
+        platformRole: authority.platformRole,
+        capabilities: authority.capabilities,
         customerProfileId,
       };
     } catch (err: any) {

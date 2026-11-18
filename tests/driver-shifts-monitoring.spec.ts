@@ -130,12 +130,27 @@ async function runDriverShiftsMonitoringSuite() {
       { expiresIn: '1h' },
     );
 
-    // 4. Driver A starts a shift via API
-    const startShiftRes = await fetch(`${BASE_URL}/driver-shifts/start`, {
+    // 4. Deprecated STAFF_DELIVERY role MUST be rejected (403), while STORE_OWNER manages delivery shift directly
+    const deprecatedRes = await fetch(`${BASE_URL}/driver-shifts/start`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${driverTokenA}`,
+      },
+    });
+    if (deprecatedRes.status === 403) {
+      logTest('Deprecated STAFF_DELIVERY rejected with HTTP 403 on POST /driver-shifts/start', true);
+      passed++;
+    } else {
+      logTest('Deprecated STAFF_DELIVERY rejected with HTTP 403 on POST /driver-shifts/start', false, `Status: ${deprecatedRes.status}`);
+      failed++;
+    }
+
+    const startShiftRes = await fetch(`${BASE_URL}/driver-shifts/start`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenA}`,
       },
     });
     const startShiftBody: any = await startShiftRes.json();
@@ -172,7 +187,7 @@ async function runDriverShiftsMonitoringSuite() {
         shippingRecipientName: 'Customer 1',
         shippingPhone: '0909000001',
         shippingAddress: '100 Street 1',
-        assignedDriverId: driverUserA.userId,
+        assignedDriverId: ownerA.userId,
         deliveredAt: new Date(),
         updatedAt: new Date(),
       },
@@ -191,7 +206,7 @@ async function runDriverShiftsMonitoringSuite() {
         shippingRecipientName: 'Customer 2',
         shippingPhone: '0909000002',
         shippingAddress: '200 Street 2',
-        assignedDriverId: driverUserA.userId,
+        assignedDriverId: ownerA.userId,
         deliveredAt: new Date(),
         updatedAt: new Date(),
       },
@@ -210,14 +225,14 @@ async function runDriverShiftsMonitoringSuite() {
         shippingRecipientName: 'Customer 3',
         shippingPhone: '0909000003',
         shippingAddress: '300 Street 3',
-        assignedDriverId: driverUserA.userId,
+        assignedDriverId: ownerA.userId,
         updatedAt: new Date(),
       },
     });
 
-    // Test 1: GET /api/v1/driver-shifts/:id returns shift detail and live stats
+    // Test 1: GET /api/v1/driver-shifts/:id returns shift detail and live stats for STORE_OWNER
     const shiftDetailRes = await fetch(`${BASE_URL}/driver-shifts/${shiftA.shiftId}`, {
-      headers: { Authorization: `Bearer ${driverTokenA}` },
+      headers: { Authorization: `Bearer ${tokenA}` },
     });
     const shiftDetailBody: any = await shiftDetailRes.json();
 
@@ -272,16 +287,16 @@ async function runDriverShiftsMonitoringSuite() {
       failed++;
     }
 
-    // Test 4: GET /api/v1/drivers/me/delivery-summary returns personal stats
+    // Test 4: GET /api/v1/drivers/me/delivery-summary returns personal stats for STORE_OWNER
     const summaryRes = await fetch(`${BASE_URL}/drivers/me/delivery-summary`, {
-      headers: { Authorization: `Bearer ${driverTokenA}` },
+      headers: { Authorization: `Bearer ${tokenA}` },
     });
     const summaryBody: any = await summaryRes.json();
 
     const test4Passed =
       summaryRes.status === 200 &&
       summaryBody.success === true &&
-      summaryBody.data?.driverId === driverUserA.userId.toString() &&
+      summaryBody.data?.driverId === ownerA.userId.toString() &&
       summaryBody.data?.todayCompletedDeliveries === 2 &&
       summaryBody.data?.todayPendingDeliveries === 1 &&
       summaryBody.data?.todayCashCollected === 350000;
@@ -292,6 +307,66 @@ async function runDriverShiftsMonitoringSuite() {
     } else {
       logTest('GET /drivers/me/delivery-summary computes delivery summary', false, JSON.stringify(summaryBody));
       failed++;
+    }
+
+    // Test 5: Legacy shipper open shift & in-flight SHIPPING order reconciliation by STORE_OWNER
+    const legacyOrder = await prisma.order.create({
+      data: {
+        orderCode: `ORD_LEG_${Date.now()}`,
+        storeId: storeA.storeId,
+        customerId: testCustomer.customerId,
+        orderStatus: 'SHIPPING',
+        paymentStatus: 'UNPAID',
+        paymentMethod: 'COD',
+        subtotalAmount: 85000,
+        totalAmount: 85000,
+        shippingRecipientName: 'Legacy Recipient',
+        shippingPhone: '0909000099',
+        shippingAddress: '999 Legacy Rd',
+        assignedDriverId: driverUserA.userId,
+      },
+    });
+    const legacyShift = await prisma.driverShift.create({
+      data: {
+        storeId: storeA.storeId,
+        driverId: driverUserA.userId,
+        status: 'OPEN',
+        startedAt: new Date(Date.now() - 1800_000),
+        handoverCode: `HO-LEG-${Date.now()}`,
+      },
+    });
+    try {
+      const statusRes = await fetch(`${BASE_URL}/stores/${storeA.storeId}/legacy-handover-status`, {
+        headers: { Authorization: `Bearer ${tokenA}` },
+      });
+      const statusBody: any = await statusRes.json();
+
+      const settleRes = await fetch(`${BASE_URL}/stores/${storeA.storeId}/legacy-handover/settle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ note: 'Thu hoi don & ban giao ca cu' }),
+      });
+      const settleBody: any = await settleRes.json();
+      const updatedLegacyOrder = await prisma.order.findUnique({ where: { orderId: legacyOrder.orderId } });
+      const updatedLegacyShift = await prisma.driverShift.findUnique({ where: { shiftId: legacyShift.shiftId } });
+
+      if (
+        statusRes.status === 200 &&
+        statusBody.data?.inFlightShipperOrders?.length === 1 &&
+        settleRes.status === 200 &&
+        settleBody.data?.reclaimedShippingOrdersCount === 1 &&
+        updatedLegacyOrder?.assignedDriverId === ownerA.userId &&
+        updatedLegacyShift?.status === 'HANDED_OVER'
+      ) {
+        logTest('GET/POST /stores/:storeId/legacy-handover reclaims legacy SHIPPING orders & settles open shifts', true);
+        passed++;
+      } else {
+        logTest('GET/POST /stores/:storeId/legacy-handover', false, JSON.stringify({ statusBody, settleBody }));
+        failed++;
+      }
+    } finally {
+      await prisma.order.deleteMany({ where: { orderId: legacyOrder.orderId } }).catch(() => {});
+      await prisma.driverShift.deleteMany({ where: { shiftId: legacyShift.shiftId } }).catch(() => {});
     }
   } catch (err: any) {
     console.error('Fatal error during suite:', err);

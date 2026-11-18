@@ -10,7 +10,7 @@
 * **Trạng thái hủy / Thất bại**: 
   * `CANCELLED`: Khách hoặc Cửa hàng bấm hủy đơn.
   * `REJECTED`: Quán từ chối do hết hàng hoặc bận.
-  * `FAILED`: Tài xế giao không được (khách không nghe máy, sai địa chỉ) sau nhiều lần thử lại.
+  * `FAILED`: Chủ cửa hàng báo giao không được (khách không nghe máy, sai địa chỉ) kèm ảnh bằng chứng thất bại.
 * **Ý nghĩa thực tế**: Đảm bảo hàng hóa chỉ bị trừ kho thật và chỉ ghi nhận doanh thu vào ví quán khi đơn hàng chuyển sang `DELIVERED`.
 
 ---
@@ -55,11 +55,11 @@
 
 ---
 
-### [STATE 6] Vòng đời Ca trực của Tài xế (Driver Shift Lifecycle)
-* **Đối tượng**: Bảng `driver_shifts` (Ca làm việc của shipper).
-* **Chuỗi trạng thái bình thường**:
-  $$\text{OFFLINE (Nghỉ trực)} \longrightarrow \text{OPEN / ONLINE (Bật nhận đơn)} \longleftrightarrow \text{ON\_DUTY (Đang đi giao hàng)} \longrightarrow \text{CLOSING (Chờ nộp tiền COD)} \longrightarrow \text{CLOSED (Hết ca)}$$
-* **Ý nghĩa thực tế**: Tài xế chỉ được gán đơn khi đang `ONLINE`. Khi kết ca, shipper phải nộp đủ tiền mặt thu hộ (COD) cho thu ngân cửa hàng mới được đóng ca an toàn.
+### [STATE 6] Vòng đời Ca trực & Bàn giao Legacy (`driver_shifts` — Retired for New Ops)
+* **Đối tượng**: Bảng `driver_shifts` (được giữ lại để đối soát bàn giao các ca cũ và bảo toàn lịch sử FK sau khi ngừng cấp role shipper).
+* **Chuỗi trạng thái hợp lệ**:
+  $$\text{OPEN (Đang mở)} \longrightarrow \text{CLOSED (Đã chốt ca)} \longrightarrow \text{HANDED\_OVER (Đã bàn giao COD — Trạng thái cuối bất biến)}$$
+* **Ý nghĩa thực tế**: Không tạo ca trực shipper mới cho vận hành hiện hành; các ca cũ được khóa hàng (`FOR UPDATE` + CAS) khi Chủ cửa hàng xác nhận bàn giao về `HANDED_OVER` và nghiêm cấm quay ngược về `CLOSED`.
 
 ---
 

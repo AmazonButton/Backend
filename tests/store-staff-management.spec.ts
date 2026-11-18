@@ -170,200 +170,154 @@ async function runStoreStaffManagementSuite() {
       { expiresIn: '1h' },
     );
 
-    // Test 1: GET /store-staff-roles returns whitelist of assignable roles
+    // Test 1: GET /store-staff-roles returns empty whitelist after store-staff/shipper deprecation
     try {
       const res = await fetch(`${BASE_URL}/store-staff-roles`);
       const body = await res.json();
 
-      if (
-        res.status === 200 &&
-        body.success === true &&
-        Array.isArray(body.data) &&
-        body.data.length === 5 &&
-        body.data.some((r: any) => r.roleCode === 'STORE_MANAGER')
-      ) {
-        logTest('GET /store-staff-roles returns 5 assignable staff roles', true);
+      if (res.status === 200 && body.success === true && Array.isArray(body.data) && body.data.length === 0) {
+        logTest('GET /store-staff-roles returns empty list after deprecation', true);
         passed++;
       } else {
-        logTest('GET /store-staff-roles returns 5 assignable staff roles', false, JSON.stringify(body));
+        logTest('GET /store-staff-roles returns empty list after deprecation', false, JSON.stringify(body));
         failed++;
       }
     } catch (err: any) {
-      logTest('GET /store-staff-roles returns 5 assignable staff roles', false, err.message);
+      logTest('GET /store-staff-roles returns empty list after deprecation', false, err.message);
       failed++;
     }
 
-    // Test 2: POST /stores/:storeId/staff creates staff invitation with PENDING status & requires acceptance
+    // Test 2: POST /stores/:storeId/staff rejects new invitations across STORE_MANAGER, STAFF_DELIVERY, ADMIN
     try {
-      const res = await fetch(`${BASE_URL}/stores/${storeA.storeId}/staff`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenOwnerA}`,
-        },
-        body: JSON.stringify({
-          userId: candidateUser1.userId.toString(),
-          roleCode: 'STORE_MANAGER',
-        }),
-      });
-      const body = await res.json();
-
-      if (
-        res.status === 201 &&
-        body.success === true &&
-        body.data.userId === candidateUser1.userId.toString() &&
-        body.data.role.roleCode === 'STORE_MANAGER' &&
-        body.data.status === 'PENDING'
-      ) {
-        createdStaff1Id = body.data.storeStaffId;
-
-        // Lỗ hổng 1: Verify Owner cannot bypass invitation by PATCHing PENDING -> ACTIVE (403 Forbidden)
-        const ownerBypassRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
-          method: 'PATCH',
+      const rejectedCodes: string[] = [];
+      for (const roleCode of ['STORE_MANAGER', 'STAFF_DELIVERY', 'ADMIN']) {
+        const res = await fetch(`${BASE_URL}/stores/${storeA.storeId}/staff`, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${tokenOwnerA}`,
           },
-          body: JSON.stringify({ status: 'ACTIVE' }),
+          body: JSON.stringify({
+            userId: candidateUser1.userId.toString(),
+            roleCode,
+          }),
         });
-        const ownerBypassBlocked = ownerBypassRes.status === 403;
-
-        // Multi-step bypass defense: Verify Owner cannot PATCH PENDING -> ON_LEAVE (403 Forbidden)
-        const ownerOnLeaveRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${tokenOwnerA}`,
-          },
-          body: JSON.stringify({ status: 'ON_LEAVE' }),
-        });
-        const ownerOnLeaveBlocked = ownerOnLeaveRes.status === 403;
-
-        // Verify BOLA: Candidate 2 cannot accept Candidate 1's invitation (403)
-        const bolaRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${tokenCandidate2}` },
-        });
-        const bolaOk = bolaRes.status === 403;
-
-        // Candidate 1 accepts their own invitation -> ACTIVE
-        const acceptRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${tokenCandidate1}` },
-        });
-        const acceptBody = await acceptRes.json();
-        const acceptOk =
-          (acceptRes.status === 200 || acceptRes.status === 201) &&
-          acceptBody.data?.status === 'ACTIVE';
-
-        // Candidate 1 attempts to accept AGAIN when already ACTIVE -> 409 Conflict
-        const doubleAcceptRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${tokenCandidate1}` },
-        });
-        const doubleAcceptBlocked = doubleAcceptRes.status === 409;
-
-        if (ownerBypassBlocked && ownerOnLeaveBlocked && bolaOk && acceptOk && doubleAcceptBlocked) {
-          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass, on-leave bypass and double-accept defenses)', true);
-          passed++;
-        } else {
-          logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE (with owner-bypass, on-leave bypass and double-accept defenses)', false, `ownerBypassBlocked: ${ownerBypassBlocked}, ownerOnLeaveBlocked: ${ownerOnLeaveBlocked}, bolaOk: ${bolaOk}, acceptOk: ${acceptOk}, doubleAcceptBlocked: ${doubleAcceptBlocked}`);
-          failed++;
+        const body = await res.json();
+        if (res.status === 403 && body.code === 'STORE_STAFF_ROLE_DEPRECATED') {
+          rejectedCodes.push(roleCode);
         }
+      }
+
+      if (rejectedCodes.length === 3) {
+        logTest('POST /stores/:storeId/staff rejects new store staff & shipper assignments with 403 STORE_STAFF_ROLE_DEPRECATED', true);
+        passed++;
       } else {
-        logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', false, JSON.stringify(body));
+        logTest(
+          'POST /stores/:storeId/staff rejects new store staff & shipper assignments with 403 STORE_STAFF_ROLE_DEPRECATED',
+          false,
+          `Rejected: ${rejectedCodes.join(',')}`,
+        );
         failed++;
       }
     } catch (err: any) {
-      logTest('POST /stores/:storeId/staff creates PENDING invitation & Candidate accepts to ACTIVE', false, err.message);
+      logTest('POST /stores/:storeId/staff rejects new store staff & shipper assignments with 403 STORE_STAFF_ROLE_DEPRECATED', false, err.message);
       failed++;
     }
 
-    // Test 3: Anti-Role-Escalation Whitelist: Rejects ADMIN role assignment with 403
+    // Seed legacy DB fixture rows directly to test legacy accept/reactivate blocking, BOLA, listing & historical soft-termination
+    const staffRole = await prisma.role.findUnique({ where: { roleCode: 'STAFF_ORDER' } });
+    const legacyPending = await prisma.storeStaff.create({
+      data: {
+        storeId: storeA.storeId,
+        userId: candidateUser1.userId,
+        roleId: staffRole!.roleId,
+        status: 'PENDING',
+      },
+    });
+    const legacyActive = await prisma.storeStaff.create({
+      data: {
+        storeId: storeA.storeId,
+        userId: candidateUser2.userId,
+        roleId: staffRole!.roleId,
+        status: 'ACTIVE',
+      },
+    });
+    createdStaff1Id = legacyActive.storeStaffId.toString();
+
+    // Test 3: Legacy PENDING invitation accept & direct PATCH reactivation/role-change are blocked with 403
     try {
-      const res = await fetch(`${BASE_URL}/stores/${storeA.storeId}/staff`, {
+      const acceptRes = await fetch(`${BASE_URL}/store-staff/${legacyPending.storeStaffId}/accept`, {
         method: 'POST',
+        headers: { Authorization: `Bearer ${tokenCandidate1}` },
+      });
+      const acceptBody = await acceptRes.json();
+
+      const reactivateRes = await fetch(`${BASE_URL}/store-staff/${legacyPending.storeStaffId}`, {
+        method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${tokenOwnerA}`,
         },
-        body: JSON.stringify({
-          userId: candidateUser2.userId.toString(),
-          roleCode: 'ADMIN',
-        }),
+        body: JSON.stringify({ status: 'ACTIVE' }),
       });
-      const body = await res.json();
+      const roleChangeRes = await fetch(`${BASE_URL}/store-staff/${legacyActive.storeStaffId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenOwnerA}`,
+        },
+        body: JSON.stringify({ roleCode: 'STAFF_INVENTORY' }),
+      });
 
       if (
-        res.status === 403 &&
-        body.message.includes('ROLE_ESCALATION_PROHIBITED')
+        acceptRes.status === 403 &&
+        acceptBody.code === 'STORE_STAFF_ROLE_DEPRECATED' &&
+        reactivateRes.status === 403 &&
+        roleChangeRes.status === 403
       ) {
-        logTest('Anti-Role-Escalation rejects ADMIN role with 403 Forbidden', true);
+        logTest('Legacy acceptInvitation, PATCH ACTIVE & PATCH roleCode are blocked with 403 STORE_STAFF_ROLE_DEPRECATED', true);
         passed++;
       } else {
-        logTest('Anti-Role-Escalation rejects ADMIN role with 403 Forbidden', false, `Status: ${res.status}, body: ${JSON.stringify(body)}`);
+        logTest(
+          'Legacy acceptInvitation, PATCH ACTIVE & PATCH roleCode are blocked with 403 STORE_STAFF_ROLE_DEPRECATED',
+          false,
+          `accept=${acceptRes.status}, reactivate=${reactivateRes.status}, roleChange=${roleChangeRes.status}`,
+        );
         failed++;
       }
     } catch (err: any) {
-      logTest('Anti-Role-Escalation rejects ADMIN role with 403 Forbidden', false, err.message);
+      logTest('Legacy acceptInvitation, PATCH ACTIVE & PATCH roleCode are blocked with 403 STORE_STAFF_ROLE_DEPRECATED', false, err.message);
       failed++;
     }
 
-    // Test 4: Duplicate staff assignment returns 409 Conflict
+    // Test 4: BOLA Protection: Owner B cannot terminate/update Store A's legacy staff row
     try {
-      const res = await fetch(`${BASE_URL}/stores/${storeA.storeId}/staff`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenOwnerA}`,
-        },
-        body: JSON.stringify({
-          userId: candidateUser1.userId.toString(),
-          roleCode: 'STAFF_ORDER',
-        }),
-      });
-      const body = await res.json();
-
-      if (res.status === 409 && body.success === false) {
-        logTest('Duplicate staff assignment in same store returns 409 Conflict', true);
-        passed++;
-      } else {
-        logTest('Duplicate staff assignment in same store returns 409 Conflict', false, `Status: ${res.status}`);
-        failed++;
-      }
-    } catch (err: any) {
-      logTest('Duplicate staff assignment in same store returns 409 Conflict', false, err.message);
-      failed++;
-    }
-
-    // Test 5: BOLA Protection: Owner B cannot add staff to Store A
-    try {
-      const res = await fetch(`${BASE_URL}/stores/${storeA.storeId}/staff`, {
-        method: 'POST',
+      const res = await fetch(`${BASE_URL}/store-staff/${legacyActive.storeStaffId}`, {
+        method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${tokenOwnerB}`,
         },
-        body: JSON.stringify({
-          userId: candidateUser2.userId.toString(),
-          roleCode: 'STAFF_DELIVERY',
-        }),
+        body: JSON.stringify({ status: 'TERMINATED' }),
       });
-      const body = await res.json();
+      const delRes = await fetch(`${BASE_URL}/store-staff/${legacyActive.storeStaffId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${tokenOwnerB}` },
+      });
 
-      if (res.status === 403 && body.success === false) {
-        logTest('BOLA: Owner B cannot add staff to Store A (403 Forbidden)', true);
+      if (res.status === 403 && delRes.status === 403) {
+        logTest('BOLA: Owner B cannot modify or terminate Store A legacy staff (403 Forbidden)', true);
         passed++;
       } else {
-        logTest('BOLA: Owner B cannot add staff to Store A (403 Forbidden)', false, `Status: ${res.status}`);
+        logTest('BOLA: Owner B cannot modify or terminate Store A legacy staff (403 Forbidden)', false, `patch=${res.status}, del=${delRes.status}`);
         failed++;
       }
     } catch (err: any) {
-      logTest('BOLA: Owner B cannot add staff to Store A (403 Forbidden)', false, err.message);
+      logTest('BOLA: Owner B cannot modify or terminate Store A legacy staff (403 Forbidden)', false, err.message);
       failed++;
     }
 
-    // Test 6: GET /stores/:storeId/staff returns paginated staff list with canonical envelope
+    // Test 5: GET /stores/:storeId/staff returns paginated legacy staff history with canonical envelope
     try {
       const res = await fetch(`${BASE_URL}/stores/${storeA.storeId}/staff?page=1&pageSize=20`, {
         headers: { Authorization: `Bearer ${tokenOwnerA}` },
@@ -374,98 +328,82 @@ async function runStoreStaffManagementSuite() {
         res.status === 200 &&
         body.success === true &&
         Array.isArray(body.data) &&
-        body.data.length >= 1 &&
+        body.data.length >= 2 &&
         body.pagination !== undefined &&
-        body.pagination.totalItems >= 1
+        body.pagination.totalItems >= 2
       ) {
-        logTest('GET /stores/:storeId/staff returns paginated staff with canonical envelope', true);
+        logTest('GET /stores/:storeId/staff returns paginated historical records with canonical envelope', true);
         passed++;
       } else {
-        logTest('GET /stores/:storeId/staff returns paginated staff with canonical envelope', false, JSON.stringify(body));
+        logTest('GET /stores/:storeId/staff returns paginated historical records with canonical envelope', false, JSON.stringify(body));
         failed++;
       }
     } catch (err: any) {
-      logTest('GET /stores/:storeId/staff returns paginated staff with canonical envelope', false, err.message);
+      logTest('GET /stores/:storeId/staff returns paginated historical records with canonical envelope', false, err.message);
       failed++;
     }
 
-    // Test 7: PATCH /store-staff/:id updates role & status
-    if (createdStaff1Id) {
-      try {
-        const res = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${tokenOwnerA}`,
-          },
-          body: JSON.stringify({
-            roleCode: 'STAFF_INVENTORY',
-            status: 'INACTIVE',
-          }),
-        });
-        const body = await res.json();
+    // Test 6: PATCH /store-staff/:id allows deactivating legacy PENDING row to TERMINATED with leftAt
+    try {
+      const res = await fetch(`${BASE_URL}/store-staff/${legacyPending.storeStaffId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenOwnerA}`,
+        },
+        body: JSON.stringify({ status: 'TERMINATED' }),
+      });
+      const body = await res.json();
 
-        // Lỗ hổng 2: Terminated/inactive staff calling /accept cannot self-reactivate -> 409 Conflict
-        const selfReactivateRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}/accept`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${tokenCandidate1}` },
-        });
-        const selfReactivateBlocked = selfReactivateRes.status === 409;
-
-        // Owner cannot PATCH a terminated staff directly back to ACTIVE -> 403 Forbidden
-        const directReactivateRes = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${tokenOwnerA}`,
-          },
-          body: JSON.stringify({ status: 'ACTIVE' }),
-        });
-        const directReactivateBlocked = directReactivateRes.status === 403;
-
-        if (
-          res.status === 200 &&
-          body.success === true &&
-          body.data.role.roleCode === 'STAFF_INVENTORY' &&
-          (body.data.status === 'TERMINATED' || body.data.status === 'INACTIVE') &&
-          body.data.leftAt !== null &&
-          selfReactivateBlocked &&
-          directReactivateBlocked
-        ) {
-          logTest('PATCH /store-staff/:id updates role to STAFF_INVENTORY and records leftAt (blocks self-reactivation & direct reactivation)', true);
-          passed++;
-        } else {
-          logTest('PATCH /store-staff/:id updates role to STAFF_INVENTORY and records leftAt (blocks self-reactivation & direct reactivation)', false, `selfReactivateBlocked: ${selfReactivateBlocked}, directReactivateBlocked: ${directReactivateBlocked}, body: ${JSON.stringify(body)}`);
-          failed++;
-        }
-      } catch (err: any) {
-        logTest('PATCH /store-staff/:id updates role to STAFF_INVENTORY and records leftAt', false, err.message);
+      if (res.status === 200 && body.success === true && body.data?.status === 'TERMINATED' && body.data?.leftAt !== null) {
+        logTest('PATCH /store-staff/:id allows terminating legacy PENDING row with leftAt', true);
+        passed++;
+      } else {
+        logTest('PATCH /store-staff/:id allows terminating legacy PENDING row with leftAt', false, JSON.stringify(body));
         failed++;
       }
-
-      // Test 8: DELETE /store-staff/:id removes staff member
-      try {
-        const res = await fetch(`${BASE_URL}/store-staff/${createdStaff1Id}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${tokenOwnerA}` },
-        });
-        const body = await res.json();
-
-        if (res.status === 200 && body.success === true) {
-          logTest('DELETE /store-staff/:id removes staff member successfully', true);
-          passed++;
-        } else {
-          logTest('DELETE /store-staff/:id removes staff member successfully', false, JSON.stringify(body));
-          failed++;
-        }
-      } catch (err: any) {
-        logTest('DELETE /store-staff/:id removes staff member successfully', false, err.message);
-        failed++;
-      }
+    } catch (err: any) {
+      logTest('PATCH /store-staff/:id allows terminating legacy PENDING row with leftAt', false, err.message);
+      failed++;
     }
+
+    // Test 7: DELETE /store-staff/:id preserves record as TERMINATED + leftAt (no physical delete)
+    try {
+      const res = await fetch(`${BASE_URL}/store-staff/${legacyActive.storeStaffId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${tokenOwnerA}` },
+      });
+      const body = await res.json();
+      const preservedRow = await prisma.storeStaff.findUnique({ where: { storeStaffId: legacyActive.storeStaffId } });
+
+      if (
+        res.status === 200 &&
+        body.success === true &&
+        preservedRow !== null &&
+        preservedRow.status === 'TERMINATED' &&
+        preservedRow.leftAt !== null
+      ) {
+        logTest('DELETE /store-staff/:id soft-terminates record to TERMINATED & preserves DB history', true);
+        passed++;
+      } else {
+        logTest('DELETE /store-staff/:id soft-terminates record to TERMINATED & preserves DB history', false, JSON.stringify(body));
+        failed++;
+      }
+    } catch (err: any) {
+      logTest('DELETE /store-staff/:id soft-terminates record to TERMINATED & preserves DB history', false, err.message);
+      failed++;
+    }
+
+    // Touch unused tokenCandidate2 reference guard if linter checks
+    void tokenCandidate2;
 
   } finally {
     // Cleanup
+    if (createdStaff1Id) {
+      await prisma.rentalAuditLog
+        .deleteMany({ where: { targetType: 'STORE_STAFF', targetId: BigInt(createdStaff1Id) } })
+        .catch(() => {});
+    }
     if (storeA) {
       await prisma.storeStaff.deleteMany({ where: { storeId: storeA.storeId } }).catch(() => {});
       await prisma.store.delete({ where: { storeId: storeA.storeId } }).catch(() => {});
@@ -475,9 +413,11 @@ async function runStoreStaffManagementSuite() {
       await prisma.store.delete({ where: { storeId: storeB.storeId } }).catch(() => {});
     }
     if (candidateUser1) {
+      await prisma.refreshToken.deleteMany({ where: { userId: candidateUser1.userId } }).catch(() => {});
       await prisma.user.delete({ where: { userId: candidateUser1.userId } }).catch(() => {});
     }
     if (candidateUser2) {
+      await prisma.refreshToken.deleteMany({ where: { userId: candidateUser2.userId } }).catch(() => {});
       await prisma.user.delete({ where: { userId: candidateUser2.userId } }).catch(() => {});
     }
     if (ownerA) {

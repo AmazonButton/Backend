@@ -10,51 +10,23 @@ import { CreateStoreStaffDto } from './dto/create-store-staff.dto';
 import { UpdateStoreStaffDto } from './dto/update-store-staff.dto';
 import { StoreStaffResponseDto } from './dto/store-staff-response.dto';
 
-export const ALLOWED_STORE_STAFF_ROLES = [
-  'STORE_MANAGER',
-  'STAFF_ORDER',
-  'STAFF_INVENTORY',
-  'STAFF_DELIVERY',
-  'STAFF_BUTTON',
-] as const;
+export const ALLOWED_STORE_STAFF_ROLES = [] as const;
+
+export const STORE_STAFF_DEPRECATED_ERROR = {
+  success: false,
+  code: 'STORE_STAFF_ROLE_DEPRECATED',
+  message:
+    'Mô hình nhân viên cửa hàng và shipper riêng của store đã ngừng áp dụng. Chủ cửa hàng tự quản lý bán hàng/giao hàng/POD và nền tảng sử dụng SYSTEM_STAFF cho thiết bị/bảo hành.',
+};
 
 export const ROLE_METADATA: Record<
   string,
   { name: string; description: string }
-> = {
-  STORE_MANAGER: {
-    name: 'Quản lý cửa hàng',
-    description: 'Toàn quyền quản lý đơn hàng, kho và vận hành cửa hàng',
-  },
-  STAFF_ORDER: {
-    name: 'Nhân viên xử lý đơn',
-    description: 'Tiếp nhận, xử lý và chuẩn bị đơn hàng cho khách',
-  },
-  STAFF_INVENTORY: {
-    name: 'Nhân viên kho',
-    description: 'Quản lý nhập xuất tồn và kiểm kê sản phẩm',
-  },
-  STAFF_DELIVERY: {
-    name: 'Nhân viên giao nhận',
-    description: 'Vận chuyển và cập nhật trạng thái giao hàng',
-  },
-  STAFF_BUTTON: {
-    name: 'Kỹ thuật viên nút bấm IoT',
-    description: 'Cấu hình và kiểm tra thiết bị nút bấm thông minh',
-  },
-};
+> = {};
 
 @Injectable()
 export class StoreStaffService {
-  constructor(private readonly repo: StoreStaffRepository) {}
-
-  private validateRoleWhitelist(roleCode: string) {
-    if (!ALLOWED_STORE_STAFF_ROLES.includes(roleCode as any)) {
-      throw new ForbiddenException(
-        `ROLE_ESCALATION_PROHIBITED: Không được phép gán vai trò '${roleCode}' cho nhân viên cửa hàng`,
-      );
-    }
-  }
+  constructor(private readonly repo: StoreStaffRepository) { }
 
   async verifyStoreOwnership(storeId: bigint, user: any) {
     const role = user?.role || user?.roleCode;
@@ -74,11 +46,7 @@ export class StoreStaffService {
   }
 
   async listAssignableRoles() {
-    return ALLOWED_STORE_STAFF_ROLES.map((code) => ({
-      roleCode: code,
-      roleName: ROLE_METADATA[code]?.name || code,
-      description: ROLE_METADATA[code]?.description || null,
-    }));
+    return [];
   }
 
   async listStaff(
@@ -108,105 +76,12 @@ export class StoreStaffService {
     };
   }
 
-  async addStaff(storeIdStr: string, dto: CreateStoreStaffDto, user: any): Promise<StoreStaffResponseDto> {
-    const storeId = BigInt(storeIdStr);
-    await this.verifyStoreOwnership(storeId, user);
-
-    this.validateRoleWhitelist(dto.roleCode);
-
-    // Resolve user to add
-    const identifier = dto.userId || dto.userIdentifier;
-    if (!identifier) {
-      throw new BadRequestException('Vui lòng cung cấp userId hoặc userIdentifier');
-    }
-
-    const targetUser = await this.repo.findUserByIdentifier(identifier);
-    if (!targetUser) {
-      throw new NotFoundException(`Không tìm thấy người dùng với thông tin: ${identifier}`);
-    }
-
-    const userPlatformRoles = await this.repo.findUserActivePlatformRoles(targetUser.userId);
-    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
-      .split(',')
-      .map((e) => e.trim().toLowerCase());
-
-    const isPlatformAdmin =
-      userPlatformRoles.some((r) => ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(r)) ||
-      superAdminEmails.includes((targetUser.email || '').toLowerCase()) ||
-      targetUser.username === 'admin';
-
-    if (isPlatformAdmin) {
-      throw new ForbiddenException('Không thể thêm tài khoản quản trị hệ thống làm nhân viên cửa hàng');
-    }
-
-    const ownedStoreCount = await this.repo.countOwnedStores(targetUser.userId);
-    if (ownedStoreCount > 0) {
-      throw new ConflictException('Không thể thêm người dùng đang là chủ cửa hàng khác làm nhân viên');
-    }
-
-    // Check existing staff
-    const existing = await this.repo.findStaffByStoreAndUser(storeId, targetUser.userId);
-    if (existing) {
-      if (existing.status === 'ACTIVE') {
-        throw new ConflictException('Người dùng đã là nhân viên đang hoạt động của cửa hàng');
-      }
-      if (existing.status === 'PENDING') {
-        throw new ConflictException('Người dùng đã có lời mời tham gia đang chờ phản hồi');
-      }
-      // Re-invite staff if previously inactive
-      let role = await this.repo.findRoleByCode(dto.roleCode);
-      if (!role) {
-        throw new NotFoundException(`Vai trò ${dto.roleCode} không tồn tại trong hệ thống`);
-      }
-      const updated = await this.repo.updateStaff(existing.storeStaffId, {
-        roleId: role.roleId,
-        status: 'PENDING',
-        leftAt: null,
-      });
-      return StoreStaffResponseDto.fromEntity(updated);
-    }
-
-    let role = await this.repo.findRoleByCode(dto.roleCode);
-    if (!role) {
-      throw new NotFoundException(`Vai trò ${dto.roleCode} không tồn tại trong hệ thống`);
-    }
-
-    const created = await this.repo.createStaff({
-      storeId,
-      userId: targetUser.userId,
-      roleId: role.roleId,
-      status: 'PENDING',
-    });
-
-    return StoreStaffResponseDto.fromEntity(created);
+  async addStaff(_storeIdStr: string, _dto: CreateStoreStaffDto, _user: any): Promise<StoreStaffResponseDto> {
+    throw new ForbiddenException(STORE_STAFF_DEPRECATED_ERROR);
   }
 
-  async acceptInvitation(staffIdStr: string, user: any): Promise<StoreStaffResponseDto> {
-    const staffId = BigInt(staffIdStr);
-    const staff = await this.repo.findStaffById(staffId);
-    if (!staff) {
-      throw new NotFoundException('Lời mời làm nhân viên không tồn tại');
-    }
-
-    const currentUserId = (user?.userId || user?.id || user?.sub)?.toString();
-    if (staff.userId.toString() !== currentUserId) {
-      throw new ForbiddenException('BOLA_VIOLATION: Bạn chỉ có thể chấp nhận lời mời gửi cho chính mình');
-    }
-
-    if (staff.status !== 'PENDING') {
-      throw new ConflictException(
-        staff.status === 'ACTIVE'
-          ? 'Lời mời này đã được chấp nhận và đang hoạt động'
-          : 'Không thể chấp nhận lời mời đã bị từ chối hoặc nhân viên đã bị chấm dứt (TERMINATED/INACTIVE)',
-      );
-    }
-
-    const updated = await this.repo.acceptInvitationAtomic(staffId, staff.userId);
-    if (!updated) {
-      throw new ConflictException('Không thể chấp nhận lời mời do trạng thái đã bị thay đổi');
-    }
-
-    return StoreStaffResponseDto.fromEntity(updated);
+  async acceptInvitation(_staffIdStr: string, _user: any): Promise<StoreStaffResponseDto> {
+    throw new ForbiddenException(STORE_STAFF_DEPRECATED_ERROR);
   }
 
   async rejectInvitation(staffIdStr: string, user: any): Promise<{ success: boolean; message: string }> {
@@ -274,38 +149,21 @@ export class StoreStaffService {
     const updateData: any = {};
 
     if (dto.roleCode) {
-      this.validateRoleWhitelist(dto.roleCode);
-      const role = await this.repo.findRoleByCode(dto.roleCode);
-      if (!role) {
-        throw new NotFoundException(`Vai trò ${dto.roleCode} không tồn tại trong hệ thống`);
-      }
-      updateData.roleId = role.roleId;
+      throw new ForbiddenException(STORE_STAFF_DEPRECATED_ERROR);
     }
 
     if (dto.status) {
       const canonicalStatus = dto.status === 'INACTIVE' ? 'TERMINATED' : dto.status;
 
-      // Lỗ hổng 1: Chủ cửa hàng không thể tự ý kích hoạt lời mời thay cho nhân viên.
-      // Người được mời phải tự gọi acceptInvitation.
-      if (staff.status === 'PENDING' && canonicalStatus === 'ACTIVE') {
-        throw new ForbiddenException(
-          'INVITATION_ACCEPTANCE_REQUIRED: Chủ cửa hàng không thể tự ý kích hoạt lời mời. Người dùng được mời phải tự chấp nhận qua API accept.',
-        );
+      if (canonicalStatus === 'ACTIVE') {
+        throw new ForbiddenException(STORE_STAFF_DEPRECATED_ERROR);
       }
 
-      // Lỗ hổng 2 liên đới: Không thể PATCH trực tiếp nhân viên đã TERMINATED/INACTIVE sang ACTIVE. Phải gửi lời mời mới.
-      if ((staff.status === 'TERMINATED' || staff.status === 'INACTIVE') && canonicalStatus === 'ACTIVE') {
-        throw new ForbiddenException(
-          'REINVITATION_REQUIRED: Không thể kích hoạt trực tiếp nhân viên đã bị chấm dứt (TERMINATED/INACTIVE). Vui lòng gửi lời mời mới.',
-        );
-      }
-
-      // Allowlist chuyển trạng thái do chủ cửa hàng thực hiện (chặn bypass hai bước PENDING -> ON_LEAVE -> ACTIVE).
-      // PENDING chỉ có thể bị hủy; ON_LEAVE chỉ đạt được từ ACTIVE nên không thể dùng để bỏ qua bước accept.
+      // Allowlist chuyển trạng thái còn lại: chỉ hỗ trợ chấm dứt/tạm ngừng thành viên store_staff cũ.
       const allowedTransitions: Record<string, string[]> = {
         PENDING: ['TERMINATED'],
-        ACTIVE: ['ACTIVE', 'ON_LEAVE', 'TERMINATED'],
-        ON_LEAVE: ['ON_LEAVE', 'ACTIVE', 'TERMINATED'],
+        ACTIVE: ['ON_LEAVE', 'TERMINATED'],
+        ON_LEAVE: ['ON_LEAVE', 'TERMINATED'],
         TERMINATED: ['TERMINATED'],
         INACTIVE: ['TERMINATED'],
       };
@@ -318,8 +176,6 @@ export class StoreStaffService {
       updateData.status = canonicalStatus;
       if (canonicalStatus === 'TERMINATED') {
         updateData.leftAt = new Date();
-      } else if (canonicalStatus === 'ACTIVE') {
-        updateData.leftAt = null;
       }
     }
 
@@ -336,7 +192,13 @@ export class StoreStaffService {
 
     await this.verifyStoreOwnership(staff.storeId, user);
 
-    await this.repo.deleteStaff(staffId);
-    return { success: true, message: 'Xóa nhân viên khỏi cửa hàng thành công' };
+    const rawActorId = user?.userId ?? user?.id;
+    const actorUserId = rawActorId != null ? BigInt(rawActorId) : null;
+    const terminated = await this.repo.deleteStaff(staffId, actorUserId);
+    return {
+      success: true,
+      message: 'Đã chấm dứt nhân viên cửa hàng và bảo toàn lịch sử',
+      data: terminated ? StoreStaffResponseDto.fromEntity(terminated) : null,
+    };
   }
 }

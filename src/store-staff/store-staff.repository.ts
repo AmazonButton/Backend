@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  advanceMonotonicTokensInvalidBefore,
+  lockUserForWatermark,
+} from '../auth/authority.policy';
 
 @Injectable()
 export class StoreStaffRepository {
@@ -144,9 +148,82 @@ export class StoreStaffRepository {
     return this.findStaffById(storeStaffId);
   }
 
-  async deleteStaff(storeStaffId: bigint) {
-    return this.prisma.storeStaff.delete({
+  async deleteStaff(
+    storeStaffId: bigint,
+    actorUserId?: bigint | null,
+    revocationTimestamp?: Date,
+  ) {
+    const targetRef = await this.prisma.storeStaff.findUnique({
       where: { storeStaffId },
+      select: { storeStaffId: true, userId: true },
+    });
+    if (!targetRef) {
+      return null;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Canonical lock order: ALWAYS lock users row FIRST before touching store_staff
+      const existingWatermark = await lockUserForWatermark(tx, targetRef.userId);
+
+      const existing = await tx.storeStaff.findUnique({
+        where: { storeStaffId },
+        include: {
+          user: true,
+          role: true,
+        },
+      });
+      if (!existing) {
+        return null;
+      }
+
+      const now = revocationTimestamp ?? new Date();
+      const updated = await tx.storeStaff.update({
+        where: { storeStaffId },
+        data: {
+          status: 'TERMINATED',
+          leftAt: existing.leftAt ?? now,
+        },
+        include: {
+          user: true,
+          role: true,
+        },
+      });
+
+      if ((tx as any).rentalAuditLog?.create) {
+        await (tx as any).rentalAuditLog.create({
+          data: {
+            actorType: 'STORE_OWNER_OR_ADMIN',
+            actorUserId: actorUserId ?? null,
+            action: 'TERMINATE_STORE_STAFF',
+            targetType: 'STORE_STAFF',
+            targetId: storeStaffId,
+            beforeState: existing.status,
+            afterState: 'TERMINATED',
+            reason: 'Ngừng/thu hồi membership nhân viên cửa hàng (bảo toàn lịch sử)',
+            metadata: {
+              storeId: existing.storeId.toString(),
+              staffUserId: existing.userId.toString(),
+              roleCode: existing.role?.roleCode || null,
+              terminatedAt: now.toISOString(),
+            },
+          },
+        });
+      }
+
+      if (existing.status === 'ACTIVE') {
+        await tx.refreshToken.updateMany({
+          where: { userId: existing.userId, isRevoked: false },
+          data: { isRevoked: true },
+        });
+        await advanceMonotonicTokensInvalidBefore(
+          tx,
+          existing.userId,
+          existingWatermark,
+          now,
+        );
+      }
+
+      return updated;
     });
   }
 

@@ -6,22 +6,30 @@
 ## PHÂN HỆ 1: NGƯỜI DÙNG, ĐỊNH DANH & BẢO MẬT (IAM) (7 bảng)
 
 ### 1. `roles` (Vai trò người dùng)
-* **Chức năng**: Định nghĩa các nhóm quyền hạn truy cập (RBAC) trên toàn hệ thống.
+* **Chức năng**: Định nghĩa các nhóm quyền hạn truy cập (RBAC) trên toàn hệ thống theo mô hình 4 tầng.
 * **Các cột quan trọng**:
   * `role_id` (PK, Integer): Mã số định danh duy nhất của vai trò.
-  * `role_name` (VarChar, UNIQUE): Tên vai trò phân quyền (`SUPER_ADMIN`, `ADMIN`, `STORE_OWNER`, `STORE_STAFF`, `CUSTOMER`, `DRIVER`).
+  * `role_code` / `role_name` (VarChar, UNIQUE): Tên vai trò phân quyền hiện hành (`SUPER_ADMIN`, `SYSTEM_ADMIN`, `ADMIN`, `SYSTEM_STAFF`, `STORE_OWNER`, `CUSTOMER`; đã ngừng cấp `STORE_STAFF` và `STAFF_DELIVERY`/`DRIVER`).
   * `description` (VarChar): Mô tả phạm vi quyền hạn và trách nhiệm của vai trò.
 
 ### 2. `users` (Tài khoản người dùng trung tâm)
-* **Chức năng**: Lưu thông tin đăng nhập gốc của mọi tác nhân (Admin, Khách hàng, Chủ quán, Tài xế).
+* **Chức năng**: Lưu thông tin đăng nhập gốc của mọi tác nhân (`CUSTOMER`, `STORE_OWNER`, `SYSTEM_STAFF`, `ADMIN / SUPER_ADMIN`).
 * **Các cột quan trọng**:
   * `user_id` (PK, BigInt): Mã định danh duy nhất của người dùng.
-  * `phone_number` (VarChar, UNIQUE): Số điện thoại dùng làm tài khoản đăng nhập chính.
-  * `email` (VarChar): Địa chỉ email nhận thông báo, hóa đơn và mật khẩu kích hoạt.
-  * `password_hash` (VarChar): Chuỗi băm mật khẩu bảo mật (sử dụng thuật toán Argon2/Bcrypt).
-  * `role_id` (FK, Integer): Khóa ngoại liên kết tới bảng `roles` xác định quyền hạn.
-  * `status` (VarChar): Trạng thái tài khoản (`ACTIVE`, `SUSPENDED`, `INACTIVE`).
-  * `last_login_at` (Timestamp): Thời điểm đăng nhập gần nhất để giám sát bảo mật.
+  * `phone` (VarChar, UNIQUE): Số điện thoại dùng làm tài khoản đăng nhập chính.
+  * `email` (VarChar): Địa chỉ email nhận thông báo, hóa đơn và kích hoạt.
+  * `password_hash` (VarChar): Chuỗi băm mật khẩu bảo mật (Argon2/Bcrypt).
+  * `tokens_invalid_before` (Timestamp): Watermark đơn điệu (`GREATEST`) thu hồi toàn bộ JWT & WebSocket đa node ngay khi khóa tài khoản hoặc thu hồi quyền.
+  * `status` (VarChar): Trạng thái tài khoản (`ACTIVE`, `SUSPENDED`, `LOCKED`, `INACTIVE`).
+
+### 2b. `platform_memberships` (Phân quyền cấp Hệ thống độc lập `store_staff`)
+* **Chức năng**: Cấp và thu hồi các vai trò cấp nền tảng (`SYSTEM_STAFF`, `ADMIN`, `SYSTEM_ADMIN`, `SUPER_ADMIN`) độc lập khỏi cửa hàng, kèm đầy đủ dấu vết người cấp/thu hồi và partial unique index theo `(user_id, role_id) WHERE status = 'ACTIVE'`.
+* **Các cột quan trọng**:
+  * `membership_id` (PK, BigInt): Mã bản ghi phân quyền hệ thống.
+  * `user_id` (FK, BigInt): Tài khoản được cấp quyền.
+  * `role_id` (FK, BigInt): Khóa ngoại tới `roles`.
+  * `status` (VarChar): Trạng thái (`ACTIVE`, `REVOKED`, `SUSPENDED`).
+  * `granted_by_user_id`, `revoked_by_user_id` (FK, BigInt): Admin thực hiện cấp/thu hồi quyền.
 
 ### 3. `user_auth_identities` (Đăng nhập đa kênh)
 * **Chức năng**: Hỗ trợ liên kết tài khoản với các dịch vụ bên ngoài (Google, Apple) hoặc OTP số điện thoại.
@@ -116,14 +124,15 @@
   * `status` (VarChar): Trạng thái phê duyệt (`PENDING_VERIFICATION`, `ACTIVE`, `REJECTED`, `SUSPENDED`).
   * `business_license_url` (Text): Link ảnh chụp giấy phép kinh doanh phục vụ Admin thẩm định.
 
-### 12. `store_staff` (Nhân sự cửa hàng)
-* **Chức năng**: Quản lý phân quyền nội bộ giữa các nhân viên làm việc tại cùng một đại lý.
+### 12. `store_staff` (Nhân sự cửa hàng — `[LEGACY AUDIT / RETIRED]`)
+* **Chức năng**: Bảng lịch sử phân quyền cửa hàng cũ; **ngừng cấp/dùng trong runtime mới** (nhân viên cũ được chuyển sang `TERMINATED` với `left_at` để bảo toàn FK và dữ liệu kiểm toán lịch sử; quyền hệ thống dùng `platform_memberships`).
 * **Các cột quan trọng**:
-  * `staff_id` (PK, BigInt): Mã định danh nhân viên.
-  * `store_id` (FK, BigInt): Khóa ngoại liên kết tới cửa hàng nơi nhân viên làm việc.
-  * `user_id` (FK, BigInt): Khóa ngoại liên kết tới tài khoản đăng nhập của nhân viên tại bảng `users`.
-  * `staff_role` (VarChar): Chức vụ (`STORE_OWNER`, `STORE_MANAGER`, `STORE_CASHIER`, `STORE_STAFF`).
-  * `status` (VarChar): Trạng thái làm việc (`ACTIVE`, `INACTIVE`).
+  * `store_staff_id` (PK, BigInt): Mã định danh nhân viên.
+  * `store_id` (FK, BigInt): Khóa ngoại liên kết tới cửa hàng.
+  * `user_id` (FK, BigInt): Khóa ngoại liên kết tới bảng `users`.
+  * `role_id` (FK, BigInt): Vai trò cũ (lịch sử).
+  * `status` (VarChar): Trạng thái (`ACTIVE`, `PENDING`, `TERMINATED`).
+  * `left_at` (Timestamp): Thời điểm chấm dứt hiệu lực thành viên.
 
 ---
 
@@ -286,23 +295,22 @@
   * `changed_by_user_id` (FK, BigInt): Tài khoản người thực hiện thay đổi trạng thái.
   * `note` (Text): Ghi chú lý do thay đổi (ví dụ: Khách hẹn giao sau 18h).
 
-### 28. `driver_shifts` (Ca trực của Tài xế)
-* **Chức năng**: Quản lý ca làm việc của shipper (giờ bắt đầu trực, giờ kết ca, trạng thái sẵn sàng nhận đơn).
+### 28. `driver_shifts` (Ca trực giao hàng — `[LEGACY HANDOVER AUDIT]`)
+* **Chức năng**: Lưu lịch sử ca làm việc & đối soát bàn giao COD cũ trước khi chuyển giao toàn quyền giao hàng/POD về Chủ cửa hàng (`HANDED_OVER` là trạng thái cuối bất biến).
 * **Các cột quan trọng**:
   * `shift_id` (PK, BigInt): Mã ca trực.
-  * `driver_user_id` (FK, BigInt): Tài khoản tài xế làm việc.
-  * `store_id` (FK, BigInt): Đại lý nơi tài xế trực thuộc.
-  * `shift_status` (VarChar): Trạng thái ca trực (`OPEN`, `ON_DUTY`, `CLOSING`, `CLOSED`).
-  * `started_at`, `ended_at` (Timestamp): Thời điểm bắt đầu và kết thúc ca trực.
+  * `driver_id` (FK, BigInt): Tài khoản người giao trước đây.
+  * `store_id` (FK, BigInt): Đại lý trực thuộc.
+  * `status` (VarChar): Trạng thái ca (`OPEN`, `CLOSED`, `HANDED_OVER`).
+  * `started_at`, `ended_at`, `handed_over_at` (Timestamp): Mốc thời gian bắt đầu, chốt và bàn giao COD.
 
-### 29. `driver_duties` (Lượt giao hàng của Tài xế)
-* **Chức năng**: Nhiệm vụ giao một đơn hàng cụ thể được gán cho tài xế kèm bằng chứng ảnh chụp khi giao xong.
+### 29. `driver_duties` (Lượt trực giao hàng — `[LEGACY AUDIT]`)
+* **Chức năng**: Giữ lịch sử trạng thái trực giao hàng cũ để đối soát chuyển tiếp trước khi Chủ cửa hàng tự tiếp nhận giao và tải ảnh POD trực tiếp trên `orders`.
 * **Các cột quan trọng**:
-  * `duty_id` (PK, BigInt): Mã lượt giao hàng.
-  * `shift_id` (FK, BigInt): Ca trực của tài xế thực hiện nhiệm vụ.
-  * `order_id` (FK, BigInt): Đơn hàng cần đi giao.
-  * `duty_status` (VarChar): Trạng thái giao (`ASSIGNED`, `IN_TRANSIT`, `COMPLETED`, `FAILED`).
-  * `delivery_proof_url` (Text): Link ảnh chụp chữ ký hoặc ảnh bình nước đã đặt tại nhà khách.
+  * `driver_duty_id` (PK, BigInt): Mã bản ghi trực.
+  * `driver_id` (FK, BigInt): Tài khoản trước đây.
+  * `store_id` (FK, BigInt): Cửa hàng tương ứng.
+  * `status` (VarChar): Trạng thái trực (`ONLINE`, `BUSY`, `OFFLINE`).
 
 ---
 

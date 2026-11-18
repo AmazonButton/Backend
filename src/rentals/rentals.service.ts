@@ -158,8 +158,8 @@ export class RentalsService {
       return { rental, actorType: 'ADMIN' as const, storeId: null };
     }
 
-    // Check Store Owner / Manager / Staff
-    const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STAFF'].includes(role);
+    // Check Store Owner only (legacy store_staff removed)
+    const isStoreRole = role === 'STORE_OWNER';
     const userStoreId = user?.storeId ? BigInt(user.storeId) : null;
 
     if (isStoreRole && userStoreId) {

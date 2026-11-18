@@ -115,8 +115,9 @@ export class DriversService {
 
   async getOnlineDrivers(storeId: string | number | bigint, user: any) {
     const targetStoreId = BigInt(storeId);
-    if (user && user.storeId && user.storeId.toString() !== targetStoreId.toString() && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      throw new ForbiddenException('Bạn không có quyền truy cập danh sách tài xế của cửa hàng khác');
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user?.role);
+    if (!isAdmin && (!user?.storeId || user.storeId.toString() !== targetStoreId.toString())) {
+      throw new ForbiddenException('Bạn không có quyền truy cập danh sách giao hàng của cửa hàng khác');
     }
 
     const onlineDrivers = await this.prisma.driverDuty.findMany({

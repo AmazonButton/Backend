@@ -1005,6 +1005,52 @@ export class OrdersRepository {
     });
   }
 
+  async takeoverShippingOrderTx(
+    orderId: bigint,
+    expectedStoreId: bigint | null,
+    newAssigneeUserId: bigint,
+    isPlatformAdmin: boolean,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+        `SELECT order_id, store_id, order_status, assigned_driver_id FROM orders WHERE order_id = $1 FOR UPDATE`,
+        orderId,
+      );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+
+      if (!isPlatformAdmin) {
+        if (!expectedStoreId || order.store_id.toString() !== expectedStoreId.toString()) {
+          throw new ForbiddenException('Đơn hàng không thuộc quyền quản lý của cửa hàng bạn');
+        }
+      }
+
+      if (order.order_status !== 'SHIPPING') {
+        throw new BadRequestException(
+          `Chỉ có thể tiếp nhận lại đơn đang ở trạng thái SHIPPING (hiện tại: ${order.order_status})`,
+        );
+      }
+
+      await tx.$executeRawUnsafe(
+        `UPDATE orders
+         SET assigned_driver_id = $1,
+             updated_at = NOW()
+         WHERE order_id = $2`,
+        newAssigneeUserId,
+        orderId,
+      );
+
+      await tx.$executeRawUnsafe(
+        `SELECT set_config('app.current_user_id', $1, true)`,
+        newAssigneeUserId.toString(),
+      );
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
   async completeDeliveryAtomicTx(orderId: bigint, driverUser: any, dto: DeliverOrderDto) {
     return this.prisma.$transaction(async (tx) => {
       const lockedOrders = await tx.$queryRawUnsafe<any[]>(
@@ -1016,13 +1062,10 @@ export class OrdersRepository {
       }
       const order = lockedOrders[0];
 
-      if (driverUser.storeId && order.store_id.toString() !== driverUser.storeId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
-      }
-
-      if (driverUser.role === 'STAFF_DELIVERY') {
-        if (!order.assigned_driver_id || order.assigned_driver_id.toString() !== driverUser.userId.toString()) {
-          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+      const isPlatformAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(driverUser?.role);
+      if (!isPlatformAdmin) {
+        if (!driverUser?.storeId || order.store_id.toString() !== driverUser.storeId.toString()) {
+          throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
         }
       }
 
@@ -1324,13 +1367,10 @@ export class OrdersRepository {
       }
       const order = lockedOrders[0];
 
-      if (driverUser.storeId && order.store_id.toString() !== driverUser.storeId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
-      }
-
-      if (driverUser.role === 'STAFF_DELIVERY') {
-        if (!order.assigned_driver_id || order.assigned_driver_id.toString() !== driverUser.userId.toString()) {
-          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+      const isPlatformAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(driverUser?.role);
+      if (!isPlatformAdmin) {
+        if (!driverUser?.storeId || order.store_id.toString() !== driverUser.storeId.toString()) {
+          throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
         }
       }
 

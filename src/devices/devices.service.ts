@@ -273,7 +273,7 @@ export class DevicesService {
     const button = await this.devicesRepo.findByIdentifier(id.toString());
     if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
 
-    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role)) {
       return button;
     }
     if (user.role === 'CUSTOMER') {
@@ -283,7 +283,7 @@ export class DevicesService {
       }
       return button;
     }
-    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+    if (user.role === 'STORE_OWNER') {
       const userStoreId = user.storeId ? user.storeId.toString() : null;
       if (!userStoreId || !button.storeId || button.storeId.toString() !== userStoreId) {
         throw new ForbiddenException('Thiết bị không thuộc phạm vi cửa hàng của bạn');
@@ -298,10 +298,10 @@ export class DevicesService {
       throw new ForbiddenException('Thiếu thông tin người dùng');
     }
 
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role);
+    const isPlatformOperator = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role);
     const whereClause: any = {};
 
-    if (isAdmin) {
+    if (isPlatformOperator) {
       if (query?.storeId) {
         whereClause.storeId = BigInt(query.storeId);
       }
@@ -316,7 +316,7 @@ export class DevicesService {
       return whereClause;
     }
 
-    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+    if (user.role === 'STORE_OWNER') {
       if (!user.storeId) {
         throw new ForbiddenException('Tài khoản cửa hàng chưa được liên kết với cửa hàng nào');
       }
@@ -407,7 +407,7 @@ export class DevicesService {
 
     // Resolve Store
     let storeId: bigint | null = null;
-    if (user.role === 'SUPER_ADMIN' || user.role === 'SYSTEM_ADMIN') {
+    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role)) {
       storeId = dto.storeId ? BigInt(dto.storeId) : null;
     } else if (user.storeId) {
       storeId = BigInt(user.storeId);
@@ -524,7 +524,7 @@ export class DevicesService {
       updateData.buttonName = body.name;
     }
     if (body.status) {
-      const allowedRoles = ['STORE_OWNER', 'STORE_MANAGER', 'ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'];
+      const allowedRoles = ['STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'];
       if (allowedRoles.includes(user?.role)) {
         updateData.status = body.status;
       }
@@ -872,8 +872,8 @@ export class DevicesService {
     }
     const rawStoreId = BigInt(storeId);
     const role = user.role || user.roleCode;
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(role);
-    if (!isAdmin) {
+    const isPlatformOps = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(role);
+    if (!isPlatformOps) {
       const userStoreId = user.storeId?.toString();
       if (!userStoreId || rawStoreId.toString() !== userStoreId) {
         throw new ForbiddenException('Bạn không có quyền truy cập vào kho nút của cửa hàng khác');
