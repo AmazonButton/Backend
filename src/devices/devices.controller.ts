@@ -93,13 +93,21 @@ export class DevicesController {
   }
 
   /**
-   * Super Admin / System Admin / Admin / System Staff lấy danh sách nút trống chưa phân bổ
+   * Super Admin / System Admin / Admin / System Staff lấy danh sách nút trống chưa phân bổ (có phân trang & tìm kiếm)
    */
   @Get('unassigned')
   @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF')
-  async getUnassigned() {
-    const data = await this.devicesService.getUnassignedDevices();
-    return { success: true, data };
+  async getUnassigned(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: DeviceQueryDto,
+  ) {
+    const result = await this.devicesService.getUnassignedDevices(query);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách nút chưa phân bổ thành công',
+    );
   }
 
   /**

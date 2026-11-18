@@ -209,6 +209,13 @@ export class DevicesService {
         remainingSeconds,
       } : null,
       storeId: b.storeId ? b.storeId.toString() : null,
+      custodyStoreId: b.custodyStoreId ? b.custodyStoreId.toString() : null,
+      custodyStore: b.custodyStore ? {
+        storeId: b.custodyStore.storeId.toString(),
+        storeName: b.custodyStore.name || b.custodyStore.storeName || null,
+        name: b.custodyStore.name || b.custodyStore.storeName || null,
+        code: b.custodyStore.code || null,
+      } : null,
       customerId: b.customerId ? b.customerId.toString() : null,
       addressId: b.addressId ? b.addressId.toString() : null,
       batteryLevel: b.batteryLevel !== null && b.batteryLevel !== undefined ? b.batteryLevel : 98,
@@ -305,6 +312,23 @@ export class DevicesService {
       if (query?.storeId) {
         whereClause.storeId = BigInt(query.storeId);
       }
+      if (query?.custodyStoreId) {
+        whereClause.custodyStoreId = BigInt(query.custodyStoreId);
+      }
+      if (query?.inventoryState) {
+        whereClause.inventoryState = query.inventoryState;
+      }
+      if (query?.allocatedOnly === 'true' || query?.allocatedOnly === true) {
+        whereClause.AND = [
+          ...(whereClause.AND || []),
+          {
+            OR: [
+              { custodyStoreId: { not: null } },
+              { inventoryState: { in: ['ALLOCATED_TO_STORE', 'IN_CUSTOMER_CUSTODY', 'IN_STORE'] } },
+            ],
+          },
+        ];
+      }
       return whereClause;
     }
 
@@ -363,10 +387,18 @@ export class DevicesService {
     }
     if (query?.search?.trim()) {
       const s = query.search.trim();
-      whereClause.OR = [
-        { buttonCode: { contains: s, mode: 'insensitive' } },
-        { deviceId: { contains: s, mode: 'insensitive' } },
-        { buttonName: { contains: s, mode: 'insensitive' } },
+      whereClause.AND = [
+        ...(whereClause.AND || []),
+        {
+          OR: [
+            { buttonCode: { contains: s, mode: 'insensitive' } },
+            { deviceId: { contains: s, mode: 'insensitive' } },
+            { buttonName: { contains: s, mode: 'insensitive' } },
+            { custodyStore: { name: { contains: s, mode: 'insensitive' } } },
+            { custodyStore: { code: { contains: s, mode: 'insensitive' } } },
+            { store: { name: { contains: s, mode: 'insensitive' } } },
+          ],
+        },
       ];
     }
     const rawPage = Number(query?.page);
@@ -829,9 +861,34 @@ export class DevicesService {
     return { success: true, count: generated.length, data: generated };
   }
 
-  async getUnassignedDevices() {
-    const { items } = await this.devicesRepo.findMany({ status: 'INACTIVE' }, { page: 1, pageSize: 50 });
-    return items.map((b) => this.formatButton(b));
+  async getUnassignedDevices(query?: any) {
+    const rawPage = Number(query?.page);
+    const rawPageSize = Number(query?.pageSize) || Number(query?.limit);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+
+    const whereClause: any = {
+      inventoryState: 'IN_PLATFORM_WAREHOUSE',
+      custodyStoreId: null,
+      customerId: null,
+    };
+
+    if (query?.search?.trim()) {
+      const s = query.search.trim();
+      whereClause.OR = [
+        { buttonCode: { contains: s, mode: 'insensitive' } },
+        { deviceId: { contains: s, mode: 'insensitive' } },
+        { buttonName: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+
+    const { items, total } = await this.devicesRepo.findMany(whereClause, { page, pageSize });
+    return {
+      items: items.map((b) => this.formatButton(b)),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async allocateDevicesToStore(body: { storeId?: string; targetStoreId?: string; deviceIds: string[]; productId?: string }, user: any) {

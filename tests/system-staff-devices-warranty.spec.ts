@@ -9,6 +9,7 @@ import { WarrantyController } from '../src/warranty/warranty.controller';
 import { RentalsController } from '../src/rentals/rentals.controller';
 import { AdminRentalsController } from '../src/rentals/admin-rentals.controller';
 import { DevicesService } from '../src/devices/devices.service';
+import { DeviceTemplatesService } from '../src/devices/device-templates.service';
 import { WarrantyService } from '../src/warranty/warranty.service';
 import { WarrantyRepository } from '../src/warranty/warranty.repository';
 import { RentalsRepository } from '../src/rentals/rentals.repository';
@@ -998,7 +999,111 @@ async function run() {
     console.log('  ✔ [PASS] Ticket rentalId snapshot enforced on create, lock & swap (rejects 501->601 drift & legacy null snapshots with 409)');
   }
 
-  console.log(`\n🎉 ALL ${passed}/8 STEP-4 VERIFICATION GROUPS PASSED!\n`);
+  // 9. DeviceTemplatesService: SYSTEM_STAFF CRUD + deploy validates defaultProduct against routing storeId (not custodyStoreId)
+  {
+    const templates = new Map<string, any>();
+    let seq = 900n;
+    const deployedCalls: any[] = [];
+    const mockRepo: any = {
+      createTemplate: async (data: any) => {
+        const id = ++seq;
+        const row = { templateId: id, ...data };
+        templates.set(id.toString(), row);
+        return row;
+      },
+      findTemplateByIdOrCode: async (id: string) => templates.get(String(id)) || null,
+      updateTemplate: async (id: bigint, data: any) => {
+        const prev = templates.get(id.toString());
+        const next = { ...prev, ...Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) };
+        templates.set(id.toString(), next);
+        return next;
+      },
+      deleteTemplate: async (id: bigint) => {
+        templates.delete(id.toString());
+      },
+      findByIdentifier: async (deviceId: string) => {
+        if (deviceId === 'SOB-CUSTODY-B') {
+          return {
+            buttonId: 7001n,
+            deviceId: 'SOB-CUSTODY-B',
+            storeId: 10n, // Routing store A
+            custodyStoreId: 20n, // Physical custody store B
+          };
+        }
+        return null;
+      },
+      deployTemplateAtomicTx: async (buttonId: bigint, payload: any) => {
+        deployedCalls.push({ buttonId, payload });
+      },
+    };
+    const mockPrisma: any = {
+      product: {
+        findUnique: async ({ where }: any) =>
+          where.productId === 200n
+            ? { productId: 200n, storeId: 20n, status: 'ACTIVE' }
+            : where.productId === 100n
+              ? { productId: 100n, storeId: 10n, status: 'ACTIVE' }
+              : null,
+      },
+    };
+    const tmplService = new DeviceTemplatesService(mockRepo, {} as any, mockPrisma);
+    const sysStaffUser = { userId: '99', role: 'SYSTEM_STAFF', storeId: null };
+
+    // 9a. SYSTEM_STAFF can create, update, and delete a global template (storeId: null)
+    const created = await tmplService.create({ name: 'SysStaff Template', category: 'Gas' } as any, sysStaffUser);
+    assert.strictEqual(created.storeId, null);
+    const updated = await tmplService.update(created.id, { name: 'SysStaff Template v2' } as any, sysStaffUser);
+    assert.strictEqual(updated.name, 'SysStaff Template v2');
+
+    // 9b. Global template cannot bind a store-specific SKU
+    await assert.rejects(
+      () => tmplService.create({ name: 'Invalid SKU', defaultProductId: '200' } as any, sysStaffUser),
+      (err: any) => err instanceof BadRequestException,
+    );
+
+    // 9c. Button with routing storeId=10 (A) & custodyStoreId=20 (B) REJECTS deploying Store B SKU (200)
+    const storeBTemplate = await tmplService.create(
+      { name: 'Store B SKU', storeId: '20', defaultProductId: '200' } as any,
+      sysStaffUser,
+    );
+    templates.set(storeBTemplate.id, {
+      ...templates.get(storeBTemplate.id),
+      defaultProduct: { productId: 200n, storeId: 20n },
+    });
+    const mismatchDeploy = await tmplService.deploy(
+      storeBTemplate.id,
+      { deviceId: 'SOB-CUSTODY-B' } as any,
+      { userId: '22', role: 'STORE_OWNER', storeId: '20' },
+    );
+    assert.strictEqual(mismatchDeploy.success, false);
+    assert.strictEqual(mismatchDeploy.failed, 1);
+    assert.strictEqual(deployedCalls.length, 0);
+
+    // 9d. Button with routing storeId=10 (A) ACCEPTS deploying Store A SKU (100)
+    const storeATemplate = await tmplService.create(
+      { name: 'Store A SKU', storeId: '10', defaultProductId: '100' } as any,
+      sysStaffUser,
+    );
+    templates.set(storeATemplate.id, {
+      ...templates.get(storeATemplate.id),
+      defaultProduct: { productId: 100n, storeId: 10n },
+    });
+    const matchedDeploy = await tmplService.deploy(
+      storeATemplate.id,
+      { deviceId: 'SOB-CUSTODY-B' } as any,
+      sysStaffUser,
+    );
+    assert.strictEqual(matchedDeploy.success, true);
+    assert.strictEqual(deployedCalls.length, 1);
+
+    await tmplService.delete(created.id, sysStaffUser);
+    assert.strictEqual(templates.has(created.id), false);
+
+    passed++;
+    console.log('  ✔ [PASS] DeviceTemplatesService allows SYSTEM_STAFF CRUD and checks SKU against routing storeId (not custodyStoreId)');
+  }
+
+  console.log(`\n🎉 ALL ${passed}/9 STEP-4 VERIFICATION GROUPS PASSED!\n`);
 }
 
 run().catch((err) => {

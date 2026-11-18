@@ -47,18 +47,24 @@ export class DeviceTemplatesService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
+  private isPlatformOperator(user: any): boolean {
+    return ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user?.role);
+  }
+
   async create(dto: CreateDeviceTemplateDto, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
-    
+    const isPlatformOps = this.isPlatformOperator(user);
+
     let storeId: bigint | null = null;
-    if (isAdmin) {
+    if (isPlatformOps) {
       storeId = dto.storeId ? BigInt(dto.storeId) : null;
-    } else {
+    } else if (user.role === 'STORE_OWNER') {
       if (!user.storeId) {
         throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin storeId');
       }
       storeId = BigInt(user.storeId);
+    } else {
+      throw new ForbiddenException('Bạn không có quyền tạo template thiết bị');
     }
 
     let defaultProductId: bigint | null = null;
@@ -76,8 +82,11 @@ export class DeviceTemplatesService {
       if (product.status !== 'ACTIVE') {
         throw new BadRequestException('Sản phẩm mặc định phải ở trạng thái ACTIVE');
       }
-      if (!isAdmin && storeId !== null && product.storeId.toString() !== storeId.toString()) {
-        throw new ForbiddenException('Sản phẩm mặc định không thuộc cửa hàng của bạn');
+      if (storeId !== null && product.storeId.toString() !== storeId.toString()) {
+        throw new ForbiddenException('Sản phẩm mặc định không thuộc cửa hàng của template');
+      }
+      if (storeId === null) {
+        throw new BadRequestException('Template toàn cục không thể gắn sản phẩm thuộc riêng một cửa hàng');
       }
       defaultProductId = pId;
     }
@@ -172,16 +181,14 @@ export class DeviceTemplatesService {
     const template = await this.devicesRepo.findTemplateByIdOrCode(id);
     if (!template) throw new NotFoundException('Không tìm thấy template mẫu');
 
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    const isPlatformOps = this.isPlatformOperator(user);
     if (template.storeId === null) {
-      if (!isAdmin) {
-        throw new ForbiddenException('Chỉ quản trị viên hệ thống (SUPER_ADMIN) mới có quyền chỉnh sửa template toàn cục');
+      if (!isPlatformOps) {
+        throw new ForbiddenException('Chỉ bộ phận kỹ thuật/quản trị nền tảng mới có quyền chỉnh sửa template toàn cục');
       }
-    } else {
-      if (!isAdmin) {
-        if (!user.storeId || user.storeId.toString() !== template.storeId.toString()) {
-          throw new ForbiddenException('Bạn không có quyền chỉnh sửa template của cửa hàng khác');
-        }
+    } else if (!isPlatformOps) {
+      if (user.role !== 'STORE_OWNER' || !user.storeId || user.storeId.toString() !== template.storeId.toString()) {
+        throw new ForbiddenException('Bạn không có quyền chỉnh sửa template của cửa hàng khác');
       }
     }
 
@@ -203,8 +210,11 @@ export class DeviceTemplatesService {
         if (product.status !== 'ACTIVE') {
           throw new BadRequestException('Sản phẩm mặc định phải ở trạng thái ACTIVE');
         }
-        if (!isAdmin && template.storeId !== null && product.storeId.toString() !== template.storeId.toString()) {
-          throw new ForbiddenException('Sản phẩm mặc định không thuộc cửa hàng của bạn');
+        if (template.storeId === null) {
+          throw new BadRequestException('Template toàn cục không thể gắn sản phẩm thuộc riêng một cửa hàng');
+        }
+        if (product.storeId.toString() !== template.storeId.toString()) {
+          throw new ForbiddenException('Sản phẩm mặc định không thuộc cửa hàng của template');
         }
         defaultProductId = pId;
       }
@@ -237,16 +247,14 @@ export class DeviceTemplatesService {
     const template = await this.devicesRepo.findTemplateByIdOrCode(id);
     if (!template) throw new NotFoundException('Không tìm thấy template mẫu');
 
-    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    const isPlatformOps = this.isPlatformOperator(user);
     if (template.storeId === null) {
-      if (!isAdmin) {
-        throw new ForbiddenException('Chỉ quản trị viên hệ thống (SUPER_ADMIN) mới có quyền xóa template toàn cục');
+      if (!isPlatformOps) {
+        throw new ForbiddenException('Chỉ bộ phận kỹ thuật/quản trị nền tảng mới có quyền xóa template toàn cục');
       }
-    } else {
-      if (!isAdmin) {
-        if (!user.storeId || user.storeId.toString() !== template.storeId.toString()) {
-          throw new ForbiddenException('Bạn không có quyền xóa template của cửa hàng khác');
-        }
+    } else if (!isPlatformOps) {
+      if (user.role !== 'STORE_OWNER' || !user.storeId || user.storeId.toString() !== template.storeId.toString()) {
+        throw new ForbiddenException('Bạn không có quyền xóa template của cửa hàng khác');
       }
     }
 
@@ -313,16 +321,17 @@ export class DeviceTemplatesService {
           continue;
         }
 
+        const custodyStoreRef = button.custodyStoreId || button.storeId;
         if (!isPlatformOps) {
-          if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
+          if (!user.storeId || custodyStoreRef?.toString() !== user.storeId.toString()) {
             results.push({ deviceId: dId, success: false, reason: 'Thiết bị không thuộc quyền quản lý của cửa hàng bạn' });
             continue;
           }
         }
 
-        // Kiểm tra sản phẩm mặc định có thuộc cửa hàng của thiết bị không
-        if (template.defaultProduct && button.storeId && template.defaultProduct.storeId.toString() !== button.storeId.toString()) {
-          results.push({ deviceId: dId, success: false, reason: 'Sản phẩm mặc định của template không thuộc cửa hàng sở hữu nút bấm' });
+        // Kiểm tra sản phẩm mặc định luôn theo storeId định tuyến đặt hàng (tách biệt với custodyStoreId)
+        if (template.defaultProduct && (!button.storeId || template.defaultProduct.storeId.toString() !== button.storeId.toString())) {
+          results.push({ deviceId: dId, success: false, reason: 'Sản phẩm mặc định của template không thuộc cửa hàng định tuyến đơn hàng của nút bấm' });
           continue;
         }
 

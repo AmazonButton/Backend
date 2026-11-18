@@ -22,6 +22,7 @@ export class DevicesRepository {
         where: whereClause,
         include: {
           store: true,
+          custodyStore: true,
           customer: { include: { user: true } },
           address: true,
           buttonProducts: { include: { product: true } },
@@ -53,6 +54,7 @@ export class DevicesRepository {
       where: { buttonId },
       include: {
         store: true,
+        custodyStore: true,
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
@@ -77,6 +79,7 @@ export class DevicesRepository {
       where: { deviceId },
       include: {
         store: true,
+        custodyStore: true,
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
@@ -108,6 +111,7 @@ export class DevicesRepository {
       },
       include: {
         store: true,
+        custodyStore: true,
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
@@ -132,6 +136,7 @@ export class DevicesRepository {
       data,
       include: {
         store: true,
+        custodyStore: true,
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
@@ -170,7 +175,7 @@ export class DevicesRepository {
           update = { ...data, canOrder: allowed };
         }
         return tx.ioTButton.update({ where: { buttonId }, data: update, include: {
-          store: true, customer: { include: { user: true } }, address: true,
+          store: true, custodyStore: true, customer: { include: { user: true } }, address: true,
           buttonProducts: { include: { product: true } }, deployedTemplate: true,
         } });
       });
@@ -180,6 +185,7 @@ export class DevicesRepository {
       data,
       include: {
         store: true,
+        custodyStore: true,
         customer: { include: { user: true } },
         address: true,
         buttonProducts: { include: { product: true } },
@@ -247,6 +253,7 @@ export class DevicesRepository {
         where: { buttonId },
         include: {
           store: true,
+          custodyStore: true,
           customer: { include: { user: true } },
           buttonProducts: { include: { product: true } },
           deployedTemplate: true,
@@ -363,6 +370,7 @@ export class DevicesRepository {
         data: { storeId: newStoreId },
         include: {
           store: true,
+          custodyStore: true,
           customer: { include: { user: true } },
           address: true,
           buttonProducts: { include: { product: true } },
@@ -472,6 +480,7 @@ export class DevicesRepository {
         data: updateData,
         include: {
           store: true,
+          custodyStore: true,
           customer: { include: { user: true } },
           address: true,
           buttonProducts: { include: { product: true } },
