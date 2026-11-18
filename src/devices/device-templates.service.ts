@@ -172,6 +172,16 @@ export class DeviceTemplatesService {
       templateId: template.templateId.toString(),
       storeId: template.storeId ? template.storeId.toString() : null,
       defaultProductId: template.defaultProductId ? template.defaultProductId.toString() : null,
+      defaultProduct: template.defaultProduct
+        ? {
+            id: (template.defaultProduct.productId ?? (template.defaultProduct as any).id)?.toString(),
+            productId: (template.defaultProduct.productId ?? (template.defaultProduct as any).id)?.toString(),
+            storeId: template.defaultProduct.storeId?.toString(),
+            productCode: template.defaultProduct.productCode,
+            productName: template.defaultProduct.productName,
+            status: template.defaultProduct.status,
+          }
+        : null,
       longPressAction: template.longPressAction || 'WIFI_CONFIGURATION',
     };
   }
@@ -306,6 +316,11 @@ export class DeviceTemplatesService {
     }
 
     const template = await this.getById(id, user);
+    const resolvedDefaultProduct =
+      template.defaultProduct ||
+      (template.defaultProductId
+        ? await this.prisma.product.findUnique({ where: { productId: BigInt(template.defaultProductId) } })
+        : null);
     const isPlatformOps = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role);
     const templateBigIntId = template.templateId
       ? BigInt(template.templateId)
@@ -330,9 +345,15 @@ export class DeviceTemplatesService {
         }
 
         // Kiểm tra sản phẩm mặc định luôn theo storeId định tuyến đặt hàng (tách biệt với custodyStoreId)
-        if (template.defaultProduct && (!button.storeId || template.defaultProduct.storeId.toString() !== button.storeId.toString())) {
-          results.push({ deviceId: dId, success: false, reason: 'Sản phẩm mặc định của template không thuộc cửa hàng định tuyến đơn hàng của nút bấm' });
-          continue;
+        if (resolvedDefaultProduct || template.defaultProductId) {
+          if (
+            !resolvedDefaultProduct ||
+            !button.storeId ||
+            resolvedDefaultProduct.storeId.toString() !== button.storeId.toString()
+          ) {
+            results.push({ deviceId: dId, success: false, reason: 'Sản phẩm mặc định của template không thuộc cửa hàng định tuyến đơn hàng của nút bấm' });
+            continue;
+          }
         }
 
         await this.devicesRepo.deployTemplateAtomicTx(button.buttonId, {

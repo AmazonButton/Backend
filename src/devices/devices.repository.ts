@@ -333,6 +333,17 @@ export class DevicesRepository {
           ...(isNum ? [{ templateId: BigInt(idOrCode) }] : []),
         ],
       },
+      include: {
+        defaultProduct: {
+          select: {
+            productId: true,
+            storeId: true,
+            productCode: true,
+            productName: true,
+            status: true,
+          },
+        },
+      },
     });
   }
 
