@@ -13,6 +13,7 @@ import { DeviceTemplatesService } from '../src/devices/device-templates.service'
 import { WarrantyService } from '../src/warranty/warranty.service';
 import { WarrantyRepository } from '../src/warranty/warranty.repository';
 import { RentalsRepository } from '../src/rentals/rentals.repository';
+import { RentalsService } from '../src/rentals/rentals.service';
 
 async function run() {
   console.log('🧪 Running Step 4 Verification Suite: SYSTEM_STAFF Devices & Warranty Invariants...');
@@ -57,6 +58,13 @@ async function run() {
     const resetRoles: string[] = reflector.get(ROLES_KEY, ProvisioningController.prototype.factoryReset) || [];
     assert.ok(resetRoles.includes('SYSTEM_STAFF'));
     assert.ok(!resetRoles.includes('STORE_MANAGER'));
+
+    const listReturnRoles: string[] = reflector.get(ROLES_KEY, RentalsController.prototype.listReturnRequests) || [];
+    assert.ok(listReturnRoles.includes('SYSTEM_STAFF'), 'RentalsController.listReturnRequests must allow SYSTEM_STAFF');
+    assert.ok(listReturnRoles.includes('STORE_OWNER'), 'RentalsController.listReturnRequests must allow STORE_OWNER');
+    for (const deprecated of ['STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON', 'STAFF_DELIVERY']) {
+      assert.ok(!listReturnRoles.includes(deprecated), `RentalsController.listReturnRequests must NOT contain deprecated role ${deprecated}`);
+    }
 
     const returnReceiptRoles: string[] = reflector.get(ROLES_KEY, RentalsController.prototype.confirmReturnReceipt) || [];
     assert.ok(returnReceiptRoles.includes('SYSTEM_STAFF'));
@@ -1103,7 +1111,92 @@ async function run() {
     console.log('  ✔ [PASS] DeviceTemplatesService allows SYSTEM_STAFF CRUD and checks SKU against routing storeId (not custodyStoreId)');
   }
 
-  console.log(`\n🎉 ALL ${passed}/9 STEP-4 VERIFICATION GROUPS PASSED!\n`);
+  // 10. RentalsService.listReturnRequests supports global SYSTEM_STAFF listing, strict STORE_OWNER tenant isolation, and rejects CUSTOMER
+  {
+    const capturedQueries: any[] = [];
+    const sampleReturn = {
+      returnId: BigInt(501),
+      returnCode: 'RET-2026-0501',
+      rentalId: BigInt(88),
+      buttonId: BigInt(42),
+      status: 'PENDING_RECEIPT',
+      inspectionNote: null,
+      receivedAt: null,
+      inspectedAt: null,
+      createdAt: new Date('2026-11-20T01:00:00Z'),
+      rental: {
+        rentalCode: 'RNT-2026-0088',
+        status: 'ACTIVE',
+        fulfillmentStoreId: BigInt(10),
+        depositPerButton: 150000,
+        fulfillmentStore: { storeId: BigInt(10), name: 'Cua hang A', code: 'STORE-A' },
+        customer: {
+          user: { fullName: 'Nguyen Van Khach', phone: '0909123456' },
+        },
+      },
+      button: {
+        deviceId: 'SOB-000042',
+        buttonCode: 'BTN-000042',
+        buttonName: 'Nut Nuoc 20L',
+        inventoryState: 'RETURN_IN_TRANSIT',
+        custodyStoreId: BigInt(10),
+        storeId: BigInt(10),
+        custodyStore: { storeId: BigInt(10), name: 'Cua hang A', code: 'STORE-A' },
+        store: { storeId: BigInt(10), name: 'Cua hang A', code: 'STORE-A' },
+      },
+      refunds: [
+        {
+          refundId: BigInt(77),
+          refundCode: 'DEP-2026-0077',
+          status: 'PENDING_APPROVAL',
+          amount: 150000,
+        },
+      ],
+    };
+
+    const mockRentalRepo: any = {
+      findRentalById: async () => null,
+      listReturnRequestsPaginated: async (params: any) => {
+        capturedQueries.push(params);
+        return { items: [sampleReturn], total: 1 };
+      },
+    };
+    const rentalsSvc = new RentalsService(mockRentalRepo);
+
+    // 10a. SYSTEM_STAFF lists globally (storeId undefined) and receives clean DTO
+    const staffResult = await rentalsSvc.listReturnRequests(
+      { userId: '99', role: 'SYSTEM_STAFF', storeId: null },
+      { status: 'PENDING_RECEIPT', search: 'RET', page: 1, pageSize: 12 },
+    );
+    assert.strictEqual(capturedQueries[0].storeId, undefined);
+    assert.strictEqual(capturedQueries[0].status, 'PENDING_RECEIPT');
+    assert.strictEqual(staffResult.items.length, 1);
+    assert.strictEqual(staffResult.items[0].returnCode, 'RET-2026-0501');
+    assert.strictEqual(staffResult.items[0].customName, 'Nut Nuoc 20L');
+    assert.strictEqual(staffResult.items[0].depositRefund?.refundAmount, 150000);
+    assert.strictEqual(staffResult.items[0].store?.code, 'STORE-A');
+    assert.strictEqual(staffResult.pagination.totalItems, 1);
+
+    // 10b. STORE_OWNER is strictly scoped to their own storeId
+    await rentalsSvc.listReturnRequests(
+      { userId: '22', role: 'STORE_OWNER', storeId: '10' },
+      { status: 'ALL', page: 2, pageSize: 20 },
+    );
+    assert.strictEqual(capturedQueries[1].storeId, BigInt(10));
+    assert.strictEqual(capturedQueries[1].skip, 20);
+    assert.strictEqual(capturedQueries[1].take, 20);
+
+    // 10c. CUSTOMER is blocked from inspection queue listing
+    await assert.rejects(
+      () => rentalsSvc.listReturnRequests({ userId: '7', role: 'CUSTOMER', customerProfileId: '5' }, {}),
+      (err: any) => err instanceof ForbiddenException,
+    );
+
+    passed++;
+    console.log('  ✔ [PASS] RentalsService.listReturnRequests enforces global SYSTEM_STAFF access, STORE_OWNER tenant isolation, and clean DTO mapping');
+  }
+
+  console.log(`\n🎉 ALL ${passed}/10 STEP-4 VERIFICATION GROUPS PASSED!\n`);
 }
 
 run().catch((err) => {

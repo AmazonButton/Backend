@@ -408,6 +408,97 @@ export class RentalsRepository {
     return { total, items };
   }
 
+  async listReturnRequestsPaginated(params: {
+    storeId?: bigint;
+    status?: string;
+    search?: string;
+    skip: number;
+    take: number;
+  }) {
+    const where: any = {};
+    if (params.status && params.status !== 'ALL') {
+      where.status = params.status;
+    }
+    if (params.storeId !== undefined) {
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { rental: { fulfillmentStoreId: params.storeId } },
+            { button: { custodyStoreId: params.storeId } },
+          ],
+        },
+      ];
+    }
+    const q = params.search?.trim();
+    if (q) {
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { returnCode: { contains: q, mode: 'insensitive' } },
+            { rental: { rentalCode: { contains: q, mode: 'insensitive' } } },
+            { button: { deviceId: { contains: q, mode: 'insensitive' } } },
+            { button: { buttonCode: { contains: q, mode: 'insensitive' } } },
+          ],
+        },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.rentalReturn.findMany({
+        where,
+        skip: params.skip,
+        take: params.take,
+        orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
+        include: {
+          rental: {
+            select: {
+              rentalId: true,
+              rentalCode: true,
+              status: true,
+              fulfillmentStoreId: true,
+              depositPerButton: true,
+              fulfillmentStore: { select: { storeId: true, name: true, code: true } },
+              customer: {
+                select: {
+                  customerId: true,
+                  user: { select: { fullName: true, phone: true, email: true } },
+                },
+              },
+            },
+          },
+          button: {
+            select: {
+              buttonId: true,
+              deviceId: true,
+              buttonCode: true,
+              buttonName: true,
+              inventoryState: true,
+              custodyStoreId: true,
+              storeId: true,
+              custodyStore: { select: { storeId: true, name: true, code: true } },
+              store: { select: { storeId: true, name: true, code: true } },
+            },
+          },
+          refunds: {
+            take: 1,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              refundId: true,
+              refundCode: true,
+              status: true,
+              amount: true,
+            },
+          },
+        },
+      }),
+      this.prisma.rentalReturn.count({ where }),
+    ]);
+
+    return { items, total };
+  }
+
   async createReturnRequestTx(rentalId: bigint, buttonId: bigint) {
     return this.prisma.$transaction(async (tx) => {
       // 1. Kiểm tra và khóa bi quan thiết bị
