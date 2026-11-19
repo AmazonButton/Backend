@@ -414,7 +414,7 @@ export class OrdersService {
       if (!user.customerProfileId || button.customerId?.toString() !== user.customerProfileId.toString()) {
         throw new ForbiddenException('Bạn không sở hữu nút bấm này');
       }
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON', 'STAFF_DELIVERY'].includes(user?.role)) {
+    } else if (user?.role === 'STORE_OWNER') {
       if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Nút bấm không thuộc quyền quản lý của cửa hàng bạn');
       }
@@ -566,17 +566,7 @@ export class OrdersService {
         throw new ForbiddenException('Tài khoản khách hàng thiếu hồ sơ định danh (customerProfileId)');
       }
       whereClause.customerId = BigInt(user.customerProfileId);
-    } else if (
-      [
-        'STORE_OWNER',
-        'STORE_MANAGER',
-        'STORE_STAFF',
-        'STAFF_ORDER',
-        'STAFF_INVENTORY',
-        'STAFF_BUTTON',
-        'STAFF_DELIVERY',
-      ].includes(user.role)
-    ) {
+    } else if (user.role === 'STORE_OWNER') {
       if (!user.storeId) {
         throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
       }
@@ -627,13 +617,19 @@ export class OrdersService {
   }
 
   async getDeliveryQueue(user: any, page: number = 1, pageSize: number = 20) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role);
+    if (!isAdmin && user.role !== 'STORE_OWNER') {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị mới có quyền xem hàng đợi giao hàng');
+    }
+    if (!isAdmin && !user.storeId) {
+      throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
+    }
+
     const cappedPageSize = Math.min(pageSize, 100);
     const skip = (page - 1) * cappedPageSize;
 
-    let storeId: bigint | undefined = undefined;
-    if (user?.storeId) {
-      storeId = BigInt(user.storeId);
-    }
+    const storeId: bigint | undefined = !isAdmin || user?.storeId ? BigInt(user.storeId) : undefined;
 
     const { orders, total } = await this.ordersRepo.findDeliveryQueueOrders(
       storeId,
@@ -742,7 +738,7 @@ export class OrdersService {
     const elapsedSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
 
     const isPrivilegedStaff =
-      user && ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER'].includes(user.role);
+      user && ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER'].includes(user.role);
 
     // If caller is CUSTOMER or unprivileged
     if (!isPrivilegedStaff) {
@@ -965,8 +961,8 @@ export class OrdersService {
 
   async claimOrder(orderId: string | number | bigint, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
-      throw new ForbiddenException('Chỉ tài xế hoặc quản lý cửa hàng mới có quyền nhận đơn hàng');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị viên mới có quyền nhận giao đơn hàng');
     }
     if (!user.storeId && !['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
       throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng liên kết (storeId)');
@@ -995,10 +991,43 @@ export class OrdersService {
     return formatted;
   }
 
+  async takeoverLegacyDelivery(orderId: string | number | bigint, user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng mới có quyền tiếp nhận lại đơn hàng đang giao');
+    }
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (!isAdmin && !user.storeId) {
+      throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng liên kết (storeId)');
+    }
+
+    const targetOrderId = BigInt(orderId);
+    const actorUserId = BigInt(user.userId || user.id);
+    const expectedStoreId = user.storeId ? BigInt(user.storeId) : null;
+
+    const updated = await this.ordersRepo.takeoverShippingOrderTx(
+      targetOrderId,
+      expectedStoreId,
+      actorUserId,
+      isAdmin,
+    );
+    const formatted = toOrderResponseDto(updated);
+    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_CLAIMED', {
+      order: formatted,
+      storeId: updated.storeId.toString(),
+      driverId: actorUserId.toString(),
+      reclaimedFromLegacyDriver: true,
+    });
+    return formatted;
+  }
+
   async completeDelivery(orderId: string | number | bigint, dto: DeliverOrderDto, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
-      throw new ForbiddenException('Không có quyền hoàn tất đơn giao hàng');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị viên mới có quyền hoàn tất giao hàng');
+    }
+    if (user.role === 'STORE_OWNER' && !user.storeId) {
+      throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
     }
 
     const targetOrderId = BigInt(orderId);
@@ -1017,8 +1046,11 @@ export class OrdersService {
 
   async failDelivery(orderId: string | number | bigint, dto: DeliveryFailureDto, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
-      throw new ForbiddenException('Không có quyền báo giao hàng thất bại');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị viên mới có quyền cập nhật giao hàng thất bại');
+    }
+    if (user.role === 'STORE_OWNER' && !user.storeId) {
+      throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
     }
 
     const targetOrderId = BigInt(orderId);
@@ -1191,10 +1223,8 @@ export class OrdersService {
       if (!customerUserId || customerUserId.toString() !== user.userId?.toString()) {
         throw new ForbiddenException('Bạn không có quyền xem thông tin đơn hàng của người khác');
       }
-    } else if (
-      ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_DELIVERY'].includes(user.role)
-    ) {
-      if (user.storeId && order.storeId.toString() !== user.storeId.toString()) {
+    } else if (user.role === 'STORE_OWNER') {
+      if (!user.storeId || order.storeId.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang quản lý');
       }
     } else if (!['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {

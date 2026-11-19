@@ -42,7 +42,7 @@ export class OrdersController {
     };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Get('delivery-queue')
   async getDeliveryQueue(
     @Request() req: any,
@@ -62,7 +62,7 @@ export class OrdersController {
     };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Get('driver/my-orders')
   async getDriverOrders(@Request() req: any, @Query() query: DriverOrdersQueryDto) {
     const data = await this.ordersService.getDriverOrders(req.user, query);
@@ -130,35 +130,42 @@ export class OrdersController {
     return this.ordersService.simulateButtonPress(body, req.user);
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post(':id/claim')
   async claimOrder(@Param('id') id: string, @Request() req: any) {
     const data = await this.ordersService.claimOrder(id, req.user);
     return { success: true, message: 'Nhận đơn hàng thành công!', data };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Post(':id/takeover-delivery')
+  async takeoverDelivery(@Param('id') id: string, @Request() req: any) {
+    const data = await this.ordersService.takeoverLegacyDelivery(id, req.user);
+    return { success: true, message: 'Chủ cửa hàng đã tiếp nhận lại đơn đang giao thành công!', data };
+  }
+
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post(':id/deliver')
   async deliverOrder(@Param('id') id: string, @Body() body: DeliverOrderDto, @Request() req: any) {
     const data = await this.ordersService.completeDelivery(id, body, req.user);
     return { success: true, message: 'Hoàn tất giao hàng thành công!', data };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post(':id/fail')
   async failDelivery(@Param('id') id: string, @Body() body: DeliveryFailureDto, @Request() req: any) {
     const data = await this.ordersService.failDelivery(id, body, req.user);
     return { success: true, message: 'Đã ghi nhận giao hàng thất bại', data };
   }
 
-  @Roles('CUSTOMER', 'STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('CUSTOMER', 'STORE_OWNER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Get(':id/pod-view')
   async getPodView(@Param('id') id: string, @Request() req: any) {
     const data = await this.ordersService.getPodViewUrl(id, req.user);
     return { success: true, message: 'Lấy link xem ảnh xác thực giao hàng thành công', data };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/status')
   async updateStatus(@Param('id') id: string, @Body() body: UpdateOrderStatusDto, @Request() req: any) {
     const data = await this.ordersService.updateOrderStatus(id, body.status, req.user);
@@ -172,7 +179,7 @@ export class OrdersController {
     return { success: true, message: 'Đã hủy đơn hàng thành công', data };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @HttpCode(200)
   @Post(':id/refund')
   async refund(@Param('id') id: string, @Request() req: any, @Body() body: RefundOrderDto) {

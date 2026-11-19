@@ -267,7 +267,7 @@ export class ProvisioningService {
     const button = await this.provRepo.findButtonByIdentifier(id);
     if (!button) throw new NotFoundException('Không tìm thấy thiết bị');
 
-    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
+    if (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role)) {
       return button;
     }
     if (user.role === 'CUSTOMER') {
@@ -277,7 +277,7 @@ export class ProvisioningService {
       }
       return button;
     }
-    if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_BUTTON'].includes(user.role)) {
+    if (user.role === 'STORE_OWNER') {
       const userStoreId = user.storeId ? user.storeId.toString() : null;
       if (!userStoreId || !button.storeId || button.storeId.toString() !== userStoreId) {
         throw new ForbiddenException('Thiết bị không thuộc phạm vi cửa hàng của bạn');

@@ -16,6 +16,18 @@ export class DeviceQueryDto extends PaginationQueryDto {
 
   @IsOptional()
   @IsString()
+  custodyStoreId?: string;
+
+  @IsOptional()
+  @IsString()
+  inventoryState?: string;
+
+  @IsOptional()
+  @IsString()
+  allocatedOnly?: string;
+
+  @IsOptional()
+  @IsString()
   customerId?: string;
 }
 

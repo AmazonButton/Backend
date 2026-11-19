@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Body,
+  Query,
   UseGuards,
   Request,
   Param,
@@ -11,7 +12,7 @@ import {
 import { RentalsService } from './rentals.service';
 import { CreateRentalOrderDto } from './dto/rentals.dto';
 import { RentalExtensionDto } from './dto/rental-extension.dto';
-import { CreateReturnRequestDto, ConfirmReturnReceiptDto } from './dto/return-request.dto';
+import { CreateReturnRequestDto, ConfirmReturnReceiptDto, ListReturnRequestsQueryDto } from './dto/return-request.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -51,6 +52,21 @@ export class RentalsController {
     }
     const data = await this.rentalsService.listCustomerRentals(customerProfileId);
     return { success: true, data };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Get('returns')
+  async listReturnRequests(
+    @Query() query: ListReturnRequestsQueryDto,
+    @Request() req: any,
+  ) {
+    const result = await this.rentalsService.listReturnRequests(req.user, query);
+    return {
+      success: true,
+      data: result.items,
+      pagination: result.pagination,
+    };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -118,7 +134,7 @@ export class RentalsController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post('returns/:returnId/confirm-receipt')
   async confirmReturnReceipt(
     @Param('returnId') returnId: string,

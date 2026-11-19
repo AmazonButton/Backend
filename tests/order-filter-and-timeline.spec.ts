@@ -220,7 +220,7 @@ async function runOrderFilterAndTimelineSuite() {
     // Test 1: Route Ordering Invariant - GET /orders/delivery-queue is not swallowed
     // -------------------------------------------------------------------------
     const queueRes = await fetch(`${BASE_URL}/orders/delivery-queue?page=1&pageSize=10`, {
-      headers: { Authorization: `Bearer ${driverToken}` },
+      headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const queueBody = (await queueRes.json()) as any;
 

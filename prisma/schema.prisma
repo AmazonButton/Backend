@@ -13,8 +13,32 @@ model Role {
   roleName    String       @map("role_name")
   description String?
   storeStaffs StoreStaff[]
+  platformMemberships PlatformMembership[]
 
   @@map("roles")
+}
+
+/// Platform-level role assignment (SYSTEM_STAFF / ADMIN / SYSTEM_ADMIN / SUPER_ADMIN),
+/// independent from store_staff. Rows are never deleted; revocation keeps history.
+model PlatformMembership {
+  membershipId    BigInt    @id @default(autoincrement()) @map("membership_id")
+  userId          BigInt    @map("user_id")
+  user            User      @relation("UserPlatformMemberships", fields: [userId], references: [userId], onDelete: Restrict)
+  roleId          BigInt    @map("role_id")
+  role            Role      @relation(fields: [roleId], references: [roleId], onDelete: Restrict)
+  status          String    @default("ACTIVE") @db.VarChar(20)
+  grantedByUserId BigInt?   @map("granted_by_user_id")
+  grantedBy       User?     @relation("UserGrantedPlatformMemberships", fields: [grantedByUserId], references: [userId], onDelete: SetNull)
+  grantedAt       DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  revokedByUserId BigInt?   @map("revoked_by_user_id")
+  revokedBy       User?     @relation("UserRevokedPlatformMemberships", fields: [revokedByUserId], references: [userId], onDelete: SetNull)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(6)
+  reason          String?   @db.VarChar(500)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId, status], map: "idx_platform_memberships_user_status")
+  @@map("platform_memberships")
 }
 
 model User {
@@ -38,11 +62,15 @@ model User {
   emailVerificationToken     String?   @map("email_verification_token")
   emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
   passwordChangedAt          DateTime? @map("password_changed_at")
+  tokensInvalidBefore        DateTime? @map("tokens_invalid_before") @db.Timestamptz(6)
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @default(now()) @updatedAt @map("updated_at")
 
   ownedStores                  Store[]                       @relation("StoreOwner")
   storeStaffs                  StoreStaff[]
+  platformMemberships          PlatformMembership[]          @relation("UserPlatformMemberships")
+  grantedPlatformMemberships   PlatformMembership[]          @relation("UserGrantedPlatformMemberships")
+  revokedPlatformMemberships   PlatformMembership[]          @relation("UserRevokedPlatformMemberships")
   customerProfile              CustomerProfile?
   priceHistories               ProductPriceHistory[]
   orderStatusHistories         OrderStatusHistory[]
@@ -587,6 +615,7 @@ model ButtonRental {
   returns             RentalReturn[]
   refunds             DepositRefund[]
   cashVouchers        StoreCashVoucher[]
+  warrantyTickets     WarrantyTicket[]
 
   @@unique([rentalId, customerId], map: "uq_rental_customer_cash_binding")
   @@index([customerId, status], map: "idx_button_rentals_customer_status")
@@ -1254,6 +1283,8 @@ model DepositRefund {
   refundCode          String               @unique @map("refund_code") @db.VarChar(64)
   returnId            BigInt?              @unique(map: "uq_deposit_refunds_return_id") @map("return_id")
   returnRequest       RentalReturn?        @relation(fields: [returnId], references: [returnId], onDelete: SetNull)
+  warrantyTicketId    BigInt?              @unique(map: "uq_deposit_refunds_warranty_ticket_id") @map("warranty_ticket_id")
+  warrantyTicket      WarrantyTicket?      @relation(fields: [warrantyTicketId], references: [ticketId], onDelete: SetNull)
   rentalId            BigInt               @map("rental_id")
   rental              ButtonRental         @relation(fields: [rentalId], references: [rentalId], onDelete: Restrict)
   customerId          BigInt               @map("customer_id")
@@ -1266,6 +1297,7 @@ model DepositRefund {
   recipientAccountHolderName      String?              @map("recipient_account_holder_name") @db.VarChar(255)
   recipientAccountNumberMasked    String?              @map("recipient_account_number_masked") @db.VarChar(32)
   amount                          Decimal              @map("amount") @db.Decimal(15, 2)
+  deductionAmount                 Decimal              @default(0) @map("deduction_amount") @db.Decimal(15, 2)
   status              String               @default("PENDING_APPROVAL") @map("status") @db.VarChar(30)
   approvedByUserId    BigInt?              @map("approved_by_user_id")
   rejectionReason     String?              @map("rejection_reason") @db.VarChar(255)
@@ -1503,6 +1535,8 @@ model WarrantyTicket {
   store               Store?           @relation(fields: [storeId], references: [storeId], onDelete: SetNull)
   customerId          BigInt?          @map("customer_id")
   customer            CustomerProfile? @relation(fields: [customerId], references: [customerId], onDelete: SetNull)
+  rentalId            BigInt?          @map("rental_id")
+  rental              ButtonRental?    @relation(fields: [rentalId], references: [rentalId], onDelete: SetNull)
   reportedByUserId    BigInt           @map("reported_by_user_id")
   reportedByUser      User             @relation("UserReportedWarrantyTickets", fields: [reportedByUserId], references: [userId], onDelete: Restrict)
 
@@ -1516,12 +1550,31 @@ model WarrantyTicket {
   inspectionNote      String?          @map("inspection_note") @db.Text
   adminNote           String?          @map("admin_note") @db.Text
   status              String           @default("PENDING") @map("status") @db.VarChar(30)
+  depositRefund       DepositRefund?
 
   createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([storeId, status], map: "idx_warranty_tickets_store_status")
   @@index([buttonId, createdAt(sort: Desc)], map: "idx_warranty_tickets_button")
+  @@index([rentalId], map: "idx_warranty_tickets_rental")
   @@index([reportedByUserId], map: "idx_warranty_tickets_reporter")
   @@map("warranty_tickets")
+}
+
+model RoleTransitionBatch {
+  batchId            String    @id @map("batch_id") @db.VarChar(64)
+  targetDatabase     String    @map("target_database") @db.VarChar(255)
+  databaseName       String    @map("database_name") @db.VarChar(128)
+  manifestVersion    String    @map("manifest_version") @db.VarChar(100)
+  manifestHash       String    @map("manifest_hash") @db.VarChar(64)
+  actorUserId        BigInt    @map("actor_user_id")
+  status             String    @default("EXECUTED") @db.VarChar(30)
+  rollbackPayload    Json      @map("rollback_payload")
+  executedAt         DateTime  @default(now()) @map("executed_at") @db.Timestamptz(6)
+  rolledBackAt       DateTime? @map("rolled_back_at") @db.Timestamptz(6)
+  rolledBackByUserId BigInt?   @map("rolled_back_by_user_id")
+
+  @@index([status, executedAt(sort: Desc)], map: "idx_role_transition_batches_status_exec")
+  @@map("role_transition_batches")
 }

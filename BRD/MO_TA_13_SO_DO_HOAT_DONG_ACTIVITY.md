@@ -15,14 +15,14 @@
 ---
 
 ### [ACT 2] Quy trình Nhấn nút Đặt hàng & Giao vận (Click-to-Order Fulfillment)
-* **Các bên tham gia**: `Nút bấm IoT` | `Máy chủ Backend & DB` | `Nhân viên Cửa hàng` | `Tài xế Giao hàng`.
+* **Các bên tham gia**: `Nút bấm IoT` | `Máy chủ Backend & DB` | `Chủ Cửa hàng (Store Owner)`.
 * **Luồng chạy**:
   1. Khách hàng nhấn nút vật lý ESP32 tại nhà.
   2. Chip ESP32 tự động kết nối Wi-Fi, tính toán chữ ký mật mã HMAC-SHA256 và gửi gói tin lên Render Cloud.
   3. Backend xác thực chữ ký HMAC và kiểm tra chuỗi Nonce chống phát lại.
-  4. Backend gọi Stored Procedure `sp_create_order_from_button` để tạo đơn hàng, tự động khóa kiểm tra tồn kho và tính chiết khấu.
-  5. Hệ thống gửi thông báo chuông về màn hình cửa hàng để nhân viên đóng gói bình nước/gas.
-  6. Hệ thống tự động gán đơn cho tài xế đi giao; khi giao xong, tài xế chụp ảnh xác nhận $\rightarrow$ Nút bấm đổi đèn LED xanh lá và bíp còi báo thành công.
+  4. Backend tạo đơn hàng trong Transaction an toàn, giữ chỗ tồn kho và tính chiết khấu/hoa hồng sàn.
+  5. Hệ thống gửi thông báo real-time vào room `store_{storeId}` của Chủ cửa hàng để đóng gói.
+  6. Chủ cửa hàng tự nhận giao đơn từ hàng đợi, giao tận tay khách và tải ảnh chứng từ POD (`DELIVERED`) $\rightarrow$ Nút bấm đổi đèn LED xanh lá và bíp còi báo thành công.
 
 ---
 
@@ -54,18 +54,16 @@
   1. Người thuê chọn gói thuê nút bấm và thanh toán tiền đặt cọc thiết bị.
   2. Cửa hàng bàn giao nút bấm và kích hoạt hợp đồng thuê.
   3. Đầu mỗi tháng, tiến trình tự động (Cron Job) quét số lượng nút đang hoạt động để sinh hóa đơn cước thuê gửi cho cửa hàng.
-  4. Khi chấm dứt hợp đồng, khách đem trả lại nút; nhân viên kiểm tra phần cứng nguyên vẹn $\rightarrow$ Hệ thống tự động kích hoạt hoàn tiền cọc về tài khoản ngân hàng.
+  4. Khi chấm dứt hợp đồng hoặc phát sinh bảo hành, khách gửi trả nút; **Nhân viên Hệ thống (`SYSTEM_STAFF`)** kiểm tra tình trạng phần cứng (hoặc khóa/đổi 1-1 theo đúng snapshot `rental_id`) và lập đề nghị hoàn cọc `PENDING_APPROVAL` $\rightarrow$ **Admin** phê duyệt tài chính để tất toán sổ cọc và phát lệnh hoàn tiền qua PayOS Payout.
 
 ---
 
-### [ACT 6] Quy trình Ca trực Tài xế & Điều phối Đơn (Driver Shift & Dispatch)
-* **Các bên tham gia**: `Tài xế giao hàng` | `Quản lý Cửa hàng` | `Hệ thống Điều phối tự động` | `Thu ngân Đối soát COD`.
+### [ACT 6] Quy trình Giao hàng Chủ Store & Tất toán Ca Shipper Legacy (Store Owner Delivery & Legacy Handover)
+* **Các bên tham gia**: `Chủ Cửa hàng (Store Owner)` | `Hệ thống Backend` | `Cloudinary POD` | `Dữ liệu Ca Legacy (chỉ đối soát chuyển tiếp)`.
 * **Luồng chạy**:
-  1. Tài xế mở app, bấm "Bắt đầu ca trực" và bật trạng thái `ONLINE` sẵn sàng nhận đơn.
-  2. Khi có đơn hàng mới từ nút bấm, thuật toán hệ thống tự động gán đơn cho tài xế có cự ly gần nhất.
-  3. Tài xế nhận hàng từ kho, di chuyển theo định vị bản đồ và giao tận tay khách.
-  4. Tài xế chụp ảnh bình nước/chữ ký làm bằng chứng giao hàng thành công.
-  5. Hết ca trực, tài xế nộp lại toàn bộ tiền mặt thu hộ (COD) cho thu ngân cửa hàng để được xác nhận đóng ca an toàn.
+  1. Chủ cửa hàng xem hàng đợi giao của đúng cửa hàng mình (`GET /orders/delivery-queue`), nhận giao đơn hoặc thu hồi đơn `SHIPPING` legacy (`POST /orders/:id/takeover-delivery`).
+  2. Khi giao xong (hoặc giao thất bại), Chủ cửa hàng tải ảnh bằng chứng POD qua Presigned URL và xác nhận kết quả giao hàng.
+  3. Đối với ca shipper & tiền COD còn tồn đọng từ giai đoạn trước khi ngừng vai trò shipper, Chủ cửa hàng dùng quy trình đối soát/bàn giao (`/legacy-handover/settle`) để chốt ca về trạng thái cuối `HANDED_OVER` (bất biến, có Row-Lock/CAS) và lưu toàn vẹn lịch sử chứng từ.
 
 ---
 

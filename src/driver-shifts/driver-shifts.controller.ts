@@ -10,21 +10,21 @@ import { Roles } from '../common/decorators/roles.decorator';
 export class DriverShiftsController {
   constructor(private readonly shiftsService: DriverShiftsService) {}
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('start')
   async startShift(@Request() req: any) {
     const data = await this.shiftsService.startShift(req.user);
     return { success: true, message: 'Bắt đầu ca làm việc thành công', data };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Get('current')
   async getCurrentShift(@Request() req: any) {
     const data = await this.shiftsService.getCurrentShift(req.user);
     return { success: true, data };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Get('history')
   async getShiftHistory(
     @Request() req: any,
@@ -53,21 +53,21 @@ export class DriverShiftsController {
     };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Get(':id')
   async getShiftById(@Param('id') id: string, @Request() req: any) {
     const data = await this.shiftsService.getShiftById(id, req.user);
     return { success: true, message: 'Lấy chi tiết ca làm việc thành công', data };
   }
 
-  @Roles('STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post(':id/close')
   async closeShift(@Param('id') id: string, @Request() req: any) {
     const data = await this.shiftsService.closeShift(id, req.user);
     return { success: true, message: 'Đóng ca làm việc thành công', data };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post(':id/confirm-handover')
   async confirmHandover(@Param('id') id: string, @Body() body: ConfirmHandoverDto, @Request() req: any) {
     const data = await this.shiftsService.confirmHandover(id, req.user, body);

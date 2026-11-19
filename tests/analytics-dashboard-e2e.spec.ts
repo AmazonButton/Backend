@@ -666,9 +666,8 @@ async function runAnalyticsDashboardE2ESuite() {
     await cacheService.set('dash:store:88:summary', { marker: 'keep' }, 30);
 
     await devSvc.updateBattery('1', 10, {
-      role: 'STAFF_BUTTON',
+      role: 'SYSTEM_STAFF',
       userId: '500',
-      storeId: '42',
     });
 
     check((await cacheService.get('customer:dashboard:99')) === null, 'Device updateBattery: owner customer 99 dashboard cleared');
@@ -718,8 +717,8 @@ async function runAnalyticsDashboardE2ESuite() {
     await cacheService.set('customer:dashboard:99', { marker: 'keep-unmodified' }, 30);
     let forbiddenThrown = false;
     try {
-      // Staff from unauthorized store tries to mutate device
-      await devSvc.updateBattery('1', 10, { role: 'STAFF_BUTTON', userId: '500', storeId: '88' });
+      // Unrelated Store Owner from store 88 tries to mutate device in store 42
+      await devSvc.updateBattery('1', 10, { role: 'STORE_OWNER', userId: '500', storeId: '88' });
     } catch {
       forbiddenThrown = true;
     }
@@ -813,6 +812,14 @@ async function runAnalyticsDashboardE2ESuite() {
       updateUserStatus: async () => ({ userId: 99n, status: 'INACTIVE' }),
       findOrCreateRole: async () => ({ roleId: 2n }),
       updateStaffRole: async () => ({}),
+      grantPlatformMembershipTx: async ({ userId, roleCode }: any) => ({
+        membershipId: 1n,
+        userId,
+        role: { roleCode },
+        status: 'ACTIVE',
+        grantedAt: new Date(),
+        reason: 'Cache invalidation test',
+      }),
     };
     const adminUserSvc = new AdminService(
       mockAdminUserRepo,
@@ -828,7 +835,7 @@ async function runAnalyticsDashboardE2ESuite() {
     check((await cacheService.get('admin:operations:users')) === null, 'Admin toggleUserStatus: admin operations cache invalidated');
 
     await cacheService.set('admin:dashboard:roles', { marker: 'old' }, 30);
-    await adminUserSvc.updateUserRole('99', 'STORE_MANAGER');
+    await adminUserSvc.updateUserRole('99', 'SYSTEM_STAFF');
     check((await cacheService.get('admin:dashboard:roles')) === null, 'Admin updateUserRole: admin dashboard cache invalidated');
   }
 

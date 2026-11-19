@@ -158,8 +158,8 @@ export class RentalsService {
       return { rental, actorType: 'ADMIN' as const, storeId: null };
     }
 
-    // Check Store Owner / Manager / Staff
-    const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STAFF'].includes(role);
+    // Check Store Owner only (legacy store_staff removed)
+    const isStoreRole = role === 'STORE_OWNER';
     const userStoreId = user?.storeId ? BigInt(user.storeId) : null;
 
     if (isStoreRole && userStoreId) {
@@ -471,6 +471,84 @@ export class RentalsService {
     await this.invalidateRentalCaches(rental.customer?.userId);
     return { returnId: String(createdReturn.returnId), returnCode: createdReturn.returnCode,
       rentalId: String(rentalId), buttonId: String(buttonId), status: createdReturn.status, createdAt: createdReturn.createdAt };
+  }
+
+  async listReturnRequests(user: any, query?: { status?: string; search?: string; page?: any; pageSize?: any; limit?: any }) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const isPlatformOps = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF'].includes(user.role);
+    let scopedStoreId: bigint | undefined;
+
+    if (!isPlatformOps) {
+      if (user.role !== 'STORE_OWNER' || !user.storeId) {
+        throw new ForbiddenException('Bạn không có quyền xem danh sách phiếu trả nút');
+      }
+      scopedStoreId = BigInt(user.storeId);
+    }
+
+    const rawPage = Number(query?.page);
+    const rawPageSize = Number(query?.pageSize) || Number(query?.limit);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+
+    const { items, total } = await this.rentalsRepo.listReturnRequestsPaginated({
+      storeId: scopedStoreId,
+      status: query?.status || 'ALL',
+      search: query?.search,
+      skip,
+      take: pageSize,
+    });
+
+    const mapped = items.map((r: any) => {
+      const storeMeta = r.button?.custodyStore || r.rental?.fulfillmentStore || r.button?.store || null;
+      const refund = Array.isArray(r.refunds) && r.refunds[0] ? r.refunds[0] : null;
+      return {
+        returnId: String(r.returnId),
+        returnCode: r.returnCode,
+        rentalId: String(r.rentalId),
+        rentalCode: r.rental?.rentalCode || null,
+        rentalStatus: r.rental?.status || null,
+        buttonId: String(r.buttonId),
+        deviceId: r.button?.deviceId || null,
+        buttonCode: r.button?.buttonCode || null,
+        customName: r.button?.buttonName || null,
+        inventoryState: r.button?.inventoryState || null,
+        status: r.status,
+        inspectionNote: r.inspectionNote || null,
+        receivedAt: r.receivedAt || null,
+        inspectedAt: r.inspectedAt || null,
+        createdAt: r.createdAt,
+        customerName: r.rental?.customer?.user?.fullName || null,
+        customerPhone: r.rental?.customer?.user?.phone || null,
+        store: storeMeta
+          ? {
+              storeId: String(storeMeta.storeId),
+              name: storeMeta.name,
+              code: storeMeta.code,
+            }
+          : null,
+        depositAmount: r.rental?.depositPerButton !== undefined ? Number(r.rental.depositPerButton) : null,
+        depositRefund: refund
+          ? {
+              refundId: String(refund.refundId),
+              refundCode: refund.refundCode,
+              status: refund.status,
+              refundAmount: Number(refund.amount),
+            }
+          : null,
+      };
+    });
+
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    return {
+      items: mapped,
+      pagination: {
+        page,
+        pageSize,
+        totalItems: total,
+        totalPages,
+      },
+    };
   }
 
   async confirmReturnReceipt(

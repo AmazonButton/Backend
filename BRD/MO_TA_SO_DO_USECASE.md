@@ -4,12 +4,12 @@
 ---
 
 ## 1. TỔNG QUAN RANH GIỚI HỆ THỐNG (SYSTEM BOUNDARY)
-* **Tên sơ đồ**: `[UC] Core System Use Case Diagram` (Trang 24 trong file `ERD_Level_3_Editable.drawio`).
+* **Tên sơ đồ**: `[UC] Core System Use Case Diagram` (trong file `ERD_Level_3_Editable.drawio`).
 * **Ranh giới**: Khung bao bọc `IOT CLICK-TO-ORDER PLATFORM (BACKEND ARCHITECTURE)`.
-* **Cấu trúc**: Gồm 6 Tác nhân (Actors) tương tác với 30 Use Cases cốt lõi được phân chia thành 3 cột chức năng:
-  1. *Cột 1*: Các chức năng dành cho Khách hàng & Thiết bị Nút bấm IoT.
-  2. *Cột 2*: Các chức năng Thanh toán, Đối soát tài chính & Điều phối Giao vận.
-  3. *Cột 3*: Các chức năng Vận hành Cửa hàng & Quản trị Nền tảng của Admin.
+* **Cấu trúc**: Gồm 5 nhóm Tác nhân (Actors) tương tác với các Use Cases cốt lõi theo mô hình phân quyền `CUSTOMER → STORE_OWNER → SYSTEM_STAFF → ADMIN / SUPER_ADMIN` (đã ngừng cấp `STORE_STAFF` và `STAFF_DELIVERY` / Shipper riêng của cửa hàng):
+  1. *Cột 1*: Các chức năng dành cho Khách hàng (`CUSTOMER`) & Thiết bị Nút bấm IoT (`ESP32-S3`).
+  2. *Cột 2*: Các chức năng Thanh toán, Bảo hành thiết bị & Tự giao vận / POD của Chủ cửa hàng (`STORE_OWNER`).
+  3. *Cột 3*: Các chức năng Kho nút bấm & Bảo hành (`SYSTEM_STAFF`) cùng Quản trị Nền tảng & Duyệt Tài chính (`ADMIN / SUPER_ADMIN`).
 
 ---
 
@@ -30,52 +30,35 @@
 
 ---
 
-### 🏪 2. Chủ cửa hàng (Store Owner)
+### 🏪 2. Chủ cửa hàng (Store Owner — `STORE_OWNER`)
 * **Đăng ký mở đại lý liên kết**: Nộp hồ sơ xin làm đối tác, đính kèm giấy phép kinh doanh (GPKD) và tài khoản nhận doanh thu.
-* **Quản lý sản phẩm & Bảng giá**: Tạo sản phẩm mới, thiết lập giá bán gốc và mô tả hàng hóa.
-* **Thiết lập khuyến mãi & Giảm giá**: Tạo các chiến dịch Flash Sale giảm giá theo thời gian.
-* **Quản lý tồn kho hàng hóa**: Theo dõi lượng hàng thực tế và lượng hàng đang bị tạm giữ chỗ khi có đơn mới.
-* **Tiếp nhận đơn & Điều phối giao**: Bấm xác nhận đơn hàng từ nút bấm/app và chỉ định tài xế đi giao.
-* **Quản lý hợp đồng thuê nút**: Theo dõi số lượng nút đang mượn từ nền tảng và danh sách khách hàng đang sử dụng nút của quán.
-* **Quản lý ví & Rút tiền doanh thu**: Xem số dư tiền bán hàng và gửi lệnh rút tiền tự động về tài khoản ngân hàng qua PayOS.
-* **Đóng phí thuê nút hàng tháng**: Nhận hóa đơn cước định kỳ và thanh toán tiền thuê nút cho nền tảng qua VietQR.
-* **Thu & Đối soát tiền mặt tại quầy**: Tạo phiếu thu tiền mặt và hạch toán biên lai đối soát vào sổ kế toán quán.
-* **Quản lý nhân sự cửa hàng**: Cấp tài khoản cho nhân viên thu ngân và phân công ca trực cho shipper.
-* **Xem báo cáo doanh thu cửa hàng**: Theo dõi biểu đồ tăng trưởng đơn hàng và doanh số bán hàng theo ngày/tháng.
+* **Quản lý sản phẩm & Bảng giá**: Tạo sản phẩm mới, thiết lập giá bán gốc, khuyến mãi (Flash Sale) và tồn kho hàng hóa (`inventory`).
+* **Tiếp nhận đơn, Tự giao hàng & Tải ảnh bằng chứng (POD)**: Xác nhận đơn, đóng gói, tự nhận giao đơn từ hàng đợi (`delivery-queue`), cập nhật giao thành công (`DELIVERED`) hoặc thất bại (`FAILED`) kèm tải ảnh/xem ảnh chứng từ POD qua Presigned URL (chỉ trong phạm vi `storeId` của mình).
+* **Thu hồi & Tất toán bàn giao legacy**: Giành quyền xử lý các đơn `SHIPPING` tồn đọng từ tài khoản shipper cũ (`takeover-delivery`) và đối soát ca/tiền COD còn mở (`/legacy-handover/settle`).
+* **Quản lý hợp đồng thuê nút & Bảo hành cửa hàng**: Theo dõi nút bấm thuộc cửa hàng và gửi/theo dõi phiếu bảo hành cho thiết bị của quán.
+* **Quản lý ví, Rút tiền & Đóng cước**: Xem số dư doanh thu, gửi lệnh rút tiền qua PayOS Payout, thanh toán cước thuê nút định kỳ và tạo phiếu thu tiền mặt tại quầy.
+* **Xem báo cáo doanh thu cửa hàng**: Theo dõi biểu đồ đơn hàng và doanh số theo ngày/tháng.
 
 ---
 
-### 💼 3. Nhân viên cửa hàng (Store Staff)
-* **Đăng nhập tài khoản nhân viên**: Đăng nhập với quyền hạn bị giới hạn (không được xem số dư ví hay rút tiền).
-* **Hỗ trợ ghép nút tại quầy (POS)**: Hỗ trợ khách hàng lớn tuổi liên kết nút bấm trực tiếp tại quầy bằng số điện thoại.
-* **Cập nhật đóng gói đơn hàng**: Bấm xác nhận hàng đã đóng gói xong, sẵn sàng để tài xế lấy đi giao.
-* **Ghi nhận nhập / xuất kho**: Cập nhật số lượng bình nước/bình gas thực tế xuất nhập tại điểm bán.
+### 🔧 3. Nhân viên Hệ thống (System Staff — `SYSTEM_STAFF`)
+* **Quản lý kho nút bấm tập trung**: Xem danh sách thiết bị toàn sàn, cấp phát/chuyển kho thiết bị, tạo/triển khai mẫu cấu hình (`Device Templates`) và reset/sửa/khóa nút bấm.
+* **Kiểm tra & Thẩm định bảo hành kỹ thuật**: Tiếp nhận phiếu bảo hành, thực hiện **đổi nút 1-1** (`approveSwapAtomicTx` — chuyển đầy đủ hợp đồng thuê `rentalId`, khách hàng, địa chỉ, cấu hình sản phẩm, hạn sử dụng, chặn đổi trùng nút/nút đang có hợp đồng) hoặc **khóa nút hỏng** (`lockDeviceAtomicTx`).
+* **Đối chiếu snapshot hợp đồng khi bảo hành**: Xác thực nút gốc và phiếu bảo hành khớp cùng snapshot `rentalId` trước khi đổi hoặc khóa (trả `409 Conflict` yêu cầu đối soát nếu lệch hợp đồng).
+* **Kiểm tra trả nút tại kho (`confirmReturnReceipt`)**: Xác nhận tình trạng phần cứng khi khách trả nút; chỉ tạo đề nghị hoàn cọc ở trạng thái `PENDING_APPROVAL` — **tuyệt đối không** tự duyệt hoàn cọc, không kích hoạt PayOS Payout, không xem/chỉnh đơn bán hàng, ví cửa hàng hay phân quyền RBAC.
 
 ---
 
-### 🛵 4. Tài xế giao hàng (Driver / Shipper)
-* **Điểm danh vào ca & Kết ca**: Bật trạng thái sẵn sàng nhận đơn (`ONLINE`) khi trực và chuyển `OFFLINE` khi nghỉ.
-* **Tiếp nhận nhiệm vụ giao hàng**: Nhận đơn hàng được gán, xem địa chỉ và số điện thoại của khách hàng.
-* **Cập nhật tiến độ lộ trình**: Cập nhật các mốc "Đã lấy hàng từ kho" và "Đang trên đường giao".
-* **Xác nhận giao hàng & Tải ảnh chứng từ**: Bấm hoàn tất giao hàng và tải ảnh chụp chữ ký/bình nước tại nhà khách để đối soát.
-* **Thu tiền mặt (COD) & Bàn giao**: Thu tiền mặt tận tay khách và nộp lại đầy đủ cho thu ngân cửa hàng khi hết ca.
-
----
-
-### 🛡️ 5. Quản trị viên hệ thống (System Admin)
-* **Quản trị người dùng & Phân quyền (RBAC)**: Quản lý danh sách tài khoản toàn sàn và khóa tài khoản có hành vi gian lận.
+### 🛡️ 4. Quản trị viên hệ thống (Admin / System Admin / Super Admin)
+* **Quản trị người dùng & Phân quyền nền tảng (`platform_memberships`)**: Quản lý tài khoản, khóa tài khoản (thu hồi đa node tức thời via Redis Pub/Sub & `tokens_invalid_before`), cấp/thu hồi vai trò `SYSTEM_STAFF` (`SUPER_ADMIN`) và bảo vệ danh tính bootstrap.
 * **Thẩm định & Phê duyệt đại lý**: Kiểm tra giấy phép kinh doanh của cửa hàng, bấm Duyệt (`ACTIVE`) hoặc Từ chối (`REJECTED`).
-* **Quản lý kho nút bấm tập trung**: Quản lý số lượng phần cứng tại kho tổng và xuất kho bàn giao cho các đại lý.
-* **Cấu hình gói cước & Bảng giá thuê**: Thiết lập phí thuê nút bấm hàng tháng, mức tiền cọc và các gói dịch vụ phần mềm.
-* **Tự động tạo & Thu cước định kỳ**: Chạy tiến trình đầu tháng tính toán số lượng nút đang hoạt động của từng quán để xuất hóa đơn cước.
-* **Xử lý đối soát nộp thừa tiền cước**: Khấu trừ vào kỳ sau hoặc hoàn tiền đối với các khoản thanh toán cước bị chuyển thừa tiền.
-* **Giám sát tài chính & Lệnh rút tiền**: Theo dõi luồng tiền ra vào qua cổng PayOS và tra soát các giao dịch rút tiền bất thường.
-* **Xem Dashboard phân tích toàn sàn**: Theo dõi tổng giá trị giao dịch (GMV), doanh thu phí sàn và tỷ lệ đơn hoàn tất.
-* **Giám sát hàng đợi lỗi (DLQ) & Hệ thống**: Theo dõi các tiến trình chạy ngầm bị lỗi và kiểm tra tình trạng sức khỏe của server.
+* **Cấu hình gói cước, Bảng giá thuê & Billing**: Thiết lập gói cước, chạy tiến trình thu cước hàng tháng và đối soát nộp thừa tiền cước.
+* **Phê duyệt hoàn cọc & Payout PayOS (`ADMIN / SUPER_ADMIN`)**: Thực hiện bút toán duy nhất trên sổ cọc `rental_deposits` (`approveDepositRefundTx`) cho cả luồng trả nút và bảo hành, giám sát dòng tiền và duyệt lệnh rút tiền/chi hộ PayOS (`SUPER_ADMIN`).
+* **Xem Dashboard phân tích toàn sàn & DLQ**: Theo dõi GMV, doanh thu phí sàn, cảnh báo bảo mật thiết bị và hàng đợi lỗi (DLQ).
 
 ---
 
-### 🤖 6. Thiết bị Phần cứng & Hệ thống ngoài (Hardware & External Systems)
+### 🤖 5. Thiết bị Phần cứng & Hệ thống ngoài (Hardware & External Systems)
 * **Nút bấm IoT (ESP32-S3)**: Phát tín hiệu đặt hàng bảo mật HMAC-SHA256 khi người dùng nhấn nút; định kỳ báo cáo mức pin (Heartbeat) và kích hoạt cảnh báo khi pin yếu.
 * **Cổng thanh toán PayOS**: Xử lý thanh toán VietQR Napas 24/7; gửi Webhook khớp đơn hàng tự động; thực thi lệnh chi tiền Payout về tài khoản ngân hàng.
 * **Didit Cloud AI Engine**: Nhận diện OCR căn cước công dân và quét khuôn mặt 3D chống giả mạo; gửi Webhook thông báo kết quả định danh người dùng.

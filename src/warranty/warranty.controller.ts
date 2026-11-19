@@ -29,8 +29,8 @@ export class WarrantyController {
   constructor(private readonly warrantyService: WarrantyService) {}
 
   @Get('tickets')
-  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_DELIVERY')
-  @ApiOperation({ summary: 'Lấy danh sách phiếu bảo hành (Admin xem tất cả; Store/Staff chỉ xem của quán mình)' })
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
+  @ApiOperation({ summary: 'Lấy danh sách phiếu bảo hành (Admin/System Staff xem toàn hệ thống; Store Owner chỉ xem của quán mình)' })
   @ApiResponse({ status: 200, description: 'Danh sách phiếu bảo hành và phân trang' })
   async getTickets(@Query() query: QueryWarrantyTicketDto, @Request() req: any) {
     const result = await this.warrantyService.getTickets(query, req.user);
@@ -43,7 +43,7 @@ export class WarrantyController {
   }
 
   @Get('tickets/:id')
-  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_DELIVERY')
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   @ApiOperation({ summary: 'Xem chi tiết phiếu bảo hành theo ID' })
   @ApiResponse({ status: 200, description: 'Chi tiết phiếu bảo hành' })
   async getTicketById(@Param('id') id: string, @Request() req: any) {
@@ -57,7 +57,7 @@ export class WarrantyController {
 
   @Post('tickets')
   @HttpCode(HttpStatus.CREATED)
-  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_DELIVERY')
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   @ApiOperation({ summary: 'Tạo phiếu báo lỗi & yêu cầu bảo hành thiết bị' })
   @ApiResponse({ status: 201, description: 'Phiếu bảo hành đã được tạo' })
   async createTicket(@Body() dto: CreateWarrantyTicketDto, @Request() req: any) {
@@ -70,8 +70,8 @@ export class WarrantyController {
   }
 
   @Patch('tickets/:id/approve-swap')
-  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
-  @ApiOperation({ summary: 'Admin duyệt đổi mới 1-1 thiết bị và ghi nhận luân chuyển kho' })
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF')
+  @ApiOperation({ summary: 'Kỹ thuật hệ thống / Admin duyệt đổi mới 1-1 thiết bị và chuyển hợp đồng/cấu hình sang nút thay thế' })
   @ApiResponse({ status: 200, description: 'Phiếu đã duyệt và thiết bị đã được hoán đổi' })
   async approveSwap(
     @Param('id') id: string,
@@ -87,8 +87,8 @@ export class WarrantyController {
   }
 
   @Patch('tickets/:id/lock-device')
-  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
-  @ApiOperation({ summary: 'Admin khóa nút hư hỏng nặng (Nhóm D) và hoàn tất phiếu' })
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF')
+  @ApiOperation({ summary: 'Kỹ thuật hệ thống / Admin khóa nút hư hỏng nặng (tạo yêu cầu hoàn cọc chờ duyệt tài chính riêng, không tự xác nhận hoàn tiền)' })
   @ApiResponse({ status: 200, description: 'Thiết bị đã bị khóa và phiếu đã chuyển sang RESOLVED' })
   async lockDevice(
     @Param('id') id: string,
@@ -104,8 +104,8 @@ export class WarrantyController {
   }
 
   @Patch('tickets/:id/resolve')
-  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
-  @ApiOperation({ summary: 'Admin hoàn tất phiếu bảo hành' })
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF')
+  @ApiOperation({ summary: 'Kỹ thuật hệ thống / Admin hoàn tất phiếu bảo hành' })
   @ApiResponse({ status: 200, description: 'Phiếu bảo hành chuyển sang RESOLVED' })
   async resolveTicket(
     @Param('id') id: string,
@@ -121,8 +121,8 @@ export class WarrantyController {
   }
 
   @Patch('tickets/:id/reject')
-  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
-  @ApiOperation({ summary: 'Admin từ chối yêu cầu bảo hành' })
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN', 'SYSTEM_STAFF')
+  @ApiOperation({ summary: 'Kỹ thuật hệ thống / Admin từ chối yêu cầu bảo hành' })
   @ApiResponse({ status: 200, description: 'Phiếu bảo hành chuyển sang REJECTED' })
   async rejectTicket(
     @Param('id') id: string,

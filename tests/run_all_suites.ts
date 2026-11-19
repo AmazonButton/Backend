@@ -409,6 +409,26 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'bank-verification-description-sync.spec.ts')],
   },
+  {
+    name: '82. System Staff Role Transition, Session Revocation & Cross-Node WS Hardening (Offline)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'system-staff-auth-transition.spec.ts')],
+  },
+  {
+    name: '83. SYSTEM_STAFF Hardware Inventory, Atomic Swap & Warranty Refund Isolation (Offline)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'system-staff-devices-warranty.spec.ts')],
+  },
+  {
+    name: '84. Store Owner Delivery, POD & Legacy Shipper COD Handover (Offline)',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'store-owner-delivery-pod-handover.spec.ts')],
+  },
+  {
+    name: '85. Step 7 Role Transition Rehearsal, Live PostgreSQL Concurrency & Redis WS Pub/Sub',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'step7-rehearsal-and-concurrency.spec.ts')],
+  },
 ];
 
 async function main() {

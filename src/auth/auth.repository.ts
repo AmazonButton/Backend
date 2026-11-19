@@ -64,6 +64,10 @@ export class AuthRepository {
             store: true,
           },
         },
+        platformMemberships: {
+          where: { status: 'ACTIVE' },
+          include: { role: true },
+        },
       },
     });
   }
@@ -77,6 +81,7 @@ export class AuthRepository {
         customerProfile: { include: { addresses: true } },
         ownedStores: true,
         storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+        platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
       },
     });
   }
@@ -320,6 +325,7 @@ export class AuthRepository {
         customerProfile: { include: { addresses: true } },
         ownedStores: true,
         storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+        platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
       },
     });
   }
@@ -339,6 +345,7 @@ export class AuthRepository {
             customerProfile: { include: { addresses: true } },
             ownedStores: true,
             storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+            platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
             authIdentities: true,
           },
         },
@@ -353,6 +360,7 @@ export class AuthRepository {
         customerProfile: { include: { addresses: true } },
         ownedStores: true,
         storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+        platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
         authIdentities: true,
       },
     });
@@ -451,6 +459,7 @@ export class AuthRepository {
           customerProfile: { include: { addresses: true } },
           ownedStores: true,
           storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+          platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
           authIdentities: true,
         },
       });
@@ -849,6 +858,7 @@ export class AuthRepository {
         customerProfile: { include: { addresses: true } },
         ownedStores: true,
         storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+        platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
       },
     });
   }
@@ -860,6 +870,7 @@ export class AuthRepository {
         customerProfile: { include: { addresses: true } },
         ownedStores: true,
         storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+        platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
       },
     });
   }
@@ -871,6 +882,7 @@ export class AuthRepository {
         customerProfile: { include: { addresses: true } },
         ownedStores: true,
         storeStaffs: { where: { status: 'ACTIVE' }, include: { role: true, store: true } },
+        platformMemberships: { where: { status: 'ACTIVE' }, include: { role: true } },
       },
     });
   }

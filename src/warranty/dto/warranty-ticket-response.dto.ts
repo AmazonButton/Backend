@@ -31,6 +31,9 @@ export class WarrantyTicketResponseDto {
   @ApiPropertyOptional({ example: '5' })
   customerId?: string | null;
 
+  @ApiPropertyOptional({ example: '501' })
+  rentalId?: string | null;
+
   @ApiProperty({ example: '2' })
   reportedByUserId: string;
 
@@ -82,6 +85,7 @@ export class WarrantyTicketResponseDto {
       storeId: ticket.storeId ? ticket.storeId.toString() : (ticket.store_id ? ticket.store_id.toString() : null),
       storeName: ticket.store?.name || null,
       customerId: ticket.customerId ? ticket.customerId.toString() : (ticket.customer_id ? ticket.customer_id.toString() : null),
+      rentalId: ticket.rentalId ? ticket.rentalId.toString() : (ticket.rental_id ? ticket.rental_id.toString() : null),
       reportedByUserId: ticket.reportedByUserId ? ticket.reportedByUserId.toString() : ticket.reported_by_user_id?.toString(),
       reportedByName: ticket.reportedByUser?.fullName || ticket.reportedByUser?.full_name || null,
       faultGroup: ticket.faultGroup || ticket.fault_group,

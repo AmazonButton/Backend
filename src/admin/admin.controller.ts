@@ -1,6 +1,6 @@
-import { Controller, Get, Post, Put, Patch, Param, Body, UseGuards, Request, Inject, Query, BadRequestException, ValidationPipe } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, UseGuards, Request, Inject, Query, BadRequestException, ValidationPipe } from '@nestjs/common';
 import { AdminService } from './admin.service';
-import { UpdateUserRoleDto } from './dto/update-user-role.dto';
+import { GrantPlatformRoleDto, RevokePlatformRoleDto, UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { UpdateAdminStoreDto } from './dto/update-admin-store.dto';
 import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
 import { CreateRentalPackageDto, UpdateRentalPackageDto } from './dto/rental-packages.dto';
@@ -105,15 +105,64 @@ export class AdminController {
   }
 
   @Post('users/:id/toggle-status')
-  async toggleUserStatus(@Param('id') id: string) {
-    const data = await this.adminService.toggleUserStatus(id);
+  async toggleUserStatus(@Param('id') id: string, @Request() req: any) {
+    const data = await this.adminService.toggleUserStatus(id, undefined, req?.user);
     return { success: true, message: 'Đã cập nhật trạng thái tài khoản', data };
   }
 
   @Post('users/:id/role')
-  async updateUserRole(@Param('id') id: string, @Body() body: UpdateUserRoleDto) {
-    const data = await this.adminService.updateUserRole(id, body.role);
-    return { success: true, message: 'Đã cập nhật vai trò phân quyền', data };
+  async updateUserRole(@Param('id') id: string, @Body() body: UpdateUserRoleDto, @Request() req: any) {
+    return this.adminService.updateUserRole(id, body.role, req.user, body.reason);
+  }
+
+  @Get('platform-memberships')
+  async listPlatformMemberships(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('status') status?: string,
+    @Query('roleCode') roleCode?: string,
+  ) {
+    const result = await this.adminService.listPlatformMemberships({
+      page: page ? Number(page) : 1,
+      pageSize: pageSize ? Number(pageSize) : 20,
+      status,
+      roleCode,
+    });
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách phân quyền hệ thống thành công',
+    );
+  }
+
+  @Post('users/:id/platform-role')
+  async grantPlatformRole(
+    @Param('id') id: string,
+    @Body() body: GrantPlatformRoleDto,
+    @Request() req: any,
+  ) {
+    const data = await this.adminService.grantPlatformRole(id, body.roleCode, req.user, body.reason);
+    return {
+      success: true,
+      message: `Đã cấp vai trò hệ thống ${body.roleCode}`,
+      data,
+    };
+  }
+
+  @Delete('users/:id/platform-role')
+  async revokePlatformRole(
+    @Param('id') id: string,
+    @Body() body: RevokePlatformRoleDto,
+    @Request() req: any,
+  ) {
+    const data = await this.adminService.revokePlatformRole(id, req.user, body?.reason);
+    return {
+      success: true,
+      message: 'Đã thu hồi vai trò hệ thống thành công',
+      data,
+    };
   }
 
   // Plans

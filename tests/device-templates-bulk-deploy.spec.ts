@@ -539,6 +539,69 @@ async function runDeviceTemplateAndBulkDeployTests() {
       failed++;
     }
 
+    // 9.3 Real HTTP Per-Device Failure & Partial Batch Contract (HTTP 201 + success: false / partial reasons)
+    try {
+      const totalFailRes = await fetch(`${BASE_URL}/device-templates/${template1Id}/deploy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${store1Token}`,
+        },
+        body: JSON.stringify({
+          deviceIds: ['SOB-UNKNOWN-ONLY-999'],
+        }),
+      });
+      const totalFailData = await totalFailRes.json();
+      const totalFailOk =
+        totalFailRes.status === 201 &&
+        totalFailData.success === false &&
+        totalFailData.total === 1 &&
+        totalFailData.succeeded === 0 &&
+        totalFailData.failed === 1 &&
+        typeof totalFailData.message === 'string' &&
+        Array.isArray(totalFailData.results) &&
+        totalFailData.results[0]?.success === false &&
+        Boolean(totalFailData.results[0]?.reason);
+
+      const partialRes = await fetch(`${BASE_URL}/device-templates/${template1Id}/deploy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${store1Token}`,
+        },
+        body: JSON.stringify({
+          deviceIds: [singleDeviceId, 'SOB-UNKNOWN-PARTIAL-999'],
+        }),
+      });
+      const partialData = await partialRes.json();
+      const partialFailedRow = Array.isArray(partialData.results)
+        ? partialData.results.find((r: any) => r.deviceId === 'SOB-UNKNOWN-PARTIAL-999')
+        : null;
+      const partialOk =
+        partialRes.status === 201 &&
+        partialData.success === true &&
+        partialData.total === 2 &&
+        partialData.succeeded === 1 &&
+        partialData.failed === 1 &&
+        partialFailedRow?.success === false &&
+        Boolean(partialFailedRow?.reason);
+
+      if (totalFailOk && partialOk) {
+        logTest('9.3 Phase 4: Deploy HTTP 201 Total Failure (success:false) & Partial Reasons Contract Verified', true);
+        passed++;
+      } else {
+        logTest(
+          '9.3 Phase 4: Deploy HTTP 201 Total Failure (success:false) & Partial Reasons Contract Verified',
+          false,
+          `totalFail(${totalFailRes.status})=${JSON.stringify(totalFailData)}, partial(${partialRes.status})=${JSON.stringify(partialData)}`,
+        );
+        failed++;
+      }
+    } catch (e: any) {
+      logTest('9.3 Phase 4: Deploy HTTP 201 Total Failure (success:false) & Partial Reasons Contract Verified', false, e.message);
+      failed++;
+    }
+
     // -------------------------------------------------------------------------
     // 10. Phase 5: Secure Device Update Hygiene
     // -------------------------------------------------------------------------

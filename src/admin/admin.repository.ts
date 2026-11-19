@@ -1,6 +1,12 @@
-import { Injectable, Inject, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import {
+  advanceMonotonicTokensInvalidBefore,
+  computeMonotonicWatermark,
+  isBootstrapSuperAdmin,
+  lockUserForWatermark,
+} from '../auth/authority.policy';
 
 const SAFE_USER_SELECT = {
   userId: true,
@@ -221,6 +227,19 @@ export class AdminRepository {
         where.customerProfile = { isNot: null };
       } else if (role === 'STORE_OWNER') {
         where.ownedStores = { some: {} };
+      } else {
+        where.OR = [
+          {
+            platformMemberships: {
+              some: { status: 'ACTIVE', role: { roleCode: role } },
+            },
+          },
+          {
+            storeStaffs: {
+              some: { status: 'ACTIVE', role: { roleCode: role } },
+            },
+          },
+        ];
       }
     }
 
@@ -236,7 +255,15 @@ export class AdminRepository {
           status: true,
           createdAt: true,
           customerProfile: true,
-          ownedStores: { select: { name: true, code: true } },
+          ownedStores: { select: { storeId: true, name: true, code: true, status: true } },
+          platformMemberships: {
+            where: { status: 'ACTIVE' },
+            include: { role: true },
+          },
+          storeStaffs: {
+            where: { status: 'ACTIVE' },
+            include: { role: true },
+          },
         },
         orderBy: [{ createdAt: 'desc' }, { userId: 'desc' }],
         skip,
@@ -265,11 +292,62 @@ export class AdminRepository {
     });
   }
 
-  async updateUserStatus(userId: bigint, status: string) {
-    return this.prisma.user.update({
+  async findUserAuthoritySnapshot(userId: bigint) {
+    return this.prisma.user.findUnique({
       where: { userId },
-      data: { status },
-      select: SAFE_USER_SELECT,
+      select: {
+        userId: true,
+        email: true,
+        username: true,
+        fullName: true,
+        phone: true,
+        status: true,
+        ownedStores: { select: { storeId: true, status: true } },
+        platformMemberships: {
+          where: { status: 'ACTIVE' },
+          include: { role: true },
+        },
+        storeStaffs: {
+          where: { status: 'ACTIVE' },
+          include: { role: true },
+        },
+      },
+    });
+  }
+
+  async updateUserStatus(userId: bigint, status: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const existingWatermark = await lockUserForWatermark(tx, userId);
+      const now = new Date();
+      const shouldRevokeSessions = status !== 'ACTIVE';
+      const nextWatermark = computeMonotonicWatermark(existingWatermark, now);
+
+      const updated = await tx.user.update({
+        where: { userId },
+        data: shouldRevokeSessions
+          ? { status, tokensInvalidBefore: nextWatermark }
+          : { status },
+        select: SAFE_USER_SELECT,
+      });
+
+      if (shouldRevokeSessions) {
+        await tx.refreshToken.updateMany({
+          where: { userId, isRevoked: false },
+          data: { isRevoked: true },
+        });
+        if (typeof tx.$executeRaw === 'function') {
+          await tx.$executeRaw`
+            UPDATE users
+            SET tokens_invalid_before = GREATEST(
+              COALESCE(tokens_invalid_before, to_timestamp(0)),
+              ${nextWatermark}
+            )
+            WHERE user_id = ${userId}
+          `;
+        }
+      }
+
+      return updated;
     });
   }
 
@@ -289,6 +367,7 @@ export class AdminRepository {
 
   async updateStaffRole(userId: bigint, roleId: bigint, storeId?: bigint) {
     return this.prisma.$transaction(async (tx) => {
+      const existingWatermark = await lockUserForWatermark(tx, userId);
       if (storeId) {
         await tx.storeStaff.updateMany({
           where: { userId, storeId },
@@ -300,11 +379,184 @@ export class AdminRepository {
           data: { roleId },
         });
       }
-      // Invalidate active JWT sessions for this user so old role is revoked
-      await tx.user.update({
-        where: { userId },
-        data: { passwordChangedAt: new Date() },
+      await tx.refreshToken.updateMany({
+        where: { userId, isRevoked: false },
+        data: { isRevoked: true },
       });
+      await advanceMonotonicTokensInvalidBefore(tx, userId, existingWatermark, new Date());
+    });
+  }
+
+  async findPlatformMemberships(query?: { page?: number; pageSize?: number; status?: string; roleCode?: string }) {
+    const rawPage = Number(query?.page);
+    const rawPageSize = Number(query?.pageSize);
+    const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(500, rawPage) : 1;
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize >= 1 ? Math.min(100, rawPageSize) : 20;
+    const skip = (page - 1) * pageSize;
+
+    const where: any = {};
+    if (query?.status?.trim()) {
+      where.status = query.status.trim().toUpperCase();
+    }
+    if (query?.roleCode?.trim()) {
+      where.role = { roleCode: query.roleCode.trim().toUpperCase() };
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.platformMembership.findMany({
+        where,
+        include: {
+          user: { select: SAFE_USER_SELECT },
+          role: true,
+          grantedBy: { select: SAFE_USER_SELECT },
+          revokedBy: { select: SAFE_USER_SELECT },
+        },
+        orderBy: [{ grantedAt: 'desc' }, { membershipId: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.platformMembership.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
+  }
+
+  async grantPlatformMembershipTx(params: {
+    userId: bigint;
+    roleCode: string;
+    actorUserId?: bigint | null;
+    reason?: string;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      // Canonical lock order: ALWAYS lock users FIRST before memberships
+      const existingWatermark = await lockUserForWatermark(tx, params.userId);
+
+      const targetUser = await tx.user.findUnique({
+        where: { userId: params.userId },
+        include: {
+          ownedStores: { select: { storeId: true, status: true } },
+        },
+      });
+      if (!targetUser) {
+        throw new NotFoundException('Không tìm thấy người dùng');
+      }
+
+      if (isBootstrapSuperAdmin(targetUser) && params.roleCode !== 'SUPER_ADMIN') {
+        throw new ForbiddenException({
+          success: false,
+          code: 'BOOTSTRAP_SUPER_ADMIN_PROTECTED',
+          message: 'Tài khoản bootstrap SUPER_ADMIN được bảo vệ, không thể hạ hoặc thay thế quyền qua API.',
+        });
+      }
+
+      if (params.roleCode === 'SYSTEM_STAFF' && targetUser.ownedStores && targetUser.ownedStores.length > 0) {
+        throw new ConflictException({
+          success: false,
+          code: 'ROLE_CONFLICT_STORE_OWNER',
+          message: 'Không thể gán vai trò SYSTEM_STAFF cho tài khoản đang sở hữu cửa hàng.',
+        });
+      }
+
+      let role = await tx.role.findUnique({ where: { roleCode: params.roleCode } });
+      if (!role) {
+        role = await tx.role.create({
+          data: {
+            roleCode: params.roleCode,
+            roleName: params.roleCode,
+            description: `Vai trò ${params.roleCode}`,
+          },
+        });
+      }
+
+      const now = new Date();
+      // Revoke any existing active platform memberships cleanly keeping full history
+      await tx.platformMembership.updateMany({
+        where: { userId: params.userId, status: 'ACTIVE' },
+        data: {
+          status: 'REVOKED',
+          revokedByUserId: params.actorUserId ?? null,
+          revokedAt: now,
+          reason: params.reason || `Thay thế quyền hệ thống sang ${params.roleCode}`,
+        },
+      });
+
+      const created = await tx.platformMembership.create({
+        data: {
+          userId: params.userId,
+          roleId: role.roleId,
+          status: 'ACTIVE',
+          grantedByUserId: params.actorUserId ?? null,
+          grantedAt: now,
+          reason: params.reason || `Cấp vai trò ${params.roleCode}`,
+        },
+        include: {
+          user: { select: SAFE_USER_SELECT },
+          role: true,
+          grantedBy: { select: SAFE_USER_SELECT },
+        },
+      });
+
+      await tx.refreshToken.updateMany({
+        where: { userId: params.userId, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      await advanceMonotonicTokensInvalidBefore(tx, params.userId, existingWatermark, now);
+
+      return created;
+    });
+  }
+
+  async revokePlatformMembershipTx(params: {
+    userId: bigint;
+    actorUserId?: bigint | null;
+    reason?: string;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const existingWatermark = await lockUserForWatermark(tx, params.userId);
+
+      const targetUser = await tx.user.findUnique({
+        where: { userId: params.userId },
+        select: { userId: true, email: true, username: true },
+      });
+      if (!targetUser) {
+        throw new NotFoundException('Không tìm thấy người dùng');
+      }
+      if (isBootstrapSuperAdmin(targetUser)) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'BOOTSTRAP_SUPER_ADMIN_PROTECTED',
+          message: 'Tài khoản bootstrap SUPER_ADMIN được bảo vệ, không thể thu hồi quyền quản trị tối cao qua API.',
+        });
+      }
+
+      const now = new Date();
+      const updated = await tx.platformMembership.updateMany({
+        where: { userId: params.userId, status: 'ACTIVE' },
+        data: {
+          status: 'REVOKED',
+          revokedByUserId: params.actorUserId ?? null,
+          revokedAt: now,
+          reason: params.reason || 'Thu hồi vai trò hệ thống bởi quản trị viên',
+        },
+      });
+
+      // Also revoke any legacy admin rows remaining in store_staff for completeness
+      await tx.storeStaff.updateMany({
+        where: {
+          userId: params.userId,
+          status: 'ACTIVE',
+          role: { roleCode: { in: ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'] } },
+        },
+        data: { status: 'INACTIVE', leftAt: now },
+      });
+
+      await tx.refreshToken.updateMany({
+        where: { userId: params.userId, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      await advanceMonotonicTokensInvalidBefore(tx, params.userId, existingWatermark, now);
+
+      return { revokedCount: updated.count };
     });
   }
 
@@ -731,12 +983,17 @@ export class AdminRepository {
           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM customer_profile cp WHERE cp.user_id = u.user_id))::int AS customers,
           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM store s WHERE s.owner_user_id = u.user_id))::int AS store_owners,
           COUNT(*) FILTER (WHERE EXISTS (
-            SELECT 1 FROM store_staff ss
-            INNER JOIN roles r ON r.role_id = ss.role_id
-            WHERE ss.user_id = u.user_id AND ss.status = 'ACTIVE'
-              AND r.role_code IN ('STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON', 'STAFF_DELIVERY', 'STORE_STAFF')
+            SELECT 1 FROM platform_memberships pm
+            INNER JOIN roles r ON r.role_id = pm.role_id
+            WHERE pm.user_id = u.user_id AND pm.status = 'ACTIVE'
+              AND r.role_code = 'SYSTEM_STAFF'
           ))::int AS staff,
           COUNT(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM platform_memberships pm
+            INNER JOIN roles r ON r.role_id = pm.role_id
+            WHERE pm.user_id = u.user_id AND pm.status = 'ACTIVE'
+              AND r.role_code IN ('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')
+          ) OR EXISTS (
             SELECT 1 FROM store_staff ss
             INNER JOIN roles r ON r.role_id = ss.role_id
             WHERE ss.user_id = u.user_id AND ss.status = 'ACTIVE'
