@@ -155,7 +155,7 @@ async function runSuite() {
       data: {
         username: `${prefix}_owner`,
         email: `${prefix}_owner@example.invalid`,
-        passwordHash: 'test-hash',
+        passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters',
         fullName: 'Store Owner Fixture',
         status: 'ACTIVE',
       },
@@ -166,7 +166,7 @@ async function runSuite() {
       data: {
         username: `${prefix}_sa`,
         email: `${prefix}_sa@example.invalid`,
-        passwordHash: 'test-hash',
+        passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters',
         fullName: 'Super Admin Fixture',
         status: 'ACTIVE',
       },
@@ -189,7 +189,7 @@ async function runSuite() {
       data: {
         username: `${prefix}_cust`,
         email: `${prefix}_cust@example.invalid`,
-        passwordHash: 'test-hash',
+        passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters',
         fullName: 'Verified Customer',
         status: 'ACTIVE',
       },

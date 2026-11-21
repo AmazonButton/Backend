@@ -83,11 +83,11 @@ async function main() {
   try {
     await p.$connect();
     ownerId = (await p.user.create({ data: { username: `${prefix}-owner`, email: `${prefix}-owner@example.invalid`,
-      fullName: 'Synthetic refund audit', passwordHash: 'not-a-login-hash', status: 'ACTIVE' } })).userId;
+      fullName: 'Synthetic refund audit', passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters', status: 'ACTIVE' } })).userId;
     storeId = (await p.store.create({ data: { code: prefix, name: prefix, ownerUserId: ownerId,
       phone: '0000000000', address: 'Audit fixture', status: 'ACTIVE' } })).storeId;
     userId = (await p.user.create({ data: { username: `${prefix}-customer`, email: `${prefix}-customer@example.invalid`,
-      fullName: 'Synthetic refund audit', passwordHash: 'not-a-login-hash', status: 'ACTIVE' } })).userId;
+      fullName: 'Synthetic refund audit', passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters', status: 'ACTIVE' } })).userId;
     customerId = (await p.customerProfile.create({ data: { userId } })).customerId;
     await p.customerBankAccount.create({ data: { customerId, bankCode: 'MB', bankName: 'MBBank', bankBin: '970422',
       accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(account),

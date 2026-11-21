@@ -765,23 +765,25 @@ async function runAnalyticsDashboardE2ESuite() {
   // 9i. Direct refundFailedWithdrawal: invalidates wallet cache after commit
   {
     const StoreWalletService = (await import('../src/store-wallet/store-wallet.service')).StoreWalletService;
+    const mockQueryRaw = async (query: any) => {
+      const text = (
+        Array.isArray(query)
+          ? query.join(' ')
+          : (query?.strings?.join(' ') || query?.sql || query?.text || String(query))
+      ).toLowerCase();
+      if (text.includes('store_withdrawals')) {
+        return [{ withdrawal_id: 88n, status: 'PROCESSING', amount: 50000, wallet_id: 10n, withdrawal_code: 'W-88' }];
+      }
+      if (text.includes('store_wallets')) {
+        return [{ wallet_id: 10n, balance: 100000, frozen_balance: 50000 }];
+      }
+      return [];
+    };
     const mockWalletPrisma: any = {
       $transaction: async (cb: any) => {
         return cb({
-          $queryRaw: async (query: any) => {
-            const text = (
-              Array.isArray(query)
-                ? query.join(' ')
-                : (query?.strings?.join(' ') || query?.sql || query?.text || String(query))
-            ).toLowerCase();
-            if (text.includes('store_withdrawals')) {
-              return [{ withdrawal_id: 88n, status: 'PROCESSING', amount: 50000, wallet_id: 10n, withdrawal_code: 'W-88' }];
-            }
-            if (text.includes('store_wallets')) {
-              return [{ wallet_id: 10n, balance: 100000, frozen_balance: 50000 }];
-            }
-            return [];
-          },
+          $queryRaw: mockQueryRaw,
+          $queryRawUnsafe: mockQueryRaw,
           walletTransaction: { findFirst: async () => null, create: async () => ({}) },
           storeWallet: { update: async () => ({}) },
           storeWithdrawal: { update: async () => ({ withdrawalId: 88n, status: 'FAILED' }), findUnique: async () => ({ withdrawalId: 88n, status: 'FAILED' }) },

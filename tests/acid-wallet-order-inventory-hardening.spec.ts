@@ -42,7 +42,7 @@ async function run() {
       data: {
         username: `acid_owner_${ts}`,
         email: `acid_owner_${ts}@example.com`,
-        passwordHash: 'hashed_pw',
+        passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters',
         fullName: 'ACID Test Owner',
         phone: `099${String(Date.now()).slice(-7)}`,
         status: 'ACTIVE',

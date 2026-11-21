@@ -1,5 +1,18 @@
 # Project Handoff & Session Context
 
+## 2026-11-22: CI/CD Test Compatibility Fix (`Suite 44` & `Suite 86`)
+- **Status**: COMPLETED locally and pushed for CI re-run after GitHub Actions Run `44940538830` passed `84/86` suites (`Code Quality & Build` passed).
+- **Fixes Applied**:
+  - Updated [`tests/analytics-dashboard-e2e.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/analytics-dashboard-e2e.spec.ts) (`Suite 44`) `mockWalletPrisma.$transaction` mock to also expose `$queryRawUnsafe` required by [`lockStoreWalletById`](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.lock.ts#L44).
+  - Updated synthetic user `passwordHash` test fixtures (`< 60` chars) to 67-char non-login placeholder strings in [`tests/acid-wallet-order-inventory-hardening.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/acid-wallet-order-inventory-hardening.spec.ts#L45) (`Suite 86`), [`tests/acid-audit-regressions-2026-11-21.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/acid-audit-regressions-2026-11-21.spec.ts), [`tests/payment-refund-obligations-hardening.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/payment-refund-obligations-hardening.spec.ts), and [`tests/payment-refund-followup-2026-11-22.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/payment-refund-followup-2026-11-22.spec.ts) to satisfy baseline `chk_user_password_hash` (`length(password_hash) >= 60`).
+- **Verification after final test edits (`smart_order_test` + mock PayOS)**:
+  - `npx tsc --noEmit` & `npm run build` — **PASS**.
+  - `npx tsx tests/analytics-dashboard-e2e.spec.ts` (`Suite 44`) — **PASS (`87/87`)**.
+  - `npx tsx tests/acid-wallet-order-inventory-hardening.spec.ts` (`Suite 86`) — **PASS (`5/5` groups)**.
+  - `npx tsx tests/payment-refund-obligations-hardening.spec.ts` — **PASS (`13 PASSED, 0 FAILED`)**.
+  - `npx tsx tests/payment-refund-followup-2026-11-22.spec.ts` — **PASS (`passed=4 failed=0`)**.
+  - `npx tsx tests/acid-audit-regressions-2026-11-21.spec.ts --live` — **PASS (`passed=10 failed=0`)**.
+
 ## 2026-11-22: F2 Follow-up Remediation (N1–N4 Closure) & Verification
 - **Status**: COMPLETED — All 4 follow-up findings (`N1`/`R1`, `N2`/`R2`, `N3`/`R3`, `N4`/`R4`) resolved, including provider-proof gating on `LEGACY_BACKFILL` reconciliation, and verified against guarded `smart_order_test` PostgreSQL + mock/stubbed PayOS gateways (zero Production or live bank API calls; original applied `migration.sql` untouched).
 - **Root Fixes Implemented**:

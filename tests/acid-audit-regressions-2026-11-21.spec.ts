@@ -123,7 +123,7 @@ async function runLiveChecks() {
   try {
     await p.$connect();
     const owner = await p.user.create({ data: { username: prefix, email: `${prefix}@example.invalid`,
-      passwordHash: 'audit-fixture-not-a-login-hash', fullName: 'Synthetic ACID Audit', status: 'ACTIVE' } });
+      passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters', fullName: 'Synthetic ACID Audit', status: 'ACTIVE' } });
     ownerId = owner.userId;
     const store = await p.store.create({ data: { code: prefix, name: prefix, ownerUserId: ownerId,
       phone: '0000000000', address: 'Audit fixture', status: 'ACTIVE' } });
@@ -201,7 +201,7 @@ async function runLiveChecks() {
         data: {
           username: `${prefix}_cust`,
           email: `${prefix}_cust@example.invalid`,
-          passwordHash: 'audit-fixture-not-a-login-hash',
+          passwordHash: 'test-placeholder-not-a-login-hash-padding-to-at-least-60-characters',
           fullName: 'L2 Customer',
           status: 'ACTIVE',
         },
