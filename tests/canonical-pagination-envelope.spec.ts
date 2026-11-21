@@ -20,30 +20,42 @@ async function runCanonicalPaginationEnvelopeSuite() {
   let passed = 0;
   let failed = 0;
 
-  let testDriverUser: any = null;
-  let driverToken = '';
+  let testOwnerUser: any = null;
+  let testStore: any = null;
+  let ownerToken = '';
 
   try {
-    // 0. Setup Driver User for Authenticated Pagination Endpoints
-    testDriverUser = await prisma.user.create({
+    // 0. Setup Store Owner & Store for Authenticated Pagination Endpoints
+    testOwnerUser = await prisma.user.create({
       data: {
-        username: `driver_pag_${Date.now()}`,
-        email: `driver_pag_${Date.now()}@smartorder.test`,
+        username: `owner_pag_${Date.now()}`,
+        email: `owner_pag_${Date.now()}@smartorder.test`,
         passwordHash: '$argon2id$v=19$m=65536,t=3,p=4$fakehashfakehashfakehashfakehashfakehash',
         phone: `0977${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`,
-        fullName: 'Test Driver Pagination',
+        fullName: 'Test Store Owner Pagination',
+        status: 'ACTIVE',
+      },
+    });
+
+    testStore = await prisma.store.create({
+      data: {
+        name: 'Pagination Test Store',
+        code: `STORE-PAG-${Date.now()}`,
+        phone: testOwnerUser.phone,
+        address: '123 Pagination St',
+        ownerUserId: testOwnerUser.userId,
         status: 'ACTIVE',
       },
     });
 
     const jwtSecret = process.env.JWT_SECRET || 'test_super_secret_jwt_key_32_bytes_len_safe!';
-    driverToken = jwt.sign(
+    ownerToken = jwt.sign(
       {
-        userId: testDriverUser.userId.toString(),
-        sub: testDriverUser.userId.toString(),
-        email: testDriverUser.email,
-        role: 'STAFF_DELIVERY',
-        storeId: '1',
+        userId: testOwnerUser.userId.toString(),
+        sub: testOwnerUser.userId.toString(),
+        email: testOwnerUser.email,
+        role: 'STORE_OWNER',
+        storeId: testStore.storeId.toString(),
       },
       jwtSecret,
       { expiresIn: '1h' },
@@ -96,7 +108,7 @@ async function runCanonicalPaginationEnvelopeSuite() {
     // Test 3: GET /driver-shifts/history returns canonical pagination envelope
     // -------------------------------------------------------------------------
     const shiftsRes = await fetch(`${BASE_URL}/driver-shifts/history?page=1&pageSize=10`, {
-      headers: { Authorization: `Bearer ${driverToken}` },
+      headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const shiftsBody = (await shiftsRes.json()) as any;
 
@@ -122,7 +134,7 @@ async function runCanonicalPaginationEnvelopeSuite() {
     // Test 4: GET /orders/driver/my-orders returns canonical pagination envelope
     // -------------------------------------------------------------------------
     const ordersRes = await fetch(`${BASE_URL}/orders/driver/my-orders?page=1&pageSize=10`, {
-      headers: { Authorization: `Bearer ${driverToken}` },
+      headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const ordersBody = (await ordersRes.json()) as any;
 
@@ -149,8 +161,11 @@ async function runCanonicalPaginationEnvelopeSuite() {
     failed++;
   } finally {
     console.log('\n🧹 Cleaning up test fixtures...');
-    if (testDriverUser) {
-      await prisma.user.deleteMany({ where: { userId: testDriverUser.userId } });
+    if (testStore) {
+      await prisma.store.deleteMany({ where: { storeId: testStore.storeId } });
+    }
+    if (testOwnerUser) {
+      await prisma.user.deleteMany({ where: { userId: testOwnerUser.userId } });
     }
     await prisma.$disconnect();
     console.log('Cleanup complete.');

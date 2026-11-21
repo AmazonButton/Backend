@@ -1,0 +1,18 @@
+{
+  "manifestVersion": "2026-11-18.1",
+  "description": "Template manifest Step 7: chi cap SYSTEM_STAFF theo danh sach userId duoc Admin phe duyet, chuyen quyen ADMIN trong store_staff sang platform_memberships, giu nguyen STORE_OWNER va cham dut mem store_staff/shipper cu.",
+  "actorUserId": "REPLACE_WITH_ADMIN_USER_ID",
+  "backfillLegacyAdmins": true,
+  "grantSystemStaffUserIds": [
+    "REPLACE_WITH_APPROVED_SYSTEM_STAFF_USER_ID"
+  ],
+  "terminateStoreStaffIds": [
+    "REPLACE_WITH_DEPRECATED_STORE_STAFF_ROW_ID"
+  ],
+  "allowStoreOwnerDualRole": false,
+  "allowUnsettledLegacyDelivery": false,
+  "expectedBefore": {
+    "deprecatedStoreStaffCount": 0,
+    "legacyAdminsNeedingPlatformMembershipCount": 0
+  }
+}

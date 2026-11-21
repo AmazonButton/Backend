@@ -62,7 +62,8 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
       const pending = await tx.$queryRawUnsafe<any[]>(
         `SELECT id, event_type, payload, attempts, status, error 
          FROM outbox_events 
-         WHERE (status = 'PENDING' OR (status = 'PROCESSING' AND locked_until < NOW()))
+         WHERE event_type <> 'PAYMENT_REFUND_PAYOUT'
+           AND (status = 'PENDING' OR (status = 'PROCESSING' AND locked_until < NOW()))
            AND next_attempt_at <= NOW() 
          ORDER BY id ASC 
          LIMIT $1 

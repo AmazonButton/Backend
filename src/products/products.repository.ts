@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
@@ -191,27 +191,41 @@ export class ProductsRepository {
           });
         }
 
-      // 3. Update inventory stock atomically
+      // 3. Update inventory stock atomically under explicit inventory FOR UPDATE lock
       if (params.stock !== undefined && !isNaN(params.stock)) {
-        const existingInv = await tx.inventory.findUnique({
-          where: { productId: params.productId },
-        });
-        if (existingInv && params.stock < Number(existingInv.reservedQuantity)) {
+        if (!Number.isInteger(params.stock) || params.stock < 0) {
+          throw new BadRequestException('Số lượng tồn kho phải là số nguyên không âm');
+        }
+        await tx.$executeRawUnsafe(
+          `INSERT INTO inventory (store_id, product_id, quantity_on_hand, reserved_quantity, min_stock_alert, updated_at)
+           VALUES ($1, $2, 0, 0, 5, NOW())
+           ON CONFLICT (product_id) DO NOTHING`,
+          params.storeId,
+          params.productId,
+        );
+        const lockedInvRows = await tx.$queryRawUnsafe<
+          Array<{ inventory_id: bigint; quantity_on_hand: number; reserved_quantity: number }>
+        >(
+          `SELECT inventory_id, quantity_on_hand, reserved_quantity
+           FROM inventory
+           WHERE product_id = $1
+           FOR UPDATE`,
+          params.productId,
+        );
+        const existingInv = lockedInvRows && lockedInvRows[0];
+        if (existingInv && params.stock < Number(existingInv.reserved_quantity)) {
           throw new BadRequestException(
-            `Không thể cập nhật tổng tồn kho (${params.stock}) nhỏ hơn số lượng đang được giữ chỗ cho đơn hàng đang xử lý (${existingInv.reservedQuantity})`,
+            `Không thể cập nhật tổng tồn kho (${params.stock}) nhỏ hơn số lượng đang được giữ chỗ cho đơn hàng đang xử lý (${existingInv.reserved_quantity})`,
           );
         }
-        await tx.inventory.upsert({
-          where: { productId: params.productId },
-          update: { quantityOnHand: params.stock },
-          create: {
-            storeId: params.storeId,
-            productId: params.productId,
-            quantityOnHand: params.stock,
-            reservedQuantity: 0,
-            minStockAlert: 5,
-          },
-        });
+        await tx.$executeRawUnsafe(
+          `UPDATE inventory
+           SET quantity_on_hand = $1,
+               updated_at = NOW()
+           WHERE product_id = $2`,
+          params.stock,
+          params.productId,
+        );
       }
 
       // 4. Update product entity
@@ -282,31 +296,71 @@ export class ProductsRepository {
     availableStock: number,
     lowStockThreshold?: number,
   ) {
-    const existingInv = await this.prisma.inventory.findUnique({
-      where: { productId },
-    });
-    if (existingInv && availableStock < Number(existingInv.reservedQuantity)) {
-      throw new BadRequestException(
-        `Không thể cập nhật tổng tồn kho (${availableStock}) nhỏ hơn số lượng đang được giữ chỗ cho đơn hàng đang xử lý (${existingInv.reservedQuantity})`,
-      );
+    if (!Number.isInteger(availableStock) || availableStock < 0) {
+      throw new BadRequestException('Số lượng tồn kho phải là số nguyên không âm');
     }
 
-    return this.prisma.inventory.upsert({
-      where: {
-        productId,
-      },
-      update: {
-        quantityOnHand: availableStock,
-        ...(lowStockThreshold !== undefined ? { minStockAlert: lowStockThreshold } : {}),
-      },
-      create: {
-        storeId,
-        productId,
-        quantityOnHand: availableStock,
-        reservedQuantity: 0,
-        minStockAlert: lowStockThreshold || 5,
-      },
-    });
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          // Canonical lock order matching OrdersRepository.createStorefrontOrderTx & updateProductAtomicTx:
+          // product FOR UPDATE -> inventory FOR UPDATE
+          const lockedProdRows = await tx.$queryRawUnsafe<
+            Array<{ product_id: bigint; store_id: bigint }>
+          >(
+            `SELECT product_id, store_id
+             FROM product
+             WHERE product_id = $1
+             FOR UPDATE`,
+            productId,
+          );
+          if (!lockedProdRows || lockedProdRows.length === 0) {
+            throw new BadRequestException('Sản phẩm không tồn tại');
+          }
+          if (BigInt(lockedProdRows[0].store_id) !== storeId) {
+            throw new ForbiddenException({
+              success: false,
+              code: 'ACCESS_DENIED',
+              message: 'Bạn không có quyền cập nhật tồn kho của cửa hàng khác.',
+            });
+          }
+
+          await tx.$executeRawUnsafe(
+            `INSERT INTO inventory (store_id, product_id, quantity_on_hand, reserved_quantity, min_stock_alert, updated_at)
+             VALUES ($1, $2, 0, 0, $3, NOW())
+             ON CONFLICT (product_id) DO NOTHING`,
+            storeId,
+            productId,
+            lowStockThreshold ?? 5,
+          );
+
+          const lockedInvRows = await tx.$queryRawUnsafe<
+            Array<{ inventory_id: bigint; quantity_on_hand: number; reserved_quantity: number; min_stock_alert: number }>
+          >(
+            `SELECT inventory_id, quantity_on_hand, reserved_quantity, min_stock_alert
+             FROM inventory
+             WHERE product_id = $1
+             FOR UPDATE`,
+            productId,
+          );
+          const lockedInv = lockedInvRows?.[0];
+          const reservedQty = Number(lockedInv?.reserved_quantity || 0);
+          if (availableStock < reservedQty) {
+            throw new BadRequestException(
+              `Không thể cập nhật tổng tồn kho (${availableStock}) nhỏ hơn số lượng đang được giữ chỗ cho đơn hàng đang xử lý (${reservedQty})`,
+            );
+          }
+
+          return tx.inventory.update({
+            where: { productId },
+            data: {
+              quantityOnHand: availableStock,
+              ...(lowStockThreshold !== undefined ? { minStockAlert: lowStockThreshold } : {}),
+            },
+          });
+        }),
+      { operationName: 'updateInventoryStock' },
+    );
   }
 
   async recordPriceHistory(data: {

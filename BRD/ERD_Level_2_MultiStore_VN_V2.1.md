@@ -1,4 +1,4 @@
-﻿# Sơ Đồ ERD Level 2 - Hệ Thống Đặt Hàng Qua Nút Bấm IoT (Đa Cửa Hàng & Sàn Thương Mại Điện Tử)
+# Sơ Đồ ERD Level 2 - Hệ Thống Đặt Hàng Qua Nút Bấm IoT (Đa Cửa Hàng & Sàn Thương Mại Điện Tử)
 **Phiên Bản: V2.2 (Universal Smart Button, Multi-Store Marketplace Ecosystem & Cloudinary Multi-Image)**
 
 ---
@@ -36,9 +36,9 @@ Mô hình ERD này mô tả chi tiết các thực thể dữ liệu, thuộc t�
 ```mermaid
 erDiagram
     USERS ||--o| CUSTOMER_PROFILE : "so_huu_ho_so"
-    USERS ||--o{ USER_ROLES : "duoc_gan_vai_tro"
+    USERS ||--o{ PLATFORM_MEMBERSHIPS : "duoc_cap_quyen_he_thong"
     USERS ||--o{ REFRESH_TOKENS : "so_huu_phien_dang_nhap"
-    ROLES ||--o{ USER_ROLES : "chua_nguoi_dung"
+    ROLES ||--o{ PLATFORM_MEMBERSHIPS : "dinh_nghia_role_he_thong"
     USERS ||--o{ STORE : "so_huu_gian_hang"
     
     STORE ||--o{ CATEGORY : "phan_loai_danh_muc"
@@ -98,6 +98,7 @@ erDiagram
         string email_verification_token "Mã băm SHA-256 token xác thực email"
         datetime email_verification_expires_at "Hạn token xác thực email"
         string status "ACTIVE, INACTIVE, BLOCKED"
+        datetime tokens_invalid_before "Watermark thu hồi JWT/WS đa node (GREATEST)"
         datetime created_at
         datetime updated_at
     }
@@ -113,15 +114,20 @@ erDiagram
 
     ROLES {
         bigint role_id PK "Mã vai trò"
-        string role_code "SYSTEM_ADMIN, STORE_OWNER, STORE_STAFF, CUSTOMER"
+        string role_code "SUPER_ADMIN, SYSTEM_ADMIN, ADMIN, SYSTEM_STAFF, STORE_OWNER, CUSTOMER"
         string role_name "Tên vai trò"
         string description "Mô tả quyền hạn"
     }
 
-    USER_ROLES {
-        bigint user_id PK,FK "Người dùng"
-        bigint role_id PK,FK "Vai trò"
-        datetime assigned_at
+    PLATFORM_MEMBERSHIPS {
+        bigint membership_id PK "Mã phân quyền hệ thống"
+        bigint user_id FK "Người dùng (USERS)"
+        bigint role_id FK "Vai trò hệ thống (ROLES)"
+        bigint granted_by_user_id FK "Admin cấp quyền"
+        bigint revoked_by_user_id FK "Admin thu hồi"
+        string status "ACTIVE, REVOKED, SUSPENDED"
+        datetime granted_at
+        datetime revoked_at
     }
 
     STORE {
@@ -431,7 +437,7 @@ erDiagram
 ### 3.1 Nhóm Danh Tính, Phân Quyền & Gian Hàng (Core Identity & Merchant)
 - **USERS**: Danh tính duy nhất toàn cầu cho tất cả các nhóm đối tượng (Admin, Chủ gian hàng, Nhân viên, Khách hàng). Ánh xạ 1-1 với Supabase Auth thông qua `auth_id`. Tích hợp mã băm SHA-256 xác minh email (`email_verification_token`) và đặt lại mật khẩu (`password_reset_token`).
 - **REFRESH_TOKENS**: Quản lý phiên đăng nhập an toàn, lưu trữ chuỗi băm SHA-256 của Refresh Token (`token_hash`). Hỗ trợ cơ chế Single-Use Token Rotation và tự động vô hiệu hóa khi logout.
-- **ROLES & USER_ROLES**: Cơ chế kiểm soát truy cập dựa trên vai trò (RBAC), hỗ trợ gán nhiều vai trò cho một người dùng.
+- **ROLES & PLATFORM_MEMBERSHIPS**: Cơ chế phân quyền hệ thống độc lập (`SYSTEM_STAFF`, `ADMIN`, `SYSTEM_ADMIN`, `SUPER_ADMIN`), tách khỏi `store_staff` (giữ dữ liệu lịch sử/FK). Quyền chủ cửa hàng gắn qua `STORE.owner_user_id`.
 - **STORE**: Gian hàng kinh doanh độc lập. Chứa thuộc tính `commission_rate` (cho phép cấu hình tỷ lệ hoa hồng linh hoạt riêng cho từng Store, nếu NULL sẽ dùng mức mặc định của Sàn là 8%).
 - **CUSTOMER_PROFILE**: Hồ sơ khách hàng toàn cầu không gắn cố định vào bất kỳ Store nào.
 - **STORE_CUSTOMER**: Bảng ghi nhận mối quan hệ mua sắm/thành viên giữa Store và Khách hàng (`UNIQUE(store_id, customer_id)`).

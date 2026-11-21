@@ -3,12 +3,24 @@ import { ALLOWED_ORDER_TRANSITIONS, OrderStatusType } from './dto/update-order-s
 import { DeliverOrderDto } from './dto/deliver-order.dto';
 import { DeliveryFailureDto } from './dto/delivery-failure.dto';
 import { DriverOrdersQueryDto } from './dto/driver-orders-query.dto';
-import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import * as crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
+import { ensureAndLockStoreWalletByStoreId } from '../store-wallet/store-wallet.lock';
+import { PaymentRefundsRepository } from '../payments/payment-refunds.repository';
 
 @Injectable()
 export class OrdersRepository {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() private readonly paymentRefundsRepo?: PaymentRefundsRepository,
+  ) {}
+
+  private getRefundsRepo(): PaymentRefundsRepository {
+    return this.paymentRefundsRepo || new PaymentRefundsRepository(this.prisma);
+  }
 
   async findButtonByIdentifier(identifier: string) {
     const isNum = !isNaN(Number(identifier));
@@ -122,8 +134,10 @@ export class OrdersRepository {
       deliveryDistanceSource?: string | null;
     },
   ): Promise<bigint> {
-    return this.prisma.$transaction(async (tx) => {
-      // 0. Idempotency Check (Safe Hit)
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          // 0. Idempotency Check (Safe Hit)
       if (iotRequestId) {
         const existingOrder = await tx.order.findFirst({
           where: {
@@ -235,6 +249,14 @@ export class OrdersRepository {
         new Set(button.buttonProducts.map((bp: any) => BigInt(bp.productId))),
       );
       sortedProductIds.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+      // Canonical Lock Order (product -> inventory ascending) matching ProductsRepository to prevent AB/BA deadlocks
+      for (const pId of sortedProductIds) {
+        await tx.$queryRawUnsafe<any[]>(
+          `SELECT product_id FROM product WHERE product_id = $1 FOR UPDATE`,
+          pId,
+        );
+      }
 
       const inventoryMap = new Map<bigint, { quantityOnHand: number; reservedQuantity: number }>();
       for (const pId of sortedProductIds) {
@@ -404,7 +426,9 @@ export class OrdersRepository {
       });
 
       return createdOrder.orderId;
-    });
+        }),
+      { operationName: 'CreateOrderFallbackTx' },
+    );
   }
 
   async findOrderById(orderId: bigint) {
@@ -593,32 +617,75 @@ export class OrdersRepository {
   }
 
   async releaseReservedInventory(items: { productId: bigint; quantity: number }[]) {
-    for (const item of items) {
-      await this.prisma.inventory.updateMany({
-        where: { productId: item.productId },
-        data: {
-          reservedQuantity: { decrement: item.quantity },
-        },
-      });
-    }
+    if (!items || items.length === 0) return;
+    const sorted = [...items].sort((a, b) => (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0));
+    await runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          for (const item of sorted) {
+            const invRows = await tx.$queryRawUnsafe<Array<{ reserved_quantity: number }>>(
+              `SELECT reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+              item.productId,
+            );
+            const currentReserved = invRows?.[0] ? Number(invRows[0].reserved_quantity) : 0;
+            const releaseQty = Math.min(currentReserved, Number(item.quantity));
+            if (releaseQty > 0) {
+              await tx.$executeRawUnsafe(
+                `UPDATE inventory
+                 SET reserved_quantity = GREATEST(0, reserved_quantity - $1),
+                     updated_at = NOW()
+                 WHERE product_id = $2`,
+                releaseQty,
+                item.productId,
+              );
+            }
+          }
+        }),
+      { operationName: 'ReleaseReservedInventory' },
+    );
   }
 
   async deductInventoryOnCompleted(items: { productId: bigint; quantity: number }[]) {
-    for (const item of items) {
-      await this.prisma.inventory.updateMany({
-        where: { productId: item.productId },
-        data: {
-          quantityOnHand: { decrement: item.quantity },
-          reservedQuantity: { decrement: item.quantity },
-        },
-      });
-    }
+    if (!items || items.length === 0) return;
+    const sorted = [...items].sort((a, b) => (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0));
+    await runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          for (const item of sorted) {
+            const invRows = await tx.$queryRawUnsafe<Array<{ quantity_on_hand: number; reserved_quantity: number }>>(
+              `SELECT quantity_on_hand, reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
+              item.productId,
+            );
+            const inv = invRows?.[0];
+            if (!inv) {
+              throw new BadRequestException(`Không tìm thấy tồn kho cho sản phẩm ${item.productId}`);
+            }
+            if (Number(inv.quantity_on_hand) < Number(item.quantity)) {
+              throw new BadRequestException(`Số lượng tồn kho thực tế không đủ cho sản phẩm ${item.productId}`);
+            }
+            const deductReserved = Math.min(Number(inv.reserved_quantity || 0), Number(item.quantity));
+            await tx.$executeRawUnsafe(
+              `UPDATE inventory
+               SET quantity_on_hand = GREATEST(0, quantity_on_hand - $1),
+                   reserved_quantity = GREATEST(0, reserved_quantity - $2),
+                   updated_at = NOW()
+               WHERE product_id = $3`,
+              item.quantity,
+              deductReserved,
+              item.productId,
+            );
+          }
+        }),
+      { operationName: 'DeductInventoryOnCompleted' },
+    );
   }
 
   async completeOrderAtomicTx(orderId: bigint): Promise<any> {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Lock order row
-      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          // 1. Lock order row
+          const lockedOrders = await tx.$queryRawUnsafe<any[]>(
         `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
         orderId,
       );
@@ -642,7 +709,7 @@ export class OrdersRepository {
           reason: { contains: '[INV_SETTLED]' },
         },
       });
-      const items = await tx.orderItem.findMany({ where: { orderId } });
+      const items = await tx.orderItem.findMany({ where: { orderId }, orderBy: { productId: 'asc' } });
       if (!alreadySettledInv) {
         for (const item of items) {
           await tx.$executeRawUnsafe(
@@ -703,43 +770,33 @@ export class OrdersRepository {
       if (shouldCreditWallet) {
         const storeId = order.store_id;
         if (storeId) {
-          const wallets = await tx.$queryRawUnsafe<any[]>(
-            `SELECT * FROM store_wallets WHERE store_id = $1 FOR UPDATE`,
-            storeId,
-          );
-          let wallet = wallets[0];
-          if (!wallet) {
-            wallet = await tx.storeWallet.create({
-              data: {
-                storeId,
-                balance: 0,
-                frozenBalance: 0,
-              },
-            });
-          }
+          const wallet = await ensureAndLockStoreWalletByStoreId(tx, BigInt(storeId));
+          const walletId = wallet.wallet_id;
 
           const orderRef = `ORDER:${orderId}`;
           const existingTx = await tx.walletTransaction.findFirst({
             where: {
-              walletId: wallet.walletId || wallet.wallet_id,
+              walletId,
               referenceId: orderRef,
               type: 'ORDER_REVENUE',
             },
           });
 
           if (!existingTx) {
-            const currentBal = Number(wallet.balance);
-            const payoutAmount = order.net_amount ? Number(order.net_amount) : Math.round(Number(order.total_amount) * 0.92);
-            const newBal = currentBal + payoutAmount;
+            const currentBal = new Prisma.Decimal(wallet.balance);
+            const payoutAmount = order.net_amount
+              ? new Prisma.Decimal(order.net_amount)
+              : new Prisma.Decimal(order.total_amount).mul('0.92').toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
+            const newBal = currentBal.plus(payoutAmount);
 
             await tx.storeWallet.update({
-              where: { walletId: wallet.walletId || wallet.wallet_id },
+              where: { walletId },
               data: { balance: newBal },
             });
 
             await tx.walletTransaction.create({
               data: {
-                walletId: wallet.walletId || wallet.wallet_id,
+                walletId,
                 amount: payoutAmount,
                 type: 'ORDER_REVENUE',
                 balanceBefore: currentBal,
@@ -764,7 +821,9 @@ export class OrdersRepository {
       // 5. Status history is recorded by DB trigger trg_sync_inventory_on_order_status_change
 
       return this.findOrderByIdTx(tx, orderId);
-    });
+        }),
+      { operationName: 'CompleteOrderAtomicTx' },
+    );
   }
 
   async cancelOrderAtomicTx(
@@ -773,8 +832,10 @@ export class OrdersRepository {
     userId?: any,
     targetStatus: 'CANCELLED' | 'REJECTED' = 'CANCELLED',
   ): Promise<any> {
-    return this.prisma.$transaction(async (tx) => {
-      const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const lockedOrders = await tx.$queryRawUnsafe<any[]>(
         `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
         orderId,
       );
@@ -813,7 +874,7 @@ export class OrdersRepository {
       // in completeDeliveryFailedTx. Re-releasing here would decrement reserved_quantity belonging to other orders!
       const alreadyReleased = order.order_status === 'DELIVERY_FAILED';
       if (!alreadyReleased) {
-        const items = await tx.orderItem.findMany({ where: { orderId } });
+        const items = await tx.orderItem.findMany({ where: { orderId }, orderBy: { productId: 'asc' } });
         for (const item of items) {
           await tx.$executeRawUnsafe(
             `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
@@ -863,13 +924,26 @@ export class OrdersRepository {
         data: orderUpdateData,
       });
 
+      if (
+        (orderUpdateData.paymentStatus === 'REFUND_PENDING' || order.payment_status === 'REFUND_PENDING') &&
+        typeof (tx as any)?.paymentOrderReceipt?.findMany === 'function'
+      ) {
+        await this.getRefundsRepo().ensureOrderRefundObligationsForCancelledOrderInTx(tx, orderId);
+      }
+
       // Lịch sử trạng thái được tự động ghi nhận bởi DB trigger trg_sync_inventory_on_order_status_change
 
       return this.findOrderByIdTx(tx, orderId);
-    });
+        }),
+      { operationName: 'CancelOrderAtomicTx' },
+    );
   }
 
-  async refundOrderAtomicTx(orderId: bigint, note: string, changedByUserId?: bigint | null) {
+  /**
+   * @deprecated Manual blind REFUNDED mutation is disabled (F2 P1 remediation).
+   * Paid order refunds must be dispatched & verified via PaymentRefundsService + PayOSPayoutService.
+   */
+  async refundOrderAtomicTx(orderId: bigint, _note: string, _changedByUserId?: bigint | null) {
     return this.prisma.$transaction(async (tx) => {
       const lockedOrders = await tx.$queryRawUnsafe<any[]>(
         `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
@@ -882,35 +956,14 @@ export class OrdersRepository {
       if (order.payment_status === 'REFUNDED') {
         return this.findOrderByIdTx(tx, orderId);
       }
-
-      const updatedOrder = await tx.order.update({
-        where: { orderId },
-        data: {
-          paymentStatus: 'REFUNDED',
-        },
-      });
-
-      await tx.paymentTransaction.updateMany({
-        where: {
-          orderId,
-          status: { in: ['PAID', 'REFUND_PENDING'] },
-        },
-        data: {
-          status: 'REFUNDED',
-        },
-      });
-
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId,
-          oldStatus: updatedOrder.orderStatus,
-          newStatus: updatedOrder.orderStatus,
-          changedByUserId: changedByUserId || null,
-          reason: note,
-        },
-      });
-
-      return this.findOrderByIdTx(tx, orderId);
+      if (order.payment_status !== 'REFUND_PENDING') {
+        throw new BadRequestException(
+          `Đơn hàng không ở trạng thái chờ hoàn tiền (Trạng thái hiện tại: ${order.payment_status})`,
+        );
+      }
+      throw new BadRequestException(
+        'MANUAL_ORDER_REFUND_DEPRECATED: Không thể đóng trạng thái REFUNDED khi chưa có chứng từ chi hộ PayOS xác thực. Vui lòng xử lý qua PaymentRefundsService.',
+      );
     });
   }
 
@@ -1005,10 +1058,15 @@ export class OrdersRepository {
     });
   }
 
-  async completeDeliveryAtomicTx(orderId: bigint, driverUser: any, dto: DeliverOrderDto) {
+  async takeoverShippingOrderTx(
+    orderId: bigint,
+    expectedStoreId: bigint | null,
+    newAssigneeUserId: bigint,
+    isPlatformAdmin: boolean,
+  ) {
     return this.prisma.$transaction(async (tx) => {
       const lockedOrders = await tx.$queryRawUnsafe<any[]>(
-        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        `SELECT order_id, store_id, order_status, assigned_driver_id FROM orders WHERE order_id = $1 FOR UPDATE`,
         orderId,
       );
       if (!lockedOrders || lockedOrders.length === 0) {
@@ -1016,13 +1074,53 @@ export class OrdersRepository {
       }
       const order = lockedOrders[0];
 
-      if (driverUser.storeId && order.store_id.toString() !== driverUser.storeId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
+      if (!isPlatformAdmin) {
+        if (!expectedStoreId || order.store_id.toString() !== expectedStoreId.toString()) {
+          throw new ForbiddenException('Đơn hàng không thuộc quyền quản lý của cửa hàng bạn');
+        }
       }
 
-      if (driverUser.role === 'STAFF_DELIVERY') {
-        if (!order.assigned_driver_id || order.assigned_driver_id.toString() !== driverUser.userId.toString()) {
-          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+      if (order.order_status !== 'SHIPPING') {
+        throw new BadRequestException(
+          `Chỉ có thể tiếp nhận lại đơn đang ở trạng thái SHIPPING (hiện tại: ${order.order_status})`,
+        );
+      }
+
+      await tx.$executeRawUnsafe(
+        `UPDATE orders
+         SET assigned_driver_id = $1,
+             updated_at = NOW()
+         WHERE order_id = $2`,
+        newAssigneeUserId,
+        orderId,
+      );
+
+      await tx.$executeRawUnsafe(
+        `SELECT set_config('app.current_user_id', $1, true)`,
+        newAssigneeUserId.toString(),
+      );
+
+      return this.findOrderByIdTx(tx, orderId);
+    });
+  }
+
+  async completeDeliveryAtomicTx(orderId: bigint, driverUser: any, dto: DeliverOrderDto) {
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const lockedOrders = await tx.$queryRawUnsafe<any[]>(
+            `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+            orderId,
+          );
+      if (!lockedOrders || lockedOrders.length === 0) {
+        throw new NotFoundException('Đơn hàng không tồn tại');
+      }
+      const order = lockedOrders[0];
+
+      const isPlatformAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(driverUser?.role);
+      if (!isPlatformAdmin) {
+        if (!driverUser?.storeId || order.store_id.toString() !== driverUser.storeId.toString()) {
+          throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
         }
       }
 
@@ -1171,7 +1269,7 @@ export class OrdersRepository {
         },
       });
       if (!alreadySettledInv) {
-        const items = await tx.orderItem.findMany({ where: { orderId } });
+        const items = await tx.orderItem.findMany({ where: { orderId }, orderBy: { productId: 'asc' } });
         for (const item of items) {
           const invRows = await tx.$queryRawUnsafe<any[]>(
             `SELECT quantity_on_hand, reserved_quantity FROM inventory WHERE product_id = $1 FOR UPDATE`,
@@ -1205,46 +1303,33 @@ export class OrdersRepository {
           },
         });
         if (payosTx && order.store_id) {
-          const storeId = order.store_id;
-          const wallets = await tx.$queryRawUnsafe<any[]>(
-            `SELECT * FROM store_wallets WHERE store_id = $1 FOR UPDATE`,
-            storeId,
-          );
-          let wallet = wallets[0];
-          if (!wallet) {
-            wallet = await tx.storeWallet.create({
-              data: {
-                storeId,
-                balance: 0,
-                frozenBalance: 0,
-              },
-            });
-          }
+          const wallet = await ensureAndLockStoreWalletByStoreId(tx, BigInt(order.store_id));
+          const walletId = wallet.wallet_id;
 
           const orderRef = `ORDER:${orderId}`;
           const existingTx = await tx.walletTransaction.findFirst({
             where: {
-              walletId: wallet.walletId || wallet.wallet_id,
+              walletId,
               referenceId: orderRef,
               type: 'ORDER_REVENUE',
             },
           });
 
           if (!existingTx) {
-            const currentBal = Number(wallet.balance);
+            const currentBal = new Prisma.Decimal(wallet.balance);
             const payoutAmount = order.net_amount
-              ? Number(order.net_amount)
-              : Math.round(Number(order.total_amount) * 0.92);
-            const newBal = currentBal + payoutAmount;
+              ? new Prisma.Decimal(order.net_amount)
+              : new Prisma.Decimal(order.total_amount).mul('0.92').toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
+            const newBal = currentBal.plus(payoutAmount);
 
             await tx.storeWallet.update({
-              where: { walletId: wallet.walletId || wallet.wallet_id },
+              where: { walletId },
               data: { balance: newBal },
             });
 
             await tx.walletTransaction.create({
               data: {
-                walletId: wallet.walletId || wallet.wallet_id,
+                walletId,
                 amount: payoutAmount,
                 type: 'ORDER_REVENUE',
                 balanceBefore: currentBal,
@@ -1310,7 +1395,9 @@ export class OrdersRepository {
       }
 
       return this.findOrderByIdTx(tx, orderId);
-    });
+        }),
+      { operationName: 'CompleteDeliveryAtomicTx' },
+    );
   }
 
   async failDeliveryAtomicTx(orderId: bigint, driverUser: any, dto: DeliveryFailureDto) {
@@ -1324,13 +1411,10 @@ export class OrdersRepository {
       }
       const order = lockedOrders[0];
 
-      if (driverUser.storeId && order.store_id.toString() !== driverUser.storeId.toString()) {
-        throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
-      }
-
-      if (driverUser.role === 'STAFF_DELIVERY') {
-        if (!order.assigned_driver_id || order.assigned_driver_id.toString() !== driverUser.userId.toString()) {
-          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
+      const isPlatformAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(driverUser?.role);
+      if (!isPlatformAdmin) {
+        if (!driverUser?.storeId || order.store_id.toString() !== driverUser.storeId.toString()) {
+          throw new ForbiddenException('Bạn không có quyền xử lý đơn hàng của cửa hàng khác');
         }
       }
 
@@ -1343,7 +1427,7 @@ export class OrdersRepository {
       }
 
       // Release reserved inventory back
-      const items = await tx.orderItem.findMany({ where: { orderId } });
+      const items = await tx.orderItem.findMany({ where: { orderId }, orderBy: { productId: 'asc' } });
       for (const item of items) {
         await tx.$executeRawUnsafe(
           `SELECT * FROM inventory WHERE product_id = $1 FOR UPDATE`,
@@ -1475,8 +1559,39 @@ export class OrdersRepository {
     };
   }
 
+  private computeStorefrontCheckoutHash(payload: {
+    storeId: bigint;
+    items: Array<{ productId: string | number; quantity: number }>;
+    customerName: string;
+    customerPhone: string;
+    deliveryAddress: string;
+    paymentMethod: string;
+    orderNote?: string;
+    customerUserId?: bigint;
+  }): string {
+    const normalizedItems = (payload.items || [])
+      .map((it) => ({
+        productId: String(it.productId || '').trim(),
+        quantity: Number(it.quantity),
+      }))
+      .sort((a, b) => a.productId.localeCompare(b.productId));
+
+    const canonical = JSON.stringify({
+      storeId: payload.storeId.toString(),
+      customerUserId: payload.customerUserId ? payload.customerUserId.toString() : null,
+      items: normalizedItems,
+      customerName: (payload.customerName || '').trim(),
+      customerPhone: (payload.customerPhone || '').trim(),
+      deliveryAddress: (payload.deliveryAddress || '').trim(),
+      paymentMethod: (payload.paymentMethod || '').trim().toUpperCase(),
+      orderNote: (payload.orderNote || '').trim(),
+    });
+    return crypto.createHash('sha256').update(canonical).digest('hex');
+  }
+
   /**
    * Tạo đơn hàng Storefront trực tiếp trong Transaction an toàn với Row-Locking (Task 1.1 + Task 1.2)
+   * Kèm ràng buộc định danh checkout bền vững (F4) để chống tạo đơn trùng khi retry sau crash window.
    */
   async createStorefrontOrderTx(payload: {
     storeId: bigint;
@@ -1487,65 +1602,137 @@ export class OrdersRepository {
     paymentMethod: string;
     orderNote?: string;
     customerUserId?: bigint;
+    idempotency?: {
+      actorScope?: string;
+      idempotencyKey: string;
+      requestHash?: string;
+      recordId?: bigint;
+      lockToken?: string;
+    };
   }) {
-    const { storeId, items, customerName, customerPhone, deliveryAddress, paymentMethod, orderNote, customerUserId } = payload;
+    const { storeId, items, customerName, customerPhone, deliveryAddress, paymentMethod, orderNote, customerUserId, idempotency } = payload;
 
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Verify Store
-      const store = await tx.store.findUnique({
-        where: { storeId },
-        select: { storeId: true, name: true, status: true, commissionRate: true },
-      });
-      if (!store || store.status !== 'ACTIVE') {
-        throw new BadRequestException('Cửa hàng không tồn tại hoặc tạm ngưng hoạt động');
-      }
+    const cleanIdempKey = idempotency?.idempotencyKey?.trim() || null;
+    const cleanActorScope = cleanIdempKey
+      ? (idempotency?.actorScope?.trim() || (customerUserId ? `user:${customerUserId.toString()}` : 'public'))
+      : null;
+    const checkoutRequestHash = cleanIdempKey
+      ? (idempotency?.requestHash?.trim() || this.computeStorefrontCheckoutHash(payload))
+      : null;
 
-      // 2. Aggregate quantities per product
-      const quantities = new Map<string, number>();
-      for (const item of items) {
-        const pId = String(item.productId || '').trim();
-        const qty = Number(item.quantity);
-        if (!pId || !Number.isInteger(qty) || qty < 1) {
-          throw new BadRequestException('Số lượng sản phẩm không hợp lệ');
-        }
-        quantities.set(pId, (quantities.get(pId) || 0) + qty);
-      }
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          // 0. Durable checkout identity lock & crash-recovery lookup inside the business transaction (F4)
+          if (cleanActorScope && cleanIdempKey) {
+            const lockKey = `storefront_checkout:${cleanActorScope}:${cleanIdempKey}`;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
 
-      let productIds: bigint[];
-      try {
-        productIds = Array.from(quantities.keys()).map((id) => BigInt(id));
-      } catch {
-        throw new BadRequestException('Giỏ hàng có sản phẩm không còn hợp lệ. Vui lòng tải lại danh mục và chọn lại sản phẩm.');
-      }
+            const existingOrder = await tx.order.findFirst({
+              where: {
+                checkoutActorScope: cleanActorScope,
+                checkoutIdempotencyKey: cleanIdempKey,
+              },
+              include: {
+                items: true,
+                store: { select: { storeId: true, name: true, phone: true } },
+              },
+            });
 
-      // 3. Acquire explicit row locks on inventory in ascending productId order (Task 1.2: anti-deadlock & concurrency safe)
-      const sortedProductIds = [...productIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-      for (const pId of sortedProductIds) {
-        const lockedRows: any[] = await tx.$queryRaw`
-          SELECT product_id, quantity_on_hand, reserved_quantity
-          FROM inventory
-          WHERE product_id = ${pId} AND store_id = ${storeId}
-          FOR UPDATE
-        `;
-        if (!lockedRows || lockedRows.length === 0) {
-          throw new BadRequestException(`Sản phẩm không có thông tin kho hàng hoặc không thuộc cửa hàng này`);
-        }
-        const invRow = lockedRows[0];
-        const onHand = Number(invRow.quantity_on_hand || 0);
-        const reserved = Number(invRow.reserved_quantity || 0);
-        const available = onHand - reserved;
-        const requiredQty = quantities.get(pId.toString())!;
-        if (available < requiredQty) {
-          const prodInfo = await tx.product.findUnique({
-            where: { productId: pId },
-            select: { productName: true },
-          });
-          const name = prodInfo?.productName || 'Sản phẩm';
-          throw new BadRequestException(
-            `Sản phẩm "${name}" không đủ số lượng trong kho (còn ${Math.max(0, available)} sản phẩm)`,
-          );
-        }
-      }
+            if (existingOrder) {
+              if (
+                existingOrder.checkoutRequestHash &&
+                checkoutRequestHash &&
+                existingOrder.checkoutRequestHash.trim() !== checkoutRequestHash.trim()
+              ) {
+                throw new UnprocessableEntityException(
+                  'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD: Khóa Idempotency đã được sử dụng với nội dung yêu cầu khác',
+                );
+              }
+              Object.defineProperty(existingOrder, '__reusedFromCheckoutIdempotency', {
+                value: true,
+                enumerable: false,
+              });
+              return existingOrder;
+            }
+          }
+          // 1. Lock Store FOR SHARE to guarantee consistent ACTIVE state throughout transaction
+          const storeRows: any[] = await tx.$queryRaw`
+            SELECT store_id, name, status, commission_rate
+            FROM store
+            WHERE store_id = ${storeId}
+            FOR SHARE
+          `;
+          const storeRow = storeRows?.[0];
+          if (!storeRow || storeRow.status !== 'ACTIVE') {
+            throw new BadRequestException('Cửa hàng không tồn tại hoặc tạm ngưng hoạt động');
+          }
+          const store = {
+            storeId: storeRow.store_id,
+            name: storeRow.name,
+            status: storeRow.status,
+            commissionRate: storeRow.commission_rate,
+          };
+
+          // 2. Aggregate quantities per product
+          const quantities = new Map<string, number>();
+          for (const item of items) {
+            const pId = String(item.productId || '').trim();
+            const qty = Number(item.quantity);
+            if (!pId || !Number.isInteger(qty) || qty < 1) {
+              throw new BadRequestException('Số lượng sản phẩm không hợp lệ');
+            }
+            quantities.set(pId, (quantities.get(pId) || 0) + qty);
+          }
+
+          let productIds: bigint[];
+          try {
+            productIds = Array.from(quantities.keys()).map((id) => BigInt(id));
+          } catch {
+            throw new BadRequestException('Giỏ hàng có sản phẩm không còn hợp lệ. Vui lòng tải lại danh mục và chọn lại sản phẩm.');
+          }
+
+          // 3. Canonical Lock Order: lock product rows ascending FOR UPDATE first,
+          //    then inventory rows ascending FOR UPDATE (matches ProductsRepository.updateProductAtomicTx).
+          const sortedProductIds = [...productIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+          for (const pId of sortedProductIds) {
+            const lockedProdRows: any[] = await tx.$queryRaw`
+              SELECT product_id, status
+              FROM product
+              WHERE product_id = ${pId} AND store_id = ${storeId}
+              FOR UPDATE
+            `;
+            if (!lockedProdRows || lockedProdRows.length === 0 || lockedProdRows[0].status !== 'ACTIVE') {
+              throw new BadRequestException('Một số sản phẩm không còn kinh doanh hoặc không thuộc cửa hàng này');
+            }
+          }
+
+          for (const pId of sortedProductIds) {
+            const lockedRows: any[] = await tx.$queryRaw`
+              SELECT product_id, quantity_on_hand, reserved_quantity
+              FROM inventory
+              WHERE product_id = ${pId} AND store_id = ${storeId}
+              FOR UPDATE
+            `;
+            if (!lockedRows || lockedRows.length === 0) {
+              throw new BadRequestException(`Sản phẩm không có thông tin kho hàng hoặc không thuộc cửa hàng này`);
+            }
+            const invRow = lockedRows[0];
+            const onHand = Number(invRow.quantity_on_hand || 0);
+            const reserved = Number(invRow.reserved_quantity || 0);
+            const available = onHand - reserved;
+            const requiredQty = quantities.get(pId.toString())!;
+            if (available < requiredQty) {
+              const prodInfo = await tx.product.findUnique({
+                where: { productId: pId },
+                select: { productName: true },
+              });
+              const name = prodInfo?.productName || 'Sản phẩm';
+              throw new BadRequestException(
+                `Sản phẩm "${name}" không đủ số lượng trong kho (còn ${Math.max(0, available)} sản phẩm)`,
+              );
+            }
+          }
 
       // 4. Query active products with current discounts
       const products = await tx.product.findMany({
@@ -1659,6 +1846,13 @@ export class OrdersRepository {
           shippingPhone: customerPhone.trim(),
           shippingAddress: deliveryAddress.trim(),
           orderNote: orderNote?.trim() || 'Đơn hàng mua trực tiếp từ cửa hàng trực tuyến (Storefront Web)',
+          ...(cleanActorScope && cleanIdempKey
+            ? {
+                checkoutActorScope: cleanActorScope,
+                checkoutIdempotencyKey: cleanIdempKey,
+                checkoutRequestHash,
+              }
+            : {}),
           items: {
             create: orderItemsData,
           },
@@ -1688,7 +1882,9 @@ export class OrdersRepository {
       });
 
       return created;
-    });
+        }),
+      { operationName: 'CreateStorefrontOrderTx' },
+    );
   }
 }
 

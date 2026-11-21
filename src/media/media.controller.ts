@@ -43,7 +43,7 @@ export class MediaController {
     @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Get('signature')
   @ApiOperation({
     summary: 'Tạo chữ ký số Cloudinary (Presigned Signature) để Frontend React upload trực tiếp',
@@ -53,10 +53,10 @@ export class MediaController {
   getUploadSignature(@Query('folder') folder?: string, @Request() req?: any) {
     const user = req?.user;
     let targetFolder = folder || 'smart-order';
-    if (user && user.role === 'STAFF_DELIVERY' && user.storeId) {
-      targetFolder = `stores/${user.storeId}/pod`;
-    }
-    if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+      if (!user.storeId) {
+        throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin storeId');
+      }
       const allowedPrefix = `stores/${user.storeId}/`;
       if (folder) {
         if (!folder.startsWith(allowedPrefix)) {
@@ -76,7 +76,7 @@ export class MediaController {
     };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('upload')
   @ApiOperation({
     summary: 'Tải ảnh lên Cloudinary qua Server (Hỗ trợ kiểm tra Magic Bytes chống mã độc)',
@@ -131,7 +131,7 @@ export class MediaController {
     };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('destroy')
   @ApiOperation({ summary: 'Xóa tệp ảnh trên Cloudinary khi thay thế hoặc hủy ảnh' })
   async destroyAsset(@Body('publicId') publicId: string, @Request() req?: any) {
@@ -176,7 +176,7 @@ export class MediaController {
     };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('upload-pod')
   @ApiOperation({
     summary: 'Tải ảnh bằng chứng giao hàng (POD) lên Cloudinary (Giới hạn 1.5MB, thư mục stores/{storeId}/pod)',
@@ -196,9 +196,11 @@ export class MediaController {
     if (!file) {
       throw new BadRequestException('Vui lòng chọn tệp hình ảnh để tải lên');
     }
-    if (!user || !user.storeId) {
+    const isAdmin = user && ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (!user || (!isAdmin && !user.storeId)) {
       throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng để lưu trữ POD');
     }
+    let resolvedStoreId = user.storeId ? user.storeId.toString() : null;
     if (orderId) {
       if (!/^\d+$/.test(orderId)) {
         throw new BadRequestException('Mã đơn hàng không hợp lệ');
@@ -209,20 +211,13 @@ export class MediaController {
       if (!order) {
         throw new NotFoundException('Đơn hàng không tồn tại');
       }
-      if (order.storeId.toString() !== user.storeId.toString()) {
-        throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang làm việc');
+      if (!isAdmin && order.storeId.toString() !== user.storeId.toString()) {
+        throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang quản lý');
       }
-      if (user.role === 'STAFF_DELIVERY') {
-        if (!order.assignedDriverId || order.assignedDriverId.toString() !== user.userId.toString()) {
-          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
-        }
-        if (order.orderStatus !== 'SHIPPING') {
-          throw new BadRequestException(`Chỉ có thể tải ảnh POD khi đơn hàng đang ở trạng thái SHIPPING (hiện tại: ${order.orderStatus})`);
-        }
-      }
+      resolvedStoreId = resolvedStoreId || order.storeId.toString();
     }
 
-    const targetFolder = `stores/${user.storeId}/pod`;
+    const targetFolder = `stores/${resolvedStoreId}/pod`;
     const result = await this.mediaService.uploadImageBuffer(file, targetFolder);
     return {
       success: true,
@@ -235,11 +230,11 @@ export class MediaController {
     };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'STAFF_DELIVERY', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   @Post('pod/presigned-upload')
   @ApiOperation({
     summary: 'Tạo URL ký sẵn (Presigned URL) để App/Web tải trực tiếp ảnh POD lên Cloud Storage (R2/S3)',
-    description: 'Tài xế/nhân viên gọi API này để lấy URL tải ảnh trực tiếp, không làm tốn RAM/băng thông của Backend API.',
+    description: 'Chủ cửa hàng gọi API này để lấy URL tải ảnh POD trực tiếp cho đơn hàng của cửa hàng mình.',
   })
   async getPodPresignedUpload(
     @Body() dto: PresignedUploadDto,
@@ -260,15 +255,7 @@ export class MediaController {
 
     if (user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
       if (!user.storeId || order.storeId.toString() !== user.storeId.toString()) {
-        throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang làm việc');
-      }
-      if (user.role === 'STAFF_DELIVERY') {
-        if (!order.assignedDriverId || order.assignedDriverId.toString() !== user.userId.toString()) {
-          throw new ForbiddenException('Bạn không phải tài xế được chỉ định cho đơn hàng này');
-        }
-        if (order.orderStatus !== 'SHIPPING') {
-          throw new BadRequestException(`Chỉ có thể xin URL tải ảnh POD khi đơn hàng đang ở trạng thái SHIPPING (hiện tại: ${order.orderStatus})`);
-        }
+        throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang quản lý');
       }
     }
 

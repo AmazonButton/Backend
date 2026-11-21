@@ -102,7 +102,7 @@ export class ProvisioningController {
    * 7. Hardware / Admin endpoint: Factory reset
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post('devices/:id/factory-reset')
   async factoryReset(@Param('id') id: string, @Request() req: any) {
     return this.provisioningService.factoryReset(id, req.user);
@@ -112,7 +112,7 @@ export class ProvisioningController {
    * 8. Customer endpoint: Change Wi-Fi credentials (preserves ownership & product)
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('CUSTOMER', 'STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('CUSTOMER', 'STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post(['devices/:id/change-wifi', 'provisioning/devices/:id/change-wifi'])
   async changeWifi(
     @Param('id') id: string,

@@ -19,6 +19,9 @@ import { ProductsRepository } from '../src/products/products.repository';
 import { ProductsService } from '../src/products/products.service';
 import { AuthRepository } from '../src/auth/auth.repository';
 import { AuthService } from '../src/auth/auth.service';
+import { PaymentRefundsRepository } from '../src/payments/payment-refunds.repository';
+import { PaymentRefundsService } from '../src/payments/payment-refunds.service';
+import { CryptoVaultUtil } from '../src/common/utils/crypto-vault.util';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
 async function runBusinessLogic13FixesSuite() {
@@ -445,13 +448,43 @@ async function runBusinessLogic13FixesSuite() {
     // =========================================================================
     console.log('\n--- Point 4 & 5: Child Lock Error Message & DevicesService canOrder Guard ---');
 
-    const ordersRepo = new OrdersRepository(prisma);
+    const mockOrdersPayoutService = {
+      createPayout: async (req: any) => ({
+        code: '00',
+        data: {
+          id: `po_bl13_${ts}`,
+          referenceId: req.referenceId,
+          amount: req.amount,
+          approvalState: 'SUCCEEDED',
+          transactions: [
+            {
+              id: `potx_bl13_${ts}`,
+              referenceId: req.referenceId,
+              amount: req.amount,
+              toBin: req.toBin,
+              toAccountNumber: req.toAccountNumber,
+              state: 'SUCCEEDED',
+            },
+          ],
+        },
+      }),
+      getPayout: async (id: string) => ({ code: '00', data: { id } }),
+      getPayouts: async () => ({ code: '00', data: [] }),
+    } as any;
+    const paymentRefundsRepo = new PaymentRefundsRepository(prisma);
+    const paymentRefundsService = new PaymentRefundsService(paymentRefundsRepo, mockOrdersPayoutService);
+    const ordersRepo = new OrdersRepository(prisma, paymentRefundsRepo);
     const mockEvents = { emitToStore: () => {}, emitToCustomer: () => {}, emitToAdmin: () => {} } as any;
     const ordersService = new OrdersService(
       ordersRepo,
       {} as any,
       mockEvents,
       walletService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      paymentRefundsService,
     );
 
     const childLockedBtn = await prisma.ioTButton.create({
@@ -546,7 +579,23 @@ async function runBusinessLogic13FixesSuite() {
       },
     });
 
-    await prisma.paymentTransaction.create({
+    const refAcc = `0988${String(ts).slice(-6)}`;
+    const refBank = await prisma.customerBankAccount.create({
+      data: {
+        customerId: custProfile.customerId,
+        bankCode: 'MB',
+        bankName: 'MBBank',
+        bankBin: '970422',
+        accountNumberEncrypted: CryptoVaultUtil.encryptAccountNumber(refAcc),
+        accountNumberMasked: CryptoVaultUtil.maskAccountNumber(refAcc),
+        accountNumberHash: CryptoVaultUtil.computeDeterministicAccountHash(refAcc),
+        accountName: 'CUSTOMER POINT 6',
+        verificationStatus: 'VERIFIED',
+        isDefault: true,
+      },
+    });
+
+    const refPt = await prisma.paymentTransaction.create({
       data: {
         orderId: refundedOrder.orderId,
         provider: 'PAYOS',
@@ -557,9 +606,28 @@ async function runBusinessLogic13FixesSuite() {
       },
     });
 
+    await prisma.paymentOrderReceipt.create({
+      data: {
+        orderId: refundedOrder.orderId,
+        paymentTransactionId: refPt.paymentTransactionId,
+        provider: 'PAYOS',
+        channel: 'ORDER_PAYMENT_LINK',
+        providerTransactionRef: `FT-REF-${ts}`,
+        amount: 100000,
+        currency: 'VND',
+        classification: 'ORDER_PAYMENT',
+        sourceBankBin: '970422',
+        sourceAccountMasked: CryptoVaultUtil.maskAccountNumber(refAcc),
+        sourceAccountHash: CryptoVaultUtil.computeDeterministicAccountHash(refAcc),
+        sourceAccountEncrypted: CryptoVaultUtil.encryptAccountNumber(refAcc),
+        sourceAccountName: 'CUSTOMER POINT 6',
+        sourceEvidenceStatus: 'SUFFICIENT',
+      },
+    });
+
     await ordersService.refundOrder(
       refundedOrder.orderId,
-      { refundReference: `REF-${ts}`, adminNote: 'Hoàn tiền đơn hủy' },
+      { customerBankAccountId: refBank.id.toString(), adminNote: 'Hoàn tiền đơn hủy' },
       { userId: ownerUser.userId, role: 'SUPER_ADMIN' },
     );
 

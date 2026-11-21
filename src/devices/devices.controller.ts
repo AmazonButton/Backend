@@ -71,42 +71,50 @@ export class DevicesController {
   }
 
   @Post()
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async register(@Body() body: RegisterDeviceDto, @Request() req: any) {
     const data = await this.devicesService.registerDevice(body, req.user);
     return { success: true, message: 'Đăng ký thiết bị thành công!', data };
   }
 
   @Post('bulk-import')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async bulkImport(@Body() body: BulkImportDevicesDto, @Request() req: any) {
     return this.devicesService.bulkImport(body, req.user);
   }
 
   /**
-   * Super Admin / System Admin / Admin tạo lô nút bấm trống vào kho tổng
+   * Super Admin / System Admin / Admin / System Staff tạo lô nút bấm trống vào kho tổng
    */
   @Post('batch-generate')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF')
   async batchGenerate(@Body() body: BatchGenerateDevicesDto, @Request() req: any) {
     return this.devicesService.batchGenerateBlankDevices(body, req.user);
   }
 
   /**
-   * Super Admin / System Admin / Admin lấy danh sách nút trống chưa phân bổ
+   * Super Admin / System Admin / Admin / System Staff lấy danh sách nút trống chưa phân bổ (có phân trang & tìm kiếm)
    */
   @Get('unassigned')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
-  async getUnassigned() {
-    const data = await this.devicesService.getUnassignedDevices();
-    return { success: true, data };
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF')
+  async getUnassigned(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: DeviceQueryDto,
+  ) {
+    const result = await this.devicesService.getUnassignedDevices(query);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách nút chưa phân bổ thành công',
+    );
   }
 
   /**
-   * Super Admin / System Admin / Admin cấp quyền phân phối danh sách nút cho Cửa hàng
+   * Super Admin / System Admin / Admin / System Staff phân phối danh sách nút cho Cửa hàng
    */
   @Post('allocate-store')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF')
   async allocateToStore(@Body() body: AllocateStoreDto, @Request() req: any) {
     return this.devicesService.allocateDevicesToStore(body, req.user);
   }
@@ -135,54 +143,54 @@ export class DevicesController {
   }
 
   @Patch(':id')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async update(@Param('id') id: string, @Body() body: UpdateDeviceDto, @Request() req: any) {
     const data = await this.devicesService.update(id, body, req.user);
     return { success: true, message: 'Cập nhật thiết bị thành công', data };
   }
 
   @Delete(':id')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async remove(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.remove(id, req.user);
     return data;
   }
 
   @Post(':id/pair')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async pair(@Param('id') id: string, @Body() body: PairDeviceDto, @Request() req: any) {
     const data = await this.devicesService.pair(id, body, req.user);
     return { success: true, message: 'Ghép nối thiết bị thành công!', data };
   }
 
   @Post(':id/re-pair')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async repair(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.repair(id, req.user);
     return { success: true, message: 'Đã tạo lại mã QR và token ghép nối mới', data };
   }
 
   @Post(':id/assign-product')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async assignProduct(@Param('id') id: string, @Body() body: AssignProductDto, @Request() req: any) {
     return this.devicesService.assignProduct(id, body, req.user);
   }
 
   @Delete(':id/product')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async unassignProduct(@Param('id') id: string, @Request() req: any) {
     return this.devicesService.unassignProduct(id, req.user);
   }
 
   @Post(':id/disable')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STAFF_BUTTON')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async disable(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.disable(id, req.user);
     return { success: true, message: 'Đã vô hiệu hóa thiết bị', data };
   }
 
   @Post(':id/enable')
-  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STAFF_BUTTON')
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF', 'STORE_OWNER')
   async enable(@Param('id') id: string, @Request() req: any) {
     const data = await this.devicesService.enable(id, req.user);
     return { success: true, message: 'Đã kích hoạt thiết bị', data };
@@ -201,7 +209,7 @@ export class DevicesController {
   }
 
   // --- Backward Compatibility Endpoints ---
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post('claim')
   async claim(@Request() req: any, @Body() body: ClaimLegacyDto) {
     const data = await this.devicesService.claim(
@@ -213,7 +221,7 @@ export class DevicesController {
     return { success: true, message: 'Kích hoạt thiết bị thành công!', data };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post(':id/assign')
   async assign(@Param('id') id: string, @Body() body: AssignDeviceDto, @Request() req: any) {
     const data = await this.devicesService.assign(id, body, req.user.storeId, req.user.id);
@@ -226,7 +234,7 @@ export class DevicesController {
     return { success: true, message: 'Cập nhật cấu hình thành công', data };
   }
 
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/status')
   async toggleStatus(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
     const data = await this.devicesService.toggleStatus(id, body.status, req.user);
@@ -247,7 +255,7 @@ export class DevicesController {
   /**
    * Cập nhật / Sạc / Thay pin cho nút bấm
    */
-  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/battery')
   async updateBattery(@Param('id') id: string, @Body() body: UpdateBatteryDto, @Request() req: any) {
     const data = await this.devicesService.updateBattery(id, body.batteryLevel, req.user);
@@ -257,7 +265,7 @@ export class DevicesController {
   /**
    * Gia hạn thời hạn sử dụng / hạn bảo hành cho nút bấm
    */
-  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/extend-warranty')
   async extendWarranty(@Param('id') id: string, @Body() body: ExtendWarrantyDto, @Request() req: any) {
     const data = await this.devicesService.extendWarranty(id, body, req.user);
@@ -267,7 +275,7 @@ export class DevicesController {
   /**
    * Bật / Tắt trạng thái còn xài hay không của nút bấm
    */
-  @Roles('STORE_OWNER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id/toggle-active')
   async toggleActive(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
     const data = await this.devicesService.toggleDeviceStatus(id, body.status, req.user);
@@ -277,7 +285,7 @@ export class DevicesController {
   /**
    * Cấu hình hành vi nút bấm (SmartSupply Behavior Designer)
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Put(':id/behavior')
   async updateBehavior(@Param('id') id: string, @Body() body: UpdateBehaviorDto, @Request() req: any) {
     const data = await this.devicesService.updateBehavior(id, body, req.user);
@@ -298,7 +306,7 @@ export class DevicesController {
    * - Đang treo trên cửa hàng (deployedOnStoreCatalog)
    * - Đang được User thuê (IN_CUSTOMER_CUSTODY)
    */
-  @Roles('STORE_OWNER', 'STORE_MANAGER', 'STAFF_BUTTON', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Get('stores/:storeId/inventory')
   async getStoreDeviceInventory(
     @Param('storeId') storeId: string,

@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { StoreWalletService } from '../store-wallet/store-wallet.service';
+import { PaymentRefundsService } from './payment-refunds.service';
 import { verifyPayoutSignature } from './payos.helper';
 
 export interface PayosPayoutWebhookDto {
@@ -42,13 +43,16 @@ export interface PayosPayoutWebhookDto {
 export class PayoutWebhookController {
   private readonly logger = new Logger(PayoutWebhookController.name);
   private readonly walletService: StoreWalletService;
+  private readonly paymentRefundsService?: PaymentRefundsService;
 
   constructor(
     @Inject(forwardRef(() => StoreWalletService))
     walletServiceOrPrisma: any,
     @Optional() maybeWalletService?: StoreWalletService,
+    @Optional() @Inject(forwardRef(() => PaymentRefundsService)) paymentRefundsService?: PaymentRefundsService,
   ) {
     this.walletService = maybeWalletService || walletServiceOrPrisma;
+    this.paymentRefundsService = paymentRefundsService;
   }
 
   @Post('payos/payout')
@@ -86,6 +90,12 @@ export class PayoutWebhookController {
     }
 
     // Delegate business processing and database transactions strictly to the Service & Repository layers
+    if (this.paymentRefundsService) {
+      const refundResult = await this.paymentRefundsService.processSignedPayoutWebhook(body.data, body.desc);
+      if (refundResult?.handled) {
+        return refundResult;
+      }
+    }
     return this.walletService.processPayoutWebhook(body.data, body.desc);
   }
 }

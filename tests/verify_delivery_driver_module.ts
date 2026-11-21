@@ -826,6 +826,11 @@ async function run() {
     await prisma.driverDuty.deleteMany({ where: { driverId: { in: trackedUserIds } } });
 
     if (trackedOrderIds.length > 0) {
+      await prisma.paymentRefundVerifiedVoucher.deleteMany({ where: { obligation: { orderId: { in: trackedOrderIds } } } });
+      await prisma.paymentRefundObligation.updateMany({ where: { orderId: { in: trackedOrderIds } }, data: { activePayoutAttemptId: null, settledAttemptId: null } });
+      await prisma.paymentRefundPayoutAttempt.deleteMany({ where: { obligation: { orderId: { in: trackedOrderIds } } } });
+      await prisma.paymentRefundObligation.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
+      await prisma.paymentOrderReceipt.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
       await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
       await prisma.paymentTransaction.deleteMany({ where: { orderId: { in: trackedOrderIds } } });
       await prisma.orderItem.deleteMany({ where: { orderId: { in: trackedOrderIds } } });

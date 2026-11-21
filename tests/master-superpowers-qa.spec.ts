@@ -760,6 +760,11 @@ async function runMasterSuperpowersQASuite() {
         await prisma.rentalPackage.deleteMany({ where: { packageId: createdRentalPackage.packageId } });
       }
       if (createdPayosOrder?.orderId) {
+        await prisma.paymentRefundVerifiedVoucher.deleteMany({ where: { obligation: { orderId: createdPayosOrder.orderId } } });
+        await prisma.paymentRefundObligation.updateMany({ where: { orderId: createdPayosOrder.orderId }, data: { activePayoutAttemptId: null, settledAttemptId: null } });
+        await prisma.paymentRefundPayoutAttempt.deleteMany({ where: { obligation: { orderId: createdPayosOrder.orderId } } });
+        await prisma.paymentRefundObligation.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
+        await prisma.paymentOrderReceipt.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
         await prisma.paymentTransaction.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
         await prisma.orderStatusHistory.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
         await prisma.orderItem.deleteMany({ where: { orderId: createdPayosOrder.orderId } });
@@ -779,6 +784,11 @@ async function runMasterSuperpowersQASuite() {
           const qaOrders = await prisma.order.findMany({ where: { storeId: createdStore.storeId } });
           const qaOrderIds = qaOrders.map((o: any) => o.orderId);
           if (qaOrderIds.length > 0) {
+            await prisma.paymentRefundVerifiedVoucher.deleteMany({ where: { obligation: { orderId: { in: qaOrderIds } } } });
+            await prisma.paymentRefundObligation.updateMany({ where: { orderId: { in: qaOrderIds } }, data: { activePayoutAttemptId: null, settledAttemptId: null } });
+            await prisma.paymentRefundPayoutAttempt.deleteMany({ where: { obligation: { orderId: { in: qaOrderIds } } } });
+            await prisma.paymentRefundObligation.deleteMany({ where: { orderId: { in: qaOrderIds } } });
+            await prisma.paymentOrderReceipt.deleteMany({ where: { orderId: { in: qaOrderIds } } });
             await prisma.iotIdempotencyKey.deleteMany({ where: { orderId: { in: qaOrderIds } } });
             await prisma.paymentTransaction.deleteMany({ where: { orderId: { in: qaOrderIds } } });
             await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: qaOrderIds } } });

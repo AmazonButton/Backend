@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { StoreWalletService } from '../store-wallet/store-wallet.service';
 import { MIN_ORDER_TOTAL_VND } from './orders.constants';
 export { MIN_ORDER_TOTAL_VND } from './orders.constants';
@@ -9,6 +10,7 @@ import {
   Inject,
   Optional,
   Logger,
+  forwardRef,
 } from '@nestjs/common';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrdersRepository } from './orders.repository';
@@ -29,6 +31,7 @@ import { ObjectStorageService } from '../media/object-storage.service';
 import { DeliveryEligibilityService, VerifiedDeliverySnapshot } from './delivery-eligibility.service';
 import { DeliveryQuoteDto } from './dto/delivery-quote.dto';
 import { QuickReorderDto } from './dto/quick-reorder.dto';
+import { PaymentRefundsService } from '../payments/payment-refunds.service';
 
 @Injectable()
 export class OrdersService {
@@ -43,7 +46,8 @@ export class OrdersService {
     @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
     @Optional() @Inject(ObjectStorageService) private readonly objectStorageService?: ObjectStorageService,
     @Optional() @Inject(DeliveryEligibilityService) private readonly deliveryEligibilityService?: DeliveryEligibilityService,
-  ) {}
+    @Optional() @Inject(forwardRef(() => PaymentRefundsService)) private readonly paymentRefundsService?: PaymentRefundsService,
+  ) { }
 
   private async invalidateDashboardCaches(storeId?: string | number | bigint, customerUserId?: string | number | bigint) {
     if (!this.cacheService || typeof this.cacheService.invalidatePrefix !== 'function') return;
@@ -414,7 +418,7 @@ export class OrdersService {
       if (!user.customerProfileId || button.customerId?.toString() !== user.customerProfileId.toString()) {
         throw new ForbiddenException('Bạn không sở hữu nút bấm này');
       }
-    } else if (['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_INVENTORY', 'STAFF_BUTTON', 'STAFF_DELIVERY'].includes(user?.role)) {
+    } else if (user?.role === 'STORE_OWNER') {
       if (!user.storeId || button.storeId?.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Nút bấm không thuộc quyền quản lý của cửa hàng bạn');
       }
@@ -478,19 +482,22 @@ export class OrdersService {
    * Đặt hàng nhanh từ App dựa trên Nút bấm (Endpoint 2: POST /api/v1/orders/quick-reorder)
    * Hỗ trợ cả chữ ký mới quickReorder(dto, user) và chữ ký cũ quickReorder(user, deviceId, addressId)
    */
-  async quickReorder(arg1: QuickReorderDto | any, arg2?: any, arg3?: string) {
+  async quickReorder(arg1: QuickReorderDto | any, arg2?: any, arg3?: string, arg4?: string) {
     let dto: QuickReorderDto;
     let user: any;
+    let idempotencyKey: string | undefined;
 
     if (arg1 && typeof arg1 === 'object' && ('deviceId' in arg1 || 'addressId' in arg1) && !('role' in arg1)) {
       dto = arg1 as QuickReorderDto;
       user = arg2;
+      idempotencyKey = arg3;
     } else {
       user = arg1;
       dto =
         typeof arg2 === 'string'
           ? { deviceId: arg2, addressId: arg3 }
           : (arg2 || {});
+      idempotencyKey = typeof arg2 === 'string' ? arg4 : arg3;
     }
 
     if (!user) {
@@ -527,7 +534,15 @@ export class OrdersService {
       ? BigInt(button.customerId)
       : BigInt(user.customerProfileId);
 
-    const requestId = `app_req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const cleanIdemp = typeof idempotencyKey === 'string' ? idempotencyKey.trim() : '';
+    if (cleanIdemp.length > 0 && !/^[A-Za-z0-9._:-]{1,128}$/.test(cleanIdemp)) {
+      throw new BadRequestException(
+        'idempotencyKey chỉ được chứa ký tự A-Z, a-z, 0-9, ., _, :, - (tối đa 128 ký tự)',
+      );
+    }
+    const requestId = cleanIdemp
+      ? `quick_${createHash('sha256').update(cleanIdemp).digest('hex')}`
+      : `app_req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
     const verifiedDeliverySnapshot =
       await this.deliveryEligibilityService.verifyAndResolveForMobileOrder({
@@ -566,17 +581,7 @@ export class OrdersService {
         throw new ForbiddenException('Tài khoản khách hàng thiếu hồ sơ định danh (customerProfileId)');
       }
       whereClause.customerId = BigInt(user.customerProfileId);
-    } else if (
-      [
-        'STORE_OWNER',
-        'STORE_MANAGER',
-        'STORE_STAFF',
-        'STAFF_ORDER',
-        'STAFF_INVENTORY',
-        'STAFF_BUTTON',
-        'STAFF_DELIVERY',
-      ].includes(user.role)
-    ) {
+    } else if (user.role === 'STORE_OWNER') {
       if (!user.storeId) {
         throw new ForbiddenException('Tài khoản cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
       }
@@ -627,13 +632,19 @@ export class OrdersService {
   }
 
   async getDeliveryQueue(user: any, page: number = 1, pageSize: number = 20) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role);
+    if (!isAdmin && user.role !== 'STORE_OWNER') {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị mới có quyền xem hàng đợi giao hàng');
+    }
+    if (!isAdmin && !user.storeId) {
+      throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
+    }
+
     const cappedPageSize = Math.min(pageSize, 100);
     const skip = (page - 1) * cappedPageSize;
 
-    let storeId: bigint | undefined = undefined;
-    if (user?.storeId) {
-      storeId = BigInt(user.storeId);
-    }
+    const storeId: bigint | undefined = !isAdmin || user?.storeId ? BigInt(user.storeId) : undefined;
 
     const { orders, total } = await this.ordersRepo.findDeliveryQueueOrders(
       storeId,
@@ -742,7 +753,7 @@ export class OrdersService {
     const elapsedSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
 
     const isPrivilegedStaff =
-      user && ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER', 'STORE_MANAGER'].includes(user.role);
+      user && ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'STORE_OWNER'].includes(user.role);
 
     // If caller is CUSTOMER or unprivileged
     if (!isPrivilegedStaff) {
@@ -790,30 +801,26 @@ export class OrdersService {
 
   /**
    * Xử lý hoàn tiền cho đơn hàng online đã hủy (REFUND_PENDING -> REFUNDED)
-   * Kèm ghi nhận lịch sử trạng thái, thông báo khách hàng và phát sự kiện realtime.
+   * Bắt buộc chỉ SUPER_ADMIN và chi hộ xác thực qua PaymentRefundsService + PayOSPayoutService.
    */
   async refundOrder(
     orderId: string | number | bigint,
-    refundDto: { refundReference?: string; adminNote?: string },
+    refundDto: { customerBankAccountId?: string; refundReference?: string; adminNote?: string },
     user?: any,
   ) {
+    if (!user || user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException({
+        success: false,
+        code: 'ACCESS_DENIED',
+        message: 'Chỉ SUPER_ADMIN mới có quyền phát lệnh hoàn tiền đơn hàng PayOS.',
+      });
+    }
+
     const targetOrderId = BigInt(orderId);
     const order = await this.ordersRepo.findOrderById(targetOrderId);
 
     if (!order) {
       throw new NotFoundException('Đơn hàng không tồn tại');
-    }
-
-    // BOLA check: Chỉ SUPER_ADMIN, SYSTEM_ADMIN hoặc chủ Store sở hữu đơn hàng
-    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
-      const isStoreOwner = user.storeId && order.storeId === BigInt(user.storeId);
-      if (!isStoreOwner) {
-        throw new ForbiddenException({
-          success: false,
-          code: 'ACCESS_DENIED',
-          message: 'Bạn không có quyền xử lý hoàn tiền cho đơn hàng của cửa hàng khác.',
-        });
-      }
     }
 
     if (order.paymentStatus === 'REFUNDED') {
@@ -826,48 +833,83 @@ export class OrdersService {
       );
     }
 
-    const note = refundDto?.adminNote
-      ? (refundDto?.refundReference ? `${refundDto.adminNote} [REF:${refundDto.refundReference}]` : refundDto.adminNote)
-      : (refundDto?.refundReference
-        ? `Đã hoàn tiền PayOS/Ngân hàng [REF:${refundDto.refundReference}]`
-        : 'Đã hoàn tất chuyển hoàn tiền đơn hàng cho khách');
+    if (!this.paymentRefundsService) {
+      throw new BadRequestException(
+        'MANUAL_ORDER_REFUND_DEPRECATED: Hệ thống chi hộ và đối soát chứng từ hoàn tiền PayOS chưa sẵn sàng.',
+      );
+    }
 
-    const updated = await this.ordersRepo.refundOrderAtomicTx(
-      targetOrderId,
-      note,
-      user?.userId ? BigInt(user.userId) : null,
+    const obligations = await this.paymentRefundsService.ensureOrderRefundObligations(targetOrderId);
+    const mainObligations = (obligations || []).filter((o: any) =>
+      ['ORDER_REFUND', 'LEGACY_UNCLASSIFIED'].includes(o.obligationType),
+    );
+    if (mainObligations.length === 0) {
+      throw new BadRequestException(
+        'Đơn hàng chưa có chứng từ thu tiền (receipt) hoặc nghĩa vụ hoàn tiền hợp lệ để chi hộ xác thực.',
+      );
+    }
+
+    const openMainObligations = mainObligations.filter(
+      (o: any) => !['REFUNDED', 'CANCELLED'].includes(o.status),
     );
 
-    // Tạo thông báo cho khách hàng nếu có
-    const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
-    if (customerUserId && this.notificationsService) {
-      const refundVnd = Number(order.totalAmount).toLocaleString('vi-VN');
-      await this.notificationsService.createAndDispatchNotification({
-        userId: customerUserId,
-        type: 'ORDER_REFUNDED',
-        title: 'Hoàn tiền đơn hàng thành công',
-        body: `Đơn hàng #${order.orderCode} đã được hoàn tiền thành công (${refundVnd} ₫).`,
-        data: {
-          orderId: order.orderId.toString(),
-          orderCode: order.orderCode,
-          refundAmount: Number(order.totalAmount),
+    for (const obl of openMainObligations) {
+      const resultObl = await this.paymentRefundsService.initiateObligationPayout(
+        obl.obligationId,
+        {
+          customerBankAccountId: refundDto?.customerBankAccountId,
+          note: refundDto?.adminNote,
         },
-        idempotencyKey: `order_refund:${order.orderId.toString()}`,
-      }).catch(() => {});
+        user,
+      );
+      if (
+        resultObl &&
+        ['READY_FOR_PAYOUT', 'PENDING_RECIPIENT_VERIFICATION'].includes(resultObl.status)
+      ) {
+        throw new BadRequestException(
+          resultObl.failureReason ||
+            'Yêu cầu chi hoàn tiền PayOS cho đơn hàng bị từ chối hoặc chưa đủ điều kiện thụ hưởng.',
+        );
+      }
     }
 
-    const formattedOrder = toOrderResponseDto(updated);
-    const refundPayload = {
-      order: formattedOrder,
-      storeId: order.storeId.toString(),
-      customerId: order.customerId ? order.customerId.toString() : null,
-    };
-    this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_REFUNDED', refundPayload);
-    if (order.customerId) {
-      this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_REFUNDED', refundPayload);
-    }
+    const updated = await this.ordersRepo.findOrderById(targetOrderId);
+    const formattedOrder = toOrderResponseDto(updated || order);
 
-    await this.invalidateDashboardCaches(order.storeId, customerUserId);
+    if (updated?.paymentStatus === 'REFUNDED') {
+      const customerUserId = order.customer?.userId || (order.customer as any)?.user?.userId;
+      if (customerUserId && this.notificationsService) {
+        const refundVnd = Number(order.totalAmount).toLocaleString('vi-VN');
+        await this.notificationsService
+          .createAndDispatchNotification({
+            userId: customerUserId,
+            type: 'ORDER_REFUNDED',
+            title: 'Hoàn tiền đơn hàng thành công',
+            body: `Đơn hàng #${order.orderCode} đã được hoàn tiền thành công (${refundVnd} ₫).`,
+            data: {
+              orderId: order.orderId.toString(),
+              orderCode: order.orderCode,
+              refundAmount: Number(order.totalAmount),
+            },
+            idempotencyKey: `order_refund:${order.orderId.toString()}`,
+          })
+          .catch(() => {});
+      }
+
+      if (this.eventsGateway) {
+        const refundPayload = {
+          order: formattedOrder,
+          storeId: order.storeId.toString(),
+          customerId: order.customerId ? order.customerId.toString() : null,
+        };
+        this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_REFUNDED', refundPayload);
+        if (order.customerId) {
+          this.eventsGateway.emitToCustomer(order.customerId.toString(), 'ORDER_REFUNDED', refundPayload);
+        }
+      }
+
+      await this.invalidateDashboardCaches(order.storeId, customerUserId);
+    }
 
     return formattedOrder;
   }
@@ -965,8 +1007,8 @@ export class OrdersService {
 
   async claimOrder(orderId: string | number | bigint, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
-      throw new ForbiddenException('Chỉ tài xế hoặc quản lý cửa hàng mới có quyền nhận đơn hàng');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị viên mới có quyền nhận giao đơn hàng');
     }
     if (!user.storeId && !['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
       throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng liên kết (storeId)');
@@ -995,10 +1037,43 @@ export class OrdersService {
     return formatted;
   }
 
+  async takeoverLegacyDelivery(orderId: string | number | bigint, user: any) {
+    if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng mới có quyền tiếp nhận lại đơn hàng đang giao');
+    }
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (!isAdmin && !user.storeId) {
+      throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng liên kết (storeId)');
+    }
+
+    const targetOrderId = BigInt(orderId);
+    const actorUserId = BigInt(user.userId || user.id);
+    const expectedStoreId = user.storeId ? BigInt(user.storeId) : null;
+
+    const updated = await this.ordersRepo.takeoverShippingOrderTx(
+      targetOrderId,
+      expectedStoreId,
+      actorUserId,
+      isAdmin,
+    );
+    const formatted = toOrderResponseDto(updated);
+    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_CLAIMED', {
+      order: formatted,
+      storeId: updated.storeId.toString(),
+      driverId: actorUserId.toString(),
+      reclaimedFromLegacyDriver: true,
+    });
+    return formatted;
+  }
+
   async completeDelivery(orderId: string | number | bigint, dto: DeliverOrderDto, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
-      throw new ForbiddenException('Không có quyền hoàn tất đơn giao hàng');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị viên mới có quyền hoàn tất giao hàng');
+    }
+    if (user.role === 'STORE_OWNER' && !user.storeId) {
+      throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
     }
 
     const targetOrderId = BigInt(orderId);
@@ -1017,8 +1092,11 @@ export class OrdersService {
 
   async failDelivery(orderId: string | number | bigint, dto: DeliveryFailureDto, user: any) {
     if (!user) throw new ForbiddenException('Thiếu thông tin người dùng');
-    if (!['STAFF_DELIVERY', 'STORE_OWNER', 'STORE_MANAGER', 'STAFF_ORDER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
-      throw new ForbiddenException('Không có quyền báo giao hàng thất bại');
+    if (!['STORE_OWNER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role)) {
+      throw new ForbiddenException('Chỉ chủ cửa hàng hoặc quản trị viên mới có quyền cập nhật giao hàng thất bại');
+    }
+    if (user.role === 'STORE_OWNER' && !user.storeId) {
+      throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
     }
 
     const targetOrderId = BigInt(orderId);
@@ -1060,7 +1138,17 @@ export class OrdersService {
   /**
    * Tạo đơn hàng Storefront trực tiếp từ Web, gọi Repository transaction và phát Event an toàn (Task 1.1)
    */
-  async createStorefrontOrder(body: CreateStorefrontOrderDto, customerUserId?: string | bigint) {
+  async createStorefrontOrder(
+    body: CreateStorefrontOrderDto,
+    customerUserId?: string | bigint,
+    idempotency?: {
+      actorScope?: string;
+      idempotencyKey: string;
+      requestHash?: string;
+      recordId?: bigint;
+      lockToken?: string;
+    },
+  ) {
     const { storeId: rawStoreId, items, customerName, customerPhone, deliveryAddress, paymentMethod, orderNote } = body;
 
     let storeId: bigint;
@@ -1088,7 +1176,11 @@ export class OrdersService {
       paymentMethod,
       orderNote,
       customerUserId: customerUserBigInt,
+      idempotency,
     });
+    const isRecoveredIdempotentReplay = Boolean(
+      (createdOrder as any)?.__reusedFromCheckoutIdempotency,
+    );
 
     // Event emission after transaction successfully committed
     const orderPayload = {
@@ -1133,15 +1225,17 @@ export class OrdersService {
       customerId: createdOrder.customerId ? createdOrder.customerId.toString() : null,
     };
 
-    this.eventsGateway.emitToStore(storeId.toString(), 'ORDER_CREATED', orderPayload);
-    if (createdOrder.customerId) {
-      this.eventsGateway.emitToCustomer(createdOrder.customerId.toString(), 'ORDER_CREATED', orderPayload);
-    }
+    if (!isRecoveredIdempotentReplay) {
+      this.eventsGateway?.emitToStore(storeId.toString(), 'ORDER_CREATED', orderPayload);
+      if (createdOrder.customerId) {
+        this.eventsGateway?.emitToCustomer(createdOrder.customerId.toString(), 'ORDER_CREATED', orderPayload);
+      }
 
-    await this.invalidateDashboardCaches(
-      storeId,
-      createdOrder.customerId ? customerUserBigInt?.toString() : undefined,
-    );
+      await this.invalidateDashboardCaches(
+        storeId,
+        createdOrder.customerId ? customerUserBigInt?.toString() : undefined,
+      );
+    }
 
     return {
       success: true,
@@ -1191,10 +1285,8 @@ export class OrdersService {
       if (!customerUserId || customerUserId.toString() !== user.userId?.toString()) {
         throw new ForbiddenException('Bạn không có quyền xem thông tin đơn hàng của người khác');
       }
-    } else if (
-      ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF', 'STAFF_ORDER', 'STAFF_DELIVERY'].includes(user.role)
-    ) {
-      if (user.storeId && order.storeId.toString() !== user.storeId.toString()) {
+    } else if (user.role === 'STORE_OWNER') {
+      if (!user.storeId || order.storeId.toString() !== user.storeId.toString()) {
         throw new ForbiddenException('Đơn hàng không thuộc cửa hàng bạn đang quản lý');
       }
     } else if (!['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(user.role)) {
@@ -1227,10 +1319,10 @@ export class OrdersService {
       isPrivateStorage: isDirectStorage,
       driver: order.assignedDriver
         ? {
-            userId: order.assignedDriver.userId.toString(),
-            fullName: order.assignedDriver.fullName,
-            phone: order.assignedDriver.phone,
-          }
+          userId: order.assignedDriver.userId.toString(),
+          fullName: order.assignedDriver.fullName,
+          phone: order.assignedDriver.phone,
+        }
         : null,
     };
   }

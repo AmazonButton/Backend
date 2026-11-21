@@ -1,6 +1,10 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class RefundOrderDto {
+  @IsOptional()
+  @Matches(/^\d+$/, { message: 'customerBankAccountId phải là số hợp lệ' })
+  customerBankAccountId?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(128)

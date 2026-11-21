@@ -1,6 +1,6 @@
 import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
 import { UpdateAdminStoreDto } from './dto/update-admin-store.dto';
-import { Injectable, NotFoundException, BadRequestException, Optional, Inject, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, Logger } from '@nestjs/common';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
 import { AdminRepository } from './admin.repository';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
@@ -11,6 +11,8 @@ import {
 } from '../payments/payos-payout-verifier';
 import { WalletMapper } from '../store-wallet/mappers/wallet.mapper';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
+import { EventsGateway } from '../websocket/events.gateway';
+import { isBootstrapSuperAdmin, isDeprecatedStoreRole, isPlatformRoleCode, resolveAuthority } from '../auth/authority.policy';
 import { buildAnalyticsDateRange } from '../analytics/utils/analytics-date-range.util';
 import {
   AdminDashboardQueryDto,
@@ -28,6 +30,7 @@ export class AdminService {
     @Optional()
     private readonly payosPayoutService?: PayOSPayoutService,
     @Optional() private readonly cacheService?: DashboardCacheService,
+    @Optional() private readonly eventsGateway?: EventsGateway,
   ) {}
 
   private async invalidateAdminAndStoreCaches(storeId?: string | number | bigint) {
@@ -132,12 +135,18 @@ export class AdminService {
 
   async listUsers(query?: any) {
     const res = await this.adminRepo.findUsers(query);
-    const items = res.items.map((u: any) => ({
-      ...u,
-      id: u.userId.toString(),
-      userId: u.userId.toString(),
-      role: u.customerProfile ? 'CUSTOMER' : (u.ownedStores && u.ownedStores.length > 0 ? 'STORE_OWNER' : 'USER'),
-    }));
+    const items = res.items.map((u: any) => {
+      const authority = resolveAuthority(u);
+      return {
+        ...u,
+        id: u.userId.toString(),
+        userId: u.userId.toString(),
+        role: authority.role,
+        storeId: authority.storeId,
+        platformRole: authority.platformRole,
+        capabilities: authority.capabilities,
+      };
+    });
     return {
       items,
       total: res.total,
@@ -152,20 +161,159 @@ export class AdminService {
     if (!user) throw new NotFoundException('Không tìm thấy người dùng');
     const nextStatus = status || (user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE');
     const result = await this.adminRepo.updateUserStatus(targetUserId, nextStatus);
+    if (nextStatus !== 'ACTIVE') {
+      await this.eventsGateway?.disconnectUserSockets(targetUserId.toString(), 'Tài khoản đã bị vô hiệu hóa');
+    }
     await this.invalidateAdminAndStoreCaches();
     return result;
   }
 
-  async updateUserRole(userId: string | number | bigint, roleCode: string, _adminUser?: any) {
-    const targetUserId = BigInt(userId);
-    const user = await this.adminRepo.findUserById(targetUserId);
-    if (!user) throw new NotFoundException('Không tìm thấy người dùng');
+  async listPlatformMemberships(query?: any) {
+    const res = await this.adminRepo.findPlatformMemberships(query);
+    return {
+      items: res.items.map((m: any) => ({
+        membershipId: m.membershipId.toString(),
+        userId: m.userId.toString(),
+        roleCode: m.role?.roleCode,
+        roleName: m.role?.roleName,
+        status: m.status,
+        grantedAt: m.grantedAt,
+        revokedAt: m.revokedAt,
+        reason: m.reason,
+        user: m.user ? { ...m.user, userId: m.user.userId.toString() } : null,
+        grantedBy: m.grantedBy ? { ...m.grantedBy, userId: m.grantedBy.userId.toString() } : null,
+        revokedBy: m.revokedBy ? { ...m.revokedBy, userId: m.revokedBy.userId.toString() } : null,
+      })),
+      total: res.total,
+      page: res.page,
+      pageSize: res.pageSize,
+    };
+  }
 
-    const role = await this.adminRepo.findOrCreateRole(roleCode);
-    await this.adminRepo.updateStaffRole(targetUserId, role.roleId);
+  async grantPlatformRole(userId: string | number | bigint, roleCode: string, adminUser?: any, reason?: string) {
+    const normalized = (roleCode || '').trim().toUpperCase();
+    if (!isPlatformRoleCode(normalized)) {
+      throw new BadRequestException(
+        `Vai trò hệ thống không hợp lệ: '${roleCode}'. Chỉ hỗ trợ: SYSTEM_STAFF, ADMIN, SYSTEM_ADMIN, SUPER_ADMIN`,
+      );
+    }
+
+    const targetUserId = BigInt(userId);
+    if (
+      normalized !== 'SUPER_ADMIN' &&
+      typeof (this.adminRepo as any).findUserAuthoritySnapshot === 'function'
+    ) {
+      const targetSnapshot = await this.adminRepo.findUserAuthoritySnapshot(targetUserId);
+      if (targetSnapshot && isBootstrapSuperAdmin(targetSnapshot)) {
+        throw new ForbiddenException({
+          success: false,
+          code: 'BOOTSTRAP_SUPER_ADMIN_PROTECTED',
+          message: 'Tài khoản bootstrap SUPER_ADMIN được bảo vệ, không thể hạ hoặc thay thế quyền qua API.',
+        });
+      }
+    }
+
+    const actorUserId = adminUser?.userId || adminUser?.id ? BigInt(adminUser.userId || adminUser.id) : null;
+    const created = await this.adminRepo.grantPlatformMembershipTx({
+      userId: targetUserId,
+      roleCode: normalized,
+      actorUserId,
+      reason,
+    });
+
+    await this.eventsGateway?.disconnectUserSockets(
+      targetUserId.toString(),
+      `Quyền hệ thống đã được cập nhật sang ${normalized}`,
+    );
     await this.invalidateAdminAndStoreCaches();
 
-    return { success: true, message: 'Đã cập nhật vai trò người dùng thành ' + roleCode };
+    return {
+      membershipId: created.membershipId.toString(),
+      userId: created.userId.toString(),
+      roleCode: created.role?.roleCode || normalized,
+      status: created.status,
+      grantedAt: created.grantedAt,
+      reason: created.reason,
+    };
+  }
+
+  async revokePlatformRole(userId: string | number | bigint, adminUser?: any, reason?: string) {
+    const targetUserId = BigInt(userId);
+    const loadSnapshot =
+      typeof (this.adminRepo as any).findUserAuthoritySnapshot === 'function'
+        ? () => this.adminRepo.findUserAuthoritySnapshot(targetUserId)
+        : () => this.adminRepo.findUserById(targetUserId);
+
+    const user = await loadSnapshot();
+    if (!user) throw new NotFoundException('Không tìm thấy người dùng');
+
+    if (isBootstrapSuperAdmin(user)) {
+      throw new ForbiddenException({
+        success: false,
+        code: 'BOOTSTRAP_SUPER_ADMIN_PROTECTED',
+        message: 'Tài khoản bootstrap SUPER_ADMIN được bảo vệ, không thể thu hồi quyền quản trị tối cao qua API.',
+      });
+    }
+
+    const actorUserId = adminUser?.userId || adminUser?.id ? BigInt(adminUser.userId || adminUser.id) : null;
+    const res = await this.adminRepo.revokePlatformMembershipTx({
+      userId: targetUserId,
+      actorUserId,
+      reason,
+    });
+
+    await this.eventsGateway?.disconnectUserSockets(targetUserId.toString(), 'Vai trò hệ thống đã bị thu hồi');
+    await this.invalidateAdminAndStoreCaches();
+
+    const refreshedUser = await loadSnapshot();
+    const effectiveAuthority = resolveAuthority(refreshedUser || user);
+
+    return {
+      userId: targetUserId.toString(),
+      revokedCount: res.revokedCount,
+      newEffectiveRole: effectiveAuthority.role,
+      storeId: effectiveAuthority.storeId,
+      platformRole: effectiveAuthority.platformRole,
+      capabilities: effectiveAuthority.capabilities,
+    };
+  }
+
+  async updateUserRole(userId: string | number | bigint, roleCode: string, adminUser?: any, reason?: string) {
+    const normalized = (roleCode || '').trim().toUpperCase();
+    if (isDeprecatedStoreRole(normalized)) {
+      throw new BadRequestException({
+        success: false,
+        code: 'DEPRECATED_ROLE_NOT_ALLOWED',
+        message: `Vai trò '${normalized}' đã ngừng cấp. Chỉ hỗ trợ SYSTEM_STAFF, ADMIN, SYSTEM_ADMIN, SUPER_ADMIN hoặc thu hồi về CUSTOMER.`,
+      });
+    }
+
+    if (normalized === 'STORE_OWNER') {
+      throw new BadRequestException('Vai trò STORE_OWNER gắn với chủ sở hữu cửa hàng khi đăng ký/duyệt store, không gán trực tiếp tại endpoint này.');
+    }
+
+    if (normalized === 'CUSTOMER') {
+      const revoked = await this.revokePlatformRole(userId, adminUser, reason || 'Hạ quyền về CUSTOMER');
+      return {
+        success: true,
+        message:
+          revoked.newEffectiveRole === 'CUSTOMER'
+            ? 'Đã thu hồi quyền hệ thống và chuyển vai trò về CUSTOMER'
+            : `Đã thu hồi quyền hệ thống; vai trò hiệu lực hiện tại là ${revoked.newEffectiveRole}`,
+        data: revoked,
+      };
+    }
+
+    if (isPlatformRoleCode(normalized)) {
+      const granted = await this.grantPlatformRole(userId, normalized, adminUser, reason);
+      return {
+        success: true,
+        message: `Đã cấp vai trò hệ thống ${normalized}`,
+        data: granted,
+      };
+    }
+
+    throw new BadRequestException(`Vai trò '${roleCode}' không được hỗ trợ`);
   }
 
   async createSubscriptionPlan(body: any, _adminUser?: any) {

@@ -9,7 +9,14 @@ import {
   Logger,
   HttpException,
   HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
+import {
+  resolveAuthority,
+  getRoleCapabilities,
+  isTokenInvalidatedByTimestamps,
+  RoleCapabilities,
+} from './authority.policy';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
@@ -53,42 +60,13 @@ export class AuthService {
     return crypto.createHmac('sha256', pepper).update(`${otpCode.trim()}:${purpose}`).digest('hex');
   }
 
-  public resolveUserRole(user: any): { role: string; storeId: string | null } {
-    let role = 'CUSTOMER';
-    let storeId: string | null = null;
-
-    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'admin@smartorder.local')
-      .split(',')
-      .map((e) => e.trim().toLowerCase());
-    const isExplicitSuperAdmin =
-      superAdminEmails.includes((user.email || '').toLowerCase()) ||
-      user.username === 'admin';
-
-    const activePlatformStaff = user.storeStaffs?.find(
-      (s: any) =>
-        s.status === 'ACTIVE' &&
-        (s.role?.roleCode === 'SUPER_ADMIN' || s.role?.roleCode === 'SYSTEM_ADMIN' || s.role?.roleCode === 'ADMIN'),
-    );
-
-    if (activePlatformStaff) {
-      role = activePlatformStaff.role.roleCode;
-    } else if (isExplicitSuperAdmin) {
-      role = 'SUPER_ADMIN';
-    } else if (user.ownedStores && user.ownedStores.length > 0) {
-      role = 'STORE_OWNER';
-      storeId = user.ownedStores[0].storeId.toString();
-    } else if (user.storeStaffs && user.storeStaffs.length > 0) {
-      const activeStaff = user.storeStaffs.find((s: any) => s.status === 'ACTIVE');
-      if (activeStaff) {
-        role = activeStaff.role?.roleCode || 'STORE_STAFF';
-        storeId = activeStaff.storeId.toString();
-      } else {
-        role = 'CUSTOMER';
-        storeId = null;
-      }
-    }
-
-    return { role, storeId };
+  public resolveUserRole(user: any): {
+    role: string;
+    storeId: string | null;
+    platformRole: string | null;
+    capabilities: RoleCapabilities;
+  } {
+    return resolveAuthority(user);
   }
 
   constructor(
@@ -105,6 +83,14 @@ export class AuthService {
     const email = body.email?.trim().toLowerCase();
     const username = body.username?.trim().toLowerCase();
     const { password, fullName, phone, role = 'CUSTOMER', storeName, address } = body;
+
+    if (role !== 'CUSTOMER' && role !== 'STORE_OWNER') {
+      throw new ForbiddenException({
+        success: false,
+        code: 'PUBLIC_ROLE_RESTRICTED',
+        message: 'Chỉ được phép đăng ký tài khoản CUSTOMER hoặc STORE_OWNER',
+      });
+    }
 
     if (!email || !password || !fullName || !username) {
       throw new BadRequestException({
@@ -626,7 +612,7 @@ export class AuthService {
     }
 
     // Determine role & storeId
-    const { role, storeId } = this.resolveUserRole(user);
+    const { role, storeId, platformRole, capabilities } = this.resolveUserRole(user);
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
 
     // Generate JWT access token
@@ -658,6 +644,8 @@ export class AuthService {
       avatarUrl: user.avatarUrl || null,
       role,
       storeId,
+      platformRole,
+      capabilities,
       customerProfileId,
       phone: user.phone,
       authProvider: user.authProvider || 'LOCAL',
@@ -731,7 +719,7 @@ export class AuthService {
     }
 
     // Determine primary role & storeId
-    const { role, storeId } = this.resolveUserRole(user);
+    const { role, storeId, platformRole, capabilities } = this.resolveUserRole(user);
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
 
     const accessToken = this.jwtService.sign(
@@ -762,6 +750,8 @@ export class AuthService {
       avatarUrl: user.avatarUrl || null,
       role,
       storeId,
+      platformRole,
+      capabilities,
       customerProfileId,
       phone: user.phone,
     };
@@ -830,6 +820,22 @@ export class AuthService {
           throw new UnauthorizedException('Refresh token không hợp lệ hoặc đã bị thu hồi/hết hạn');
         }
 
+        // Load user first to verify tokensInvalidBefore / passwordChangedAt multi-node cutoff
+        const candidateUser = await this.authRepo.findById(storedToken.userId);
+        if (!candidateUser || candidateUser.status !== 'ACTIVE') {
+          throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị khóa');
+        }
+        const tokenCreatedSec = Math.floor(new Date(storedToken.createdAt).getTime() / 1000);
+        if (
+          isTokenInvalidatedByTimestamps(
+            tokenCreatedSec,
+            candidateUser.tokensInvalidBefore,
+            candidateUser.passwordChangedAt,
+          )
+        ) {
+          throw new UnauthorizedException('Phiên đăng nhập đã bị thu hồi do thay đổi bảo mật hoặc phân quyền.');
+        }
+
         // Atomic refresh token rotation
         newRawRefreshToken = crypto.randomBytes(40).toString('hex');
         const newHash = crypto.createHash('sha256').update(newRawRefreshToken).digest('hex');
@@ -839,7 +845,7 @@ export class AuthService {
           tokenHash: newHash,
           expiresAt,
         });
-        user = await this.authRepo.findById(storedToken.userId);
+        user = candidateUser;
       } else {
         // Fallback for JWT format tokens
         const payload = this.jwtService.verify(cleanToken);
@@ -847,6 +853,12 @@ export class AuthService {
           throw new UnauthorizedException('Token không hợp lệ: Yêu cầu Refresh Token, không chấp nhận Access Token.');
         }
         user = await this.authRepo.findById(BigInt(payload.userId));
+        if (!user || user.status !== 'ACTIVE') {
+          throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị khóa');
+        }
+        if (isTokenInvalidatedByTimestamps(payload.iat, user.tokensInvalidBefore, user.passwordChangedAt)) {
+          throw new UnauthorizedException('Phiên đăng nhập đã bị thu hồi do thay đổi bảo mật hoặc phân quyền.');
+        }
         newRawRefreshToken = crypto.randomBytes(40).toString('hex');
         const newHash = crypto.createHash('sha256').update(newRawRefreshToken).digest('hex');
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -1201,7 +1213,7 @@ export class AuthService {
       return { success: false, data: null };
     }
 
-    const { role, storeId } = this.resolveUserRole(user);
+    const { role, storeId, platformRole, capabilities } = this.resolveUserRole(user);
 
     return {
       success: true,
@@ -1216,6 +1228,14 @@ export class AuthService {
         role,
         status: user.status,
         storeId,
+        platformRole,
+        capabilities,
+        platformMemberships: (user.platformMemberships || []).map((m: any) => ({
+          membershipId: m.membershipId?.toString(),
+          roleCode: m.role?.roleCode,
+          status: m.status,
+          grantedAt: m.grantedAt,
+        })),
         customerProfileId: user.customerProfile?.customerId?.toString() || null,
         customerProfile: user.customerProfile
           ? {
@@ -1452,7 +1472,7 @@ export class AuthService {
     }
 
     // Determine primary role & storeId
-    const { role, storeId } = this.resolveUserRole(user);
+    const { role, storeId, platformRole, capabilities } = this.resolveUserRole(user);
     const customerProfileId = user.customerProfile?.customerId ? user.customerProfile.customerId.toString() : null;
 
     // Sign JWT access token
@@ -1484,6 +1504,8 @@ export class AuthService {
       avatarUrl: user.avatarUrl || null,
       role,
       storeId,
+      platformRole,
+      capabilities,
       customerProfileId,
       phone: user.phone,
       phoneVerified: true,

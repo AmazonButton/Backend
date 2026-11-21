@@ -77,16 +77,17 @@ export class WarrantyService {
       throw new NotFoundException(`Không tìm thấy nút bấm với mã ${dto.deviceId}`);
     }
 
-    // BOLA Check: Nếu user là Store/Staff, chỉ được tạo phiếu cho nút của quán mình
-    const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF'].includes(user.role);
-    if (isStoreRole) {
-      if (user.storeId && button.storeId && button.storeId.toString() !== user.storeId.toString()) {
+    // BOLA Check: Chỉ STORE_OWNER bị giới hạn theo storeId của quán mình; SYSTEM_STAFF/Admin xem toàn hệ thống
+    const isStoreOwner = user.role === 'STORE_OWNER';
+    if (isStoreOwner) {
+      if (!user.storeId || (button.storeId && button.storeId.toString() !== user.storeId.toString())) {
         throw new ForbiddenException('Bạn không có quyền báo bảo hành cho thiết bị thuộc cửa hàng khác');
       }
     }
 
     const effectiveStoreId = button.storeId || (dto.storeId ? BigInt(dto.storeId) : (user.storeId ? BigInt(user.storeId) : null));
     const effectiveCustomerId = button.customerId || null;
+    const effectiveRentalId = button.rentalId || null;
 
     // Tính toán cọc và khấu trừ chuẩn (Zero Client Trust: ưu tiên lấy tiền cọc thực tế từ hợp đồng thuê)
     const rentalDeposit = (button as any).rental?.depositPerButton
@@ -115,6 +116,7 @@ export class WarrantyService {
       buttonId: button.buttonId,
       storeId: effectiveStoreId,
       customerId: effectiveCustomerId,
+      rentalId: effectiveRentalId,
       reportedByUserId: BigInt(user.userId || user.id),
       faultGroup: dto.faultGroup,
       faultCode: dto.faultCode.trim(),
@@ -129,6 +131,7 @@ export class WarrantyService {
     const resultDto = WarrantyTicketResponseDto.fromEntity(ticket);
     try {
       this.eventsGateway?.emitToAdmin('WARRANTY_TICKET_CREATED', resultDto);
+      this.eventsGateway?.emitToSystemStaff('WARRANTY_TICKET_CREATED', resultDto);
       if (effectiveStoreId) {
         this.eventsGateway?.emitToStore(effectiveStoreId.toString(), 'WARRANTY_TICKET_CREATED', resultDto);
       }
@@ -145,9 +148,9 @@ export class WarrantyService {
 
     const where: any = {};
 
-    // BOLA Tenant Isolation
-    const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF'].includes(user.role);
-    if (isStoreRole) {
+    // BOLA Tenant Isolation (STORE_OWNER scoped to own storeId; SYSTEM_STAFF/Admin global)
+    const isStoreOwner = user.role === 'STORE_OWNER';
+    if (isStoreOwner) {
       if (!user.storeId) {
         throw new ForbiddenException('Tài khoản thiếu thông tin cửa hàng để truy vấn');
       }
@@ -197,9 +200,9 @@ export class WarrantyService {
     }
 
     // BOLA Tenant check
-    const isStoreRole = ['STORE_OWNER', 'STORE_MANAGER', 'STORE_STAFF'].includes(user.role);
-    if (isStoreRole && user.storeId) {
-      if (ticket.storeId && ticket.storeId.toString() !== user.storeId.toString()) {
+    const isStoreOwner = user.role === 'STORE_OWNER';
+    if (isStoreOwner) {
+      if (!user.storeId || (ticket.storeId && ticket.storeId.toString() !== user.storeId.toString())) {
         throw new ForbiddenException('Bạn không có quyền truy cập phiếu bảo hành của cửa hàng khác');
       }
     }
@@ -213,16 +216,27 @@ export class WarrantyService {
     if (!ticket) {
       throw new NotFoundException('Không tìm thấy phiếu bảo hành');
     }
+    if (ticket.status !== 'PENDING') {
+      throw new BadRequestException(`Phiếu bảo hành đang ở trạng thái ${ticket.status}, không thể duyệt đổi`);
+    }
     if (ticket.faultGroup !== WarrantyFaultGroupEnum.GROUP_A) {
       throw new BadRequestException(
         'Chỉ hỗ trợ duyệt đổi 1-1 miễn phí cho thiết bị thuộc Nhóm A (Lỗi kỹ thuật tự nhiên 0% khấu trừ). Với lỗi hư hỏng do người dùng (Nhóm C/D), vui lòng thu hồi/khóa thiết bị và tất toán cọc.',
       );
     }
 
-    // Tìm nút thay thế
-    const replacement = await this.warrantyRepo.findAvailableReplacementButton(dto.replacementDeviceId?.trim());
+    const requestedDeviceId = dto.replacementDeviceId?.trim();
+    if (requestedDeviceId && ticket.button?.deviceId && requestedDeviceId.toUpperCase() === ticket.button.deviceId.toUpperCase()) {
+      throw new BadRequestException('Không thể đổi trùng với chính thiết bị đang gặp lỗi');
+    }
+
+    // Tìm nút thay thế sẵn sàng trong kho (chưa gán khách hàng, chưa thuộc hợp đồng thuê, chưa đổi cho phiếu khác)
+    const replacement = await this.warrantyRepo.findAvailableReplacementButton(
+      requestedDeviceId,
+      ticket.buttonId,
+    );
     if (!replacement) {
-      throw new BadRequestException('Không tìm thấy thiết bị thay thế sẵn sàng trong kho để đổi');
+      throw new BadRequestException('Không tìm thấy thiết bị thay thế sẵn sàng và chưa được gán trong kho để đổi');
     }
 
     const updated = await this.warrantyRepo.approveSwapAtomicTx(
@@ -236,6 +250,7 @@ export class WarrantyService {
     const resultDto = WarrantyTicketResponseDto.fromEntity(updated);
     try {
       this.eventsGateway?.emitToAdmin('WARRANTY_TICKET_UPDATED', resultDto);
+      this.eventsGateway?.emitToSystemStaff('WARRANTY_TICKET_UPDATED', resultDto);
       if (updated.storeId) {
         this.eventsGateway?.emitToStore(updated.storeId.toString(), 'WARRANTY_TICKET_UPDATED', resultDto);
       }
@@ -271,6 +286,7 @@ export class WarrantyService {
     const resultDto = WarrantyTicketResponseDto.fromEntity(updated);
     try {
       this.eventsGateway?.emitToAdmin('WARRANTY_TICKET_UPDATED', resultDto);
+      this.eventsGateway?.emitToSystemStaff('WARRANTY_TICKET_UPDATED', resultDto);
       if (updated.storeId) {
         this.eventsGateway?.emitToStore(updated.storeId.toString(), 'WARRANTY_TICKET_UPDATED', resultDto);
       }
@@ -284,10 +300,14 @@ export class WarrantyService {
     if (!ticket) {
       throw new NotFoundException('Không tìm thấy phiếu bảo hành');
     }
+    if (!['PENDING', 'APPROVED_SWAP'].includes(ticket.status)) {
+      throw new BadRequestException(`Không thể hoàn tất phiếu đang ở trạng thái ${ticket.status}`);
+    }
     const updated = await this.warrantyRepo.updateTicketStatus(ticketId, 'RESOLVED', dto.adminNote?.trim());
     const resultDto = WarrantyTicketResponseDto.fromEntity(updated);
     try {
       this.eventsGateway?.emitToAdmin('WARRANTY_TICKET_UPDATED', resultDto);
+      this.eventsGateway?.emitToSystemStaff('WARRANTY_TICKET_UPDATED', resultDto);
       if (updated.storeId) {
         this.eventsGateway?.emitToStore(updated.storeId.toString(), 'WARRANTY_TICKET_UPDATED', resultDto);
       }
@@ -301,10 +321,14 @@ export class WarrantyService {
     if (!ticket) {
       throw new NotFoundException('Không tìm thấy phiếu bảo hành');
     }
+    if (ticket.status !== 'PENDING') {
+      throw new BadRequestException(`Chỉ có thể từ chối phiếu ở trạng thái PENDING (hiện tại: ${ticket.status})`);
+    }
     const updated = await this.warrantyRepo.updateTicketStatus(ticketId, 'REJECTED', dto.adminNote?.trim());
     const resultDto = WarrantyTicketResponseDto.fromEntity(updated);
     try {
       this.eventsGateway?.emitToAdmin('WARRANTY_TICKET_UPDATED', resultDto);
+      this.eventsGateway?.emitToSystemStaff('WARRANTY_TICKET_UPDATED', resultDto);
       if (updated.storeId) {
         this.eventsGateway?.emitToStore(updated.storeId.toString(), 'WARRANTY_TICKET_UPDATED', resultDto);
       }

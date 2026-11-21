@@ -24,7 +24,7 @@ et_amount) vào Ví Cửa Hàng (STORE_WALLETS).
 ### 2.1 Trong phạm vi (In scope)
 
 - **Quản lý đa Cửa hàng (Multi-Store Management)**: Cách ly dữ liệu sản phẩm, tồn kho, đơn hàng, ví tiền giữa các Store.
-- **Quản lý tài khoản & phân quyền (RBAC)**: Phân quyền chặt chẽ giữa SYSTEM_ADMIN, STORE_OWNER, STORE_STAFF và CUSTOMER.
+- **Quản lý tài khoản & phân quyền (RBAC)**: Phân quyền chặt chẽ theo mô hình 4 tầng `CUSTOMER → STORE_OWNER → SYSTEM_STAFF → ADMIN / SYSTEM_ADMIN / SUPER_ADMIN` (đã ngừng cấp các vai trò `STORE_STAFF` và `STAFF_DELIVERY` / shipper riêng của cửa hàng).
 - **Quản lý hồ sơ & danh bạ địa chỉ Khách hàng**: Hỗ trợ nhiều địa chỉ, bảo vệ duy nhất một địa chỉ mặc định để nhận hàng khi bấm nút.
 - **Mô hình Nút Thông Minh Đa Năng (Universal IoT Button)**:
   - Một Nút bấm gắn liền với Khách hàng sở hữu (customer_id).
@@ -59,21 +59,25 @@ et_amount) vào Ví Cửa Hàng (STORE_WALLETS).
 
 ## 3. Các tác nhân và mô hình tài chính (Actors & Financial Flows)
 
-### 3.1 Quản trị viên hệ thống (System Admin / Platform)
-- Quản trị toàn bộ nền tảng, thiết bị phần cứng IoT và cấu hình hệ thống.
+### 3.1 Quản trị viên hệ thống (Admin / System Admin / Super Admin)
+- Quản trị toàn bộ nền tảng, thiết bị phần cứng IoT, cấp/thu hồi `SYSTEM_STAFF` qua `platform_memberships` và cấu hình hệ thống.
 - Ban hành các Gói thuê nút (RENTAL_PACKAGES) và Gói mở gian hàng (SUBSCRIPTION_PLANS).
-- Tiếp nhận tiền thuê phần cứng & tiền cọc thiết bị từ Khách hàng; giữ quỹ ký quỹ hoàn cọc khi khách trả nút.
+- Tiếp nhận tiền thuê phần cứng & tiền cọc thiết bị từ Khách hàng; giữ quỹ ký quỹ hoàn cọc và phê duyệt tài chính (`approveDepositRefundTx`) khi khách trả nút hoặc tất toán bảo hành.
 - Thu phí hoa hồng sàn (Take-rate 8% - 10%) trên mỗi đơn hàng hoàn tất.
-- Giám sát số dư tài khoản chi PayOS Payout và phê duyệt các lệnh rút tiền lớn của Store.
+- Giám sát số dư tài khoản chi PayOS Payout và phê duyệt các lệnh rút tiền của Store (`SUPER_ADMIN`).
 
-### 3.2 Chủ Cửa Hàng (Store Owner)
+### 3.2 Nhân viên Hệ thống (System Staff — `SYSTEM_STAFF`)
+- Vận hành tập trung toàn sàn đối với **kho nút bấm IoT** (cấp phát lô thiết bị, kiểm tra, sửa, cấu hình/reset, đổi nút bảo hành 1-1, khóa nút hỏng) và **xử lý kỹ thuật phiếu bảo hành**.
+- Không gắn `storeId` cố định; chịu ràng buộc tách biệt quyền lực nghiêm ngặt: **không** truy cập bán hàng/đơn hàng của Store, **không** quản lý ví/rút tiền, **không** tự phê duyệt hoàn cọc hoặc phát lệnh PayOS Payout, và **không** quản trị tài khoản/RBAC.
+
+### 3.3 Chủ Cửa Hàng (Store Owner — `STORE_OWNER`)
 - Đăng ký mở gian hàng và thanh toán Gói dịch vụ định kỳ (STORE_SUBSCRIPTIONS).
 - Quản lý danh mục sản phẩm, giá bán, chương trình giảm giá và kho hàng của Store.
-- Tiếp nhận tín hiệu đơn hàng tức thì từ nút bấm của khách hàng, đóng gói và vận chuyển hàng hóa.
+- Tự tiếp nhận tín hiệu đơn hàng tức thì, đóng gói, **nhận giao hàng, cập nhật trạng thái thành công/thất bại và tải ảnh bằng chứng giao hàng (POD)** cho cửa hàng mình (cùng chức năng bàn giao/tất toán ca & đơn legacy).
 - Nhận doanh thu đơn hàng thực nhận (`net_amount = total_amount - commission_amount`) vào Ví Cửa Hàng (STORE_WALLETS).
 - Khởi tạo lệnh rút tiền doanh thu về tài khoản ngân hàng cá nhân/doanh nghiệp qua kênh PayOS Payout.
 
-### 3.3 Khách Hàng (Customer)
+### 3.4 Khách Hàng (Customer — `CUSTOMER`)
 - Thuê thiết bị nút bấm IoT từ Sàn (đặt cọc + trả phí thuê hàng tháng).
 - Ghép nối nút bấm với Cửa hàng quen thuộc gần nhà và chọn sản phẩm mặc định.
 - Tự do chuyển đổi sang Cửa hàng khác (Store Re-mapping) trên ứng dụng mà không cần thay đổi phần cứng.
