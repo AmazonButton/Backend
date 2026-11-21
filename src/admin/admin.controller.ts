@@ -1,5 +1,10 @@
-import { Controller, Get, Post, Put, Patch, Delete, Param, Body, UseGuards, Request, Inject, Query, BadRequestException, ValidationPipe } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, UseGuards, Request, Inject, Optional, Query, BadRequestException, ValidationPipe } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { PaymentRefundsService } from '../payments/payment-refunds.service';
+import {
+  AdminListPaymentRefundObligationsQueryDto,
+  InitiatePaymentRefundPayoutDto,
+} from '../payments/dto/refund-obligation.dto';
 import { GrantPlatformRoleDto, RevokePlatformRoleDto, UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { UpdateAdminStoreDto } from './dto/update-admin-store.dto';
 import { CreateSubscriptionPlanDto, UpdateSubscriptionPlanDto } from './dto/plans.dto';
@@ -26,7 +31,10 @@ import { Roles } from '../common/decorators/roles.decorator';
 @Roles('SUPER_ADMIN')
 @Controller('admin')
 export class AdminController {
-  constructor(@Inject(AdminService) private readonly adminService: AdminService) {}
+  constructor(
+    @Inject(AdminService) private readonly adminService: AdminService,
+    @Optional() @Inject(PaymentRefundsService) private readonly paymentRefundsService?: PaymentRefundsService,
+  ) {}
 
   @Get('stores/pending')
   async listPendingStores(
@@ -294,6 +302,59 @@ export class AdminController {
   async listPayosPayouts(@Query() query: ListPayosPayoutsQueryDto) {
     const res = await this.adminService.listPayosPayouts(query);
     return { success: true, data: res?.data || res };
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Get('payment-refunds/obligations')
+  async listPaymentRefundObligations(
+    @Query(new ValidationPipe({ transform: true, whitelist: true })) query: AdminListPaymentRefundObligationsQueryDto,
+    @Request() req: any,
+  ) {
+    if (!this.paymentRefundsService) {
+      throw new BadRequestException('PaymentRefundsService chưa sẵn sàng');
+    }
+    const result = await this.paymentRefundsService.listObligations(query, req.user);
+    return buildPaginatedResponse(
+      result.items,
+      result.total,
+      result.page,
+      result.pageSize,
+      'Lấy danh sách nghĩa vụ hoàn tiền PayOS thành công',
+    );
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Get('payment-refunds/obligations/:id')
+  async getPaymentRefundObligation(@Param('id') id: string, @Request() req: any) {
+    if (!this.paymentRefundsService) {
+      throw new BadRequestException('PaymentRefundsService chưa sẵn sàng');
+    }
+    const data = await this.paymentRefundsService.getObligationById(id, req.user);
+    return { success: true, message: 'Lấy chi tiết nghĩa vụ hoàn tiền thành công', data };
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Post('payment-refunds/obligations/:id/payout')
+  async initiatePaymentRefundPayout(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true })) body: InitiatePaymentRefundPayoutDto,
+    @Request() req: any,
+  ) {
+    if (!this.paymentRefundsService) {
+      throw new BadRequestException('PaymentRefundsService chưa sẵn sàng');
+    }
+    const data = await this.paymentRefundsService.initiateObligationPayout(id, body, req.user);
+    return { success: true, message: 'Đã xử lý yêu cầu chi hoàn tiền PayOS', data };
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Post('payment-refunds/obligations/:id/sync')
+  async syncPaymentRefundObligation(@Param('id') id: string, @Request() req: any) {
+    if (!this.paymentRefundsService) {
+      throw new BadRequestException('PaymentRefundsService chưa sẵn sàng');
+    }
+    const data = await this.paymentRefundsService.syncObligationStatus(id, req.user);
+    return { success: true, message: 'Đã đồng bộ trạng thái đối soát hoàn tiền PayOS', data };
   }
 
   @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN')

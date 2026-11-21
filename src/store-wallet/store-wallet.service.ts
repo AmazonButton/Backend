@@ -1,15 +1,5 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  BadGatewayException,
-  InternalServerErrorException,
-  Inject,
-  Optional,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, BadGatewayException, InternalServerErrorException, Inject, Optional, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateBankAccountDto, TransactionQueryDto, WithdrawalQueryDto } from './dto/wallet.dto';
 import { RequestWithdrawalDto } from './dto/withdrawal.dto';
@@ -24,6 +14,7 @@ import { WalletMapper } from './mappers/wallet.mapper';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 import { StoreWalletRepository } from './store-wallet.repository';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
+import { ensureAndLockStoreWalletByStoreId, lockStoreWalletById } from './store-wallet.lock';
 
 @Injectable()
 export class StoreWalletService {
@@ -90,56 +81,65 @@ export class StoreWalletService {
 
   async creditOrderRevenue(
     storeId: string | number | bigint,
-    amount: number | string,
+    amount: number | string | Prisma.Decimal,
     orderCode: string,
   ) {
     const rawStoreId = BigInt(storeId);
-    const creditAmount = Number(amount);
-    if (creditAmount <= 0) return await this.getOrCreateStoreWallet(rawStoreId);
+    let creditAmount: Prisma.Decimal;
+    try {
+      creditAmount = new Prisma.Decimal(amount);
+    } catch {
+      throw new BadRequestException('Số tiền cộng ví không hợp lệ');
+    }
+    if (!creditAmount.isFinite() || creditAmount.lte(0)) {
+      return this.getOrCreateStoreWallet(rawStoreId);
+    }
 
-    const wallet = await this.getOrCreateStoreWallet(rawStoreId);
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          // 1. Ensure & lock store wallet row exclusively BEFORE reading balance or checking ledger
+          const lockedWallet = await ensureAndLockStoreWalletByStoreId(tx, rawStoreId);
 
-    return this.prisma.$transaction(async (tx) => {
-      const currentWallet = await tx.storeWallet.findUnique({
-        where: { walletId: wallet.walletId },
-      });
-      if (!currentWallet) throw new NotFoundException('Ví cửa hàng không tồn tại');
+          // 2. Idempotency guard under row lock: không cộng tiền trùng lặp cho cùng một đơn hàng
+          const cleanRef = orderCode.replace(/^ORDER:/, '');
+          const existingTx = await tx.walletTransaction.findFirst({
+            where: {
+              walletId: lockedWallet.wallet_id,
+              referenceId: { in: [orderCode, `ORDER:${cleanRef}`, cleanRef] },
+              type: { in: ['ORDER_REVENUE', 'PAYMENT_CREDIT'] },
+            },
+          });
+          if (existingTx) {
+            return tx.storeWallet.findUnique({
+              where: { walletId: lockedWallet.wallet_id },
+            });
+          }
 
-      // Idempotency guard: không cộng tiền trùng lặp cho cùng một đơn hàng
-      const cleanRef = orderCode.replace(/^ORDER:/, '');
-      const existingTx = await tx.walletTransaction.findFirst({
-        where: {
-          walletId: wallet.walletId,
-          referenceId: { in: [orderCode, `ORDER:${cleanRef}`, cleanRef] },
-          type: { in: ['ORDER_REVENUE', 'PAYMENT_CREDIT'] },
-        },
-      });
-      if (existingTx) {
-        return currentWallet;
-      }
+          const balanceBefore = new Prisma.Decimal(lockedWallet.balance);
+          const balanceAfter = balanceBefore.plus(creditAmount);
 
-      const balanceBefore = Number(currentWallet.balance);
-      const balanceAfter = balanceBefore + creditAmount;
+          const updated = await tx.storeWallet.update({
+            where: { walletId: lockedWallet.wallet_id },
+            data: { balance: balanceAfter },
+          });
 
-      const updated = await tx.storeWallet.update({
-        where: { walletId: wallet.walletId },
-        data: { balance: balanceAfter },
-      });
-
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.walletId,
-          amount: creditAmount,
-          type: 'ORDER_REVENUE',
-          balanceBefore,
-          balanceAfter,
-          referenceId: orderCode,
+          await tx.walletTransaction.create({
+            data: {
+              walletId: lockedWallet.wallet_id,
+              amount: creditAmount,
+              type: 'ORDER_REVENUE',
+              balanceBefore,
+              balanceAfter,
+              referenceId: orderCode,
           description: `Doanh thu don h�ng #${orderCode}`,
         },
       });
 
       return updated;
-    });
+        }),
+      { operationName: 'CreditOrderRevenue' },
+    );
   }
 
   async listTransactions(storeId: string | number | bigint, query?: TransactionQueryDto) {
@@ -286,33 +286,19 @@ export class StoreWalletService {
           if (existingInTx) return existingInTx;
         }
 
-        // Lock wallet row exclusively with SELECT ... FOR UPDATE (Anti-Race Condition)
-        const [lockedWallet] = await tx.$queryRaw<Array<{
-          wallet_id: bigint;
-          balance: any;
-          frozen_balance: any;
-          bank_name: string | null;
-          bank_account_number: string | null;
-          bank_account_holder: string | null;
-        }>>`
-          SELECT wallet_id, balance, frozen_balance, bank_name, bank_account_number, bank_account_holder
-          FROM store_wallets
-          WHERE wallet_id = ${wallet.walletId}
-          FOR UPDATE
-        `;
+        const lockedWallet = await lockStoreWalletById(tx, wallet.walletId);
 
-        if (!lockedWallet) throw new NotFoundException('Ví không tồn tại');
-
-        const currentBalance = Number(lockedWallet.balance);
-        const currentFrozen = Number(lockedWallet.frozen_balance || 0);
-        if (currentBalance < amount) {
+        const amountDec = new Prisma.Decimal(amount);
+        const currentBalance = new Prisma.Decimal(lockedWallet.balance);
+        const currentFrozen = new Prisma.Decimal(lockedWallet.frozen_balance || 0);
+        if (currentBalance.lt(amountDec)) {
           throw new BadRequestException(
-            `Số dư không đủ. Số dư khả dụng hiện tại: ${currentBalance.toLocaleString()} VND`,
+            `Số dư không đủ. Số dư khả dụng hiện tại: ${currentBalance.toNumber().toLocaleString()} VND`,
           );
         }
 
-        const balanceAfter = currentBalance - amount;
-        const frozenAfter = currentFrozen + amount;
+        const balanceAfter = currentBalance.minus(amountDec);
+        const frozenAfter = currentFrozen.plus(amountDec);
         await tx.storeWallet.update({
           where: { walletId: wallet.walletId },
           data: {
@@ -532,30 +518,18 @@ export class StoreWalletService {
         });
       }
 
-      // 4. Lock wallet row with FOR UPDATE
-      const [lockedWallet] = await tx.$queryRaw<Array<{
-        wallet_id: bigint;
-        balance: any;
-        frozen_balance: any;
-      }>>`
-        SELECT wallet_id, balance, frozen_balance
-        FROM store_wallets
-        WHERE wallet_id = ${lockedWithdrawal.wallet_id}
-        FOR UPDATE
-      `;
+      const lockedWallet = await lockStoreWalletById(tx, lockedWithdrawal.wallet_id);
 
-      if (!lockedWallet) throw new NotFoundException('Ví không tồn tại');
-
-      const refundAmount = Number(lockedWithdrawal.amount);
-      const balanceBefore = Number(lockedWallet.balance);
-      const balanceAfter = balanceBefore + refundAmount;
-      const currentFrozen = Number(lockedWallet.frozen_balance || 0);
-      if (currentFrozen < refundAmount) {
+      const refundAmount = new Prisma.Decimal(lockedWithdrawal.amount);
+      const balanceBefore = new Prisma.Decimal(lockedWallet.balance);
+      const balanceAfter = balanceBefore.plus(refundAmount);
+      const currentFrozen = new Prisma.Decimal(lockedWallet.frozen_balance || 0);
+      if (currentFrozen.lt(refundAmount)) {
         throw new ConflictException(
-          `ACCOUNTING_INCONSISTENCY: Wallet #${lockedWithdrawal.wallet_id} frozenBalance (${currentFrozen}) is less than refund amount (${refundAmount})`,
+          `ACCOUNTING_INCONSISTENCY: Wallet #${lockedWithdrawal.wallet_id} frozenBalance (${currentFrozen.toString()}) is less than refund amount (${refundAmount.toString()})`,
         );
       }
-      const frozenAfter = currentFrozen - refundAmount;
+      const frozenAfter = currentFrozen.minus(refundAmount);
 
       await tx.storeWallet.update({
         where: { walletId: lockedWithdrawal.wallet_id },

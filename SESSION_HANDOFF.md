@@ -1,5 +1,262 @@
 # Project Handoff & Session Context
 
+## 2026-11-22: F2 Follow-up Remediation (N1–N4 Closure) & Verification
+- **Status**: COMPLETED — All 4 follow-up findings (`N1`/`R1`, `N2`/`R2`, `N3`/`R3`, `N4`/`R4`) resolved, including provider-proof gating on `LEGACY_BACKFILL` reconciliation, and verified against guarded `smart_order_test` PostgreSQL + mock/stubbed PayOS gateways (zero Production or live bank API calls; original applied `migration.sql` untouched).
+- **Root Fixes Implemented**:
+  - **N1 (`R1` — Provider-Proven Legacy Backfill Reconciliation; No Amount-Only Auto-Merge)**:
+    - Added [`PaymentsRepository.findUnreconciledLegacyBackfill`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.repository.ts#L151), [`PaymentsService.resolveProviderLegacyLinkEvidence`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.service.ts#L873), [`PaymentRefundsRepository.reconcileLegacyBackfillReceiptInTx`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payment-refunds.repository.ts#L283), and updated [`PaymentsRepository.confirmPaymentAtomicTx`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.repository.ts#L167).
+    - Reconciliation of `channel = 'LEGACY_BACKFILL'` NEVER merges solely on `amount` match:
+      - `PROVEN_REPLAY` (PayOS `GET /v2/payment-requests` confirms a single settled transfer matching ref & amount with `amountPaid <= legacyAmount`): atomically merges `LEGACY_BACKFILL` -> `ORDER_PAYMENT_LINK`, preventing duplicate `100k -> 200k` ledger counting or spurious excess obligations.
+      - `PROVEN_INDEPENDENT_EXCESS` (PayOS lookup confirms `transactions.length >= 2` or `amountPaid > legacyAmount`, even when duplicate amount equals legacy amount): preserves `LEGACY_BACKFILL` untouched and creates a distinct `EXCESS_DUPLICATE` receipt & obligation.
+      - `UNVERIFIED` (missing PayOS lookup proof, stub/unavailable response, or API failure): preserves `LEGACY_BACKFILL` (`LEGACY_PT_*`, `sourceEvidenceStatus = 'MISSING'`) untouched and parks the inbound receipt safely as `classification = 'LEGACY_UNCLASSIFIED'` awaiting reconciliation with zero auto-created `PaymentRefundObligation` / auto-payout (`skipObligationCreation: true`); upgrades cleanly upon subsequent retry if provider proof arrives without conflict.
+  - **N2 (`R2` — Under-Lock State & Amount Classification Under Webhook Concurrency)**:
+    - Updated [`PaymentsService.handlePayosWebhook`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payments.service.ts#L333) to skip stale pre-lock `wasAlreadySettled` short-circuiting and pre-lock `amount` mismatch rejection for transactional repositories (`typeof paymentsRepo.prisma?.$transaction === 'function'`, preserving unit mock isolation compatibility), moving authoritative settlement/excess classification and state-dependent amount checks strictly under `orders -> payment_transaction` row locks in `PaymentsRepository.confirmPaymentAtomicTx()` via non-enumerable `__webhookOutcome` (`{ wasAlreadySettled, amountMismatch }`).
+  - **N3 (`R3` — Pre-POST Preflight GET Separation from Dispatch Linearization Point)**:
+    - Split dispatch authorization in [`PaymentRefundsRepository.evaluateLockedAttemptForDispatchInTx`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payment-refunds.repository.ts#L786) and [`PaymentRefundsService.dispatchClaimedAttempt`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payment-refunds.service.ts#L260) into `authorizeAttemptPreflightTx()` (30s lease keeping `status = 'PREPARING'` & `dispatchedAt = NULL`), `releaseAttemptPreflightRetryableTx()` (clears lease & increments `reconcileAttempts` while keeping `PREPARING` + `dispatchedAt = NULL` on indeterminate pre-POST `GET` failures), and `commitAttemptDispatchingTx()` (transitions `PREPARING -> DISPATCHING` strictly right before `PayOSPayoutService.createPayout()`).
+    - Updated `reconcileAttempt()`, `findPendingReconciliationAttempts()`, and [`PaymentRefundWorkerService.processOutboxDispatchBatch()`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/payment-refund-worker.service.ts#L55) so transient pre-POST `GET` errors stay retryable (`PREFLIGHT_RETRY_PENDING`) and recover automatically without stranding attempts in `PENDING_RECONCILIATION`.
+  - **N4 (`R4` — Canonical Pre-POST Source Conflict & Eligibility Re-verification)**:
+    - Enforced canonical lock ordering (`orders -> payment_order_receipts -> payment_refund_obligations -> payment_refund_payout_attempts`) inside `evaluateLockedAttemptForDispatchInTx()` (both `PREFLIGHT` and `DISPATCH`).
+    - If `source_evidence_status === 'CONFLICTING'` or live `evaluateRecipientEligibilityInTx()` blocks payout while the attempt is still unsent (`PREPARING` with `dispatchedAt = NULL`), marks attempt `FAILED` and moves obligation to `PENDING_RECIPIENT_VERIFICATION` without altering locked snapshot columns (`fn_guard_locked_refund_obligation_snapshot`); if `POST` was already sent (`DISPATCHING` / `PENDING_RECONCILIATION` / `dispatchedAt != NULL`), prior attempts remain recoverable via `RECOVER_PRIOR` / `PENDING_RECONCILIATION`.
+- **Tests, Diagrams & Docs Updated**:
+  - Updated [`tests/payment-refund-obligations-hardening.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/payment-refund-obligations-hardening.spec.ts) (`T1`–`T12` incl. `T1b`, rewriting `T9` to test unverified same-amount `120k` non-merge, proven independent 2nd `120k` excess, proven single `120k` replay merge + refund, and `REFUND_PENDING` reverse direction + mismatch; plus `T10` concurrent excess race, `T11` preflight GET worker recovery, `T12` pre-POST vs post-POST source conflict, and resetting `defaultCreateBehavior` after `T7` Part C).
+  - Updated [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio) (`ACT14`, `ST04A`), [`BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md) (`ACT14`), and [`BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md) (`ST04A`).
+- **Verification (all run after final code/test edit against `smart_order_test` with `TEST_DB_ALLOWED_HOSTS` & mocked PayOS gateways)**:
+  - `npx tsc --noEmit` & `npm run build` — **PASS**.
+  - `npx tsx tests/payment-refund-followup-2026-11-22.spec.ts` — **PASS** (`FOLLOWUP_RESULTS passed=4 failed=0`: `R1`, `R2`, `R3`, `R4`).
+  - `npx tsx tests/payment-refund-obligations-hardening.spec.ts` — **PASS** (`SUMMARY: 13 PASSED, 0 FAILED`: `T1`, `T1b`, `T2`, `T3`, `T4`, `T5`, `T6`, `T7`, `T8`, `T9`, `T10`, `T11`, `T12`).
+  - `npx tsx tests/acid-audit-regressions-2026-11-21.spec.ts --live` — **PASS** (`AUDIT_REGRESSIONS passed=10 failed=0`).
+  - `npx tsx tests/order-refund-and-cooling-off.spec.ts` — **PASS** (`18 PASSED, 0 FAILED`).
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts` — **PASS** (`20/20 passed`).
+  - `npx tsx tests/p0-security-and-concurrency.spec.ts` — **PASS** (`11 passed, 0 failed`).
+  - `npx tsx tests/acid-wallet-order-inventory-hardening.spec.ts` — **PASS** (`5/5` hardening groups).
+  - `npx tsx tests/payos-thu-chi.spec.ts` — **PASS** (Stages 1–8 mock provider mode).
+  - `npx tsx tests/admin_payout_invariants.spec.ts` — **PASS**.
+  - `npx tsx tests/database-schema.spec.ts` — **PASS** (`7/7` Prisma delegates).
+  - Out-of-scope pre-existing baseline failures confirmed unchanged (failed in unrelated modules):
+    - `npx tsx tests/business-logic-13-fixes.spec.ts` — **18 PASSED | 1 FAILED** (Point 6 refund analytics exclusion **PASS**; pre-existing unrelated `Point 3C-2` `WarrantyService.lockDevice`, `reserved="0"`, failed).
+    - `npx tsx tests/verify_remaining_3_deep_issues.ts` — **3/5 PASSED** (Probes 1, 4, 5 **PASS**; pre-existing unrelated Probe 2 IoT check constraint and Probe 3 Cloudinary refcount cleanup failed).
+  - Read-only DB residue check on `smart_order_test`: `RFA*`/`PRH*`/`AA*` leftover users=`0`, stores=`0`, pending `PAYMENT_REFUND_PAYOUT` outbox=`0`, active attempts=`0`.
+  - Draw.io XML validation on `BRD/ERD_Level_3_Editable.drawio`: `XML_PARSE_OK total=86`, `page_act14_order_cancel_switch_late_receipt` (`108` cells, `broken_edges=0`), `page_st04a_payment_transaction` (`46` cells, `broken_edges=0`).
+- **Remaining / Limits**: Executed with test DB allowlist & in-memory/mocked PayOS HTTP responses only (no real PayOS network calls, no Production DB writes, and no Draw.io GUI preview). Unrelated baseline defects remain outside this scope: `WarrantyService.lockDevice` (`Point 3C-2`), IoT button check constraint (`Probe 2`), and Cloudinary refcount cleanup (`Probe 3`).
+- **Next**: Proceed with PR/review on `feat/system-staff-role-transition` for F1–F5 + F2 N1–N4 closure; track out-of-scope baseline defects (`Point 3C-2`, `Probe 2`, `Probe 3`) and Draw.io visual check separately.
+
+## 2026-11-22: F2 Receipt/Obligation Acceptance Review — Four Follow-up Findings Open
+- **Status**: REVIEW COMPLETED, remediation NOT fully accepted. New implementation hardening suite PASS 9/9 and updated ACID regression PASS 10/10, but four additional guarded PostgreSQL scenarios reproduced failures (N1/N2/N4 P1, N3 P2).
+- **Changes by this review**: added `tests/payment-refund-followup-2026-11-22.spec.ts` (intentionally red, not registered in CI runner), `docs/reviews/2026-11-22-payment-refund-ledger-review.md`, and this context entry only. Business source/migration files and existing user changes preserved; no Production, DDL or live provider calls.
+- **N1**: migration-shaped legacy PAID receipt + replay of original signed bank transfer creates a second receipt and READY excess obligation; observed 100k historical payment represented as 200k ledger and one successful mock payout.
+- **N2**: extra 30k webhook holds pre-lock PENDING snapshot, main 100k webhook commits PAID, then stale service amount gate rejects extra with Amount mismatch and records no extra receipt.
+- **N3**: pre-dispatch GET timeout before any POST leaves attempt PENDING_RECONCILIATION; healthy empty lookups and same-attempt recovery never dispatch. Mock POST count remained 0.
+- **N4**: source replay becomes CONFLICTING after claim/snapshot-lock but before dispatch; authorization does not re-read source and payout still proceeds to REFUNDED through mock provider.
+- **Current verification**: `payment-refund-obligations-hardening.spec.ts` 9/9 PASS; `acid-audit-regressions-2026-11-21.spec.ts --live` 10/10 PASS; new follow-up test expected FAIL (0 pass / 4 failures, exit 1); TypeScript noEmit and Nest build PASS after test addition. READ ONLY cleanup verified own users/stores/orders/receipts/obligations/vouchers/outbox all 0.
+- **Scope limits**: current working tree on `feat/system-staff-role-transition`; test DB guard and explicit host allowlist used; provider entirely in-memory; no original migration re-executed (legacy fixture reproduces exact backfill identity). Full suite, real PayOS and Production deployment not verified.
+- **Next**: reconcile legacy placeholder receipt identities before allowing auto-refund, classify receipt/amount after authoritative row locks, revalidate source conflict at dispatch authorization, and preserve a safe retry path when failure occurred before any POST.
+
+## 2026-11-22: F2 Full Remediation — Payment Receipt Ledger, Refund Obligations & Verified PayOS Payout Reconciliation
+- **Status**: COMPLETED (verified on guarded `smart_order_test` PostgreSQL + mock PayOS provider; zero Production/real-money changes).
+- **Goal & Architectural Changes**:
+  - **Receipt Ledger & Conservation (`R2` + Multi-Transfer Same Link)**:
+    - Added PostgreSQL schema & migration [`prisma/migrations/20261121235900_payment_receipt_refund_obligations/migration.sql`](file:///f:/Learning/SEM9-FPTu/backend/prisma/migrations/20261121235900_payment_receipt_refund_obligations/migration.sql) and Prisma models (`PaymentOrderReceipt`, `PaymentRefundObligation`, `PaymentRefundPayoutAttempt`, `PaymentRefundVerifiedVoucher`) with DB trigger `fn_enforce_payment_refund_budget()` (`allocated + refunded <= allowable_refundable` across `ORDER_REFUND` and `EXCESS_DUPLICATE`) and `fn_guard_locked_refund_obligation_snapshot()`.
+    - Updated `PaymentsRepository.confirmPaymentAtomicTx()` and `PaymentsService.handlePayosWebhook()` to record a unique `PaymentOrderReceipt` keyed on `(provider, channel, provider_transaction_ref)` for every verified `'00'` payment webhook—including 2nd+ transfers hitting an already-`PAID` link (`EXCESS_DUPLICATE` receipt + obligation without altering primary `PAID` status) and receipts lacking/masking sender bank details (recorded with `sourceEvidenceStatus = MISSING | MASKED | UNMAPPED_BANK` so inbound funds are never dropped).
+    - Updated `OrdersRepository.cancelOrderAtomicTx()` to materialize `ORDER_REFUND` obligations from order receipts whenever cancellation moves an order to `REFUND_PENDING`.
+    - Normalized `counterAccountBankId` strictly via `normalizeBankBin()` in `src/payments/payment-source-evidence.util.ts` (never coercing unmapped strings to a BIN).
+  - **Verified Payout Dispatch, `SUPER_ADMIN`-Only Financial Authority & Voucher Uniqueness (`R1` + `C1`)**:
+    - Restricted `AdminController` (`GET admin/payment-refunds/obligations`, `GET admin/payment-refunds/obligations/:id`, `POST admin/payment-refunds/obligations/:id/payout`, `POST admin/payment-refunds/obligations/:id/sync`), `PaymentsController.refundExcessTransaction`, and `OrdersController.refund` strictly to `SUPER_ADMIN` (`403 Forbidden` for `STORE_OWNER`, `ADMIN`, `SYSTEM_ADMIN`); deprecated direct manual settlement in `OrdersRepository.refundOrderAtomicTx()` and `PaymentsRepository.refundExcessTransactionAtomicTx()` (`MANUAL_*_REFUND_DEPRECATED`).
+    - Quarantined guest (`customerId == null`), insufficient/masked/unmapped sender evidence, conflicting replays, and unmatched customer bank accounts into `PENDING_RECIPIENT_VERIFICATION` (forbidding auto-payout even if `customerBankAccountId` is passed).
+    - Implemented atomic payout claim -> immutable snapshot -> fixed-reference `PaymentRefundPayoutAttempt` -> `OutboxEvent ('PAYMENT_REFUND_PAYOUT')` -> post-commit `PayOSPayoutService.createPayout()` -> `verifyPayosPayoutEvidence()` + global unique `PaymentRefundVerifiedVoucher` in `PaymentRefundsRepository` / `PaymentRefundsService`, plus crash/timeout reconciliation via `PaymentRefundWorkerService` (preserving fixed `payoutReference` on `PENDING_RECONCILIATION`) and `PayoutWebhookController` routing. Excluded `'PAYMENT_REFUND_PAYOUT'` from `rentals/OutboxConsumerService`.
+  - **Diagram & Documentation Sync**:
+    - Synchronized [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio) (`ACT14`, `ST04A`), [`BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md), and [`BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md) with implemented F2 behavior (`box_hits=0`, `edge_cross=0`, zero implicit joins).
+- **Important Files Added/Updated**:
+  - Added: `src/payments/dto/refund-obligation.dto.ts`, `src/payments/payment-source-evidence.util.ts`, `src/payments/payment-refunds.repository.ts`, `src/payments/payment-refunds.service.ts`, `src/payments/payment-refund-worker.service.ts`, `tests/payment-refund-obligations-hardening.spec.ts`, `prisma/migrations/20261121235900_payment_receipt_refund_obligations/migration.sql`.
+  - Updated: `prisma/schema.prisma`, `src/payments/payments.module.ts`, `src/payments/payments.repository.ts`, `src/payments/payments.service.ts`, `src/payments/payments.controller.ts`, `src/payments/payout-webhook.controller.ts`, `src/payments/dto/refund-excess-payment.dto.ts`, `src/orders/orders.module.ts`, `src/orders/orders.controller.ts`, `src/orders/orders.repository.ts`, `src/orders/orders.service.ts`, `src/orders/dto/refund-order.dto.ts`, `src/admin/admin.controller.ts`, `src/rentals/outbox-consumer.service.ts`, `tests/acid-audit-regressions-2026-11-21.spec.ts`, `tests/order-refund-and-cooling-off.spec.ts`, `tests/business-logic-13-fixes.spec.ts`, and cleanup FK order in `tests/payos-thu-chi.spec.ts`, `tests/acid-wallet-order-inventory-hardening.spec.ts`, `tests/master-superpowers-qa.spec.ts`, `tests/verify_delivery_driver_module.ts`, `tests/verify_remaining_3_deep_issues.ts`.
+- **Verification (executed after final `src/` edit against `smart_order_test` with `TEST_DB_ALLOWED_HOSTS` set & mock PayOS provider)**:
+  - `npx prisma validate && npx prisma migrate deploy && npx prisma generate` — **PASS** (`62 migrations`).
+  - `npx tsc --noEmit` & `npm run build` — **PASS**.
+  - `npx tsx tests/payment-refund-obligations-hardening.spec.ts` — **PASS** (`9 PASSED, 0 FAILED`: `T1`, `T1b`, `T2`, `T3`, `T4`, `T5`, `T6`, `T7`, `T8`).
+  - `npx tsx tests/order-refund-and-cooling-off.spec.ts` — **PASS** (`18 PASSED, 0 FAILED`).
+  - `npx tsx tests/acid-audit-regressions-2026-11-21.spec.ts --live` — **PASS** (`passed=10 failed=0`, incl. `C1` barrier race, `L1b` `COMPLETED`/`REJECTED`/`DELIVERY_FAILED`/`COD`, and `L2` verified excess payout).
+  - `npx tsx tests/admin_payout_invariants.spec.ts` — **PASS**.
+  - `npx tsx tests/p0-security-and-concurrency.spec.ts` — **PASS** (`11 passed, 0 failed`).
+  - `npx tsx tests/acid-wallet-order-inventory-hardening.spec.ts` — **PASS** (`5/5` hardening groups).
+  - `npx tsx tests/payos-thu-chi.spec.ts` — **PASS** (Stages 1–8 zero residue).
+  - `npx tsx tests/audit-run6-payos-fixes.spec.ts` — **PASS** (`20/20 passed`).
+  - `npx tsx tests/database-schema.spec.ts` — **PASS** (`7/7` Prisma delegates).
+  - `npx tsx tests/business-logic-13-fixes.spec.ts` — **PARTIAL (18 PASSED, 1 FAILED)**: Point 6 (`Refunded order excluded from Analytics paidRevenue`) **PASS**; pre-existing unrelated `Point 3C-2` (`WarrantyService.lockDevice`, `reserved="0"`) failed.
+  - `npx tsx tests/verify_remaining_3_deep_issues.ts` — **PARTIAL (3/5 PASSED)**: Probe 1 (PayOS Fail-Closed), Probe 4 (`CANCELLED` PayOS -> `REFUND_PENDING`), and Probe 5 (Fail-Fast Boot) **PASS**; pre-existing unrelated Probe 2 (IoT check constraint) and Probe 3 (Cloudinary refcount cleanup) failed.
+  - Read-only residue check on `smart_order_test`: `AA*`/`PRH*` leftover users=`0`, stores=`0`, pending `PAYMENT_REFUND_PAYOUT` outbox=`0`.
+  - Draw.io XML & geometry check (`apply_drawio_updates.js` + Python audit): `XML_PARSE_OK total=86`, `page_act14_order_cancel_switch_late_receipt: box_hits=0, edge_cross=0`, `page_st04a_payment_transaction: box_hits=0, edge_cross=0` (live Draw.io GUI preview not executed).
+- **Remaining / Limits**: Mock PayOS payout gateway used only (no live bank transfer or Production DB writes). `tests/master-superpowers-qa.spec.ts` was updated only for FK cleanup order and was not rerun in this session.
+- **Next**: Claim verified guest or conflicting obligations via future customer-initiated claim workflow if business requires self-service bank linking, and review updated `ACT14`/`ST04A` visually in Draw.io Desktop/Web.
+
+## 2026-11-21: Council Review 5-Issue UML & Semantics Fixes (Implicit Joins, ACT09 Atomic TX/Role, ST05 Retry Caveat, ACT14/ST04A Payment Status & Final State Cleanup)
+- **Status**: COMPLETED (Diagrams & Documentation only; zero `src/` business code, tests, or migrations modified).
+- **Changes**:
+  - Updated [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio) keeping exact page count at **85 pages** (`20` Activity + `17` State diagrams):
+    1. **Eliminated UML implicit joins in Activity Diagrams** + added automatic `ActivityDiagram.validate()` guard against multi-incoming non-Merge/Join nodes:
+       - `ACT08A`: separated COD wait/monitor (`cod_wait`) from PayOS webhook (`payos_hook`), converging via `m_settle` Merge before `dec_settle`.
+       - `ACT10`: added `m_before_view` Merge uniting `a_fail_ref` and `a_succ_ded` before `a_view`.
+       - `ACT14`: split triggers cleanly with `dec_canc_who`, added `m_req_canc` before `sys_chk_canc`, `m_canc_link` before `payos_canc_l -> ff_link_closed`, `m_ref_ord` before `own_ref_ord`, individual branch `FlowFinal` nodes, and `m_end14` before `end_14`.
+       - `ACT-SUP3`: added `m_op_done` Merge uniting `sys_grant_rev` and `sys_toggle` before `dec_inval`.
+    2. **Rebuilt `ACT09` (`page_act09_order_process_deliver_pod`)**: removed erroneous `f_deliv`/`j_deliv` Fork/Join splitting delivery and wallet settlement; consolidated `completeDeliveryAtomicTx()` into one atomic DB transaction action (inventory deduction `[INV_SETTLED]`, `DELIVERED`/`PAID`, conditional `StoreWallet` credit on `PAYOS` only), moved `COMPLETED` transition to `Store Owner / Admin` (`@Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')` on `PATCH /orders/:id/status`), and noted that Customer self-confirmation is unimplemented in API.
+    3. **Fixed `ST05` (`page_st05_order`)**: removed the active `"giao lại"` loop `DELIVERY_FAILED -> SHIPPING` (retained `SHIPPING -> DELIVERY_FAILED -> CANCELLED` and documented in state/callout that while DB trigger lists `DELIVERY_FAILED -> SHIPPING`, `PATCH /status` blocks `SHIPPING`, `/claim` requires `READY_FOR_DELIVERY`, and `/fail` already releases `reserved_quantity`).
+    4. **Clarified `Order.paymentStatus` vs `PaymentTransaction.status` & F2 open caveats in `ACT14` and `ST04A`**: unlinked late `'00'` webhook on `CANCELLED`/`REJECTED`/COD orders writes `PaymentTransaction = PAID` + `Order.paymentStatus = REFUND_PENDING` (resolved via `/orders/:id/refund`), while excess late link with an active `PAID` sibling writes `PaymentTransaction = REFUND_PENDING` (keeping `Order.paymentStatus = PAID`); documented open F2 follow-up findings (`R1` unverified payout / `STORE_OWNER` role, `R2` stuck excess if main order refunded first) on `/payments/transactions/:id/refund-excess`.
+    5. **Removed premature `Final` states**: removed terminal `Final` transitions on `ST11` (`Store.status` `SUSPENDED` can reactivate -> `ACTIVE`, no store delete API), `ST-SUP4` Frame 1 (`User.status` `INACTIVE` can unlock -> `ACTIVE`), and `ST04A` (`PaymentTransaction.status` `FAILED`/`CANCELLED` must stay recoverable for late `'00'` webhooks `NV-11`).
+  - Synchronized [`BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md) (`ACT08A`, `ACT09`, `ACT14`, `ACT10`, `ACT-SUP3`) and [`BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md) (`ST04A`, `ST05`, `ST11`, `ST-SUP4`).
+- **Verification**:
+  - `node .../apply_drawio_updates.js` — **PASS**: `85` unique pages, zero dangling IDs/parents/edges.
+  - Python XML & geometry audit on `BRD/ERD_Level_3_Editable.drawio` — **PASS**: `XML_PARSE_OK TOTAL=85 ACT=20 ST=17`, `NON_FINAL_IMPLICIT_JOIN_VIOLATIONS= 0` across all 20 Activity pages, and `DANGLING= 0 OVERLAP= 0 BOX_CROSS= [] EDGE_CROSS= []` across all 9 updated pages (`ACT08A`, `ACT09`, `ACT14`, `ACT10`, `ACT-SUP3`, `ST04A`, `ST05`, `ST11`, `ST-SUP4`).
+  - Markdown-to-Draw.io heading parity check — **PASS**: `20` ACT headings & `17` ST headings match `ERD_Level_3_Editable.drawio`.
+  - Visual check in Draw.io Desktop/Web UI was not performed in this session.
+- **Next**: Open [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio) in Draw.io Desktop/Web to inspect label placement visually if desired; backend F2 `R1`/`R2` code fixes remain tracked separately per [`docs/reviews/2026-11-21-acid-remediation-followup.md`](file:///f:/Learning/SEM9-FPTu/backend/docs/reviews/2026-11-21-acid-remediation-followup.md).
+
+## 2026-11-21: UML Activity & State Diagrams Council Review Remediation + Doc Sync
+- **Status**: COMPLETED (Diagrams & Documentation only; zero `src/` business code, test, or migration changes).
+- **Goal & Changes**:
+  - Updated [`BRD/ERD_Level_3_Editable.drawio`](file:///f:/Learning/SEM9-FPTu/backend/BRD/ERD_Level_3_Editable.drawio) from 77 to **85 pages** (`20` Activity diagrams + `17` State diagrams + unchanged ERD, ARCH, CTX, UC, FE, ARCHIVE, and SEQ 01–24 pages):
+    - **Activity additions & splits**: inserted `[ACT15] Store Subscription Purchase & Renewal` after `ACT02` before `ACT03`; simplified `[ACT03]` to call `ACT15` via `«callBehavior»`; split `[ACT08]` into `[ACT08A] Website Storefront Order & Checkout` (incl. F4 durable idempotency + 15m sweeper) and `[ACT08B] IoT Button Order Placement` (HMAC + 5m nonce + 2.5s debounce + 30s lease + Goong 5km + `sp_create_order_from_button` + 60s window + no hardware LED field); inserted `[ACT14] Order Cancellation, Payment Switch & Late Receipt` after `ACT09` (incl. F1/F2/F3 fixes); inserted `[ACT-SUP3] Admin RBAC Grant/Revoke & Account Lock` after `ACT-SUP2` (matching `SEQ 06` & Redis WS revocation).
+    - **Activity modeling fixes**: updated `[ACT10]` to execute sequential `CAS Claim PROCESSING` strictly BEFORE calling PayOS `createPayout` and added the `PENDING_RECONCILIATION` branch with fail-closed payout verification; updated `[ACT13]` to group `approveDepositRefundTx()` (bank lock, 5-field snapshot, `PENDING_PAYOUT`, `OutboxEvent` commit) prior to post-commit `OutboxConsumerService(5s)` and routed `refundAmount == 0` (100% warranty deduction) through `ADMIN / SUPER_ADMIN` financial approval.
+    - **State Machine fixes, splits & additions**: fixed `[ST01]` (single-row `StoreSubscription` lifecycle without backward `s_effective -> s_upcoming` edge); refactored `[ST02]` (`IoTButton`) into 3 orthogonal regions (`inventoryState`, `status`, `canOrder`) without contradictory self-loops; split `[ST04]` into `[ST04A] PaymentTransaction State` (incl. F2/F3 CAS guards) and `[ST04B] BillingCharge State` (with v1 read-only `BillingOverpaymentObligation` note); refactored `[ST05]` into two independent frames (`Order.orderStatus` separating all 10 states incl. `PREPARING` vs `READY_FOR_DELIVERY` and `DELIVERED` vs `COMPLETED`, plus independent `Order.paymentStatus` removing wrong `PAID` join); refactored `[ST06]`, `[ST07]`, and `[ST-SUP1]` to separate ephemeral verification session/tx lifecycles from persistent bank/KYC entity statuses without shared Fork/Join; split `[ST-SUP2]` into `[ST-SUP2A] StoreCashVoucher State` and `[ST-SUP2B] RentalReturn State`; refactored `[ST-SUP3]` into two independent obligation state machines without shared Fork/Join; added `[ST11] Store Lifecycle State` (`ACTIVE | INACTIVE | SUSPENDED`) after `ST10` and `[ST-SUP4] User Account & PlatformMembership Lifecycles` after `ST-SUP3`.
+  - Synchronized [`BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_13_SO_DO_HOAT_DONG_ACTIVITY.md) (`20` Activity diagrams) and [`BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md`](file:///f:/Learning/SEM9-FPTu/backend/BRD/MO_TA_9_SO_DO_TRANG_THAI_STATE.md) (`17` State diagrams) with exact Draw.io page IDs, names, actors, enums, and codebase guards.
+- **Verification**:
+  - `node .../apply_drawio_updates.js` — **PASS**: `TOTAL_CROSSINGS=0` across all 21 built/updated diagrams, zero node overlaps, zero swimlane overflows, 85 unique page IDs/names, zero dangling parent/edge references on all 37 `ACT`/`ST` pages.
+  - `python -c "import xml.etree.ElementTree as ET; ..."` on `BRD/ERD_Level_3_Editable.drawio` — **PASS**: `XML_PARSE_OK root=mxfile diagrams=85`.
+  - Visual rendering inside desktop draw.io editor was not performed in this session (validated structurally via XML parse + geometry/segment intersection scripts).
+- **Remaining / Next**: Review visual layout & spacing of updated tabs directly in Draw.io Desktop/Web UI; note `ERD_Level_3_Optimized` (untouched legacy ERD page 1) retains one pre-existing orphaned cell parent reference (`30A9bzpUEQ7j0Tngwrvw-1`).
+
+## 2026-11-21: ACID Remediation Follow-up Review — F2 Still Open
+- **Status**: REVIEW COMPLETED. Existing F1–F5 regression suite now PASS 10/10, but **two remaining P1 refund findings** reproduced on PostgreSQL test. Do not interpret green tests as closure of the excess-refund workflow.
+- **Changes in this review**: added `docs/reviews/2026-11-21-acid-remediation-followup.md` and this context entry only; no business source, tests or migration changed, no Production/provider transfers.
+- **R1**: `refundExcessTransaction` accepts `{}` from the same-store STORE_OWNER and marks the excess payment REFUNDED without dispatch/verified refund evidence. Observed response `success=true`, excess REFUNDED, order PAID.
+- **R2**: cancel + refund main order first turns its valid payment REFUNDED while keeping excess REFUND_PENDING; excess refund then rejects for lacking PAID sibling and full-order refund returns early, leaving the excess unresolved.
+- **Coverage caveat**: current L3 avoids the new CAS helper through envelope rejection / PAID early-return; add an independent helper/true failure-path race test. L1b title mentions COD but body does not test COD.
+- **Current verification**: TypeScript noEmit and Nest build PASS; live ACID regression 10/10; ACID hardening 5/5 groups; universal idempotency 22/22; audit-run6 20/20. Two additional diagnostic scripts via service/repository reproduced R1/R2 and cleaned synthetic fixtures. READ ONLY cleanup check: own users/stores/idempotency records = 0.
+- **Limits**: not all suites from user handoff rerun; no migration DDL applied or production schema inspected; missing button SP/trigger test coverage remains an environment limitation.
+- **Next**: verify refund payout evidence before terminal REFUNDED and authorize financial completion appropriately; decouple excess obligation eligibility from current status of the main payment; add both refund ordering cases and independent CAS regression.
+
+## 2026-11-21: ACID Remediation (F1–F5: Payments, Storefront Idempotency & Inventory PATCH)
+
+### 1. Summary of Changes
+- **F3 — Authoritative Signed Webhook Validation & Monotonic Failed-State CAS**:
+  - Updated `PaymentsService.createPayosPaymentLink` and `PaymentsService.handlePayosWebhook` (`src/payments/payments.service.ts`) to treat verified webhook `data.code` as authoritative (`'00'` = success; non-`'00'` = failure) and reject contradictory outer envelope `code` values after transaction lookup (preserving lock/race ordering).
+  - Replaced blind failure overwrite with row-locked/CAS `PaymentsRepository.markTransactionFailedIfPendingAtomicTx` (also routed from `updateTransactionStatus(..., 'FAILED')`), preventing late/stale failure callbacks from downgrading `PAID`, `REFUND_PENDING`, or `REFUNDED` transactions.
+- **F1 — Separate Payment Confirmation from Fulfillment Progression**:
+  - Updated `PaymentsRepository.confirmPaymentAtomicTx` (`src/payments/payments.repository.ts`) so valid PayOS payments on orders already in active progression (`CONFIRMED`, `PREPARING`, `READY_FOR_DELIVERY`, `SHIPPING`, `DELIVERED`, `COMPLETED`) record `paymentStatus: 'PAID'` and preserve progression instead of misrouting them to `'REFUND_PENDING'`; `PENDING` orders transition to `CONFIRMED` + `PAID`; `CANCELLED`, `REJECTED`, `DELIVERY_FAILED`, or COD-switched orders still route to `'REFUND_PENDING'`.
+- **F2 — Excess / Late Obsolete-Link Payment Isolation**:
+  - Updated `PaymentsRepository.confirmPaymentAtomicTx` so late receipt on an obsolete link when `order.payment_status === 'PAID'` or `activeSibling.status === 'PAID'` marks only the late/excess `paymentTransaction` as `'REFUND_PENDING'` and preserves `order.paymentStatus === 'PAID'` backed by the valid transaction (while flagging order-level `'REFUND_PENDING'` if an obsolete link arrived on an unpaid/pending order, keeping `audit-run6` compatibility).
+  - Guarded `OrdersRepository.refundOrderAtomicTx` against blanket-refunding orders whose `payment_status !== 'REFUND_PENDING'`.
+  - Added dedicated per-transaction excess refund path: `PaymentsController.refundExcessTransaction` (`POST /api/v1/payments/transactions/:id/refund-excess`), `RefundExcessPaymentDto` (`src/payments/dto/refund-excess-payment.dto.ts`), `PaymentsService.refundExcessTransaction`, and `PaymentsRepository.refundExcessTransactionAtomicTx`.
+- **F4 — Durable Storefront Checkout Idempotency Inside Business Transaction**:
+  - Added migration `prisma/migrations/20261121220000_storefront_checkout_idempotency/migration.sql` and `Order` schema fields (`checkoutActorScope`, `checkoutIdempotencyKey`, `checkoutRequestHash`) + unique index `uq_orders_checkout_idempotency` on `(checkout_actor_scope, checkout_idempotency_key)` — deployed to `smart_order_test` (`npx prisma migrate deploy`, `npx prisma generate`).
+  - Wired `IdempotencyService`, `IdempotencyInterceptor` (`src/common/idempotency/`), `StorefrontController`, `OrdersService.createStorefrontOrder`, and `OrdersRepository.createStorefrontOrderTx` so post-commit retry recovery after lease expiry returns the existing order (`422` on payload mismatch, without duplicate order/inventory/WS emission), and post-commit interceptor errors do not release/delete committed idempotency locks (`finalizeFailure` skipped after handler commit).
+- **F5 — Row-Locked `PATCH` Inventory Mutation & Conflict Error Handling**:
+  - Rewrote `ProductsRepository.updateInventoryStock` (`src/products/products.repository.ts`) using `runWithTransactionRetry` + `$transaction` locking `product -> inventory FOR UPDATE`, validating `availableStock >= reserved_quantity` post-lock and throwing `BadRequestException` instead of surfacing a PostgreSQL `CHECK` constraint error under checkout concurrency.
+
+### 2. Verified Checks (`smart_order_test` / Local Build — After Final Edits)
+- `tsc --noEmit` -> PASS (exit 0)
+- `npm run build` -> PASS (exit 0)
+- `tests/acid-audit-regressions-2026-11-21.spec.ts --live` -> **10 passed, 0 failed** (`M0`, `M1`, `M2`, `L0`, `L1`, `L1b`, `L2`, `L3`, `L4`, `L5`)
+- `tests/acid-wallet-order-inventory-hardening.spec.ts` -> **5/5 groups passed**
+- `tests/audit-run6-payos-fixes.spec.ts` -> **20/20 passed** (exit 0)
+- `tests/payos-thu-chi.spec.ts` -> **ALL passed** (exit 0, mock provider mode)
+- `tests/phase2-idempotency-platform.spec.ts` -> **22 passed, 0 failed** (exit 0)
+- `tests/p0-security-and-concurrency.spec.ts` -> **11 passed, 0 failed** (exit 0)
+- `tests/order-refund-and-cooling-off.spec.ts` -> **15 passed, 0 failed** (exit 0)
+- `tests/http-contract-validation.spec.ts` -> **20 passed, 0 failed** (exit 0)
+- `tests/superpower-security-verification.spec.ts` -> **42 passed, 0 failed** (exit 0)
+- `tests/database-schema.spec.ts` -> **7/7 delegates verified** (exit 0)
+- `tests/superpower-security-unit.spec.ts` -> **44 passed, 0 failed** (exit 0)
+- `tests/security-audit-p1-fixes.spec.ts` -> **27 passed, 0 failed** (exit 0)
+- `tests/security-audit-waves-fixes.spec.ts` -> **All waves verified** (exit 0)
+- `tests/phase1-transactions-concurrency.spec.ts` -> **16 passed, 0 failed** (exit 0)
+- `tests/withdrawal-concurrency-idempotency.spec.ts` -> **16 passed, 0 failed** (exit 0)
+- `tests/order-lifecycle.spec.ts` -> **7 passed, 0 failed** (exit 0)
+- `tests/data_isolation_bola.spec.ts` -> **PASS** (exit 0)
+- `tests/business-logic-13-fixes.spec.ts` -> **18 passed, 1 failed** (exit 1; all Orders/Products/Analytics points passed; pre-existing unrelated failure on `Point 3C-2: lockDevice` in Warranty/Deposit module)
+- Read-only DB check on `smart_order_test` -> `uq_orders_checkout_idempotency` index and `checkout_*` columns present; migration `20261121220000_storefront_checkout_idempotency` applied; `0` leftover `AA*` synthetic fixtures.
+
+### 3. Known Environment / Scope Caveats
+- Production (`supabase.co`) and live payment providers were NOT modified (`PAYOS_MOCK_PAYOUT=true` / mock provider mode).
+- `smart_order_test` still lacks `sp_create_order_from_button` & order triggers noted in the audit; HTTP-server-dependent inventory/checkout suites (`inventory-concurrency-race.spec.ts`, `storefront-checkout-refactor.spec.ts`, `price-history-and-inventory.spec.ts`) expect a running `localhost:3000` server and were not run standalone.
+
+---
+
+## 2026-11-21: ACID Audit — Orders, Inventory, Payments and Wallets
+- **Status**: REVIEW COMPLETED; **5 confirmed findings remain open** (4 P1, 1 P2). No production business logic fixes, migrations, production access or real provider transfers performed in this audit.
+- **Snapshot**: `feat/system-staff-role-transition`, base `fdef8b5`, including pre-existing uncommitted ACID hardening changes. Existing working-tree changes preserved.
+- **Files added**:
+  - `docs/reviews/2026-11-21-acid-orders-payments-audit.md`: detailed findings, exact source locations, reproduction, proposed fixes, positive controls and verification limits.
+  - `tests/acid-audit-regressions-2026-11-21.spec.ts`: intentionally failing regressions; default mock checks, guarded `--live` PostgreSQL fixtures; not registered in `run_all_suites.ts`.
+- **Confirmed findings**:
+  1. Payment on an already CONFIRMED/PREPARING PayOS order incorrectly sets REFUND_PENDING.
+  2. Late obsolete-link receipt demotes an order backed by an already-PAID replacement payment.
+  3. Unconditional FAILED update can overwrite concurrent PAID; regression also exposes unsigned envelope code selecting the failure branch despite signed success data.
+  4. Storefront business COMMIT precedes idempotency response finalization; expired lease recovery can create a second order with the same key/body.
+  5. Separate PATCH inventory path reads reserved quantity without lock; concurrent checkout causes a database CHECK error instead of a business conflict. CHECK prevents corrupt inventory in the reproduced case.
+- **Current verification** (test DB `smart_order_test`, guarded allowlisted host; no secrets recorded):
+  - `node node_modules/tsx/dist/cli.mjs tests/acid-wallet-order-inventory-hardening.spec.ts` — PASS, 5/5 groups on PostgreSQL with mocked provider I/O.
+  - `node node_modules/tsx/dist/cli.mjs tests/acid-audit-regressions-2026-11-21.spec.ts` — expected FAIL, exit 1, 1 control pass / 2 regression failures.
+  - Same command with `--live` — expected FAIL, exit 1, 2 controls pass / 7 regression failures representing 5 distinct findings; callback interleaving and expiry window deliberately controlled by the test.
+  - `node node_modules/typescript/bin/tsc --noEmit` — PASS, exit 0 after final regression edit.
+  - `npm run build` — PASS, exit 0.
+  - `node node_modules/tsx/dist/cli.mjs tests/store-cash-contract.spec.ts` — PASS, offline contracts only.
+  - `node node_modules/tsx/dist/cli.mjs tests/store-cash-settlement.spec.ts` — FAIL: mock lacks `buttonRental.findUnique`, reached at `billing-charges.repository.ts:150`; not evidence of a live settlement bug by itself.
+  - READ ONLY verification after live runs: own synthetic stores/users/idempotency records remaining = 0; inventory/wallet rows violating tested non-negative/bounds predicates = 0.
+- **Environment limitation**: READ ONLY metadata confirms this test DB lacks `sp_create_order_from_button`, the two order trigger functions and non-internal order triggers defined by migrations. Partial payment indexes, inventory/wallet CHECKs, wallet-ledger unique and API-idempotency unique are present. Production schema not inspected; no DDL applied.
+- **Remaining**: fix the five findings; rebuild an isolated test schema from migrations for full button/SP coverage; verify interrupted link recovery and asynchronous rental payout follow-up. Full suite and database infrastructure durability/failover not tested. See report for evidence levels.
+- **Next**: prioritize monotonic payment/CAS and signed boundary, order/payment/refund state separation, durable checkout identity, then inventory PATCH locking.
+
+## 2026-11-20: ACID Hardening Audit & Remediation (Wallets, Orders, Inventory, Subscriptions, Payments)
+- **Status**: 🟢 CODE & DB CONSTRAINT REMEDIATIONS + REVIEW FOLLOW-UPS IMPLEMENTED & VERIFIED ON NEON TEST DB (`smart_order_test`, additive migrations applied, Nest build PASS, DB guard enforced; uncommitted on `feat/system-staff-role-transition` awaiting user review/commit).
+- **Root Fixes Applied**:
+  1. **StoreWallet Locking, Lost-Update Prevention & `Prisma.Decimal` Arithmetic**:
+     - Added shared lock helper [src/store-wallet/store-wallet.lock.ts](file:///f:/Learning/SEM9-FPTu/backend/src/store-wallet/store-wallet.lock.ts) (`ensureAndLockStoreWalletByStoreId` using `INSERT ... ON CONFLICT (store_id) DO NOTHING` + `SELECT ... FOR UPDATE`, and `lockStoreWalletById`).
+     - Fixed `StoreWalletService.creditOrderRevenue` (`src/store-wallet/store-wallet.service.ts`) to lock the wallet row via `ensureAndLockStoreWalletByStoreId` BEFORE reading balance/idempotency ledger, wrapped with `runWithTransactionRetry`, and converted balance math in `creditOrderRevenue`, `requestWithdrawal`, `refundFailedWithdrawal`, `StoreWalletRepository.finalizePayoutSuccessTx`, `AdminRepository` withdrawal settlement/refunds, and `OrdersRepository` (`completeOrderAtomicTx`, `completeDeliveryAtomicTx`) to `Prisma.Decimal` + conflict-safe wallet creation.
+  2. **Inventory Locking Order & DB Consistency Constraint**:
+     - Fixed `ProductsRepository.updateProductAtomicTx` (`src/products/products.repository.ts`) to initialize/lock `inventory` with `SELECT ... FROM inventory WHERE product_id = $1 FOR UPDATE` before validating `stock >= reserved_quantity` and updating `quantity_on_hand`.
+     - Rewrote `OrdersRepository.releaseReservedInventory` & `deductInventoryOnCompleted` (`src/orders/orders.repository.ts`) to execute atomically inside `$transaction` with ascending `productId` sorting, `FOR UPDATE` row locks, stock sufficiency checks, and `runWithTransactionRetry`.
+     - Unified canonical `productId` ascending lock order (`orderBy: { productId: 'asc' }`) across ALL `orderItem` inventory mutation paths (`createStorefrontOrderTx`, `createOrderFallbackTx`, `completeOrderAtomicTx`, `cancelOrderAtomicTx`, `completeDeliveryAtomicTx`, `failDeliveryAtomicTx`) and added `runWithTransactionRetry` wrappers.
+     - Created and applied additive migration `prisma/migrations/20261120120000_acid_inventory_and_concurrency_checks/migration.sql` (`chk_inventory_non_negative_and_reserved_bound`: `quantity_on_hand >= 0 AND reserved_quantity >= 0 AND reserved_quantity <= quantity_on_hand`) on Neon `smart_order_test`.
+  3. **Quick-Reorder Idempotency Key Support (Collision-Free Hash)**:
+     - Updated `QuickReorderDto` (`src/orders/dto/quick-reorder.dto.ts`), `OrdersController.quickReorder` (`src/orders/orders.controller.ts`), and `OrdersService.quickReorder` (`src/orders/orders.service.ts`) to validate optional `X-Idempotency-Key` / `body.idempotencyKey` (`^[A-Za-z0-9._:-]{1,128}$`) and derive a full-key SHA-256 `quick_<64-hex>` `iotRequestId` (`70` chars <= `VarChar(128)`), preventing prefix truncation collisions across 128-char keys.
+  4. **Cross-Store Trial Serialization & Subscription Settlement Locking**:
+     - Updated `StoreSubscriptionsRepository.hasUsedTrialSubscription` & `subscribeWithWalletAtomicTx` (`src/store-subscriptions/store-subscriptions.repository.ts`) to follow canonical `store -> store_wallets -> store_subscriptions` `FOR UPDATE` lock order, serialize owner trial checks inside `tx` with `pg_advisory_xact_lock(hashtext('trial_sub_owner:' || owner_user_id))`, and wrap with `runWithTransactionRetry`.
+     - Updated `BillingChargesRepository.settleChargeAtomicTx` (`src/billing-charges/billing-charges.repository.ts`) to lock active `store_subscriptions ... FOR UPDATE` after locking `store`.
+  5. **Lock-First PayOS Payment Creation, Canonical `orders -> payment_transaction` Lock Ordering & Partial Unique Index Restoration**:
+     - Added `PaymentsRepository.createPendingTransactionCheckedTx` (`src/payments/payments.repository.ts`) locking `orders FOR UPDATE` before ownership/state validation and `PENDING` `PaymentTransaction` insert.
+     - Added `PaymentsRepository.savePaymentLinkIfStillActiveTx` (wrapped in `runWithTransactionRetry`) locking `orders -> payment_transaction FOR UPDATE` AFTER external PayOS creation and re-reading states under both locks; updated `PaymentsService.createPayosPaymentLink` (`src/payments/payments.service.ts`) via shared `persistLinkOrCancelOnRace` so if `changeOrderPaymentMethod` (or cancellation/payment) invalidated the transaction while PayOS I/O was in flight, it retains link metadata on the non-`PAID` row for audit, triggers best-effort remote `cancelPaymentLink` (skipped when already `PAID`), and throws `409 ConflictException` (`PAYMENT_TRANSACTION_CANCELLED`) instead of returning `PENDING` (also failing fast out of the `P2002` waiter loop if pending tx disappears/gets paid; never retrying external PayOS link creation inside DB retry loops).
+     - Unified `PaymentsRepository.confirmPaymentAtomicTx` onto the exact same canonical `orders -> payment_transaction` `FOR UPDATE` lock order (non-locking `SELECT payment_transaction_id, order_id` lookup first, then `orders FOR UPDATE` -> `payment_transaction FOR UPDATE`, then authoritative state re-read under both locks) wrapped in `runWithTransactionRetry`.
+     - Reordered `PaymentsService.changeOrderPaymentMethod` + `PaymentsRepository.changePaymentMethodTx` to acquire `orders FOR UPDATE`, enforce ownership/`PENDING`/`UNPAID` guards, switch `paymentMethod` and cancel `PENDING` DB transactions FIRST, then cancel remote PayOS links post-commit.
+     - Created and applied idempotent additive migration `prisma/migrations/20261120140000_restore_partial_unique_indexes/migration.sql` restoring `uq_payment_active_per_order`, `uq_payment_active_per_rental`, `uq_payment_transaction_code`, `uq_default_bank_account_per_store`, and `chk_store_wallets_non_negative_balance` on Neon `smart_order_test`.
+  6. **Test DB Guard & Hardened Concurrency Assertions (`tests/acid-wallet-order-inventory-hardening.spec.ts`)**:
+     - Wired Suite `86` through `getSafeTestPrismaService` (`tests/test-db-guard.ts`) BEFORE connecting; verified strict rejection when run without explicit `TEST_DB_ALLOWED_HOSTS` allowlist.
+     - Strengthened Group 2 concurrent order/stock assertions (exact business `BadRequestException` checks and deterministic inventory state matching), added Group 5 concurrent `createPayosPaymentLink` x 2, `PayOS` vs `changeOrderPaymentMethod('COD')` race recovery, concurrent `savePaymentLinkIfStillActiveTx` vs `confirmPaymentAtomicTx`, concurrent `handlePayosWebhook` vs `changeOrderPaymentMethod('COD')` + deterministic serialization, `runWithTransactionRetry` (`40P01`/`P2034`) DB retry without retrying PayOS HTTP creation, and 128-char shared-prefix non-collision in `quickReorder`.
+- **Verification Results (Post Final Edits on `smart_order_test`)**:
+  - `npx prisma migrate deploy` (`smart_order_test`) — PASS (`20261120120000_acid_inventory_and_concurrency_checks` & `20261120140000_restore_partial_unique_indexes` applied; `pg_indexes` & `pg_constraint` verified all 4 partial unique indexes + wallet check constraint active).
+  - `npx tsc --noEmit` — PASS (`Exit code 0`).
+  - `npm run build` — PASS (`Exit code 0`).
+  - `tests/acid-wallet-order-inventory-hardening.spec.ts` (Suite `86`):
+    - Without `TEST_DB_ALLOWED_HOSTS`: PASS (Guard refused Neon host before connect, `Exit code 1`).
+    - With `TEST_DB_ALLOWED_HOSTS` set to Neon test host: PASS (`5/5` groups).
+  - Passing suites (`Exit code 0`, with `TEST_DB_ALLOWED_HOSTS` set to Neon test host):
+    - `tests/superpower-security-verification.spec.ts` (Suite `41`) — PASS (`42 passed, 0 failed`).
+    - `tests/audit-run6-payos-fixes.spec.ts` — PASS (`20/20 passed`, including mocked `confirmPaymentAtomicTx` `REFUND_PENDING` sibling check).
+    - `tests/p0-security-and-concurrency.spec.ts` (Suite `24`) — PASS (`11 passed, 0 failed`).
+    - `tests/payos-thu-chi.spec.ts` — PASS.
+    - `tests/http-contract-validation.spec.ts` (Suite `75`) — PASS (`20 passed, 0 failed`).
+    - `tests/phase1-transactions-concurrency.spec.ts` (Suite `36`) — PASS (`16 passed, 0 failed`).
+    - `tests/withdrawal-concurrency-idempotency.spec.ts` (Suite `14`) — PASS (`16 passed, 0 failed`).
+    - `tests/store-wallet.spec.ts` — PASS.
+    - `tests/store-subscriptions.spec.ts` — PASS.
+    - `tests/trial-and-rental-duration.spec.ts` — PASS (`19/19`).
+    - `tests/store-owner-delivery-pod-handover.spec.ts` (Suite `84`) — PASS (`5/5` groups).
+    - `tests/system-staff-devices-warranty.spec.ts` (Suite `83`) — PASS (`10/10` groups).
+    - `tests/rental-closeout-regression.spec.ts` — PASS (`7/7`).
+    - `tests/e2e-marketplace-ecosystem.spec.ts` — PASS (`14 passed, 0 failed`).
+    - `tests/goong-5km-delivery.spec.ts` — PASS (`18 passed, 0 failed`).
+  - Suites with pre-existing/unrelated failures observed on `smart_order_test`:
+    - `tests/verify_remaining_3_deep_issues.ts` — `3/5` passed (PayOS Fail-Closed `[1/5]`, `confirmPaymentAtomicTx` `REFUND_PENDING` `[4/5]`, and `OTP_PEPPER`/SSE `[5/5]` passed; `[2/5]` IoT check constraint on `order_id = NULL` and `[3/5]` Cloudinary refcount deletion failed due to pre-existing `smart_order_test` state).
+    - `tests/business-logic-13-fixes.spec.ts` — `18 passed, 1 failed` (`Point 3C-2` pre-existing Step 4 `lockDevice` deferral diff; Points `10`, `11A`, `11B` passed).
+    - `tests/order-minimum-value.spec.ts` — `11 passed, 4 failed` (`sp_create_order_from_button` absent on `smart_order_test`, `42883`; all 11 `createOrderFallbackTx` & validation assertions passed).
+
 ## 2026-11-20: Part II `SYSTEM_STAFF` Missing Screens (`Return Inspection Queue` & `Bulk CSV Import Preview`)
 - **Status**: 🟢 IMPLEMENTED, VERIFIED & READY TO PUSH (`backend` branch `feat/system-staff-role-transition` + `Frontend` branch `feat/system-staff-ui-transition`; PR #1 kept `OPEN`, Production untouched).
 - **Backend Changes (`f:\Learning\SEM9-FPTu\backend`)**:

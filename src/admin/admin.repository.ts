@@ -723,16 +723,16 @@ export class AdminRepository {
       `;
       if (!wallet) throw new Error('Ví không tồn tại');
 
-      const refundAmount = Number(lockedWithdrawal.amount);
-      const balanceBefore = Number(wallet.balance);
-      const balanceAfter = balanceBefore + refundAmount;
-      const currentFrozen = Number(wallet.frozen_balance || 0);
-      if (currentFrozen < refundAmount) {
+      const refundAmount = new Prisma.Decimal(lockedWithdrawal.amount);
+      const balanceBefore = new Prisma.Decimal(wallet.balance);
+      const balanceAfter = balanceBefore.plus(refundAmount);
+      const currentFrozen = new Prisma.Decimal(wallet.frozen_balance || 0);
+      if (currentFrozen.lt(refundAmount)) {
         throw new ConflictException(
-          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen}) nhỏ hơn số tiền từ chối hoàn (${refundAmount}). Rollback để bảo toàn dữ liệu tài chính.`
+          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen.toString()}) nhỏ hơn số tiền từ chối hoàn (${refundAmount.toString()}). Rollback để bảo toàn dữ liệu tài chính.`
         );
       }
-      const frozenAfter = currentFrozen - refundAmount;
+      const frozenAfter = currentFrozen.minus(refundAmount);
 
       await tx.storeWallet.update({
         where: { walletId: wallet.wallet_id },
@@ -809,14 +809,14 @@ export class AdminRepository {
       if (!wallet) {
         throw new NotFoundException('Ví không tồn tại');
       }
-      const amount = Number(lockedWithdrawal.amount);
-      const currentFrozen = Number(wallet.frozen_balance || 0);
-      if (currentFrozen < amount) {
+      const amountDec = new Prisma.Decimal(lockedWithdrawal.amount);
+      const currentFrozen = new Prisma.Decimal(wallet.frozen_balance || 0);
+      if (currentFrozen.lt(amountDec)) {
         throw new ConflictException(
-          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen}) nhỏ hơn số tiền rút (${amount}). Rollback để bảo toàn dữ liệu tài chính.`
+          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen.toString()}) nhỏ hơn số tiền rút (${amountDec.toString()}). Rollback để bảo toàn dữ liệu tài chính.`
         );
       }
-      const newFrozen = currentFrozen - amount;
+      const newFrozen = currentFrozen.minus(amountDec);
       await tx.storeWallet.update({
         where: { walletId: wallet.wallet_id },
         data: { frozenBalance: newFrozen },
@@ -893,16 +893,16 @@ export class AdminRepository {
 
       if (!wallet) return null;
 
-      const refundAmount = Number(lockedWithdrawal.amount);
-      const balanceBefore = Number(wallet.balance);
-      const balanceAfter = balanceBefore + refundAmount;
-      const currentFrozen = Number(wallet.frozen_balance || 0);
-      if (currentFrozen < refundAmount) {
+      const refundAmount = new Prisma.Decimal(lockedWithdrawal.amount);
+      const balanceBefore = new Prisma.Decimal(wallet.balance);
+      const balanceAfter = balanceBefore.plus(refundAmount);
+      const currentFrozen = new Prisma.Decimal(wallet.frozen_balance || 0);
+      if (currentFrozen.lt(refundAmount)) {
         throw new ConflictException(
-          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen}) nhỏ hơn số tiền hoàn (${refundAmount}). Rollback để bảo toàn dữ liệu tài chính.`
+          `Sai lệch kế toán: Số dư đóng băng (${currentFrozen.toString()}) nhỏ hơn số tiền hoàn (${refundAmount.toString()}). Rollback để bảo toàn dữ liệu tài chính.`
         );
       }
-      const frozenAfter = currentFrozen - refundAmount;
+      const frozenAfter = currentFrozen.minus(refundAmount);
 
       await tx.storeWallet.update({
         where: { walletId: wallet.wallet_id },

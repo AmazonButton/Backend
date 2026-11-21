@@ -429,6 +429,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'step7-rehearsal-and-concurrency.spec.ts')],
   },
+  {
+    name: '86. ACID Wallet, Order, Inventory, Subscription Trial & Payment Concurrency Hardening',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'acid-wallet-order-inventory-hardening.spec.ts')],
+  },
 ];
 
 async function main() {

@@ -67,6 +67,37 @@ async function runOrderRefundSuite() {
     invalidateKey: async () => {},
   } as any;
 
+  const mockPaymentRefundsService = {
+    ensureOrderRefundObligations: async (orderId: bigint) => {
+      const order = mockOrders[orderId.toString()];
+      if (!order) return [];
+      return [
+        {
+          obligationId: orderId * 10n,
+          orderId,
+          obligationType: 'ORDER_REFUND',
+          status: order.paymentStatus === 'REFUNDED' ? 'REFUNDED' : 'READY_FOR_PAYOUT',
+        },
+      ];
+    },
+    initiateObligationPayout: async (obligationId: bigint, dto: any, _user: any) => {
+      const orderId = (obligationId / 10n).toString();
+      const order = mockOrders[orderId];
+      if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+      order.paymentStatus = 'REFUNDED';
+      statusHistories.push({
+        orderId: BigInt(orderId),
+        oldStatus: order.orderStatus,
+        newStatus: order.orderStatus,
+        reason: dto?.note || 'PayOS Payout Verified Settlement',
+      });
+      return {
+        obligationId: obligationId.toString(),
+        status: 'REFUNDED',
+      };
+    },
+  } as any;
+
   const ordersService = new OrdersService(
     mockRepo,
     {} as any,
@@ -74,6 +105,9 @@ async function runOrderRefundSuite() {
     {} as any,
     mockNotifications,
     mockCache,
+    undefined,
+    undefined,
+    mockPaymentRefundsService,
   );
 
   try {
@@ -89,9 +123,9 @@ async function runOrderRefundSuite() {
     }
 
     // -------------------------------------------------------------------------
-    // 2. BOLA TENANT ISOLATION CHECK
+    // 2. ROLE AUTHORITY BOUNDARY (STRICTLY SUPER_ADMIN ONLY)
     // -------------------------------------------------------------------------
-    console.log('\n--- Test Section 2: BOLA / Multi-Tenant Isolation ---');
+    console.log('\n--- Test Section 2: Role Authority Boundary (SUPER_ADMIN Only) ---');
     mockOrders['1001'] = {
       orderId: BigInt(1001),
       orderCode: 'ORD-1001',
@@ -104,16 +138,25 @@ async function runOrderRefundSuite() {
       paymentMethod: 'PAYOS',
     };
 
-    // Store 2 user attempting to refund Store 1's order
-    try {
-      await ordersService.refundOrder(
-        1001,
-        { adminNote: 'Cross-tenant refund attempt' },
-        { role: 'STORE_OWNER', storeId: '2', userId: '88' },
-      );
-      assert(false, 'Should block cross-tenant store owner from refunding another store order');
-    } catch (err: any) {
-      assert(err instanceof ForbiddenException, 'Blocks cross-store owner with ForbiddenException (BOLA guard)');
+    for (const nonSuperUser of [
+      { role: 'STORE_OWNER', storeId: '1', userId: '10' },
+      { role: 'STORE_OWNER', storeId: '2', userId: '88' },
+      { role: 'SYSTEM_ADMIN', userId: '5' },
+      { role: 'ADMIN', userId: '6' },
+    ]) {
+      try {
+        await ordersService.refundOrder(
+          1001,
+          { adminNote: 'Unauthorized role refund attempt' },
+          nonSuperUser,
+        );
+        assert(false, `Should block ${nonSuperUser.role} from dispatching financial payout`);
+      } catch (err: any) {
+        assert(
+          err instanceof ForbiddenException,
+          `Blocks ${nonSuperUser.role} (store=${(nonSuperUser as any).storeId ?? 'N/A'}) with ForbiddenException`,
+        );
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -136,7 +179,7 @@ async function runOrderRefundSuite() {
       await ordersService.refundOrder(
         1002,
         { adminNote: 'Premature refund' },
-        { role: 'STORE_OWNER', storeId: '1', userId: '10' },
+        { role: 'SUPER_ADMIN', userId: '1' },
       );
       assert(false, 'Should reject refund when paymentStatus is not REFUND_PENDING');
     } catch (err: any) {
@@ -144,19 +187,19 @@ async function runOrderRefundSuite() {
     }
 
     // -------------------------------------------------------------------------
-    // 4. SUCCESSFUL REFUND FLOW (STORE OWNER)
+    // 4. SUCCESSFUL REFUND FLOW (SUPER_ADMIN VERIFIED PAYOUT)
     // -------------------------------------------------------------------------
-    console.log('\n--- Test Section 4: Valid Refund Flow (Store Owner) ---');
+    console.log('\n--- Test Section 4: Valid Refund Flow (SUPER_ADMIN) ---');
     const refundResult = await ordersService.refundOrder(
       1001,
-      { refundReference: 'PAYOS-REF-998877', adminNote: 'Hoàn tiền online theo yêu cầu hủy của khách' },
-      { role: 'STORE_OWNER', storeId: '1', userId: '10' },
+      { adminNote: 'Hoàn tiền online theo yêu cầu hủy của khách (PAYOS-REF-998877)' },
+      { role: 'SUPER_ADMIN', userId: '1' },
     );
 
     assert(refundResult.paymentStatus === 'REFUNDED', 'Order paymentStatus updated to REFUNDED');
     assert(mockOrders['1001'].paymentStatus === 'REFUNDED', 'Database record updated atomically');
-    assert(statusHistories.length === 1, 'Audit log created in orderStatusHistory');
-    assert(statusHistories[0].reason.includes('PAYOS-REF-998877'), 'History records refund reference');
+    assert(statusHistories.length === 1, 'Audit log created in statusHistories');
+    assert(statusHistories[0].reason.includes('PAYOS-REF-998877'), 'History records admin note');
 
     // Check Realtime WebSockets
     const storeEvent = emittedEvents.find(e => e.event === 'ORDER_REFUNDED' && e.target === 'store');
@@ -175,8 +218,8 @@ async function runOrderRefundSuite() {
     console.log('\n--- Test Section 5: Idempotency Check ---');
     const repeatResult = await ordersService.refundOrder(
       1001,
-      { refundReference: 'PAYOS-REF-998877' },
-      { role: 'STORE_OWNER', storeId: '1', userId: '10' },
+      { adminNote: 'Repeat call' },
+      { role: 'SUPER_ADMIN', userId: '1' },
     );
     assert(repeatResult.paymentStatus === 'REFUNDED', 'Idempotent refund returns order without error');
     assert(statusHistories.length === 1, 'Does not duplicate history log on idempotent call');

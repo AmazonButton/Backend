@@ -88,6 +88,8 @@ model User {
   authIdentities               UserAuthIdentity[]
   collectedCashReceipts         StoreCashReceipt[]
   reportedWarrantyTickets       WarrantyTicket[]              @relation("UserReportedWarrantyTickets")
+  settledPaymentRefunds         PaymentRefundObligation[]     @relation("PaymentRefundSettledBy")
+  initiatedPaymentRefundAttempts PaymentRefundPayoutAttempt[] @relation("PaymentRefundInitiatedBy")
 
   @@unique([authProvider, providerSubject], map: "uq_users_auth_provider_subject")
   @@map("users")
@@ -403,13 +405,19 @@ model Order {
   deliveryAddressId      BigInt?          @map("delivery_address_id")
   deliveryDistanceMeters Int?             @map("delivery_distance_meters")
   deliveryDistanceSource String?          @map("delivery_distance_source") @db.VarChar(50)
+  checkoutActorScope     String?          @map("checkout_actor_scope") @db.VarChar(128)
+  checkoutIdempotencyKey String?          @map("checkout_idempotency_key") @db.VarChar(128)
+  checkoutRequestHash    String?          @map("checkout_request_hash") @db.Char(64)
 
-  items               OrderItem[]
-  statusHistories     OrderStatusHistory[]
-  paymentTransactions PaymentTransaction[]
-  iotIdempotencyKeys  IotIdempotencyKey[]
+  items                    OrderItem[]
+  statusHistories          OrderStatusHistory[]
+  paymentTransactions      PaymentTransaction[]
+  iotIdempotencyKeys       IotIdempotencyKey[]
+  paymentOrderReceipts     PaymentOrderReceipt[]
+  paymentRefundObligations PaymentRefundObligation[]
 
   @@unique([buttonId, iotRequestId], map: "uq_orders_button_request")
+  @@unique([checkoutActorScope, checkoutIdempotencyKey], map: "uq_orders_checkout_idempotency")
   @@index([storeId, orderStatus, createdAt(sort: Desc)], map: "idx_orders_store_status_created")
   @@index([customerId, orderStatus, createdAt(sort: Desc)], map: "idx_orders_customer_status_created")
   @@index([assignedDriverId, orderStatus], map: "idx_orders_driver_status")
@@ -464,9 +472,11 @@ model PaymentTransaction {
   checkoutUrl          String?       @map("checkout_url")
   qrCode               String?       @map("qr_code")
   status               String        @default("PENDING")
-  paidAt               DateTime?     @map("paid_at")
-  createdAt            DateTime      @default(now()) @map("created_at")
-  updatedAt            DateTime      @default(now()) @updatedAt @map("updated_at")
+  paidAt                   DateTime?                 @map("paid_at")
+  createdAt                DateTime                  @default(now()) @map("created_at")
+  updatedAt                DateTime                  @default(now()) @updatedAt @map("updated_at")
+  orderReceipts            PaymentOrderReceipt[]
+  refundObligations        PaymentRefundObligation[]
 
   @@index([orderId, status], map: "idx_payment_tx_order_status")
   @@index([rentalId, status], map: "idx_payment_tx_rental_status")
@@ -1330,6 +1340,7 @@ model CustomerBankAccount {
 
   refunds                DepositRefund[]
   verificationProofs     CustomerBankVerificationProof[]
+  paymentRefundObligations PaymentRefundObligation[]
 
   @@unique([customerId, accountNumberHash], name: "uq_customer_bank_acc_hash")
   @@index([customerId, isDefault], map: "idx_customer_bank_default")
@@ -1577,4 +1588,126 @@ model RoleTransitionBatch {
 
   @@index([status, executedAt(sort: Desc)], map: "idx_role_transition_batches_status_exec")
   @@map("role_transition_batches")
+}
+
+model PaymentOrderReceipt {
+  receiptId              BigInt    @id @default(autoincrement()) @map("receipt_id")
+  orderId                BigInt    @map("order_id")
+  order                  Order     @relation(fields: [orderId], references: [orderId], onDelete: Restrict)
+  paymentTransactionId   BigInt?   @map("payment_transaction_id")
+  paymentTransaction     PaymentTransaction? @relation(fields: [paymentTransactionId], references: [paymentTransactionId], onDelete: Restrict)
+  provider               String    @default("PAYOS") @db.VarChar(32)
+  channel                String    @default("ORDER_PAYMENT_LINK") @db.VarChar(64)
+  providerTransactionRef String    @map("provider_transaction_ref") @db.VarChar(128)
+  paymentLinkId          String?   @map("payment_link_id") @db.VarChar(128)
+  amount                 Decimal   @db.Decimal(15, 2)
+  currency               String    @default("VND") @db.VarChar(10)
+  classification         String    @db.VarChar(32)
+  sourceBankRaw          String?   @map("source_bank_raw") @db.VarChar(64)
+  sourceBankBin          String?   @map("source_bank_bin") @db.VarChar(10)
+  sourceAccountMasked    String?   @map("source_account_masked") @db.VarChar(32)
+  sourceAccountHash      String?   @map("source_account_hash") @db.VarChar(64)
+  sourceAccountEncrypted String?   @map("source_account_encrypted") @db.Text
+  sourceAccountName      String?   @map("source_account_name") @db.VarChar(255)
+  sourceEvidenceStatus   String    @default("MISSING") @map("source_evidence_status") @db.VarChar(32)
+  rawPayloadChecksum     String?   @map("raw_payload_checksum") @db.Char(64)
+  receivedAt             DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  refundObligation PaymentRefundObligation?
+
+  @@unique([provider, channel, providerTransactionRef], map: "uq_payment_order_receipt_provider_ref")
+  @@unique([receiptId, orderId], map: "uq_payment_order_receipt_order_binding")
+  @@index([orderId, classification], map: "idx_payment_order_receipt_order_cls")
+  @@index([paymentTransactionId], map: "idx_payment_order_receipt_tx")
+  @@map("payment_order_receipts")
+}
+
+model PaymentRefundObligation {
+  obligationId                BigInt    @id @default(autoincrement()) @map("obligation_id")
+  orderId                     BigInt    @map("order_id")
+  order                       Order     @relation(fields: [orderId], references: [orderId], onDelete: Restrict)
+  sourcePaymentTransactionId  BigInt?   @map("source_payment_transaction_id")
+  sourcePaymentTransaction    PaymentTransaction? @relation(fields: [sourcePaymentTransactionId], references: [paymentTransactionId], onDelete: Restrict)
+  receiptId                   BigInt    @unique(map: "uq_payment_refund_obligation_receipt") @map("receipt_id")
+  receipt                     PaymentOrderReceipt @relation(fields: [receiptId], references: [receiptId], onDelete: Restrict)
+  obligationType              String    @map("obligation_type") @db.VarChar(32)
+  refundAmount                Decimal   @map("refund_amount") @db.Decimal(15, 2)
+  currency                    String    @default("VND") @db.VarChar(10)
+  status                      String    @default("PENDING_RECIPIENT_VERIFICATION") @db.VarChar(40)
+  recipientVerificationStatus String    @default("SOURCE_INSUFFICIENT") @map("recipient_verification_status") @db.VarChar(40)
+  verificationNote            String?   @map("verification_note") @db.VarChar(500)
+  customerBankAccountId       BigInt?   @map("customer_bank_account_id")
+  customerBankAccount         CustomerBankAccount? @relation(fields: [customerBankAccountId], references: [id], onDelete: Restrict)
+  targetBankBin               String?   @map("target_bank_bin") @db.VarChar(10)
+  targetAccountEncrypted      String?   @map("target_account_encrypted") @db.Text
+  targetAccountHash           String?   @map("target_account_hash") @db.VarChar(64)
+  targetAccountMasked         String?   @map("target_account_masked") @db.VarChar(32)
+  targetAccountName           String?   @map("target_account_name") @db.VarChar(255)
+  snapshotLockedAt            DateTime? @map("snapshot_locked_at") @db.Timestamptz(6)
+  activePayoutAttemptId       BigInt?   @map("active_payout_attempt_id")
+  settledAttemptId            BigInt?   @map("settled_attempt_id")
+  settledByUserId             BigInt?   @map("settled_by_user_id")
+  settledByUser               User?     @relation("PaymentRefundSettledBy", fields: [settledByUserId], references: [userId], onDelete: SetNull)
+  refundedAt                  DateTime? @map("refunded_at") @db.Timestamptz(6)
+  failureReason               String?   @map("failure_reason") @db.VarChar(500)
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payoutAttempts  PaymentRefundPayoutAttempt[] @relation("PaymentRefundObligationAttempts")
+  verifiedVoucher PaymentRefundVerifiedVoucher?
+
+  @@index([orderId, status], map: "idx_payment_refund_obligation_order_status")
+  @@index([status, createdAt], map: "idx_payment_refund_obligation_status_created")
+  @@map("payment_refund_obligations")
+}
+
+model PaymentRefundPayoutAttempt {
+  attemptId             BigInt    @id @default(autoincrement()) @map("attempt_id")
+  obligationId          BigInt    @map("obligation_id")
+  obligation            PaymentRefundObligation @relation("PaymentRefundObligationAttempts", fields: [obligationId], references: [obligationId], onDelete: Restrict)
+  attemptNumber         Int       @map("attempt_number")
+  payoutProvider        String    @default("PAYOS") @map("payout_provider") @db.VarChar(32)
+  payoutReference       String    @map("payout_reference") @db.VarChar(128)
+  providerPayoutId      String?   @map("provider_payout_id") @db.VarChar(128)
+  providerTransactionId String?   @map("provider_transaction_id") @db.VarChar(128)
+  status                String    @default("PREPARING") @db.VarChar(32)
+  initiatedByUserId     BigInt?   @map("initiated_by_user_id")
+  initiatedByUser       User?     @relation("PaymentRefundInitiatedBy", fields: [initiatedByUserId], references: [userId], onDelete: SetNull)
+  dispatchedAt          DateTime? @map("dispatched_at") @db.Timestamptz(6)
+  reconciledAt          DateTime? @map("reconciled_at") @db.Timestamptz(6)
+  nextReconcileAt       DateTime? @map("next_reconcile_at") @db.Timestamptz(6)
+  reconcileAttempts     Int       @default(0) @map("reconcile_attempts")
+  responseCode          String?   @map("response_code") @db.VarChar(64)
+  failureReason         String?   @map("failure_reason") @db.Text
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  verifiedVoucher PaymentRefundVerifiedVoucher?
+
+  @@unique([obligationId, attemptNumber], map: "uq_pay_refund_attempt_num")
+  @@unique([payoutProvider, payoutReference], map: "uq_pay_refund_attempt_provider_ref")
+  @@index([status, nextReconcileAt], map: "idx_pay_refund_attempt_reconcile")
+  @@map("payment_refund_payout_attempts")
+}
+
+model PaymentRefundVerifiedVoucher {
+  voucherId             BigInt    @id @default(autoincrement()) @map("voucher_id")
+  payoutProvider        String    @default("PAYOS") @map("payout_provider") @db.VarChar(32)
+  providerPayoutId      String    @map("provider_payout_id") @db.VarChar(128)
+  providerTransactionId String    @map("provider_transaction_id") @db.VarChar(128)
+  payoutReference       String    @map("payout_reference") @db.VarChar(128)
+  obligationId          BigInt    @unique @map("obligation_id")
+  obligation            PaymentRefundObligation @relation(fields: [obligationId], references: [obligationId], onDelete: Restrict)
+  attemptId             BigInt    @unique @map("attempt_id")
+  attempt               PaymentRefundPayoutAttempt @relation(fields: [attemptId], references: [attemptId], onDelete: Restrict)
+  verifiedAmount        Decimal   @map("verified_amount") @db.Decimal(15, 2)
+  targetBankBin         String    @map("target_bank_bin") @db.VarChar(10)
+  targetAccountHash     String    @map("target_account_hash") @db.VarChar(64)
+  verifiedAt            DateTime  @default(now()) @map("verified_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([payoutProvider, providerTransactionId], map: "uq_refund_voucher_provider_tx")
+  @@unique([payoutProvider, providerPayoutId, payoutReference], map: "uq_refund_voucher_payout_ref")
+  @@map("payment_refund_verified_vouchers")
 }

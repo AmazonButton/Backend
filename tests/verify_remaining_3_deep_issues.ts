@@ -546,6 +546,10 @@ async function runComprehensiveVerification() {
   } catch (e: any) {
     console.error('  ✖ [FAIL] Probe 4 Error:', e.message);
   } finally {
+    if (refundTestOrderId) {
+      await prisma.paymentRefundObligation.deleteMany({ where: { orderId: refundTestOrderId } }).catch(() => {});
+      await prisma.paymentOrderReceipt.deleteMany({ where: { orderId: refundTestOrderId } }).catch(() => {});
+    }
     if (refundTestTxId) {
       await prisma.paymentTransaction.delete({ where: { paymentTransactionId: refundTestTxId } }).catch(() => {});
     }

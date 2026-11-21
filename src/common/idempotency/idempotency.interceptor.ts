@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, of } from 'rxjs';
-import { concatMap, catchError } from 'rxjs/operators';
+import { concatMap, catchError, tap } from 'rxjs/operators';
 import { IdempotencyService } from './idempotency.service';
 import {
   IDEMPOTENCY_OPTIONS_KEY,
@@ -109,9 +109,22 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     const recordId = acquisition.recordId!;
     const lockToken = acquisition.lockToken!;
+    req.idempotencyContext = {
+      actorScope,
+      idempotencyKey: rawKey.trim(),
+      requestHash: acquisition.requestHash,
+      recordId,
+      lockToken,
+    };
 
-    // Use concatMap to guarantee finalizeSuccess is 100% awaited BEFORE response is emitted
+    // Guard against post-commit failure deletion: once next.handle() emits, business commit
+    // already succeeded, so catchError must never delete/fail the idempotency row.
+    let businessCommitted = false;
+
     return next.handle().pipe(
+      tap(() => {
+        businessCommitted = true;
+      }),
       concatMap(async (data) => {
         const statusCode = res?.statusCode || 200;
         await this.idempotencyService.finalizeSuccess(
@@ -123,14 +136,15 @@ export class IdempotencyInterceptor implements NestInterceptor {
         return data;
       }),
       catchError(async (err) => {
-        // If error is client-side (< 500), remove key to permit immediate clean correction
-        const isClientError =
-          err?.status && typeof err.status === 'number' && err.status < 500;
-        await this.idempotencyService.finalizeFailure(
-          recordId,
-          lockToken,
-          isClientError,
-        );
+        if (!businessCommitted) {
+          const isClientError =
+            err?.status && typeof err.status === 'number' && err.status < 500;
+          await this.idempotencyService.finalizeFailure(
+            recordId,
+            lockToken,
+            isClientError,
+          );
+        }
         throw err;
       }),
     );

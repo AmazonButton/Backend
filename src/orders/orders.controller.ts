@@ -121,7 +121,11 @@ export class OrdersController {
   @Roles('CUSTOMER')
   @Post('quick-reorder')
   async quickReorder(@Request() req: any, @Body() body: QuickReorderDto) {
-    const data = await this.ordersService.quickReorder(body, req.user);
+    const idempotencyKey =
+      (req.headers?.['x-idempotency-key'] as string) ||
+      (req.headers?.['idempotency-key'] as string) ||
+      (body as any)?.idempotencyKey;
+    const data = await this.ordersService.quickReorder(body, req.user, idempotencyKey);
     return { success: true, message: 'Đặt hàng thành công!', data };
   }
 
@@ -179,11 +183,18 @@ export class OrdersController {
     return { success: true, message: 'Đã hủy đơn hàng thành công', data };
   }
 
-  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @Roles('SUPER_ADMIN')
   @HttpCode(200)
   @Post(':id/refund')
   async refund(@Param('id') id: string, @Request() req: any, @Body() body: RefundOrderDto) {
     const data = await this.ordersService.refundOrder(id, body, req.user);
-    return { success: true, message: 'Đã hoàn tất hoàn tiền đơn hàng', data };
+    return {
+      success: true,
+      message:
+        data?.paymentStatus === 'REFUNDED'
+          ? 'Đã hoàn tất hoàn tiền đơn hàng'
+          : 'Đã gửi yêu cầu chi hoàn tiền PayOS, đang chờ xác nhận đối soát',
+      data,
+    };
   }
 }

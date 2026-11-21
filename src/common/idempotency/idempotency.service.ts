@@ -103,7 +103,7 @@ export class IdempotencyService {
     lockTimeoutMs?: number;
     ttlSeconds?: number;
   }): Promise<
-    | { state: 'ACQUIRED'; recordId: bigint; lockToken: string }
+    | { state: 'ACQUIRED'; recordId: bigint; lockToken: string; requestHash: string }
     | { state: 'CACHED'; statusCode: number; responseBody: any }
   > {
     const validKey = this.validateKey(params.idempotencyKey);
@@ -158,6 +158,7 @@ export class IdempotencyService {
       state: 'ACQUIRED',
       recordId: result.recordId,
       lockToken: result.lockToken,
+      requestHash,
     };
   }
 

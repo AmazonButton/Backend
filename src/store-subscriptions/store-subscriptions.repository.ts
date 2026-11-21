@@ -2,6 +2,8 @@ import * as crypto from 'crypto';
 import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
+import { lockStoreWalletById } from '../store-wallet/store-wallet.lock';
 
 @Injectable()
 export class StoreSubscriptionsRepository {
@@ -64,15 +66,18 @@ export class StoreSubscriptionsRepository {
     });
   }
 
-  async hasUsedTrialSubscription(storeId: bigint): Promise<boolean> {
-    const store = await this.prisma.store.findUnique({
+  async hasUsedTrialSubscription(
+    storeId: bigint,
+    dbClient: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<boolean> {
+    const store = await dbClient.store.findUnique({
       where: { storeId },
       select: { ownerUserId: true },
     });
 
     let storeCondition: any = { storeId };
     if (store?.ownerUserId) {
-      const ownerStores = await this.prisma.store.findMany({
+      const ownerStores = await dbClient.store.findMany({
         where: { ownerUserId: store.ownerUserId },
         select: { storeId: true },
       });
@@ -82,7 +87,7 @@ export class StoreSubscriptionsRepository {
       }
     }
 
-    const trialSub = await this.prisma.storeSubscription.findFirst({
+    const trialSub = await dbClient.storeSubscription.findFirst({
       where: {
         ...storeCondition,
         plan: {
@@ -162,81 +167,92 @@ export class StoreSubscriptionsRepository {
     walletId: bigint;
     idempotencyKey?: string;
   }): Promise<any> {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Lock store_wallets row (FOR UPDATE)
-      const walletRows = await tx.$queryRawUnsafe<any[]>(
-        `SELECT wallet_id, balance, store_id FROM store_wallets WHERE wallet_id = $1 FOR UPDATE;`,
-        params.walletId,
-      );
-      if (!walletRows || walletRows.length === 0) {
-        throw new NotFoundException('Ví cửa hàng không tồn tại');
-      }
-      const walletRow = walletRows[0];
-
-      // 2. Strict Idempotency check AFTER acquiring row-level lock on wallet
-      // Uses dedicated subscription_idempotency_keys table to guarantee returning the EXACT subscription
-      if (params.idempotencyKey) {
-        const cleanKey = params.idempotencyKey.trim();
-        const requestHash = crypto
-          .createHash('sha256')
-          .update(`${params.storeId}:${params.planId}`)
-          .digest('hex');
-
-        const idempRecord = await tx.subscriptionIdempotencyKey.findUnique({
-          where: {
-            storeId_idempotencyKey: {
-              storeId: params.storeId,
-              idempotencyKey: cleanKey,
-            },
-          },
-        });
-
-        if (idempRecord) {
-          // Detect key reuse with mismatched payloads (storeId, planId) -> 409 Conflict
-          if (idempRecord.requestHash !== requestHash) {
-            throw new ConflictException(
-              'IDEMPOTENCY_KEY_REUSED: Khóa idempotency đã được sử dụng với payload khác',
-            );
-          }
-
-          // Return the EXACT subscription recorded for this key (never deduce via latest)
-          const exactSub = await tx.storeSubscription.findUnique({
-            where: { subscriptionId: idempRecord.subscriptionId },
-            include: { plan: true },
-          });
-          if (exactSub) {
-            return exactSub;
-          }
-        }
-      }
-
-      // 2. Lock active subscription for store (FOR UPDATE)
-      const activeSubRows = await tx.$queryRawUnsafe<any[]>(
-        `SELECT subscription_id, start_date, end_date FROM store_subscriptions
-         WHERE store_id = $1 AND status = 'ACTIVE' AND end_date > CURRENT_TIMESTAMP
-         ORDER BY end_date DESC LIMIT 1 FOR UPDATE;`,
-        params.storeId,
-      );
-      const activeSub = activeSubRows && activeSubRows.length > 0 ? activeSubRows[0] : null;
-
-      // 3. Fetch plan
-      const plan = await tx.subscriptionPlan.findUnique({
-        where: { planId: params.planId },
-      });
-      if (!plan || !plan.isActive) {
-        throw new NotFoundException('Gói cước không tồn tại hoặc đã tạm dừng cung cấp');
-      }
-
-      // 3.1. Trial Package Restriction (Mỗi tài khoản/gian hàng chỉ được dùng thử 1 lần duy nhất)
-      const isTrial = Number(plan.price) === 0 || plan.planCode.toUpperCase().includes('TRIAL');
-      if (isTrial) {
-        const hasUsed = await this.hasUsedTrialSubscription(params.storeId);
-        if (hasUsed) {
-          throw new BadRequestException(
-            'Cửa hàng đã từng sử dụng gói dùng thử 7 ngày. Mỗi tài khoản chỉ được dùng thử 1 lần duy nhất.',
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          // 1. Canonical Lock Order: lock store FOR UPDATE first (matching PayOS settlement & bank verification),
+          //    then store_wallets row FOR UPDATE to eliminate cross-flow deadlocks & overlap races.
+          const lockedStores = await tx.$queryRawUnsafe<Array<{ store_id: bigint; owner_user_id: bigint }>>(
+            `SELECT store_id, owner_user_id FROM store WHERE store_id = $1 FOR UPDATE;`,
+            params.storeId,
           );
-        }
-      }
+          if (!lockedStores || lockedStores.length === 0) {
+            throw new NotFoundException('Cửa hàng không tồn tại');
+          }
+          const storeRow = lockedStores[0];
+
+          const walletRow = await lockStoreWalletById(tx, params.walletId);
+
+          // 2. Strict Idempotency check AFTER acquiring row-level locks
+          // Uses dedicated subscription_idempotency_keys table to guarantee returning the EXACT subscription
+          if (params.idempotencyKey) {
+            const cleanKey = params.idempotencyKey.trim();
+            const requestHash = crypto
+              .createHash('sha256')
+              .update(`${params.storeId}:${params.planId}`)
+              .digest('hex');
+
+            const idempRecord = await tx.subscriptionIdempotencyKey.findUnique({
+              where: {
+                storeId_idempotencyKey: {
+                  storeId: params.storeId,
+                  idempotencyKey: cleanKey,
+                },
+              },
+            });
+
+            if (idempRecord) {
+              // Detect key reuse with mismatched payloads (storeId, planId) -> 409 Conflict
+              if (idempRecord.requestHash !== requestHash) {
+                throw new ConflictException(
+                  'IDEMPOTENCY_KEY_REUSED: Khóa idempotency đã được sử dụng với payload khác',
+                );
+              }
+
+              // Return the EXACT subscription recorded for this key (never deduce via latest)
+              const exactSub = await tx.storeSubscription.findUnique({
+                where: { subscriptionId: idempRecord.subscriptionId },
+                include: { plan: true },
+              });
+              if (exactSub) {
+                return exactSub;
+              }
+            }
+          }
+
+          // 3. Lock active subscription for store (FOR UPDATE)
+          const activeSubRows = await tx.$queryRawUnsafe<any[]>(
+            `SELECT subscription_id, start_date, end_date FROM store_subscriptions
+             WHERE store_id = $1 AND status = 'ACTIVE' AND end_date > CURRENT_TIMESTAMP
+             ORDER BY end_date DESC LIMIT 1 FOR UPDATE;`,
+            params.storeId,
+          );
+          const activeSub = activeSubRows && activeSubRows.length > 0 ? activeSubRows[0] : null;
+
+          // 4. Fetch plan
+          const plan = await tx.subscriptionPlan.findUnique({
+            where: { planId: params.planId },
+          });
+          if (!plan || !plan.isActive) {
+            throw new NotFoundException('Gói cước không tồn tại hoặc đã tạm dừng cung cấp');
+          }
+
+          // 4.1. Transactional Trial Package Restriction (1 lần duy nhất cho mỗi ownerUserId trên mọi store)
+          const isTrial = Number(plan.price) === 0 || plan.planCode.toUpperCase().includes('TRIAL');
+          if (isTrial) {
+            // Serialize concurrent trial registrations across multiple stores owned by the same user
+            // without acquiring users lock (avoiding users <-> store lock cycle with StoreCash).
+            await tx.$executeRawUnsafe(
+              `SELECT pg_advisory_xact_lock(hashtext('trial_sub_owner:' || $1))`,
+              storeRow.owner_user_id.toString(),
+            );
+            const hasUsed = await this.hasUsedTrialSubscription(params.storeId, tx);
+            if (hasUsed) {
+              throw new BadRequestException(
+                'Cửa hàng đã từng sử dụng gói dùng thử 7 ngày. Mỗi tài khoản chỉ được dùng thử 1 lần duy nhất.',
+              );
+            }
+          }
 
       // 4. Financial math strictly using Prisma.Decimal
       const price = new Prisma.Decimal(plan.price);
@@ -314,6 +330,8 @@ export class StoreSubscriptionsRepository {
       });
 
       return subscription;
-    });
+        }),
+      { operationName: 'SubscribeWithWallet' },
+    );
   }
 }

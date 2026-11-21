@@ -256,17 +256,19 @@ export class BillingChargesRepository {
         }
 
         const now = new Date();
-        // Kiểm tra subscription hiện tại của store xem còn hạn không
-        const currentSub = await tx.storeSubscription.findFirst({
-          where: {
-            storeId,
-            status: 'ACTIVE',
-            endDate: { gt: now },
-          },
-          orderBy: { endDate: 'desc' },
-        });
+        // Khóa bi quan gói đang hoạt động của store (đồng bộ cùng thứ tự khóa store -> store_subscriptions với luồng ví)
+        const currentSubRows = await tx.$queryRawUnsafe<Array<{ subscription_id: bigint; start_date: Date; end_date: Date }>>(
+          `SELECT subscription_id, start_date, end_date
+           FROM store_subscriptions
+           WHERE store_id = $1 AND status = 'ACTIVE' AND end_date > CURRENT_TIMESTAMP
+           ORDER BY end_date DESC
+           LIMIT 1
+           FOR UPDATE`,
+          storeId,
+        );
+        const currentSub = currentSubRows && currentSubRows.length > 0 ? currentSubRows[0] : null;
 
-        const startDate = currentSub ? currentSub.endDate : now;
+        const startDate = currentSub && new Date(currentSub.end_date) > now ? new Date(currentSub.end_date) : now;
         const endDate = new Date(startDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
         subscriptionUpdated = await tx.storeSubscription.create({

@@ -14,7 +14,10 @@ import {
 import { PaymentsService } from './payments.service';
 import { CreatePaymentLinkDto, PayosWebhookDto, CancelPaymentLinkDto } from './dto/payment.dto';
 import { ChangePaymentMethodDto } from './dto/change-payment-method.dto';
+import { RefundExcessPaymentDto } from './dto/refund-excess-payment.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
 import { Idempotent } from '../common/idempotency/idempotency.decorator';
 
@@ -62,6 +65,18 @@ export class PaymentsController {
     // Issue 6 Fix: Service now throws on PayOS error; only wrap in success when service returns cleanly.
     const res = await this.paymentsService.cancelPaymentLink(id, body?.cancellationReason, req.user);
     return { success: true, message: 'Đã hủy link thanh toán thành công', data: res?.data || res };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @HttpCode(200)
+  @Post('transactions/:id/refund-excess')
+  async refundExcessTransaction(
+    @Param('id') id: string,
+    @Body() body: RefundExcessPaymentDto,
+    @Request() req: any,
+  ) {
+    return this.paymentsService.refundExcessTransaction(id, body, req.user);
   }
 
   @UseGuards(JwtAuthGuard)

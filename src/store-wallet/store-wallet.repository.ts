@@ -1,8 +1,10 @@
 import { Injectable, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
+import { lockStoreWalletById } from './store-wallet.lock';
 
 @Injectable()
 export class StoreWalletRepository {
@@ -14,16 +16,18 @@ export class StoreWalletRepository {
     });
 
     if (!wallet) {
-      wallet = await this.prisma.storeWallet.create({
-        data: {
-          storeId,
-          balance: new Decimal(0),
-          frozenBalance: new Decimal(0),
-        },
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO store_wallets (store_id, balance, frozen_balance, created_at, updated_at)
+         VALUES ($1, 0, 0, NOW(), NOW())
+         ON CONFLICT (store_id) DO NOTHING`,
+        storeId,
+      );
+      wallet = await this.prisma.storeWallet.findUnique({
+        where: { storeId },
       });
     }
 
-    return wallet;
+    return wallet!;
   }
 
   async findStoreWallet(storeId: bigint) {
@@ -162,30 +166,21 @@ export class StoreWalletRepository {
         );
       }
 
-      const [lockedWallet] = await tx.$queryRaw<Array<{
-        wallet_id: bigint;
-        frozen_balance: any;
-      }>>`
-        SELECT wallet_id, frozen_balance
-        FROM store_wallets
-        WHERE wallet_id = ${lockedWithdrawal.wallet_id}
-        FOR UPDATE
-      `;
+      const lockedWallet = await lockStoreWalletById(tx, lockedWithdrawal.wallet_id);
 
-      if (lockedWallet) {
-        const currentFrozen = Number(lockedWallet.frozen_balance || 0);
-        if (currentFrozen < Number(lockedWithdrawal.amount)) {
-          throw new ConflictException(
-            `ACCOUNTING_INCONSISTENCY: Wallet #${lockedWallet.wallet_id} frozenBalance (${currentFrozen}) is less than payout amount (${lockedWithdrawal.amount})`,
-          );
-        }
-        const frozenAfter = currentFrozen - Number(lockedWithdrawal.amount);
-
-        await tx.storeWallet.update({
-          where: { walletId: lockedWallet.wallet_id },
-          data: { frozenBalance: new Decimal(frozenAfter) },
-        });
+      const payoutAmount = new Prisma.Decimal(lockedWithdrawal.amount);
+      const currentFrozen = new Prisma.Decimal(lockedWallet.frozen_balance || 0);
+      if (currentFrozen.lt(payoutAmount)) {
+        throw new ConflictException(
+          `ACCOUNTING_INCONSISTENCY: Wallet #${lockedWallet.wallet_id} frozenBalance (${currentFrozen.toString()}) is less than payout amount (${payoutAmount.toString()})`,
+        );
       }
+      const frozenAfter = currentFrozen.minus(payoutAmount);
+
+      await tx.storeWallet.update({
+        where: { walletId: lockedWallet.wallet_id },
+        data: { frozenBalance: frozenAfter },
+      });
 
       await tx.storeWithdrawal.update({
         where: { withdrawalId },

@@ -587,8 +587,13 @@ async function testPayOSThuChiProduction() {
     // ------------------------------------------------------------------------
     console.log('\n[STAGE 8] Strictly Scoped Zero Residue Database Cleanup:');
 
-    // Delete only explicitly created test orders
+    // Delete only explicitly created test orders (receipts & refund obligations first due to ON DELETE RESTRICT)
     if (createdOrderIds.length > 0) {
+      await prisma.paymentRefundVerifiedVoucher.deleteMany({ where: { obligation: { orderId: { in: createdOrderIds } } } });
+      await prisma.paymentRefundObligation.updateMany({ where: { orderId: { in: createdOrderIds } }, data: { activePayoutAttemptId: null, settledAttemptId: null } });
+      await prisma.paymentRefundPayoutAttempt.deleteMany({ where: { obligation: { orderId: { in: createdOrderIds } } } });
+      await prisma.paymentRefundObligation.deleteMany({ where: { orderId: { in: createdOrderIds } } });
+      await prisma.paymentOrderReceipt.deleteMany({ where: { orderId: { in: createdOrderIds } } });
       await prisma.paymentTransaction.deleteMany({ where: { orderId: { in: createdOrderIds } } });
       await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: createdOrderIds } } });
       await prisma.orderItem.deleteMany({ where: { orderId: { in: createdOrderIds } } });
