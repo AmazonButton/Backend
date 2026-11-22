@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   maskDatabaseUrl,
   resolveDirectMigrationUrl,
@@ -8,6 +11,7 @@ import {
   parseGrantRoleArgs,
   runGrantPlatformRole,
 } from '../scripts/grant-platform-role';
+import { resolveCommitSha } from '../scripts/resolve-commit-sha';
 
 function testResolveDirectMigrationUrl() {
   const explicitDirect = resolveDirectMigrationUrl({
@@ -93,9 +97,36 @@ async function testGrantPlatformRoleValidationAndDryRun() {
   assert.equal(dryRunResult.maskedEmail, 'o***@example.com');
 }
 
+function testResolveCommitSha() {
+  assert.equal(
+    resolveCommitSha({ RENDER_GIT_COMMIT: ' render123 ', GITHUB_SHA: 'gh456', COMMIT_SHA: 'local789' }),
+    'render123',
+  );
+  assert.equal(
+    resolveCommitSha({ RENDER_GIT_COMMIT: '   ', GITHUB_SHA: 'gh456', COMMIT_SHA: 'local789' }),
+    'gh456',
+  );
+  assert.equal(
+    resolveCommitSha({ COMMIT_SHA: 'local789' }),
+    'local789',
+  );
+
+  const repoRoot = path.resolve(__dirname, '..');
+  const gitSha = resolveCommitSha({}, repoRoot);
+  assert.match(gitSha, /^[0-9a-f]{40}$/i);
+
+  const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'no-git-sha-'));
+  try {
+    assert.equal(resolveCommitSha({}, nonGitDir), 'unknown');
+  } finally {
+    fs.rmSync(nonGitDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   testResolveDirectMigrationUrl();
   await testGrantPlatformRoleValidationAndDryRun();
+  testResolveCommitSha();
   console.log('ALL OPS SCRIPTS CONTRACT TESTS PASSED');
 }
 

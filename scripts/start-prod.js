@@ -1,5 +1,13 @@
 require('dotenv/config');
 const path = require('path');
+const { resolveCommitSha } = require('./resolve-commit-sha');
+
+if (!process.env.RENDER_GIT_COMMIT && !process.env.GITHUB_SHA && !process.env.COMMIT_SHA) {
+  const resolvedSha = resolveCommitSha(process.env, path.resolve(__dirname, '..'));
+  if (resolvedSha && resolvedSha !== 'unknown') {
+    process.env.COMMIT_SHA = resolvedSha;
+  }
+}
 
 console.log('🔄 Checking database environment...');
 const dbUrl = process.env.DATABASE_URL || '';
