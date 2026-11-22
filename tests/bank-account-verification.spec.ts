@@ -286,6 +286,11 @@ async function runBankVerificationTests() {
     );
 
     // Test 1.6b: Production Anti-Bypass (Redis missing/offline in production throws 503 Service Unavailable)
+    const guardStatic = BankLookupRateLimitGuard as any;
+    const savedRedisClient = guardStatic.redisClient;
+    const savedRedisInitialized = guardStatic.redisInitialized;
+    guardStatic.redisClient = null;
+    guardStatic.redisInitialized = true;
     process.env.NODE_ENV = 'production';
     let prodRedisFailClosed = false;
     try {
@@ -293,8 +298,11 @@ async function runBankVerificationTests() {
     } catch (err: any) {
       prodRedisFailClosed =
         err instanceof HttpException && err.getStatus() === HttpStatus.SERVICE_UNAVAILABLE;
+    } finally {
+      guardStatic.redisClient = savedRedisClient;
+      guardStatic.redisInitialized = savedRedisInitialized;
+      process.env.NODE_ENV = 'test';
     }
-    process.env.NODE_ENV = 'test';
     assert(
       prodRedisFailClosed,
       '1.6b Production Anti-Bypass: BankLookupRateLimitGuard throws 503 Service Unavailable when Redis is unavailable in production (RAM fallback banned)',
@@ -1181,6 +1189,8 @@ async function runBankVerificationTests() {
     } catch (cleanupErr: any) {
       console.warn('Cleanup warning:', cleanupErr?.message);
     }
+    await BankLookupRateLimitGuard.reset();
+    new BankLookupRateLimitGuard().onModuleDestroy();
     await prisma.$disconnect();
   }
 

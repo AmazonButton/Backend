@@ -13,6 +13,7 @@ import {
 } from '../scripts/grant-platform-role';
 import { resolveCommitSha } from '../scripts/resolve-commit-sha';
 import { isAllowedPaymentRedirectUrl } from '../src/payments/dto/payment.dto';
+import { BankLookupRateLimitGuard } from '../src/bank-verification/guards/bank-lookup-rate-limit.guard';
 
 function testResolveDirectMigrationUrl() {
   const explicitDirect = resolveDirectMigrationUrl({
@@ -160,11 +161,73 @@ function testRedirectUrlAndWorkerCorsContract() {
   }
 }
 
+async function testRedisBudgetAndBankLookupLazyConnect() {
+  const queueSrc = fs.readFileSync(
+    path.resolve(__dirname, '../src/common/queues/queue.service.ts'),
+    'utf8',
+  );
+  assert.ok(
+    queueSrc.includes("drainDelay: process.env.NODE_ENV === 'test' ? 1 : 5"),
+    'BullWorker should use bounded drainDelay without stalling test shutdown',
+  );
+  assert.ok(queueSrc.includes('stalledInterval: 120000'), 'BullWorker should bound stalled scan interval');
+  assert.ok(queueSrc.includes('removeOnFail: { count: 20, age: 86400 }'), 'QueueService must cap retained failed jobs');
+  assert.ok(queueSrc.includes('removeOnComplete: { count: 10, age: 3600 }'), 'QueueService must cap completed jobs');
+
+  const guardClass = BankLookupRateLimitGuard as any;
+  const prevClient = guardClass.redisClient;
+  const prevInit = guardClass.redisInitialized;
+  const prevEnv = process.env.NODE_ENV;
+
+  try {
+    let connectCalls = 0;
+    const mockRedis: any = {
+      status: 'wait',
+      connect: async () => {
+        connectCalls++;
+        mockRedis.status = 'ready';
+      },
+      incr: async () => 1,
+      expire: async () => 1,
+    };
+    guardClass.redisClient = mockRedis;
+    guardClass.redisInitialized = true;
+    process.env.NODE_ENV = 'production';
+
+    const guard = new BankLookupRateLimitGuard();
+    const ctx: any = {
+      switchToHttp: () => ({
+        getRequest: () => ({ user: { userId: '42' }, ip: '127.0.0.1' }),
+      }),
+    };
+    const allowed = await guard.canActivate(ctx);
+    assert.equal(allowed, true);
+    assert.equal(connectCalls, 1);
+
+    mockRedis.status = 'wait';
+    mockRedis.connect = async () => {
+      throw new Error('Redis unreachable');
+    };
+    let rejectedProd503 = false;
+    try {
+      await guard.canActivate(ctx);
+    } catch (err: any) {
+      rejectedProd503 = err?.getStatus?.() === 503;
+    }
+    assert.equal(rejectedProd503, true);
+  } finally {
+    guardClass.redisClient = prevClient;
+    guardClass.redisInitialized = prevInit;
+    process.env.NODE_ENV = prevEnv;
+  }
+}
+
 async function main() {
   testResolveDirectMigrationUrl();
   await testGrantPlatformRoleValidationAndDryRun();
   testResolveCommitSha();
   testRedirectUrlAndWorkerCorsContract();
+  await testRedisBudgetAndBankLookupLazyConnect();
   console.log('ALL OPS SCRIPTS CONTRACT TESTS PASSED');
 }
 

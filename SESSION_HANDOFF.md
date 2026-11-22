@@ -1,5 +1,23 @@
 # Project Handoff & Session Context
 
+## 2026-11-23: Frontend Worker Proxy Cutover (A) & 30MB Redis Budget + Prod Guard Hardening (B)
+- **Status**: IN PROGRESS — Cloudflare Worker deployed live and Frontend PR #2 (`eb426c5`) routed Vercel `/api/v1/*` through Worker (`X-Cluster-Node` + Render keep-alive verified); `QueueService` 30MB/low-ops tuning and `BankLookupRateLimitGuard` `lazyConnect` production fix prepared for PR #5 + `REDIS_URL` / `NODE_ENV=production` rollout.
+- **Operations Executed (Cloudflare Worker + Vercel + Redis Verification)**:
+  - **Cloudflare Worker + Frontend Cutover**: Verified live `fragrant-mode-3a41` distribution (`node-1` `render-primary-50pct`, `node-2` `render-secondary-35pct`, `node-3` `aws-backup-15pct`, `third-party-primary (100%)` on `/api/v1/banks/...`, and `X-Idempotency-Key`/`x-request-id` in `OPTIONS` headers). Merged `AmazonButton/Frontend` PR #2 (`eb426c5`) updating `vercel.json`, `frontend/vercel.json`, and `tests/banking-integration.test.mjs`; verified live `https://smart-order-button.vercel.app/api/v1/categories` proxied via `Server: Vercel` -> Cloudflare `X-Cluster-Node: node-2`, and both Render Free nodes stayed warm via Cron (`Node-1` `uptimeSeconds: 2050` in `0.720s`, `Node-2` `uptimeSeconds: 2271` in `0.680s`).
+  - **Redis Cloud Free (`30 MB`, `noeviction`) Provisioning Prep**: Verified connectivity and `maxmemory_policy:noeviction` (`used_memory_human: 2.6M baseline`) without committing or logging credentials.
+- **Repo Changes (`perf/redis-30mb-budget-and-prod-guard`)**:
+  - Updated [`src/common/queues/queue.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/queues/queue.service.ts#L415-L535) for free-tier 30MB / 100 ops/s budgets: bounded `removeOnComplete` (`{ count: 10, age: 3600 }`) and `removeOnFail` (`{ count: 20, age: 86400 }`) since permanent DLQ resides in PostgreSQL `dead_letter_jobs`, and tuned BullMQ worker polling (`drainDelay: process.env.NODE_ENV === 'test' ? 1 : 5`, `stalledInterval: 120000`).
+  - Updated [`src/bank-verification/guards/bank-lookup-rate-limit.guard.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/guards/bank-lookup-rate-limit.guard.ts#L64-L135) with `ensureRedisReady()` so `lazyConnect: true` clients connect cleanly before checking readiness instead of failing with `503` on the first lookup in `NODE_ENV=production` (while still failing closed with `503` when Redis is unconfigured or unreachable).
+  - Expanded [`tests/ops-scripts-contract.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/ops-scripts-contract.spec.ts) with unit checks for QueueService caps/intervals and `BankLookupRateLimitGuard` `wait -> ready` / `503` behavior.
+- **Verification**:
+  - `npx tsc --noEmit && npx tsx tests/ops-scripts-contract.spec.ts && npx tsx tests/bank-account-verification.spec.ts` — **PASS** (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`; `PASSED: 40, FAILED: 0`).
+  - `npx tsx tests/mail-and-dlq-hardening.spec.ts` — **PASS** (`5 passed, 0 failed`).
+  - Also fixed `Test 1.6b` and teardown in [`tests/bank-account-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/bank-account-verification.spec.ts#L288-L310) to isolate missing Redis explicitly and close `BankLookupRateLimitGuard` Redis connections on exit (`onModuleDestroy()`).
+- **Remaining / Limits**:
+  - Inject `REDIS_URL` + enable `NODE_ENV=production` across all 3 nodes upon PR #5 merge, then verify live `/readyz` and Redis connection/memory telemetry (`< 30` clients, `< 30 MB`).
+  - Mục C (EC2 Security Group port `80` restriction to Cloudflare IPv4 CIDRs and optional Elastic IP) pending AWS Console step.
+- **Next**: Merge PR #5 -> deploy PR #5 + `REDIS_URL` + `NODE_ENV=production` across Node-1, Node-2, AWS Node-3 -> complete Mục C Security Group allowlist.
+
 ## 2026-11-22: Multi-Cloud Env Alignment, Worker CORS Headers & Production Payment Redirect Allowlist
 - **Status**: IN PROGRESS — Aligned all 3 live nodes (`Node-1`, `Node-2`, `AWS Node-3`) to `https://smart-order-button.vercel.app` + `GOOGLE_CLIENT_ID`; prepared Cloudflare Worker CORS preflight & production payment redirect DTO fixes for PR #4.
 - **Operations Executed (Render `Node-1`, Render `Node-2`, AWS `Node-3` — Zero Secrets Logged)**:
