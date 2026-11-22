@@ -1,5 +1,23 @@
 # Project Handoff & Session Context
 
+## 2026-11-22: AWS Node-3 Infrastructure Hardening (`20 GiB` EBS, Persistent Port 80, Live Domain `.env`, `commitSha` & `build:aws`)
+- **Status**: IN PROGRESS — Live AWS EC2 Node-3 OS/EBS/iptables/`.env` hardening verified online; repo changes (`resolve-commit-sha.js`, `start-prod.js`, `build:aws`) verified locally and queued for PR merge + `npm run aws:deploy`.
+- **Operations Executed (AWS EC2 Node-3 — `i-057b3e633f7e77266` / `3.25.136.6`)**:
+  - **Root Disk Expansion (`8 GiB -> 20 GiB`, Zero Downtime)**: Extended `nvme0n1p1` via `growpart /dev/nvme0n1 1` and `resize2fs /dev/nvme0n1p1`; `/dev/root` usage dropped from `81%` (`5.3G / 6.7G`, `1.4G` free) to **`30%`** (`5.3G / 19G`, **`13G` free**, `uptimeSeconds` uninterrupted).
+  - **Persistent Port `80 -> 3000` Redirect (`iptables`)**: Removed `3` duplicate `PREROUTING` `REDIRECT` rules leaving `1` active rule, and installed/enabled systemd unit `/etc/systemd/system/iptables-port80-redirect.service` (`enabled`, `active`) for reboot persistence.
+  - **Live `.env` Cleanup & Domain Alignment (Zero Secrets Printed)**: Removed `1` duplicate `GOOGLE_CLIENT_ID` line, updated `PAYOS_RETURN_URL`, `PAYOS_CANCEL_URL`, `DIDIT_CALLBACK_URL`, and `BANK_VERIFICATION_CALLBACK_URL` to `https://smart-order-button.vercel.app`, added `https://smart-order-button.vercel.app` ahead of `https://buttontdash.vercel.app` in `CORS_ORIGIN`, reloaded `pm2 backend-node3 --update-env` & `pm2 save`.
+- **Repo Changes (`chore/aws-node3-ops-hardening`)**:
+  - Added [`scripts/resolve-commit-sha.js`](file:///f:/Learning/SEM9-FPTu/backend/scripts/resolve-commit-sha.js) (`resolveCommitSha`) and wired [`scripts/start-prod.js`](file:///f:/Learning/SEM9-FPTu/backend/scripts/start-prod.js) to populate `process.env.COMMIT_SHA` from `git rev-parse HEAD` when `RENDER_GIT_COMMIT`, `GITHUB_SHA`, and `COMMIT_SHA` are unset (with safe `'unknown'` fallback if `.git` is unavailable).
+  - Updated [`package.json`](file:///f:/Learning/SEM9-FPTu/backend/package.json#L9-L29) with memory-capped `build:aws` (`--max-old-space-size=1280`; tested `768` and observed OOM during `nest build`) and updated `aws:deploy` (`npm ci --no-audit --no-fund`, `npm run build:aws`).
+  - Expanded [`tests/ops-scripts-contract.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/ops-scripts-contract.spec.ts) with `testResolveCommitSha()`.
+- **Verification**:
+  - External AWS Node-3 CORS & readiness (`curl -i -H "Origin: https://smart-order-button.vercel.app" http://3.25.136.6/readyz`) — **PASS** (`HTTP 200 OK`, `Access-Control-Allow-Origin: https://smart-order-button.vercel.app`, `database: UP`, `queue: UP`).
+  - Local checks (`npx tsc --noEmit && npm run build:aws && npx tsx tests/ops-scripts-contract.spec.ts`) — **PASS** (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`).
+- **Remaining / Limits**:
+  - Live `commitSha` on AWS Node-3 will update from `'unknown'` once PR merges to `main` and `npm run aws:deploy` finishes.
+  - Non-AWS cluster follow-ups remain open for next phase: sync deployed Cloudflare Worker (`X-Cluster-Role: aws-core-70pct`) with repo `worker.js`, align `Frontend/vercel.json` API proxy target, address Render Free Tier sleep, provision shared `REDIS_URL` + Render `GOOGLE_CLIENT_ID` before enabling `NODE_ENV=production`, and review EC2 port `80` TLS/Cloudflare IP restriction & Elastic IP attachment.
+- **Next**: Merge `chore/aws-node3-ops-hardening` PR to `main`, run `npm run aws:deploy` to verify live `commitSha` on AWS Node-3 `/readyz`, then proceed to Cloudflare Worker / Render / Redis cluster phase.
+
 ## 2026-11-22: Multi-Cloud Production Release, AWS Node-3 Disk Cleanup & Ops Tooling
 - **Status**: COMPLETED — Production Supabase DB (`62/62` migrations), Render `Node-1`, Render `Node-2`, and AWS EC2 `Node-3` all verified live at commit `21b7fdc` (`READY` HTTP `200`). New deploy/role ops helpers added on branch `chore/ops-migrate-and-role-tools`.
 - **Operations Executed (Live Cluster & DB)**:

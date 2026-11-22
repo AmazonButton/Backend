@@ -7,6 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "node --max-old-space-size=2048 ./node_modules/@nestjs/cli/bin/nest.js build -p tsconfig.build.json",
+    "build:aws": "node --max-old-space-size=1280 ./node_modules/@nestjs/cli/bin/nest.js build -p tsconfig.build.json",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "node scripts/start-prod.js",
     "dev": "nest start --watch",
@@ -25,7 +26,7 @@
     "migrate:deploy": "node scripts/prisma-migrate-deploy.js",
     "role:grant": "tsx scripts/grant-platform-role.ts",
     "aws:status": "node scripts/aws_node3.js \"pm2 status\"",
-    "aws:deploy": "node scripts/aws_node3.js \"cd ~/Backend/Backend && git pull --ff-only origin main && npm ci && npx prisma generate && npm run migrate:deploy && npm run build && npm cache clean --force && pm2 reload backend-node3 --update-env && pm2 save\"",
+    "aws:deploy": "node scripts/aws_node3.js \"cd ~/Backend/Backend && git pull --ff-only origin main && npm ci --no-audit --no-fund && npx prisma generate && npm run migrate:deploy && npm run build:aws && npm cache clean --force && pm2 reload backend-node3 --update-env && pm2 save\"",
     "aws:logs": "node scripts/aws_node3.js \"pm2 logs --lines 50\"",
     "test:multicloud": "tsx tests/verify_all_multicloud_scenarios.ts",
     "benchmark:stress": "tsx tests/multicloud_load_stress_benchmark.ts",
