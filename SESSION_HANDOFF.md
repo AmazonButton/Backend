@@ -1,5 +1,27 @@
 # Project Handoff & Session Context
 
+## 2026-11-22: Multi-Cloud Production Release, AWS Node-3 Disk Cleanup & Ops Tooling
+- **Status**: COMPLETED — Production Supabase DB (`62/62` migrations), Render `Node-1`, Render `Node-2`, and AWS EC2 `Node-3` all verified live at commit `21b7fdc` (`READY` HTTP `200`). New deploy/role ops helpers added on branch `chore/ops-migrate-and-role-tools`.
+- **Operations Executed (Live Cluster & DB)**:
+  - **AWS EC2 Node-3 Disk Cleanup (`87%` -> `81%` post-rebuild)**: Removed orphaned Oct-28 duplicate repo/caches outside live `/home/ubuntu/Backend/Backend`, cleared `apt`/`npm`/Prisma/`fwupd` caches, removed disabled snap revisions (`core22 rev 2955`, `snapd rev 28254`), capped `journald` (`/etc/systemd/journald.conf.d/99-cap.conf`, `SystemMaxUse=20M`), configured `pm2-logrotate` (`10M`, `retain 5`, `compress true`), and terminated two stale hung Prisma `:6543` processes (`PID 133564`, `133575`). Post-rebuild `/dev/root` = `5.3G / 6.7G` (`1.4G` avail, `81%`).
+  - **Production Supabase DB Reconciliation & Migration (`aws-0-ap-northeast-1.pooler.supabase.com:5432`)**: Restored `35` missing historical DDL statements (`20261031`–`20261103` constraints/indexes/FKs/trigger), marked `14` historical migrations (`20261030000000`–`20261109120000`) applied, deployed all `9` new migrations (`20261117230000`–`20261121235900`), and verified `npx prisma migrate status` = `Database schema is up to date!` (`62` applied; `1` `SYSTEM_ADMIN` auto-backfilled in `platform_memberships`; `15` `PAID` orders backfilled as `LEGACY_BACKFILL` in `payment_order_receipts`).
+  - **Cluster Rollout & Parity**: Set `PAYOS_PAYOUT_WORKER_ENABLED=false` on Render `Node-2` (`52/52` env parity with `Node-1`), restarted Render `Node-1` & `Node-2`, fast-forwarded AWS `Node-3` to `21b7fdc`, rebuilt and reloaded PM2 `backend-node3`. Read-only `step7-role-transition-dry-run.ts --json` confirmed `0` deprecated store staff/drivers, `0` legacy admins needing backfill, `0` unsettled shifts/orders, and `0` un-snapshotted warranty tickets. Note: bootstrap account `user_id=1` resolves to `SUPER_ADMIN` at runtime via `isBootstrapSuperAdmin()`; no separate `SUPER_ADMIN` row exists in `platform_memberships`.
+- **Repo Changes (`chore/ops-migrate-and-role-tools`)**:
+  - Added [`scripts/prisma-migrate-deploy.js`](file:///f:/Learning/SEM9-FPTu/backend/scripts/prisma-migrate-deploy.js) to resolve `DIRECT_URL` or convert Supabase `:6543?pgbouncer=true` URLs to `:5432` session pooler without logging credentials.
+  - Added [`scripts/grant-platform-role.ts`](file:///f:/Learning/SEM9-FPTu/backend/scripts/grant-platform-role.ts) (dry-run by default; requires `--execute --confirm-db=<dbName>`) using `lockUserForWatermark` & `advanceMonotonicTokensInvalidBefore`.
+  - Updated [`package.json`](file:///f:/Learning/SEM9-FPTu/backend/package.json#L23-L28) scripts (`migrate:status`, `migrate:deploy`, `role:grant`, hardened `aws:deploy`).
+  - Added [`tests/ops-scripts-contract.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/ops-scripts-contract.spec.ts).
+- **Verification**:
+  - Render `Node-1` (`/healthz` `200` `0.249s`, `/readyz` `200` `0.568s`, `commitSha: 21b7fdc`, `database: UP`, `queue: UP`).
+  - Render `Node-2` (`/healthz` `200` `0.832s`, `/readyz` `200` `1.660s`, `commitSha: 21b7fdc`, `database: UP`, `queue: UP`).
+  - AWS `Node-3` (`http://127.0.0.1:3000/healthz` & `/readyz` `200`, `database: UP`, `queue: UP`, `pm2 backend-node3` `online`, `21b7fdc`; direct public `:3000` curl timed out due to AWS Security Group).
+  - Local ops validation: `npx tsc --noEmit`, `npm run build`, `npx tsx tests/ops-scripts-contract.spec.ts` (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`), `node scripts/prisma-migrate-deploy.js --dry-run` — **PASS**.
+- **Remaining / Limits**:
+  - All 3 nodes keep `NODE_ENV=development`; switching to `NODE_ENV=production` is currently blocked until `REDIS_URL` is configured on all 3 nodes (`QueueService` fails closed in production) and `GOOGLE_CLIENT_ID` is added on Render `Node-1` & `Node-2` (`main.ts` boot guard).
+  - AWS EC2 root volume remains `8 GiB` (`6.7G` `/`); long-term headroom requires AWS EBS volume resize (`16 GiB+`) + `growpart`/`resize2fs`.
+  - Uncommitted local diff in `BRD/ERD_Level_3_Editable.drawio` preserved untouched.
+- **Next**: Review & merge `chore/ops-migrate-and-role-tools` PR to `main` (and add `npm run migrate:deploy` to Render `Node-1` `buildCommand` if desired), review & merge `AmazonButton/Frontend` `feat/system-staff-ui-transition` PR, and plan EBS resize + Redis provisioning before enabling `NODE_ENV=production`.
+
 ## 2026-11-22: CI/CD Test Compatibility Fix (`Suite 44` & `Suite 86`)
 - **Status**: COMPLETED locally and pushed for CI re-run after GitHub Actions Run `44940538830` passed `84/86` suites (`Code Quality & Build` passed).
 - **Fixes Applied**:
