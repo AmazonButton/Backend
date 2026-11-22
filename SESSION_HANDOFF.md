@@ -1,5 +1,22 @@
 # Project Handoff & Session Context
 
+## 2026-11-23: Production Redis + `NODE_ENV=production` Cluster Live & Worker Edge-Challenge Failover
+- **Status**: PRODUCTION LIVE (`ea589f9` + PR #6) — All 3 nodes (`Render Node-1`, `Render Node-2`, `AWS Node-3`) switched to `NODE_ENV=production` with shared Redis Cloud Free (`30 MB`, `noeviction`), Vercel `/api/v1/*` proxied via Cloudflare Worker, and PR #6 adding failover when a Render origin returns Cloudflare `429 Cf-Mitigated: challenge`.
+- **Verified Cluster & Redis Telemetry**:
+  - Updated Render `Node-1` & `Node-2` `buildCommand` to `npm ci --include=dev ...` before enabling `NODE_ENV=production`, plus synced `REDIS_URL` & `NODE_ENV=production` across `Node-1`, `Node-2`, and `AWS Node-3`.
+  - All 3 nodes live on `ea589f9` (`READY`, `database: UP`, `queue: UP`); AWS Node-3 logs verified `DashboardCache connected to Redis`, `[WS Pub/Sub] Distributed revocation channel 'ws:auth:revoke' active`, `BullMQ Worker registered for queue: [mail-queue]`, and `[PayOS Payout]` balance `00` (`522Mi` RAM avail, `30%` / `13G` free disk).
+  - Live Redis Cloud telemetry across connected nodes: `used_memory_human: 2.60M` (peak `2.70M` / `30M`), `maxmemory_policy: noeviction`, `12–19` clients (`< 30`), `5–7 ops/sec` (`< 100`).
+  - Live security verification caught that `http://3.25.136.6:80` remained open (`sgr-07f394df72c093840` still awaiting `revoke` in CloudShell after `less` pager pause) while `:443` closed and Cloudflare Worker + Vercel routed cleanly to `node-3` (`aws-backup-15pct` `200 OK`) and `node-1` (`render-primary-50pct` `200 OK`).
+- **Repo Changes (`fix/worker-challenge-failover`)**:
+  - Updated [`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js#L170-L190) to bound upstream fetches (`AbortSignal.timeout(12000)`) and fail over on upstream `502–599` or Cloudflare WAF `429` (`cf-mitigated: challenge`), without masking genuine backend JSON `429` rate limits.
+  - Added runtime mocked-fetch failover assertions (`testWorkerChallengeFailoverBehavior`) to [`tests/ops-scripts-contract.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/ops-scripts-contract.spec.ts).
+- **Verification**:
+  - `npx tsc --noEmit && npm run build:aws && npx tsx tests/ops-scripts-contract.spec.ts` — **PASS** (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`).
+- **Remaining**:
+  - Complete CloudShell `aws ec2 revoke-security-group-ingress --no-cli-pager ... sgr-07f394df72c093840 sgr-05dc06ed47bf567b2` so direct `:80` is blocked.
+  - Paste updated [`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js) in Cloudflare Dashboard `fragrant-mode-3a41` after PR #6 merges.
+- **Next**: Verify PR #6 CI -> merge -> deploy updated `worker.js` to Cloudflare Dashboard + finish revoking `sgr-07f394df72c093840` (`HTTP 80 0.0.0.0/0`), then confirm direct `:80` blocked & all Worker traffic `200`.
+
 ## 2026-11-23: Frontend Worker Proxy Cutover (A) & 30MB Redis Budget + Prod Guard Hardening (B)
 - **Status**: IN PROGRESS — Cloudflare Worker deployed live and Frontend PR #2 (`eb426c5`) routed Vercel `/api/v1/*` through Worker (`X-Cluster-Node` + Render keep-alive verified); `QueueService` 30MB/low-ops tuning and `BankLookupRateLimitGuard` `lazyConnect` production fix prepared for PR #5 + `REDIS_URL` / `NODE_ENV=production` rollout.
 - **Operations Executed (Cloudflare Worker + Vercel + Redis Verification)**:

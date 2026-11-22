@@ -168,11 +168,18 @@ export default {
       }
 
       try {
-        const response = await fetch(targetUrl.toString(), requestInit);
+        const response = await fetch(targetUrl.toString(), {
+          ...requestInit,
+          signal: AbortSignal.timeout(12000),
+        });
 
-        // If server returns gateway error (502, 503, 504) and we have fallback candidates, try next
-        if ((response.status === 502 || response.status === 503 || response.status === 504) && attempt < candidateOrigins.length - 1) {
-          console.warn(`[Director LB] ${currentOrigin} returned ${response.status}. Retrying fallback...`);
+        const cfMitigated = (response.headers.get('cf-mitigated') || '').toLowerCase();
+        const isEdgeChallenge = response.status === 429 && cfMitigated.includes('challenge');
+        const isUpstreamGatewayFailure = response.status >= 502 && response.status <= 599;
+
+        // Fail over on upstream gateway errors (502-599) or Render-edge Cloudflare WAF bot challenges (never mask API JSON 429s)
+        if ((isUpstreamGatewayFailure || isEdgeChallenge) && attempt < candidateOrigins.length - 1) {
+          console.warn(`[Director LB] ${currentOrigin} returned ${response.status}${isEdgeChallenge ? ' (cf-mitigated challenge)' : ''}. Retrying fallback...`);
           lastError = new Error(`HTTP ${response.status} from ${currentOrigin}`);
           continue;
         }
