@@ -64,6 +64,45 @@ export class BankLookupRateLimitGuard implements CanActivate, OnModuleDestroy {
   }
 
   /**
+   * Ensures a lazyConnect ioredis client is connected before checking readiness.
+   */
+  private static async ensureRedisReady(redis: Redis | null): Promise<void> {
+    if (!redis || redis.status === 'ready') return;
+
+    const timeoutMs = 2000;
+    if (redis.status === 'wait' || redis.status === 'end' || redis.status === 'close') {
+      try {
+        await Promise.race([
+          redis.connect(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Redis connect timeout')), timeoutMs)),
+        ]);
+      } catch {
+        // Readiness status below handles fail-closed production errors and non-prod fallback.
+      }
+      return;
+    }
+
+    if (redis.status === 'connecting' || redis.status === 'connect') {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(onDone, timeoutMs);
+        function cleanup() {
+          clearTimeout(timer);
+          redis?.removeListener('ready', onDone);
+          redis?.removeListener('error', onDone);
+          redis?.removeListener('close', onDone);
+        }
+        function onDone() {
+          cleanup();
+          resolve();
+        }
+        redis.once('ready', onDone);
+        redis.once('error', onDone);
+        redis.once('close', onDone);
+      });
+    }
+  }
+
+  /**
    * Reset rate limit cache (dành cho test suites)
    */
   static async reset(): Promise<void> {
@@ -91,6 +130,7 @@ export class BankLookupRateLimitGuard implements CanActivate, OnModuleDestroy {
     const key = `rate_limit:bank_lookup:${userId}:${ip}`;
 
     const redis = BankLookupRateLimitGuard.getRedisClient();
+    await BankLookupRateLimitGuard.ensureRedisReady(redis);
     const isProduction = process.env.NODE_ENV === 'production';
 
     // 1. Kiểm tra trạng thái Redis trong môi trường Production (Bắt buộc phân tán, cấm RAM fallback)

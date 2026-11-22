@@ -415,6 +415,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         {
           connection: this.redisClient.duplicate({ maxRetriesPerRequest: null }),
           concurrency: 5,
+          // Keep background Redis traffic low to fit free-tier ops/sec & bandwidth budgets across multi-node clusters
+          drainDelay: 30,
+          stalledInterval: 120000,
         },
       );
 
@@ -475,6 +478,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     if (!queue) {
       queue = new BullQueue(queueName, {
         connection: this.redisClient.duplicate({ maxRetriesPerRequest: null }),
+        defaultJobOptions: {
+          removeOnComplete: { count: 10, age: 3600 },
+          removeOnFail: { count: 20, age: 86400 },
+        },
       });
       this.bullQueues.set(queueName, queue);
     }
@@ -516,8 +523,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           },
           delay: options.delayMs,
           priority: options.priority,
-          removeOnComplete: 100,
-          removeOnFail: false,
+          // Bound retained job payloads in Redis (PostgreSQL dead_letter_jobs stores permanent failure records)
+          removeOnComplete: { count: 10, age: 3600 },
+          removeOnFail: { count: 20, age: 86400 },
         });
         return addedJob.id || jobId;
       } catch (err: any) {
