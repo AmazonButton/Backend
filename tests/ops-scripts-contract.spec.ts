@@ -166,7 +166,10 @@ async function testRedisBudgetAndBankLookupLazyConnect() {
     path.resolve(__dirname, '../src/common/queues/queue.service.ts'),
     'utf8',
   );
-  assert.ok(queueSrc.includes('drainDelay: 30'), 'BullWorker should bound idle drain polling');
+  assert.ok(
+    queueSrc.includes("drainDelay: process.env.NODE_ENV === 'test' ? 1 : 5"),
+    'BullWorker should use bounded drainDelay without stalling test shutdown',
+  );
   assert.ok(queueSrc.includes('stalledInterval: 120000'), 'BullWorker should bound stalled scan interval');
   assert.ok(queueSrc.includes('removeOnFail: { count: 20, age: 86400 }'), 'QueueService must cap retained failed jobs');
   assert.ok(queueSrc.includes('removeOnComplete: { count: 10, age: 3600 }'), 'QueueService must cap completed jobs');

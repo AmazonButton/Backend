@@ -415,8 +415,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         {
           connection: this.redisClient.duplicate({ maxRetriesPerRequest: null }),
           concurrency: 5,
-          // Keep background Redis traffic low to fit free-tier ops/sec & bandwidth budgets across multi-node clusters
-          drainDelay: 30,
+          // Keep background Redis traffic low while avoiding long BZPOPMIN close waits in tests
+          drainDelay: process.env.NODE_ENV === 'test' ? 1 : 5,
           stalledInterval: 120000,
         },
       );
