@@ -1189,6 +1189,8 @@ async function runBankVerificationTests() {
     } catch (cleanupErr: any) {
       console.warn('Cleanup warning:', cleanupErr?.message);
     }
+    await BankLookupRateLimitGuard.reset();
+    new BankLookupRateLimitGuard().onModuleDestroy();
     await prisma.$disconnect();
   }
 

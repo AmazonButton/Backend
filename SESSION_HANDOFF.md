@@ -12,7 +12,7 @@
 - **Verification**:
   - `npx tsc --noEmit && npx tsx tests/ops-scripts-contract.spec.ts && npx tsx tests/bank-account-verification.spec.ts` — **PASS** (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`; `PASSED: 40, FAILED: 0`).
   - `npx tsx tests/mail-and-dlq-hardening.spec.ts` — **PASS** (`5 passed, 0 failed`).
-  - Also fixed `Test 1.6b` in [`tests/bank-account-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/bank-account-verification.spec.ts#L288-L310) to isolate missing Redis explicitly instead of relying on the prior un-connected `lazyConnect` bug in CI (`REDIS_URL=redis://localhost:6379`).
+  - Also fixed `Test 1.6b` and teardown in [`tests/bank-account-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/bank-account-verification.spec.ts#L288-L310) to isolate missing Redis explicitly and close `BankLookupRateLimitGuard` Redis connections on exit (`onModuleDestroy()`).
 - **Remaining / Limits**:
   - Inject `REDIS_URL` + enable `NODE_ENV=production` across all 3 nodes upon PR #5 merge, then verify live `/readyz` and Redis connection/memory telemetry (`< 30` clients, `< 30 MB`).
   - Mục C (EC2 Security Group port `80` restriction to Cloudflare IPv4 CIDRs and optional Elastic IP) pending AWS Console step.
