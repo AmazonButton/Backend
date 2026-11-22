@@ -220,6 +220,66 @@ async function testRedisBudgetAndBankLookupLazyConnect() {
     guardClass.redisInitialized = prevInit;
     process.env.NODE_ENV = prevEnv;
   }
+  assert.ok(true);
+}
+
+async function testWorkerChallengeFailoverBehavior() {
+  const workerMod = await import('../cloudflare-worker/worker.js');
+  const worker = workerMod.default || workerMod;
+  const origFetch = globalThis.fetch;
+  const origRandom = Math.random;
+
+  try {
+    // Case 1: force primary selection -> node-2 (0.50 <= rand < 0.85), upstream returns CF 429 challenge -> fail over to node-1
+    Math.random = () => 0.6;
+    const calledUrls: string[] = [];
+    globalThis.fetch = (async (input: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      calledUrls.push(url);
+      if (url.includes('backend-node2-ukib.onrender.com')) {
+        return new Response('<html>Just a moment</html>', {
+          status: 429,
+          headers: { 'cf-mitigated': 'challenge', 'Content-Type': 'text/html' },
+        });
+      }
+      return new Response(JSON.stringify({ status: 'READY' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as any;
+
+    const ctx: any = { waitUntil: () => {} };
+    const res1 = await worker.fetch(new Request('https://example.workers.dev/readyz'), {}, ctx);
+    assert.equal(res1.status, 200);
+    assert.equal(res1.headers.get('X-Cluster-Node'), 'node-1');
+    assert.equal(res1.headers.get('X-Cluster-Attempt'), '2');
+    assert.deepEqual(
+      calledUrls.filter((u) => u.endsWith('/readyz')),
+      [
+        'https://backend-node2-ukib.onrender.com/readyz',
+        'https://backend-fae8.onrender.com/readyz',
+      ],
+    );
+
+    // Case 2: real backend API 429 JSON (no cf-mitigated header) must NOT fail over
+    calledUrls.length = 0;
+    globalThis.fetch = (async (input: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      calledUrls.push(url);
+      return new Response(JSON.stringify({ success: false, errorCode: 'RATE_LIMIT_EXCEEDED' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as any;
+
+    const res2 = await worker.fetch(new Request('https://example.workers.dev/api/v1/stores'), {}, ctx);
+    assert.equal(res2.status, 429);
+    assert.equal(res2.headers.get('X-Cluster-Attempt'), '1');
+    assert.equal(calledUrls.length, 1);
+  } finally {
+    globalThis.fetch = origFetch;
+    Math.random = origRandom;
+  }
 }
 
 async function main() {
@@ -228,6 +288,7 @@ async function main() {
   testResolveCommitSha();
   testRedirectUrlAndWorkerCorsContract();
   await testRedisBudgetAndBankLookupLazyConnect();
+  await testWorkerChallengeFailoverBehavior();
   console.log('ALL OPS SCRIPTS CONTRACT TESTS PASSED');
 }
 
