@@ -1,5 +1,22 @@
 # Project Handoff & Session Context
 
+## 2026-11-22: Multi-Cloud Env Alignment, Worker CORS Headers & Production Payment Redirect Allowlist
+- **Status**: IN PROGRESS — Aligned all 3 live nodes (`Node-1`, `Node-2`, `AWS Node-3`) to `https://smart-order-button.vercel.app` + `GOOGLE_CLIENT_ID`; prepared Cloudflare Worker CORS preflight & production payment redirect DTO fixes for PR #4.
+- **Operations Executed (Render `Node-1`, Render `Node-2`, AWS `Node-3` — Zero Secrets Logged)**:
+  - Synchronized `GOOGLE_CLIENT_ID`, `FRONTEND_URL=https://smart-order-button.vercel.app`, and `PAYOS_STORE_BANK_ALLOWED_RETURN_ORIGINS=https://smart-order-button.vercel.app,https://buttontdash.vercel.app` across Render `Node-1` (`55` keys), Render `Node-2` (`55` keys), and AWS `Node-3` `.env` (`pm2 reload backend-node3 --update-env`).
+  - Replaced stale `localhost:5173` / `buttontdash.vercel.app` callback URLs (`PAYOS_RETURN_URL`, `PAYOS_CANCEL_URL`, `DIDIT_CALLBACK_URL`, `BANK_VERIFICATION_CALLBACK_URL`) and updated `CORS_ORIGIN` (`smart-order-button.vercel.app` primary + retaining `buttontdash.vercel.app` compatibility) on Render `Node-1` & `Node-2`.
+- **Repo Changes (`fix/prod-redirect-origins-and-worker-cors`)**:
+  - Updated [`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js#L56) `OPTIONS` `Access-Control-Allow-Headers` to include `x-idempotency-key`, `idempotency-key`, `X-Idempotency-Key`, `Idempotency-Key`, and `x-request-id` matching [`src/main.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/main.ts#L155).
+  - Extracted and updated [`isAllowedPaymentRedirectUrl`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/dto/payment.dto.ts#L17) in [`src/payments/dto/payment.dto.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/payments/dto/payment.dto.ts) so `CreatePaymentLinkDto` accepts configured HTTPS frontend/return origins (`FRONTEND_URL`, `PAYOS_ALLOWED_RETURN_ORIGINS`, `PAYOS_STORE_BANK_ALLOWED_RETURN_ORIGINS`, HTTPS entries of `CORS_ORIGIN`) alongside `smartorder.vn` in `NODE_ENV=production` while still rejecting credentialed URLs, non-HTTPS prod redirects, and untrusted origins.
+  - Added production redirect & Worker CORS header contract assertions to [`tests/ops-scripts-contract.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/ops-scripts-contract.spec.ts).
+- **Verification**:
+  - `npx tsc --noEmit && npm run build:aws && npx tsx tests/ops-scripts-contract.spec.ts && npx tsx tests/store-bank-return-url.spec.ts` — **PASS** (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`; `PASS: Store verification redirect origins and paths.`).
+- **Remaining / Limits (User Actions Needed Next)**:
+  - **A (Cloudflare Worker + Vercel proxy)**: Local `wrangler` CLI is unauthenticated (`wrangler login` needed) before deploying updated [`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js) (`50/35/15` routing + `*/5` keep-alive cron) and switching `Frontend` `vercel.json` / `vite.config.ts` away from direct `backend-fae8.onrender.com` calls.
+  - **B (`REDIS_URL` & `NODE_ENV=production`)**: All 3 nodes remain on `NODE_ENV=development` pending shared external `REDIS_URL` (`QueueService` + `BankVerificationService` fail closed in `production`; Upstash 500K/mo limit incompatible with BullMQ continuous polling, Render Free Key Value lacks persistence/external-first design -> use Redis Cloud Free 30MB `noeviction` or dedicated TLS Redis).
+  - **C (AWS Elastic IP + Port `80` Cloudflare IP Allowlist)**: Local `antigravity-ssm` IAM lacks `ec2:*` permissions; attach Elastic IP and lock EC2 Security Group port `80` to Cloudflare IPv4 CIDRs via AWS Console after Worker cutover (A).
+- **Next**: Merge PR #4 -> `main`, deploy Node-1/Node-2/Node-3, then complete Cloudflare Worker login/deploy (A), provision shared `REDIS_URL` + enable `NODE_ENV=production` (B), and apply AWS Elastic IP + Cloudflare Security Group allowlist (C).
+
 ## 2026-11-22: AWS Node-3 Infrastructure Hardening (`20 GiB` EBS, Persistent Port 80, Live Domain `.env`, `commitSha` & `build:aws`)
 - **Status**: IN PROGRESS — Live AWS EC2 Node-3 OS/EBS/iptables/`.env` hardening verified online; repo changes (`resolve-commit-sha.js`, `start-prod.js`, `build:aws`) verified locally and queued for PR merge + `npm run aws:deploy`.
 - **Operations Executed (AWS EC2 Node-3 — `i-057b3e633f7e77266` / `3.25.136.6`)**:

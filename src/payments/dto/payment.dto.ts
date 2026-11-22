@@ -13,35 +13,67 @@ import {
   ValidationArguments,
 } from 'class-validator';
 
-@ValidatorConstraint({ name: 'isAllowedPaymentRedirectUrl', async: false })
-export class IsAllowedPaymentRedirectUrlConstraint implements ValidatorConstraintInterface {
-  validate(value: any, args: ValidationArguments) {
-    if (!value || typeof value !== 'string') return true;
-    try {
-      const parsed = new URL(value);
-      const hostname = parsed.hostname.toLowerCase();
-      const isProd = process.env.NODE_ENV === 'production';
+export function isAllowedPaymentRedirectUrl(
+  value: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!value || typeof value !== 'string') return true;
+  try {
+    const parsed = new URL(value);
+    if (parsed.username || parsed.password) {
+      return false;
+    }
 
-      // Enforce HTTPS and exact smartorder.vn or *.smartorder.vn
-      if (parsed.protocol === 'https:' && (hostname === 'smartorder.vn' || hostname.endsWith('.smartorder.vn'))) {
+    const hostname = parsed.hostname.toLowerCase();
+    const isProd = env.NODE_ENV === 'production';
+
+    if (parsed.protocol === 'https:') {
+      if (hostname === 'smartorder.vn' || hostname.endsWith('.smartorder.vn')) {
         return true;
       }
 
-      // In non-production only: allow localhost or 127.0.0.1
-      if (!isProd && (parsed.protocol === 'http:' || parsed.protocol === 'https:')) {
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-          return true;
+      const configuredUrls = [
+        env.FRONTEND_URL,
+        env.PAYOS_RETURN_URL,
+        env.PAYOS_CANCEL_URL,
+        ...(env.PAYOS_ALLOWED_RETURN_ORIGINS || '').split(','),
+        ...(env.PAYOS_STORE_BANK_ALLOWED_RETURN_ORIGINS || '').split(','),
+        ...(env.CORS_ORIGIN || '').split(','),
+      ];
+      for (const candidate of configuredUrls) {
+        const trimmed = candidate?.trim();
+        if (!trimmed) continue;
+        try {
+          const allowedUrl = new URL(trimmed);
+          if (allowedUrl.protocol === 'https:' && parsed.origin === allowedUrl.origin) {
+            return true;
+          }
+        } catch {
+          // Ignore malformed optional env entries
         }
       }
-
-      return false;
-    } catch {
-      return false;
     }
+
+    if (!isProd && (parsed.protocol === 'http:' || parsed.protocol === 'https:')) {
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return true;
+      }
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+@ValidatorConstraint({ name: 'isAllowedPaymentRedirectUrl', async: false })
+export class IsAllowedPaymentRedirectUrlConstraint implements ValidatorConstraintInterface {
+  validate(value: any, _args: ValidationArguments) {
+    return isAllowedPaymentRedirectUrl(value, process.env);
   }
 
   defaultMessage(args: ValidationArguments) {
-    return `${args.property} phải thuộc domain được phép (smartorder.vn hoặc subdomain an toàn)`;
+    return `${args.property} phải thuộc domain được phép (HTTPS frontend cấu hình hoặc smartorder.vn)`;
   }
 }
 

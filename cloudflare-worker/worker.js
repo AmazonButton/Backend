@@ -53,7 +53,7 @@ export default {
         headers: {
           'Access-Control-Allow-Origin': request.headers.get('Origin') || '*',
           'Access-Control-Allow-Methods': 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature',
+          'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature, x-idempotency-key, idempotency-key, X-Idempotency-Key, Idempotency-Key, x-request-id',
           'Access-Control-Allow-Credentials': 'true',
           'Access-Control-Max-Age': '86400',
         },
