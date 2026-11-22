@@ -12,6 +12,7 @@ import {
   runGrantPlatformRole,
 } from '../scripts/grant-platform-role';
 import { resolveCommitSha } from '../scripts/resolve-commit-sha';
+import { isAllowedPaymentRedirectUrl } from '../src/payments/dto/payment.dto';
 
 function testResolveDirectMigrationUrl() {
   const explicitDirect = resolveDirectMigrationUrl({
@@ -123,10 +124,47 @@ function testResolveCommitSha() {
   }
 }
 
+function testRedirectUrlAndWorkerCorsContract() {
+  const prodEnv: NodeJS.ProcessEnv = {
+    NODE_ENV: 'production',
+    FRONTEND_URL: 'https://smart-order-button.vercel.app',
+    CORS_ORIGIN: 'https://smart-order-button.vercel.app,https://buttontdash.vercel.app,http://localhost:5173',
+  };
+  assert.equal(isAllowedPaymentRedirectUrl('https://smartorder.vn/payment/success', prodEnv), true);
+  assert.equal(isAllowedPaymentRedirectUrl('https://pay.smartorder.vn/payment/success', prodEnv), true);
+  assert.equal(
+    isAllowedPaymentRedirectUrl('https://smart-order-button.vercel.app/shop?payos_status=success&orderId=1', prodEnv),
+    true,
+  );
+  assert.equal(
+    isAllowedPaymentRedirectUrl('https://buttontdash.vercel.app/payment/success', prodEnv),
+    true,
+  );
+  assert.equal(isAllowedPaymentRedirectUrl('http://localhost:5173/shop', prodEnv), false);
+  assert.equal(isAllowedPaymentRedirectUrl('https://evil.test/shop', prodEnv), false);
+  assert.equal(isAllowedPaymentRedirectUrl('https://smartorder.vn.evil.test/shop', prodEnv), false);
+  assert.equal(isAllowedPaymentRedirectUrl('https://user:pass@smartorder.vn/shop', prodEnv), false);
+
+  const devEnv: NodeJS.ProcessEnv = { NODE_ENV: 'development' };
+  assert.equal(isAllowedPaymentRedirectUrl('http://localhost:5173/shop', devEnv), true);
+
+  const workerSource = fs.readFileSync(
+    path.resolve(__dirname, '../cloudflare-worker/worker.js'),
+    'utf8',
+  );
+  for (const header of ['x-idempotency-key', 'X-Idempotency-Key', 'x-request-id']) {
+    assert.ok(
+      workerSource.includes(header),
+      `Cloudflare worker CORS preflight must whitelist ${header}`,
+    );
+  }
+}
+
 async function main() {
   testResolveDirectMigrationUrl();
   await testGrantPlatformRoleValidationAndDryRun();
   testResolveCommitSha();
+  testRedirectUrlAndWorkerCorsContract();
   console.log('ALL OPS SCRIPTS CONTRACT TESTS PASSED');
 }
 
