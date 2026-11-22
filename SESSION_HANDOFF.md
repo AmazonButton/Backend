@@ -10,8 +10,9 @@
   - Updated [`src/bank-verification/guards/bank-lookup-rate-limit.guard.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/bank-verification/guards/bank-lookup-rate-limit.guard.ts#L64-L135) with `ensureRedisReady()` so `lazyConnect: true` clients connect cleanly before checking readiness instead of failing with `503` on the first lookup in `NODE_ENV=production` (while still failing closed with `503` when Redis is unconfigured or unreachable).
   - Expanded [`tests/ops-scripts-contract.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/ops-scripts-contract.spec.ts) with unit checks for QueueService caps/intervals and `BankLookupRateLimitGuard` `wait -> ready` / `503` behavior.
 - **Verification**:
-  - `npx tsc --noEmit && npm run build:aws && npx tsx tests/ops-scripts-contract.spec.ts` — **PASS** (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`).
+  - `npx tsc --noEmit && npx tsx tests/ops-scripts-contract.spec.ts && npx tsx tests/bank-account-verification.spec.ts` — **PASS** (`ALL OPS SCRIPTS CONTRACT TESTS PASSED`; `PASSED: 40, FAILED: 0`).
   - `npx tsx tests/mail-and-dlq-hardening.spec.ts` — **PASS** (`5 passed, 0 failed`).
+  - Also fixed `Test 1.6b` in [`tests/bank-account-verification.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/bank-account-verification.spec.ts#L288-L310) to isolate missing Redis explicitly instead of relying on the prior un-connected `lazyConnect` bug in CI (`REDIS_URL=redis://localhost:6379`).
 - **Remaining / Limits**:
   - Inject `REDIS_URL` + enable `NODE_ENV=production` across all 3 nodes upon PR #5 merge, then verify live `/readyz` and Redis connection/memory telemetry (`< 30` clients, `< 30 MB`).
   - Mục C (EC2 Security Group port `80` restriction to Cloudflare IPv4 CIDRs and optional Elastic IP) pending AWS Console step.
