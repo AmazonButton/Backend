@@ -1,4 +1,5 @@
-import { Controller, Get, Patch, Param, Query, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Delete, Param, Query, Body, UseGuards, UseInterceptors, UploadedFile, BadRequestException, HttpCode, Request } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { StoresService } from './stores.service';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { buildPaginatedResponse } from '../common/utils/pagination.helper';
@@ -57,6 +58,40 @@ export class StoresController {
     return {
       success: true,
       message: 'Cập nhật thông tin cửa hàng thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @HttpCode(200)
+  @Post('me/logo')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 3 * 1024 * 1024 },
+    }),
+  )
+  async uploadStoreLogo(@UploadedFile() file: Express.Multer.File, @Request() req: any) {
+    if (!file) {
+      throw new BadRequestException('Vui lòng chọn tệp logo hợp lệ (JPG, PNG, WEBP, tối đa 3MB)');
+    }
+    const data = await this.storesService.uploadStoreLogo(req.user, file);
+    return {
+      success: true,
+      message: 'Cập nhật logo cửa hàng thành công',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'STORE_MANAGER', 'ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
+  @HttpCode(200)
+  @Delete('me/logo')
+  async removeStoreLogo(@Request() req: any) {
+    const data = await this.storesService.removeStoreLogo(req.user);
+    return {
+      success: true,
+      message: 'Đã gỡ logo cửa hàng thành công',
       data,
     };
   }

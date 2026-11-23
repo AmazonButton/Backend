@@ -207,6 +207,63 @@ async function runDiditKycTestSuite() {
       (diditClient as any).logger.error = originalLoggerError;
     }
 
+    // 1d. Surfacing Didit 400 credit exhaustion safely & masking any echoed API key
+    loggedErrors = [];
+    (diditClient as any).logger.error = (msg: string) => {
+      loggedErrors.push(msg);
+    };
+    try {
+      global.fetch = async () => {
+        return {
+          ok: false,
+          status: 400,
+          text: async () =>
+            JSON.stringify({
+              detail:
+                "You don't have enough credits to perform this request. Please top up at https://business.didit.me",
+              extra_secret_field: process.env.DIDIT_API_KEY,
+            }),
+        } as any;
+      };
+      try {
+        await diditClient.createSession(mockVendorData, 'http://callback');
+        assert(false, 'Expected BadGatewayException on Didit 400 credit error');
+      } catch (err: any) {
+        assert(err instanceof BadGatewayException, 'Throws BadGatewayException on Didit 400 credit error');
+        assert(
+          err.message.includes('credit') && err.message.includes('400'),
+          'Surfaces actionable credit-exhaustion guidance on Didit 400 response',
+        );
+        assert(!err.message.includes(process.env.DIDIT_API_KEY!), 'Didit 400 message never leaks DIDIT_API_KEY');
+        assert(
+          loggedErrors.some((m) => m.includes('HTTP 400') && m.includes('insufficient_credits')) &&
+            !loggedErrors.some((m) => m.includes('extra_secret_field')),
+          'Logger logs sanitized insufficient_credits marker without dumping arbitrary JSON fields',
+        );
+      }
+
+      global.fetch = async () => {
+        return {
+          ok: false,
+          status: 400,
+          text: async () => JSON.stringify({ detail: `Workflow inactive key=${process.env.DIDIT_API_KEY}` }),
+        } as any;
+      };
+      try {
+        await diditClient.createSession(mockVendorData, 'http://callback');
+        assert(false, 'Expected BadGatewayException on Didit 400 workflow error');
+      } catch (err: any) {
+        assert(
+          err.message.includes('Workflow inactive') &&
+            err.message.includes('[REDACTED]') &&
+            !err.message.includes(process.env.DIDIT_API_KEY!),
+          'Redacts DIDIT_API_KEY if ever echoed inside Didit detail string',
+        );
+      }
+    } finally {
+      (diditClient as any).logger.error = originalLoggerError;
+    }
+
     // Restore standard mock fetch
     global.fetch = async (url: any, options: any) => {
       lastRequestUrl = url.toString();

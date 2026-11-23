@@ -55,6 +55,7 @@ model User {
   authProvider               String?   @default("LOCAL") @map("auth_provider") @db.VarChar(32)
   providerSubject            String?   @map("provider_subject") @db.VarChar(255)
   avatarUrl                  String?   @map("avatar_url") @db.VarChar(512)
+  avatarPublicId             String?   @map("avatar_public_id") @db.VarChar(255)
   kycStatus                  String    @default("UNVERIFIED") @map("kyc_status") @db.VarChar(32)
   status                     String    @default("ACTIVE")
   passwordResetToken         String?   @map("password_reset_token")
@@ -104,6 +105,8 @@ model Store {
   email          String?  @db.VarChar(255)
   phone          String   @db.VarChar(20)
   address        String
+  logoUrl        String?  @map("logo_url") @db.VarChar(512)
+  logoPublicId   String?  @map("logo_public_id") @db.VarChar(255)
   latitude       Decimal? @map("latitude") @db.Decimal(10, 7)
   longitude      Decimal? @map("longitude") @db.Decimal(10, 7)
   commissionRate Decimal? @default(8.0) @map("commission_rate") @db.Decimal(5, 2)

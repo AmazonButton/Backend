@@ -84,7 +84,7 @@ export class CustomersRepository {
                 s.store_id,
                 s.name,
                 s.code,
-                NULL::text AS logo_url
+                s.logo_url
               FROM orders o
               JOIN store s ON s.store_id = o.store_id
               WHERE o.customer_id = ${customerId}

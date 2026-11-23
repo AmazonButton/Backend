@@ -5,6 +5,7 @@ export class StoreMeResponseDto {
   email: string | null;
   phone: string;
   address: string;
+  logoUrl: string | null;
   latitude: number | null;
   longitude: number | null;
   status: string;
@@ -15,6 +16,7 @@ export class StoreMeResponseDto {
     fullName: string;
     email: string;
     phone: string | null;
+    avatarUrl: string | null;
   };
   subscription: {
     planName: string;
@@ -45,6 +47,7 @@ export class StoreMeResponseDto {
       email: store.email || null,
       phone: store.phone,
       address: store.address,
+      logoUrl: store.logoUrl || null,
       latitude: store.latitude != null ? Number(store.latitude) : null,
       longitude: store.longitude != null ? Number(store.longitude) : null,
       status: store.status,
@@ -55,6 +58,7 @@ export class StoreMeResponseDto {
         fullName: store.owner?.fullName || '',
         email: store.owner?.email || '',
         phone: store.owner?.phone || null,
+        avatarUrl: store.owner?.avatarUrl || null,
       },
       subscription: activeSub
         ? {

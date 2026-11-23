@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEmail, MaxLength, MinLength, Matches, IsIn, IsNumber, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsEmail, MaxLength, MinLength, Matches, IsIn, IsNumber, Min, Max, ValidateIf, IsUrl } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -41,6 +41,16 @@ export class UpdateAdminStoreDto {
   @Min(-180)
   @Max(180)
   longitude?: number;
+
+  @ApiPropertyOptional({ description: 'URL logo cửa hàng', example: 'https://res.cloudinary.com/.../logo.png' })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsUrl(
+    { require_protocol: true, protocols: ['http', 'https'] },
+    { message: 'logoUrl phải là đường dẫn URL hợp lệ (http hoặc https)' },
+  )
+  @MaxLength(512)
+  logoUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Trạng thái hoạt động của cửa hàng (ACTIVE, INACTIVE, SUSPENDED)', example: 'ACTIVE' })
   @IsOptional()

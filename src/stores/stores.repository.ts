@@ -34,12 +34,17 @@ export class StoresRepository {
     });
   }
 
-  async updateStore(storeId: bigint, data: UpdateStoreMeDto) {
+  async updateStore(
+    storeId: bigint,
+    data: UpdateStoreMeDto & { logoPublicId?: string | null },
+  ) {
     const payload: any = {};
     if (data.name !== undefined) payload.name = data.name;
     if (data.email !== undefined) payload.email = data.email;
     if (data.phone !== undefined) payload.phone = data.phone;
     if (data.address !== undefined) payload.address = data.address;
+    if (data.logoUrl !== undefined) payload.logoUrl = data.logoUrl;
+    if (data.logoPublicId !== undefined) payload.logoPublicId = data.logoPublicId;
     if (data.latitude !== undefined) payload.latitude = data.latitude;
     if (data.longitude !== undefined) payload.longitude = data.longitude;
 

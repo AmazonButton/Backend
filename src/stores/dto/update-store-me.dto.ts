@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEmail, IsNumber, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsEmail, IsNumber, Min, Max, ValidateIf, IsUrl, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class UpdateStoreMeDto {
@@ -17,6 +17,15 @@ export class UpdateStoreMeDto {
   @IsOptional()
   @IsString({ message: 'Địa chỉ phải là chuỗi' })
   address?: string;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsUrl(
+    { require_protocol: true, protocols: ['http', 'https'] },
+    { message: 'logoUrl phải là một đường dẫn URL hợp lệ (http hoặc https)' },
+  )
+  @MaxLength(512, { message: 'logoUrl không được vượt quá 512 ký tự' })
+  logoUrl?: string | null;
 
   @IsOptional()
   @Type(() => Number)

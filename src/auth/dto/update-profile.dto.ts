@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, IsUrl, Matches } from 'class-validator';
+import { IsOptional, IsString, MaxLength, IsUrl, Matches, ValidateIf } from 'class-validator';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -7,12 +7,13 @@ export class UpdateProfileDto {
   fullName?: string;
 
   @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsUrl(
     { require_protocol: true, protocols: ['http', 'https'] },
     { message: 'avatarUrl phải là một đường dẫn URL hợp lệ (http hoặc https)' },
   )
   @MaxLength(512, { message: 'avatarUrl không được vượt quá 512 ký tự' })
-  avatarUrl?: string;
+  avatarUrl?: string | null;
 
   @IsOptional()
   @IsString({ message: 'Số điện thoại phải là chuỗi ký tự' })

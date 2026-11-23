@@ -60,14 +60,26 @@ export class AdminService {
     }
   }
 
+  private sanitizeStoreRecord(store: any) {
+    if (!store || typeof store !== 'object') return store;
+    const { logoPublicId: _logoPublicId, ...safeStore } = store;
+    return safeStore;
+  }
+
   async listPendingStores(query?: any) {
     const res = await this.adminRepo.findPendingStores(query);
-    return res;
+    return {
+      ...res,
+      items: res.items.map((item: any) => this.sanitizeStoreRecord(item)),
+    };
   }
 
   async listAllStores(query?: any) {
     const res = await this.adminRepo.findAllStores(query);
-    return res;
+    return {
+      ...res,
+      items: res.items.map((item: any) => this.sanitizeStoreRecord(item)),
+    };
   }
 
   async updateStoreById(storeId: string | number | bigint, dto: UpdateAdminStoreDto, _adminUser?: any) {
@@ -78,7 +90,7 @@ export class AdminService {
     }
     const updated = await this.adminRepo.updateStoreById(targetStoreId, dto);
     await this.invalidateAdminAndStoreCaches(targetStoreId);
-    return updated;
+    return this.sanitizeStoreRecord(updated);
   }
 
   async approveStore(storeId: string | number | bigint, _adminUser?: any) {
@@ -87,7 +99,7 @@ export class AdminService {
     if (!store) throw new NotFoundException('Không tìm thấy cửa hàng');
     const res = await this.adminRepo.approveStore(targetStoreId, store.ownerUserId);
     await this.invalidateAdminAndStoreCaches(targetStoreId);
-    return res;
+    return this.sanitizeStoreRecord(res);
   }
 
   async rejectStore(storeId: string | number | bigint, reason: string, _adminUser?: any) {
@@ -97,7 +109,7 @@ export class AdminService {
     if (!store) throw new NotFoundException('Không tìm thấy cửa hàng');
     const res = await this.adminRepo.rejectStore(targetStoreId);
     await this.invalidateAdminAndStoreCaches(targetStoreId);
-    return res;
+    return this.sanitizeStoreRecord(res);
   }
 
   async getSystemStats() {

@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { cloudinary, configureCloudinary } from '../config/cloudinary.config';
 import crypto from 'crypto';
 
@@ -19,8 +19,15 @@ export interface UploadResult {
   bytes: number;
 }
 
+export interface UploadImageOptions {
+  maxBytes?: number;
+  allowedMimes?: string[];
+  publicIdPrefix?: string;
+}
+
 @Injectable()
 export class MediaService {
+  private readonly logger = new Logger(MediaService.name);
   private readonly ALLOWED_ROOTS = ['smart-order', 'smart-button', 'products', 'avatars', 'stores', 'general'];
 
   private validateFolder(folder: string): string {
@@ -136,23 +143,34 @@ export class MediaService {
   async uploadImageBuffer(
     file: Express.Multer.File,
     folder: string = 'smart-order',
+    options?: UploadImageOptions,
   ): Promise<UploadResult> {
     folder = this.validateFolder(folder);
     if (!file || !file.buffer) {
       throw new BadRequestException('Không tìm thấy tệp tải lên');
     }
 
-    // Max 5MB
-    const MAX_SIZE = 5 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      throw new BadRequestException('Kích thước tệp vượt quá giới hạn tối đa 5MB');
+    const maxBytes = options?.maxBytes ?? 5 * 1024 * 1024;
+    const allowedMimes = options?.allowedMimes ?? [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+    ];
+    const actualBytes = Math.max(file.size || 0, file.buffer.length || 0);
+    if (actualBytes > maxBytes) {
+      const maxMb = Number((maxBytes / (1024 * 1024)).toFixed(1));
+      throw new BadRequestException(`Kích thước tệp vượt quá giới hạn tối đa ${maxMb}MB`);
     }
 
-    // Magic bytes verification
+    // Magic bytes verification prevents spoofed extensions & XSS/SVG uploads
     const inspection = this.validateImageMagicBytes(file.buffer);
-    if (!inspection.valid) {
+    if (!inspection.valid || !allowedMimes.includes(inspection.mime)) {
+      const allowedText = allowedMimes
+        .map((m) => m.replace('image/', '').toUpperCase().replace('JPEG', 'JPG'))
+        .join(', ');
       throw new BadRequestException(
-        'Tệp không hợp lệ hoặc đuôi file bị giả mạo. Chỉ chấp nhận định dạng ảnh JPG, PNG, WEBP, GIF.',
+        `Tệp không hợp lệ hoặc đuôi file bị giả mạo. Chỉ chấp nhận định dạng ảnh ${allowedText}.`,
       );
     }
 
@@ -166,12 +184,19 @@ export class MediaService {
       );
     }
 
+    const safePrefix = options?.publicIdPrefix
+      ? options.publicIdPrefix.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40)
+      : '';
+    const generatedPublicId = `${safePrefix ? `${safePrefix}_` : ''}${Date.now()}_${crypto
+      .randomBytes(8)
+      .toString('hex')}`;
+
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder,
           resource_type: 'image',
-          public_id: `${Date.now()}_${crypto.randomBytes(8).toString('hex')}`,
+          public_id: generatedPublicId,
         },
         (error, result) => {
           if (error || !result) {
@@ -203,6 +228,17 @@ export class MediaService {
       return res.result === 'ok';
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Best-effort deletion helper when replacing or cleaning up orphaned media assets.
+   */
+  async deleteAssetBestEffort(publicId?: string | null): Promise<void> {
+    if (!publicId) return;
+    const deleted = await this.deleteAsset(publicId);
+    if (!deleted) {
+      this.logger.warn(`[MediaCleanup] Could not delete asset cleanly: ${publicId}`);
     }
   }
 }
