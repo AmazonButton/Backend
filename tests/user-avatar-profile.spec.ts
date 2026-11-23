@@ -7,13 +7,19 @@ import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 
 import { AuthRepository } from '../src/auth/auth.repository';
 import { AuthService } from '../src/auth/auth.service';
 import { AuthController } from '../src/auth/auth.controller';
 import { UpdateProfileDto } from '../src/auth/dto/update-profile.dto';
 import { JwtStrategy } from '../src/auth/jwt.strategy';
+import { MediaService } from '../src/media/media.service';
+import { StoresController } from '../src/stores/stores.controller';
+import { StoresService } from '../src/stores/stores.service';
+import { StoresRepository } from '../src/stores/stores.repository';
+import { UpdateStoreMeDto } from '../src/stores/dto/update-store-me.dto';
+import { CustomersRepository } from '../src/customers/customers.repository';
 
 const prisma = new PrismaClient();
 
@@ -37,6 +43,7 @@ async function runUserAvatarTestSuite() {
 
   const ts = Date.now();
   let createdUser: any = null;
+  let createdStore: any = null;
   let googleCreatedUser: any = null;
 
   try {
@@ -81,10 +88,66 @@ async function runUserAvatarTestSuite() {
     const errorsExcessive = await validate(excessiveDto);
     assert(errorsExcessive.length > 0, 'DTO rejects avatar URL exceeding 512 characters max limit');
 
-    // 1f. Optional fields allowed
+    // 1f. Optional fields allowed + explicit null accepted to remove avatar/logo
     const emptyDto = plainToInstance(UpdateProfileDto, {});
     const errorsEmpty = await validate(emptyDto);
     assert(errorsEmpty.length === 0, 'DTO accepts empty object (all fields are optional)');
+
+    const nullAvatarDto = plainToInstance(UpdateProfileDto, { avatarUrl: null });
+    const errorsNullAvatar = await validate(nullAvatarDto);
+    assert(errorsNullAvatar.length === 0, 'UpdateProfileDto accepts null avatarUrl for avatar removal');
+
+    const invalidLogoDto = plainToInstance(UpdateStoreMeDto, { logoUrl: 'javascript:alert(1)' });
+    const errorsInvalidLogo = await validate(invalidLogoDto);
+    assert(errorsInvalidLogo.length > 0, 'UpdateStoreMeDto rejects javascript: URI scheme for logoUrl');
+
+    const validNullLogoDto = plainToInstance(UpdateStoreMeDto, { logoUrl: null });
+    const errorsNullLogo = await validate(validNullLogoDto);
+    assert(errorsNullLogo.length === 0, 'UpdateStoreMeDto accepts null logoUrl for logo removal');
+
+    // 1g. MediaService magic-byte & 3MB size enforcement
+    const mediaServiceReal = new MediaService();
+    const fakeExecutablePng = {
+      buffer: Buffer.from('MZfake-executable-payload-not-png'),
+      size: 64,
+      originalname: 'evil.png',
+    } as any;
+    let magicRejected = false;
+    try {
+      await mediaServiceReal.uploadImageBuffer(fakeExecutablePng, 'avatars', {
+        maxBytes: 3 * 1024 * 1024,
+        allowedMimes: ['image/jpeg', 'image/png', 'image/webp'],
+      });
+    } catch (e: any) {
+      magicRejected = e instanceof BadRequestException;
+    }
+    assert(magicRejected, 'MediaService rejects spoofed .png with non-image magic bytes');
+
+    const minimalGif = Buffer.from('GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;');
+    let gifRejectedForAvatar = false;
+    try {
+      await mediaServiceReal.uploadImageBuffer(
+        { buffer: minimalGif, size: minimalGif.length } as any,
+        'avatars',
+        { maxBytes: 3 * 1024 * 1024, allowedMimes: ['image/jpeg', 'image/png', 'image/webp'] },
+      );
+    } catch (e: any) {
+      gifRejectedForAvatar = e instanceof BadRequestException;
+    }
+    assert(gifRejectedForAvatar, 'MediaService rejects GIF when avatar/logo whitelist restricts to JPG/PNG/WEBP');
+
+    const oversizedBuffer = Buffer.alloc(3 * 1024 * 1024 + 50, 0x89);
+    let oversizedRejected = false;
+    try {
+      await mediaServiceReal.uploadImageBuffer(
+        { buffer: oversizedBuffer, size: oversizedBuffer.length } as any,
+        'avatars',
+        { maxBytes: 3 * 1024 * 1024, allowedMimes: ['image/jpeg', 'image/png', 'image/webp'] },
+      );
+    } catch (e: any) {
+      oversizedRejected = e instanceof BadRequestException;
+    }
+    assert(oversizedRejected, 'MediaService rejects avatar/logo exceeding 3MB size cap');
 
     // -------------------------------------------------------------------------
     // 2. DATABASE FIXTURE & BACKWARD COMPATIBILITY
@@ -226,6 +289,169 @@ async function runUserAvatarTestSuite() {
     );
 
     // -------------------------------------------------------------------------
+    // 5c. MULTIPART AVATAR UPLOAD, OLD ASSET CLEANUP & REMOVAL
+    // -------------------------------------------------------------------------
+    console.log('\n[Phase 5c: Multipart User Avatar Upload, Replacement Cleanup & Removal]');
+    const uploadedFolders: string[] = [];
+    const deletedPublicIds: string[] = [];
+    let uploadCounter = 0;
+    const mockMediaService: any = {
+      uploadImageBuffer: async (_file: any, folder: string, opts?: any) => {
+        uploadCounter += 1;
+        uploadedFolders.push(folder);
+        assert(opts?.maxBytes === 3 * 1024 * 1024, `Upload enforces 3MB maxBytes (${folder})`);
+        assert(
+          Array.isArray(opts?.allowedMimes) && !opts.allowedMimes.includes('image/gif'),
+          `Upload limits MIME types to JPG/PNG/WEBP (${folder})`,
+        );
+        return {
+          url: `http://res.cloudinary.com/mock/image/upload/v${uploadCounter}/${folder}/img_${uploadCounter}.png`,
+          secureUrl: `https://res.cloudinary.com/mock/image/upload/v${uploadCounter}/${folder}/img_${uploadCounter}.png`,
+          publicId: `${folder}/img_${uploadCounter}`,
+          format: 'png',
+          bytes: 1024,
+        };
+      },
+      deleteAssetBestEffort: async (publicId?: string | null) => {
+        if (publicId) deletedPublicIds.push(publicId);
+      },
+    };
+
+    const authServiceWithMedia = new AuthService(
+      mockMailService,
+      authRepo,
+      jwtService,
+      {} as any,
+      mockMediaService,
+    );
+    const authCtrlWithMedia = new AuthController(authServiceWithMedia, mockFirebaseService);
+    const pngStub = {
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]),
+      size: 12,
+      mimetype: 'image/png',
+      originalname: 'avatar.png',
+    } as any;
+
+    const uploadAvatarRes1 = await authCtrlWithMedia.uploadAvatar(pngStub, {
+      user: { id: createdUser.userId.toString() },
+    });
+    assert(
+      uploadAvatarRes1.success === true &&
+        uploadAvatarRes1.data.avatarUrl === 'https://res.cloudinary.com/mock/image/upload/v1/avatars/img_1.png' &&
+        !('avatarPublicId' in uploadAvatarRes1.data),
+      'POST /auth/avatar persists uploaded secureUrl without exposing avatarPublicId',
+    );
+    assert(uploadedFolders[0] === 'avatars', 'POST /auth/avatar stores user images inside avatars folder');
+
+    const dbUserAfterUpload1 = await prisma.user.findUnique({ where: { userId: createdUser.userId } });
+    assert(
+      dbUserAfterUpload1?.avatarPublicId === 'avatars/img_1',
+      'PostgreSQL users.avatar_public_id stores publicId for replacement cleanup',
+    );
+
+    const uploadAvatarRes2 = await authCtrlWithMedia.uploadAvatar(pngStub, {
+      user: { userId: createdUser.userId.toString() },
+    });
+    assert(
+      uploadAvatarRes2.data.avatarUrl === 'https://res.cloudinary.com/mock/image/upload/v2/avatars/img_2.png' &&
+        deletedPublicIds.includes('avatars/img_1'),
+      'Uploading replacement avatar deletes previous Cloudinary asset best-effort',
+    );
+
+    const removeAvatarRes = await authCtrlWithMedia.removeAvatar({
+      user: { id: createdUser.userId.toString() },
+    });
+    assert(
+      removeAvatarRes.success === true &&
+        removeAvatarRes.data.avatarUrl === null &&
+        deletedPublicIds.includes('avatars/img_2'),
+      'DELETE /auth/avatar clears avatarUrl and deletes previous Cloudinary asset',
+    );
+
+    const dbUserAfterRemove = await prisma.user.findUnique({ where: { userId: createdUser.userId } });
+    assert(
+      dbUserAfterRemove?.avatarUrl === null && dbUserAfterRemove?.avatarPublicId === null,
+      'DELETE /auth/avatar persists null avatar_url & avatar_public_id in DB',
+    );
+
+    await authCtrlWithMedia.uploadAvatar(pngStub, { user: { id: createdUser.userId.toString() } });
+    const nullPatchRes = await authCtrlWithMedia.updateProfile(
+      { user: { id: createdUser.userId.toString() } },
+      { avatarUrl: null },
+    );
+    assert(
+      nullPatchRes.data.avatarUrl === null && deletedPublicIds.includes('avatars/img_3'),
+      'PATCH /auth/profile { avatarUrl: null } clears avatarUrl and triggers cleanup',
+    );
+
+    // -------------------------------------------------------------------------
+    // 5d. STORE LOGO UPLOAD, REMOVAL, LIST/DETAIL PROJECTION & CUSTOMERS DASHBOARD
+    // -------------------------------------------------------------------------
+    console.log('\n[Phase 5d: Store Logo Upload, Public Projection & Cleanup]');
+    createdStore = await prisma.store.create({
+      data: {
+        ownerUserId: createdUser.userId,
+        name: `Logo Test Store ${ts}`,
+        code: `LOGO-${ts}`,
+        phone: `0989${ts.toString().slice(-6)}`,
+        email: `store_logo_${ts}@smartorder.test`,
+        address: '123 Test Logo Street, HCMC',
+        status: 'ACTIVE',
+      },
+    });
+
+    const storesRepo = new StoresRepository(prisma as any);
+    const storesService = new StoresService(prisma as any, storesRepo, undefined, mockMediaService);
+    const storesController = new StoresController(storesService);
+    const ownerReq = { user: { id: createdUser.userId.toString(), role: 'STORE_OWNER', storeId: createdStore.storeId.toString() } };
+
+    const logoRes1 = await storesController.uploadStoreLogo(pngStub, ownerReq);
+    assert(
+      logoRes1.success === true &&
+        logoRes1.data.logoUrl === 'https://res.cloudinary.com/mock/image/upload/v4/stores/' + createdStore.storeId.toString() + '/logo/img_4.png' &&
+        !('logoPublicId' in (logoRes1.data as any)),
+      'POST /stores/me/logo updates store.logoUrl inside store folder without exposing logoPublicId',
+    );
+
+    const storeListRes = await storesService.listActiveStores({ search: `LOGO-${ts}`, page: 1, pageSize: 10 });
+    assert(
+      storeListRes.items.length === 1 && storeListRes.items[0].logoUrl === logoRes1.data.logoUrl,
+      'GET /stores returns persisted store logoUrl',
+    );
+
+    const storeDetailRes = await storesService.getStoreById(createdStore.storeId);
+    assert(
+      storeDetailRes.logoUrl === logoRes1.data.logoUrl,
+      'GET /stores/:id returns persisted store logoUrl',
+    );
+
+    const logoPatchRes = await storesController.updateStoreMe(ownerReq, {
+      logoUrl: 'https://cdn.smartorder.vn/custom-store-logo.webp',
+    });
+    assert(
+      logoPatchRes.data.logoUrl === 'https://cdn.smartorder.vn/custom-store-logo.webp' &&
+        deletedPublicIds.includes(`stores/${createdStore.storeId.toString()}/logo/img_4`),
+      'PATCH /stores/me updates store logoUrl and cleans replaced Cloudinary logo',
+    );
+
+    const logoRemoveRes = await storesController.removeStoreLogo(ownerReq);
+    assert(logoRemoveRes.data.logoUrl === null, 'DELETE /stores/me/logo clears store logoUrl to null');
+
+    const dbStoreCheck = await prisma.store.findUnique({ where: { storeId: createdStore.storeId } });
+    assert(
+      dbStoreCheck?.logoUrl === null && dbStoreCheck?.logoPublicId === null,
+      'PostgreSQL store.logo_url & logo_public_id persisted cleanly',
+    );
+
+    // Verify CustomersRepository SQL reads real s.logo_url cleanly against PostgreSQL
+    const customersRepo = new CustomersRepository(prisma as any);
+    const dashResult = await customersRepo.getCustomerDashboard(createdUser.userId);
+    assert(
+      Array.isArray(dashResult.connectedStores),
+      'CustomersRepository.getCustomerDashboard queries s.logo_url without SQL error',
+    );
+
+    // -------------------------------------------------------------------------
     // 6. GOOGLE OAUTH AVATAR SYNCHRONIZATION
     // -------------------------------------------------------------------------
     console.log('\n[Phase 6: Google OAuth Avatar Synchronization]');
@@ -333,6 +559,14 @@ async function runUserAvatarTestSuite() {
     // 8. ZERO TEST RESIDUE TEARDOWN
     // -------------------------------------------------------------------------
     console.log('\n[Phase 8: Zero Test Residue Cleanup]');
+    if (createdStore && createdStore.storeId) {
+      try {
+        await prisma.store.delete({ where: { storeId: createdStore.storeId } });
+        console.log(`  \x1b[32m✔ [CLEANUP]\x1b[0m Successfully deleted test store ID: ${createdStore.storeId}`);
+      } catch (cleanErr: any) {
+        console.error('  \x1b[31m✖ [CLEANUP ERROR]\x1b[0m Could not delete test store:', cleanErr.message);
+      }
+    }
     if (createdUser && createdUser.userId) {
       try {
         await prisma.refreshToken.deleteMany({ where: { userId: createdUser.userId } });

@@ -63,9 +63,14 @@ export class IdentityVerificationsService {
 
     // 2. Compose vendorData securely on server-side
     const vendorData = `user-${userId.toString()}`;
+    const defaultFrontendUrl = (
+      process.env.FRONTEND_URL || 'https://smart-order-button.vercel.app'
+    )
+      .trim()
+      .replace(/\/+$/, '');
     const callbackUrl =
       process.env.DIDIT_CALLBACK_URL ||
-      'https://buttontdash.vercel.app/verification/callback';
+      `${defaultFrontendUrl}/customer/profile?tab=IDENTITY`;
 
     // 3. Call Didit API v3
     const diditResponse = await this.diditClient.createSession(vendorData, callbackUrl);

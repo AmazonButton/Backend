@@ -839,7 +839,8 @@ export class AuthRepository {
     userId: bigint,
     data: {
       fullName?: string;
-      avatarUrl?: string;
+      avatarUrl?: string | null;
+      avatarPublicId?: string | null;
       phone?: string;
       phoneVerifiedAt?: Date | null;
       firebaseUid?: string | null;
@@ -850,6 +851,7 @@ export class AuthRepository {
       data: {
         ...(data.fullName !== undefined ? { fullName: data.fullName } : {}),
         ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
+        ...(data.avatarPublicId !== undefined ? { avatarPublicId: data.avatarPublicId } : {}),
         ...(data.phone !== undefined ? { phone: data.phone } : {}),
         ...(data.phoneVerifiedAt !== undefined ? { phoneVerifiedAt: data.phoneVerifiedAt } : {}),
         ...(data.firebaseUid !== undefined ? { firebaseUid: data.firebaseUid } : {}),

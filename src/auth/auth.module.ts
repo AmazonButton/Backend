@@ -9,6 +9,7 @@ import { AuthRepository } from './auth.repository';
 import { MailModule } from '../mail/mail.module';
 import { FirebaseModule } from './firebase.module';
 import { FirebasePhoneService } from './firebase-phone.service';
+import { MediaModule } from '../media/media.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { FirebasePhoneService } from './firebase-phone.service';
     }),
     MailModule,
     FirebaseModule,
+    MediaModule,
   ],
   controllers: [AuthController],
   providers: [

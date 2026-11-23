@@ -4,13 +4,18 @@ import {
   Get,
   Patch,
   Put,
+  Delete,
   Body,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
   Request,
   Inject,
   HttpCode,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { LogoutJwtGuard } from './guards/logout-jwt.guard';
@@ -114,6 +119,30 @@ export class AuthController {
   updateProfilePut(@Request() req: any, @Body() body: UpdateProfileDto) {
     const rawUserId = req.user?.id || req.user?.userId;
     return this.authService.updateProfile(rawUserId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  @Post('avatar')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 3 * 1024 * 1024 },
+    }),
+  )
+  uploadAvatar(@UploadedFile() file: Express.Multer.File, @Request() req: any) {
+    if (!file) {
+      throw new BadRequestException('Vui lòng chọn tệp hình ảnh hợp lệ (JPG, PNG, WEBP, tối đa 3MB)');
+    }
+    const rawUserId = req.user?.id || req.user?.userId;
+    return this.authService.uploadAvatar(rawUserId, file);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  @Delete('avatar')
+  removeAvatar(@Request() req: any) {
+    const rawUserId = req.user?.id || req.user?.userId;
+    return this.authService.removeAvatar(rawUserId);
   }
 
   @UseGuards(JwtAuthGuard, AuthRateLimitGuard)

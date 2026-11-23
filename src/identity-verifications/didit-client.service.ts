@@ -41,6 +41,28 @@ export class DiditClientService {
   }
 
   /**
+   * Extract a short, secret-free human-readable detail from Didit error payloads.
+   * Never dumps arbitrary JSON keys so sensitive vendor data cannot reach logs or clients.
+   */
+  private extractSafeErrorDetail(responseData: any): string {
+    const rawDetail =
+      typeof responseData?.detail === 'string'
+        ? responseData.detail
+        : typeof responseData?.message === 'string'
+          ? responseData.message
+          : '';
+    if (!rawDetail) {
+      return '';
+    }
+
+    let clean = rawDetail.replace(/\s+/g, ' ').trim();
+    if (this.apiKey) {
+      clean = clean.split(this.apiKey).join('[REDACTED]');
+    }
+    return clean.slice(0, 200);
+  }
+
+  /**
    * Safe fetch wrapper with timeout, x-api-key header, and secret leakage prevention
    */
   private async executeRequest<T>(
@@ -76,8 +98,14 @@ export class DiditClientService {
       }
 
       if (!response.ok) {
+        const safeDetail = this.extractSafeErrorDetail(responseData);
+        const isInsufficientCredits =
+          /enough credits|insufficient credits|credit limit|quota exceeded/i.test(safeDetail);
+
         this.logger.error(
-          `[DiditClient] ${endpointName} failed with HTTP ${response.status}`,
+          `[DiditClient] ${endpointName} failed with HTTP ${response.status}${
+            isInsufficientCredits ? ' (insufficient_credits)' : ''
+          }`,
         );
 
         if (response.status >= 500) {
@@ -86,8 +114,16 @@ export class DiditClientService {
           );
         }
 
+        if (isInsufficientCredits) {
+          throw new BadGatewayException(
+            `Cổng định danh Didit không đủ verification credit hoặc đã hết hạn mức (HTTP ${response.status}: ${safeDetail}). Vui lòng nạp credit hoặc kiểm tra DIDIT_API_KEY tại Didit Business Console.`,
+          );
+        }
+
         throw new BadGatewayException(
-          `Yêu cầu đến cổng định danh Didit không thành công (${response.status})`,
+          safeDetail
+            ? `Yêu cầu đến cổng định danh Didit không thành công (${response.status}): ${safeDetail}`
+            : `Yêu cầu đến cổng định danh Didit không thành công (${response.status})`,
         );
       }
 

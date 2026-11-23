@@ -5,7 +5,9 @@ import {
   ConflictException,
   BadRequestException,
   NotFoundException,
+  InternalServerErrorException,
   Inject,
+  Optional,
   Logger,
   HttpException,
   HttpStatus,
@@ -22,6 +24,7 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { AuthRepository } from './auth.repository';
 import { MailService } from '../mail/mail.service';
+import { MediaService } from '../media/media.service';
 import {
   RegisterDto,
   LoginDto,
@@ -74,6 +77,7 @@ export class AuthService {
     @Inject(AuthRepository) private readonly authRepo: AuthRepository,
     @Inject(JwtService) private readonly jwtService: JwtService,
     @Inject(FirebasePhoneService) private readonly firebasePhoneService: FirebasePhoneService,
+    @Optional() @Inject(MediaService) private readonly mediaService?: MediaService,
   ) {}
 
   /**
@@ -1246,7 +1250,7 @@ export class AuthService {
               }),
             }
           : null,
-        ownedStores: user.ownedStores,
+        ownedStores: user.ownedStores?.map(({ logoPublicId: _logoPublicId, ...safeStore }: any) => safeStore),
         storeStaffs: user.storeStaffs,
         createdAt: user.createdAt,
       },
@@ -1260,11 +1264,29 @@ export class AuthService {
       throw new NotFoundException('Không tìm thấy thông tin người dùng');
     }
 
+    const previousPublicId = user.avatarPublicId || null;
     const newPhone = dto.phone !== undefined ? dto.phone.trim() : undefined;
     const phoneChanged = newPhone !== undefined && newPhone !== user.phone;
+
+    let nextAvatarUrl: string | null | undefined = undefined;
+    let nextAvatarPublicId: string | null | undefined = undefined;
+    if (dto.avatarUrl !== undefined) {
+      if (dto.avatarUrl === null) {
+        nextAvatarUrl = null;
+        nextAvatarPublicId = null;
+      } else {
+        const trimmedUrl = dto.avatarUrl.trim();
+        nextAvatarUrl = trimmedUrl;
+        if (trimmedUrl !== user.avatarUrl) {
+          nextAvatarPublicId = null;
+        }
+      }
+    }
+
     const profileUpdate: any = {
       fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
-      avatarUrl: dto.avatarUrl !== undefined ? dto.avatarUrl.trim() : undefined,
+      avatarUrl: nextAvatarUrl,
+      avatarPublicId: nextAvatarPublicId,
       phone: newPhone,
     };
     if (phoneChanged) {
@@ -1273,6 +1295,9 @@ export class AuthService {
     }
 
     const updated = await this.authRepo.updateProfile(rawUserId, profileUpdate);
+    if (nextAvatarPublicId === null && previousPublicId) {
+      await this.mediaService?.deleteAssetBestEffort(previousPublicId);
+    }
 
     const { role, storeId } = this.resolveUserRole(updated);
 
@@ -1293,6 +1318,87 @@ export class AuthService {
         customerProfileId: updated.customerProfile?.customerId?.toString() || null,
         createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
+      },
+    };
+  }
+
+  /**
+   * Upload and persist a user avatar image directly to Cloudinary and PostgreSQL.
+   */
+  async uploadAvatar(userId: string | number | bigint, file: Express.Multer.File) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('Vui lòng chọn tệp hình ảnh hợp lệ (JPG, PNG, WEBP, tối đa 3MB)');
+    }
+    if (!this.mediaService) {
+      throw new InternalServerErrorException('Dịch vụ lưu trữ ảnh chưa được khởi tạo');
+    }
+
+    const rawUserId = BigInt(userId);
+    const user = await this.authRepo.findById(rawUserId);
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy thông tin người dùng');
+    }
+
+    const previousPublicId = user.avatarPublicId || null;
+    const uploadResult = await this.mediaService.uploadImageBuffer(file, 'avatars', {
+      maxBytes: 3 * 1024 * 1024,
+      allowedMimes: ['image/jpeg', 'image/png', 'image/webp'],
+      publicIdPrefix: `user_${rawUserId.toString()}`,
+    });
+
+    let updated: any;
+    try {
+      updated = await this.authRepo.updateProfile(rawUserId, {
+        avatarUrl: uploadResult.secureUrl,
+        avatarPublicId: uploadResult.publicId,
+      });
+    } catch (err) {
+      await this.mediaService.deleteAssetBestEffort(uploadResult.publicId);
+      throw err;
+    }
+
+    if (previousPublicId && previousPublicId !== uploadResult.publicId) {
+      await this.mediaService.deleteAssetBestEffort(previousPublicId);
+    }
+
+    return {
+      success: true,
+      message: 'Cập nhật ảnh đại diện thành công',
+      data: {
+        id: updated.userId.toString(),
+        userId: updated.userId.toString(),
+        avatarUrl: updated.avatarUrl || null,
+      },
+    };
+  }
+
+  /**
+   * Remove user's persisted avatar URL and clean up old Cloudinary asset best-effort.
+   */
+  async removeAvatar(userId: string | number | bigint) {
+    const rawUserId = BigInt(userId);
+    const user = await this.authRepo.findById(rawUserId);
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy thông tin người dùng');
+    }
+
+    const previousPublicId = user.avatarPublicId || null;
+    const updated = await this.authRepo.updateProfile(rawUserId, {
+      avatarUrl: null,
+      avatarPublicId: null,
+    });
+
+    if (previousPublicId) {
+      await this.mediaService?.deleteAssetBestEffort(previousPublicId);
+    }
+
+    return {
+      success: true,
+      message: 'Đã gỡ ảnh đại diện thành công',
+      data: {
+        id: updated.userId.toString(),
+        userId: updated.userId.toString(),
+        avatarUrl: null,
       },
     };
   }

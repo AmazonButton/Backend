@@ -14,6 +14,7 @@ const SAFE_USER_SELECT = {
   email: true,
   fullName: true,
   phone: true,
+  avatarUrl: true,
   status: true,
 };
 
@@ -100,6 +101,7 @@ export class AdminRepository {
       email?: string;
       phone?: string;
       address?: string;
+      logoUrl?: string | null;
       latitude?: number;
       longitude?: number;
       status?: string;
@@ -112,6 +114,10 @@ export class AdminRepository {
         ...(data.email !== undefined && { email: data.email ? data.email.trim() : null }),
         ...(data.phone && { phone: data.phone.trim() }),
         ...(data.address && { address: data.address.trim() }),
+        ...(data.logoUrl !== undefined && {
+          logoUrl: data.logoUrl ? data.logoUrl.trim() : null,
+          logoPublicId: null,
+        }),
         ...(data.latitude !== undefined && { latitude: data.latitude }),
         ...(data.longitude !== undefined && { longitude: data.longitude }),
         ...(data.status && { status: data.status }),
@@ -252,10 +258,11 @@ export class AdminRepository {
           username: true,
           fullName: true,
           phone: true,
+          avatarUrl: true,
           status: true,
           createdAt: true,
           customerProfile: true,
-          ownedStores: { select: { storeId: true, name: true, code: true, status: true } },
+          ownedStores: { select: { storeId: true, name: true, code: true, logoUrl: true, status: true } },
           platformMemberships: {
             where: { status: 'ACTIVE' },
             include: { role: true },
@@ -284,10 +291,11 @@ export class AdminRepository {
         username: true,
         fullName: true,
         phone: true,
+        avatarUrl: true,
         status: true,
         createdAt: true,
         customerProfile: true,
-        ownedStores: { select: { name: true, code: true } },
+        ownedStores: { select: { name: true, code: true, logoUrl: true } },
       },
     });
   }
