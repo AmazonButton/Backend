@@ -1936,9 +1936,7 @@ async function runDiditKycTestSuite() {
     global.fetch = originalFetch;
 
     process.env.NODE_ENV = 'test';
-    if (!process.env.REDIS_URL) {
-      process.env.DISABLE_REDIS = 'true';
-    }
+    process.env.DISABLE_REDIS = 'true';
     const testJwtSecret =
       process.env.JWT_SECRET || 'ci_test_jwt_secret_key_minimum_32_characters_long_for_security!';
     process.env.JWT_SECRET = testJwtSecret;
@@ -2326,6 +2324,7 @@ async function runDiditKycTestSuite() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runDiditKycTestSuite().catch((err) => {
