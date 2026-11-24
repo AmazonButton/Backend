@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ForbiddenException, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
+import { ProductsService } from '../src/products/products.service';
 import { PrismaClient } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import * as bcrypt from 'bcryptjs';
@@ -27,6 +28,8 @@ async function runProductsHttpTestSuite() {
 
   let app: any = null;
   let baseUrl = '';
+  const prevNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
   const ts = Date.now();
   let customerUser: any = null;
   let storeOwner1: any = null;
@@ -190,7 +193,7 @@ async function runProductsHttpTestSuite() {
       },
     });
 
-    const jwtSecret = process.env.JWT_SECRET || 'sob_jwt_secret_dev_2026';
+    const jwtSecret = process.env.JWT_SECRET || 'ci_test_jwt_secret_key_minimum_32_characters_long_for_security!';
     const jwtCustomer = jwt.sign(
       { userId: customerUser.userId.toString(), email: customerUser.email, username: customerUser.username, role: 'CUSTOMER' },
       jwtSecret,
@@ -310,7 +313,7 @@ async function runProductsHttpTestSuite() {
       'Store Owner 2 truy cập sản phẩm của Store 1 bị chặn với 403 Forbidden (Chống BOLA/IDOR)',
     );
 
-    // 6.3: Store Owner không có storeId -> 403 Forbidden (Fail-Closed)
+    // 6.3: Store Owner không có storeId -> 403 Forbidden (Fail-Closed trên cả /products/:id và /products)
     const resOwnerNoStore = await fetch(`${baseUrl}/products/${testProductStore1.productId}`, {
       headers: { Authorization: `Bearer ${jwtOwnerNoStore}` },
     });
@@ -318,20 +321,59 @@ async function runProductsHttpTestSuite() {
       resOwnerNoStore.status === 403,
       'Store Owner thiếu storeId bị chặn với 403 Forbidden (Fail-Closed bảo mật)',
     );
+    const resOwnerNoStoreList = await fetch(`${baseUrl}/products`, {
+      headers: { Authorization: `Bearer ${jwtOwnerNoStore}` },
+    });
+    assert(
+      resOwnerNoStoreList.status === 403,
+      'GET /api/v1/products với Store Owner thiếu storeId bị chặn 403 Forbidden',
+    );
 
-    // 6.4: Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 1 -> 200 OK
+    // 6.3b: Store Owner 1 cố tình truyền ?storeId của Store 2 trên GET /api/v1/products -> 403 Forbidden
+    const resOwner1CrossList = await fetch(`${baseUrl}/products?storeId=${testStore2.storeId}`, {
+      headers: { Authorization: `Bearer ${jwtOwner1}` },
+    });
+    assert(
+      resOwner1CrossList.status === 403,
+      'GET /api/v1/products?storeId=<Store2> với Store Owner 1 bị chặn 403 Forbidden',
+    );
+
+    // 6.4 & 6.5: Legacy store_staff (STAFF_INVENTORY) trên HTTP bị hạ quyền về CUSTOMER theo authority.policy.ts
+    // (không thể gọi endpoint quản trị store -> 403; ở tầng service vẫn chặn BOLA 403 nếu nhận STAFF_INVENTORY)
     const resStaff1Self = await fetch(`${baseUrl}/products/${testProductStore1.productId}`, {
       headers: { Authorization: `Bearer ${jwtStaff1}` },
     });
-    assert(resStaff1Self.status === 200, 'Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 1: 200 OK');
+    assert(resStaff1Self.status === 200, 'Staff Inventory (hạ quyền CUSTOMER) xem sản phẩm ACTIVE Store 1: 200 OK');
 
-    // 6.5: Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 2 -> 403 Forbidden
-    const resStaff1Other = await fetch(`${baseUrl}/products/${testProductStore2.productId}`, {
-      headers: { Authorization: `Bearer ${jwtStaff1}` },
+    const resStaff1Mutate = await fetch(`${baseUrl}/products`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${jwtStaff1}`,
+      },
+      body: JSON.stringify({ productName: 'Blocked Staff Create', basePrice: 10000 }),
     });
     assert(
-      resStaff1Other.status === 403,
-      'Staff Inventory cửa hàng 1 xem sản phẩm cửa hàng 2 bị chặn với 403 Forbidden',
+      resStaff1Mutate.status === 403,
+      'Legacy Staff Inventory bị hạ quyền CUSTOMER bị chặn 403 Forbidden khi tạo sản phẩm',
+    );
+
+    const productsService = app.get(ProductsService);
+    let directStaffBolaBlocked = false;
+    try {
+      await productsService.getById(testProductStore2.productId.toString(), {
+        userId: staffInventoryStore1.userId.toString(),
+        role: 'STAFF_INVENTORY',
+        storeId: testStore1.storeId.toString(),
+      });
+    } catch (err: any) {
+      if (err instanceof ForbiddenException || err?.status === 403) {
+        directStaffBolaBlocked = true;
+      }
+    }
+    assert(
+      directStaffBolaBlocked,
+      'ProductsService.getById chặn BOLA 403 Forbidden khi STAFF_INVENTORY Store 1 truy cập sản phẩm Store 2',
     );
 
     // 6.6: Customer xem sản phẩm của Store 1 -> 200 OK (Catalog công khai cho người mua hàng)
@@ -386,6 +428,8 @@ async function runProductsHttpTestSuite() {
     if (app) {
       await app.close();
     }
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
     await prisma.$disconnect();
   }
 

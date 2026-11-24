@@ -16,11 +16,15 @@ export class ProductsRepository {
 
   async findMany(
     storeId?: bigint,
-    options?: { page?: number; pageSize?: number; search?: string; category?: string },
+    options?: { page?: number; pageSize?: number; search?: string; category?: string; onlyActivePublic?: boolean },
   ) {
     const whereClause: any = {};
     if (storeId) {
       whereClause.storeId = storeId;
+    }
+    if (options?.onlyActivePublic) {
+      whereClause.status = 'ACTIVE';
+      whereClause.store = { status: 'ACTIVE' };
     }
     if (options?.category?.trim()) {
       whereClause.category = {
@@ -43,16 +47,27 @@ export class ProductsRepository {
     const skip = (page - 1) * pageSize;
     const take = pageSize;
 
+    const includeClause: any = {
+      inventory: true,
+      category: true,
+      images: {
+        orderBy: { displayOrder: 'asc' },
+      },
+    };
+    if (options?.onlyActivePublic) {
+      includeClause.store = {
+        select: {
+          storeId: true,
+          name: true,
+          code: true,
+        },
+      };
+    }
+
     const [items, total] = await Promise.all([
       this.prisma.product.findMany({
         where: whereClause,
-        include: {
-          inventory: true,
-          category: true,
-          images: {
-            orderBy: { displayOrder: 'asc' },
-          },
-        },
+        include: includeClause,
         orderBy: [{ createdAt: 'desc' }, { productId: 'desc' }],
         skip,
         take,

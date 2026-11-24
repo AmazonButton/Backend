@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 
 @Injectable()
 export class WarrantyRepository {
@@ -192,8 +193,39 @@ export class WarrantyRepository {
     adminUserId: bigint,
     adminNote?: string,
   ) {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Lock và kiểm tra ticket
+    return runWithTransactionRetry(
+      () => this.prisma.$transaction(async (tx) => {
+      // 1. Pre-read non-locking để xác định buttonId trước nhằm thống nhất thứ tự khóa: iot_button -> warranty_tickets
+      const preTicket = await tx.warrantyTicket.findUnique({
+        where: { ticketId },
+        select: { ticketId: true, buttonId: true, faultGroup: true, status: true },
+      });
+      if (!preTicket) throw new NotFoundException('Không tìm thấy phiếu bảo hành');
+      if (preTicket.status !== 'PENDING') {
+        throw new BadRequestException(`Phiếu bảo hành đang ở trạng thái ${preTicket.status}, không thể duyệt đổi`);
+      }
+      if (preTicket.faultGroup !== 'GROUP_A') {
+        throw new BadRequestException(
+          'Chỉ hỗ trợ duyệt đổi 1-1 miễn phí cho thiết bị thuộc Nhóm A (Lỗi kỹ thuật tự nhiên 0% khấu trừ).',
+        );
+      }
+      if (replacementButtonId === preTicket.buttonId) {
+        throw new BadRequestException('DUPLICATE_DEVICE_SWAP: Không thể đổi trùng với chính thiết bị đang lỗi');
+      }
+
+      // 1.1. Khóa cả 2 thiết bị theo thứ tự ID tăng dần TRƯỚC khi khóa warranty_tickets (tránh AB-BA deadlock với Provisioning)
+      const [firstBtnId, secondBtnId] =
+        preTicket.buttonId < replacementButtonId
+          ? [preTicket.buttonId, replacementButtonId]
+          : [replacementButtonId, preTicket.buttonId];
+      await tx.$queryRaw`
+        SELECT button_id FROM iot_button
+        WHERE button_id IN (${firstBtnId}, ${secondBtnId})
+        ORDER BY button_id ASC
+        FOR UPDATE
+      `;
+
+      // 1.2. Sau đó mới khóa & xác thực lại ticket
       await tx.$queryRaw`
         SELECT ticket_id FROM warranty_tickets WHERE ticket_id = ${ticketId} FOR UPDATE
       `;
@@ -205,6 +237,9 @@ export class WarrantyRepository {
       if (ticket.status !== 'PENDING') {
         throw new BadRequestException(`Phiếu bảo hành đang ở trạng thái ${ticket.status}, không thể duyệt đổi`);
       }
+      if (ticket.buttonId !== preTicket.buttonId) {
+        throw new ConflictException('SOURCE_DEVICE_CHANGED: Thiết bị gốc của phiếu bảo hành đã thay đổi đồng thời');
+      }
       if (ticket.faultGroup !== 'GROUP_A') {
         throw new BadRequestException(
           'Chỉ hỗ trợ duyệt đổi 1-1 miễn phí cho thiết bị thuộc Nhóm A (Lỗi kỹ thuật tự nhiên 0% khấu trừ).',
@@ -213,18 +248,6 @@ export class WarrantyRepository {
       if (replacementButtonId === ticket.buttonId) {
         throw new BadRequestException('DUPLICATE_DEVICE_SWAP: Không thể đổi trùng với chính thiết bị đang lỗi');
       }
-
-      // 1.1. Khóa cả 2 thiết bị theo thứ tự ID tăng dần để chống deadlock và chống đổi trùng đồng thời
-      const [firstBtnId, secondBtnId] =
-        ticket.buttonId < replacementButtonId
-          ? [ticket.buttonId, replacementButtonId]
-          : [replacementButtonId, ticket.buttonId];
-      await tx.$queryRaw`
-        SELECT button_id FROM iot_button
-        WHERE button_id IN (${firstBtnId}, ${secondBtnId})
-        ORDER BY button_id ASC
-        FOR UPDATE
-      `;
 
       const oldButton = await tx.ioTButton.findUnique({
         where: { buttonId: ticket.buttonId },
@@ -395,7 +418,9 @@ export class WarrantyRepository {
       }
 
       return updatedTicket;
-    });
+    }),
+      { operationName: 'WarrantyApproveSwapAtomicTx' },
+    );
   }
 
   async lockDeviceAtomicTx(
@@ -403,7 +428,21 @@ export class WarrantyRepository {
     adminUserId: bigint,
     adminNote?: string,
   ) {
-    return this.prisma.$transaction(async (tx) => {
+    return runWithTransactionRetry(
+      () => this.prisma.$transaction(async (tx) => {
+      // Pre-read buttonId không giữ khóa để thống nhất thứ tự khóa: iot_button -> warranty_tickets
+      const preTicket = await tx.warrantyTicket.findUnique({
+        where: { ticketId },
+        select: { ticketId: true, buttonId: true, status: true },
+      });
+      if (!preTicket) throw new NotFoundException('Không tìm thấy phiếu bảo hành');
+      if (preTicket.status !== 'PENDING') {
+        throw new BadRequestException(`Phiếu bảo hành đang ở trạng thái ${preTicket.status}, không thể khóa thiết bị lại`);
+      }
+
+      await tx.$queryRaw`
+        SELECT button_id FROM iot_button WHERE button_id = ${preTicket.buttonId} FOR UPDATE
+      `;
       await tx.$queryRaw`
         SELECT ticket_id FROM warranty_tickets WHERE ticket_id = ${ticketId} FOR UPDATE
       `;
@@ -415,10 +454,9 @@ export class WarrantyRepository {
       if (ticket.status !== 'PENDING') {
         throw new BadRequestException(`Phiếu bảo hành đang ở trạng thái ${ticket.status}, không thể khóa thiết bị lại`);
       }
-
-      await tx.$queryRaw`
-        SELECT button_id FROM iot_button WHERE button_id = ${ticket.buttonId} FOR UPDATE
-      `;
+      if (ticket.buttonId !== preTicket.buttonId) {
+        throw new ConflictException('SOURCE_DEVICE_CHANGED: Thiết bị gốc của phiếu bảo hành đã thay đổi đồng thời');
+      }
       const lockedButton =
         typeof tx.ioTButton.findUnique === 'function'
           ? await tx.ioTButton.findUnique({ where: { buttonId: ticket.buttonId } })
@@ -546,7 +584,9 @@ export class WarrantyRepository {
       }
 
       return resolvedTicket;
-    });
+    }),
+      { operationName: 'WarrantyLockDeviceAtomicTx' },
+    );
   }
 
   async updateTicketStatus(

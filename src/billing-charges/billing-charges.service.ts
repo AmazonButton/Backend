@@ -113,7 +113,8 @@ export class BillingChargesService {
       throw new NotFoundException(`Khoản thu #${chargeId} không tồn tại`);
     }
 
-    if (charge.status === 'PAID' && !['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose)) {
+    const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION', 'STORE_SUBSCRIPTION'].includes(charge.purpose);
+    if (charge.status === 'PAID' && !receiptLedgerEnabled) {
       return {
         alreadySettled: true,
         status: 'PAID',
@@ -135,7 +136,8 @@ export class BillingChargesService {
       throw new NotFoundException(`Khoản thu #${chargeId} không tồn tại`);
     }
 
-    if (charge.status === 'PAID' && !['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose)) {
+    const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION', 'STORE_SUBSCRIPTION'].includes(charge.purpose);
+    if (charge.status === 'PAID' && !receiptLedgerEnabled) {
       return {
         alreadySettled: true,
         status: 'PAID',
@@ -177,7 +179,7 @@ export class BillingChargesService {
           throw new BadRequestException(`Giao dịch trên PayOS chưa hoàn tất thanh toán (trạng thái: ${result.data?.status || result.desc})`);
         }
 
-        const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose);
+        const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION', 'STORE_SUBSCRIPTION'].includes(charge.purpose);
         const providerTx = receiptLedgerEnabled
           ? result.data.transactions?.find((item: any) => item.reference === providerTransactionCode.trim())
           : result.data.transactions?.[0];

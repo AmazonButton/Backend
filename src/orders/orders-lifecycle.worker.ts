@@ -87,26 +87,34 @@ export class OrdersLifecycleWorker implements OnModuleInit, OnModuleDestroy {
         );
 
         // P2 Fix (orders/storefront-guest-unpaid-inventory-reservation-without-expiry):
-        // Sweep and cancel unpaid storefront/online orders older than 15 minutes, returning reserved stock!
+        // Sweep and cancel unpaid non-COD storefront/online orders older than 15 minutes, returning reserved stock!
+        // #10 Fix: Exclude COD / CASH_ON_DELIVERY orders from 15-minute unpaid payment expiration sweep.
         const staleUnpaidOrders = await this.prisma.$queryRawUnsafe<any[]>(
           `SELECT o.order_id, o.order_code
            FROM orders o
            WHERE o.order_status = 'PENDING'
              AND o.payment_status = 'UNPAID'
              AND o.button_id IS NULL
+             AND UPPER(COALESCE(o.payment_method, '')) NOT IN ('COD', 'CASH_ON_DELIVERY')
              AND o.created_at <= (NOW() - INTERVAL '15 minutes')
            LIMIT 50`,
         );
 
         for (const stale of (staleUnpaidOrders || [])) {
           try {
-            await this.ordersRepo.cancelOrderAtomicTx(
+            const cancelResult: any = await this.ordersRepo.cancelOrderAtomicTx(
               BigInt(stale.order_id),
               'Hết hạn thời gian thanh toán đơn hàng (15 phút)',
               null,
               'CANCELLED',
+              {
+                mode: 'PAYMENT_TIMEOUT',
+                excludePaymentMethods: ['COD', 'CASH_ON_DELIVERY'],
+              },
             );
-            this.logger.log(`[OrdersLifecycleWorker] Cancelled stale unpaid order #${stale.order_code} to release reserved inventory.`);
+            if (!cancelResult?.skipped) {
+              this.logger.log(`[OrdersLifecycleWorker] Cancelled stale unpaid order #${stale.order_code} to release reserved inventory.`);
+            }
           } catch (e: any) {
             this.logger.warn(`Failed to cancel stale unpaid order #${stale.order_code}: ${e.message}`);
           }

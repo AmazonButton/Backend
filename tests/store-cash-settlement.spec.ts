@@ -17,6 +17,7 @@ async function main() {
     const tx: any = {
       $queryRawUnsafe: async (sql: string) => sql.includes('billing_charges') ? [charge] : [],
       billingCharge: { findUnique: async () => ({ chargeId: 11n, status: 'PAID' }) },
+      buttonRental: { findUnique: async () => ({ rentalId: 7n, status: 'ACTIVE' }) },
       billingPaymentReceipt: {
         findUnique: async () => saved,
         create: async ({ data }: any) => { receiptWrites++; saved = { id: 3n, ...data }; return saved; },

@@ -7,6 +7,22 @@ import { PriceHistoryResponseDto } from './dto/price-history-response.dto';
 import { InventoryResponseDto } from './dto/inventory-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
+import {
+  POSTGRES_BIGINT_MAX,
+  parseNonNegativeInt,
+  parsePositivePostgresBigInt,
+} from '../common/utils/validation.util';
+
+const STORE_SCOPED_ROLES = [
+  'STORE_OWNER',
+  'STORE_MANAGER',
+  'STAFF_INVENTORY',
+  'STAFF_ORDERS',
+  'STAFF_ORDER',
+  'STAFF_DELIVERY',
+  'STORE_STAFF',
+];
+const PLATFORM_ADMIN_ROLES = ['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'];
 
 @Injectable()
 export class ProductsService {
@@ -17,7 +33,7 @@ export class ProductsService {
     @Inject(MediaService) private readonly mediaService: MediaService,
     @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
     @Optional() private readonly cacheService?: DashboardCacheService,
-  ) {}
+  ) { }
 
   private async invalidateProductCaches(storeId?: string | number | bigint) {
     if (!this.cacheService || typeof this.cacheService.invalidatePrefix !== 'function') return;
@@ -88,6 +104,81 @@ export class ProductsService {
     return undefined;
   }
 
+  private parseOptionalStoreId(storeId?: string | number | bigint | null): bigint | undefined {
+    if (storeId === undefined || storeId === null) return undefined;
+    if (typeof storeId === 'string' && storeId.trim() === '') return undefined;
+    const parsed = parsePositivePostgresBigInt(storeId);
+    if (parsed === null) {
+      throw new BadRequestException(
+        `Mã cửa hàng (storeId) không hợp lệ (chỉ chấp nhận số nguyên dương BIGINT 1..${POSTGRES_BIGINT_MAX.toString()})`,
+      );
+    }
+    return parsed;
+  }
+
+  private mapProductImages(p: any) {
+    return (
+      p.images?.map((img: any) => ({
+        imageId: img.imageId.toString(),
+        productId: img.productId.toString(),
+        imageUrl: img.imageUrl,
+        isThumbnail: img.isThumbnail,
+        displayOrder: img.displayOrder,
+      })) || []
+    );
+  }
+
+  private formatPublicProduct(p: any) {
+    if (!p) return null;
+    const thumb = p.images?.find((img: any) => img.isThumbnail) || p.images?.[0];
+    const thumbUrl = thumb?.imageUrl || null;
+    const quantityOnHand = p.inventory
+      ? Number(p.inventory.quantityOnHand || 0)
+      : p.stock !== undefined
+        ? Number(p.stock)
+        : 0;
+    const reservedQuantity = p.inventory ? Number(p.inventory.reservedQuantity || 0) : 0;
+    const availableStock = Math.max(0, quantityOnHand - reservedQuantity);
+
+    return {
+      id: p.productId.toString(),
+      productId: p.productId.toString(),
+      storeId: p.storeId ? p.storeId.toString() : null,
+      categoryId: p.categoryId ? p.categoryId.toString() : null,
+      name: p.productName || p.name || '',
+      productName: p.productName || p.name || '',
+      sku: p.productCode || p.sku || 'SKU-' + p.productId.toString(),
+      productCode: p.productCode || null,
+      brand: p.brand || '',
+      description: p.description || '',
+      unit: p.unit || 'Sản phẩm',
+      basePrice: Number(p.basePrice || 0),
+      price: Number(p.basePrice || 0),
+      availableStock,
+      stock: availableStock,
+      status: p.status,
+      imageUrl: thumbUrl,
+      thumbnailUrl: thumbUrl,
+      images: this.mapProductImages(p),
+      category: p.category
+        ? {
+          categoryId: p.category.categoryId?.toString?.() ?? null,
+          id: p.category.categoryId?.toString?.() ?? null,
+          categoryName: p.category.categoryName ?? null,
+          name: p.category.categoryName ?? null,
+        }
+        : null,
+      store: p.store
+        ? {
+          id: p.store.storeId?.toString?.() ?? null,
+          storeId: p.store.storeId?.toString?.() ?? null,
+          name: p.store.name ?? null,
+          code: p.store.code ?? null,
+        }
+        : null,
+    };
+  }
+
   private formatProduct(p: any) {
     if (!p) return null;
     const thumb = p.images?.find((img: any) => img.isThumbnail) || p.images?.[0];
@@ -106,23 +197,48 @@ export class ProductsService {
       stock: p.inventory ? Number(p.inventory.quantityOnHand || 0) : (p.stock !== undefined ? Number(p.stock) : 0),
       imageUrl: thumbUrl,
       thumbnailUrl: thumbUrl,
-      images: p.images?.map((img: any) => ({
-        imageId: img.imageId.toString(),
-        productId: img.productId.toString(),
-        imageUrl: img.imageUrl,
-        isThumbnail: img.isThumbnail,
-        displayOrder: img.displayOrder,
-      })) || [],
+      images: this.mapProductImages(p),
     };
   }
 
   async list(
     storeId?: string | number | bigint,
     options?: { page?: number; pageSize?: number; search?: string; category?: string },
+    user?: any,
   ) {
-    const targetStoreId = storeId ? BigInt(storeId) : undefined;
-    const { items, total, page, pageSize } = await this.productsRepo.findMany(targetStoreId, options);
-    const data = items.map((p: any) => this.formatProduct(p));
+    const requestedStoreId = this.parseOptionalStoreId(storeId);
+    let targetStoreId: bigint | undefined;
+    let onlyActivePublic = false;
+
+    if (user) {
+      if (STORE_SCOPED_ROLES.includes(user.role)) {
+        const authStoreId = this.parseOptionalStoreId(user.storeId);
+        if (!authStoreId) {
+          throw new ForbiddenException('Tài khoản quản lý hoặc nhân viên chưa được liên kết với bất kỳ cửa hàng nào');
+        }
+        if (requestedStoreId !== undefined && requestedStoreId !== authStoreId) {
+          throw new ForbiddenException('Bạn không có quyền xem danh sách sản phẩm của cửa hàng khác');
+        }
+        targetStoreId = authStoreId;
+      } else if (user.role === 'CUSTOMER') {
+        targetStoreId = requestedStoreId;
+        onlyActivePublic = true;
+      } else if (PLATFORM_ADMIN_ROLES.includes(user.role)) {
+        targetStoreId = requestedStoreId;
+      } else {
+        throw new ForbiddenException('Vai trò này không có quyền truy cập danh sách sản phẩm');
+      }
+    } else if (requestedStoreId !== undefined) {
+      targetStoreId = requestedStoreId;
+    } else {
+      throw new ForbiddenException('Yêu cầu xác thực cửa hàng hoặc vai trò hợp lệ khi truy vấn danh sách sản phẩm');
+    }
+
+    const { items, total, page, pageSize } = await this.productsRepo.findMany(targetStoreId, {
+      ...options,
+      onlyActivePublic,
+    });
+    const data = items.map((p: any) => (onlyActivePublic ? this.formatPublicProduct(p) : this.formatProduct(p)));
     const totalPages = Math.ceil(total / (pageSize || 20));
     return {
       data,
@@ -217,6 +333,26 @@ export class ProductsService {
 
     const imageInputs = this.parseImageInputs(body);
 
+    let resolvedInitialStock: number | undefined;
+    if (initialStock !== undefined) {
+      const parsedInitialStock = parseNonNegativeInt(initialStock);
+      if (parsedInitialStock === null) {
+        throw new BadRequestException('Số lượng tồn kho ban đầu (initialStock) phải là số nguyên không âm hợp lệ');
+      }
+      resolvedInitialStock = parsedInitialStock;
+    }
+
+    let resolvedStock: number | undefined;
+    if (stock !== undefined) {
+      const parsedStock = parseNonNegativeInt(stock);
+      if (parsedStock === null) {
+        throw new BadRequestException('Số lượng tồn kho (stock) phải là số nguyên không âm hợp lệ');
+      }
+      resolvedStock = parsedStock;
+    }
+
+    const finalInitialStock = resolvedInitialStock ?? resolvedStock ?? 50;
+
     const created = await this.productsRepo.create({
       storeId: targetStoreId,
       productName: finalProductName,
@@ -226,7 +362,7 @@ export class ProductsService {
       basePrice: parseFloat(finalPrice.toString()),
       status: 'ACTIVE',
       ...(categoryId ? { categoryId: BigInt(categoryId) } : {}),
-      initialStock: initialStock !== undefined ? initialStock : stock || 50,
+      initialStock: finalInitialStock,
       images: imageInputs,
     });
     const formatted = this.formatProduct(created);
@@ -274,10 +410,10 @@ export class ProductsService {
     const hasPriceChange = finalPrice !== undefined && Number(existing.basePrice) !== finalPrice;
     const priceHistory = hasPriceChange
       ? {
-          oldPrice: Number(existing.basePrice),
-          newPrice: finalPrice,
-          changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
-        }
+        oldPrice: Number(existing.basePrice),
+        newPrice: finalPrice,
+        changedByUserId: user?.userId ? BigInt(user.userId) : undefined,
+      }
       : undefined;
 
     // P2 Invariant Fix (products/update-status-bypasses-subscription-and-max-products):

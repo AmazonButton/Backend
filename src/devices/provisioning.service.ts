@@ -6,7 +6,9 @@ import {
   UnauthorizedException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   InternalServerErrorException,
+  NotImplementedException,
   Logger,
   Inject,
 } from '@nestjs/common';
@@ -14,6 +16,10 @@ import { ProvisioningRepository } from './provisioning.repository';
 import { CryptoService } from '../security/crypto.service';
 import { EventsGateway } from '../websocket/events.gateway';
 import * as crypto from 'crypto';
+import {
+  POSTGRES_BIGINT_MAX,
+  parsePositivePostgresBigInt,
+} from '../common/utils/validation.util';
 
 // activeSessions migrated to PostgreSQL provisioning_sessions
 
@@ -164,6 +170,12 @@ export class ProvisioningService {
       throw new UnauthorizedException('Chỉ khách hàng cá nhân có hồ sơ mới có thể kích hoạt ghép nối thiết bị');
     }
 
+    if (parsePositivePostgresBigInt(dto?.productId) === null) {
+      throw new BadRequestException(
+        `Mã sản phẩm (productId) không hợp lệ (chỉ chấp nhận số nguyên dương BIGINT 1..${POSTGRES_BIGINT_MAX.toString()})`,
+      );
+    }
+
     try {
       const result = await this.provRepo.confirmPairingAtomicTx(sessionId, customerId, {
         deviceId: dto.deviceId,
@@ -184,13 +196,20 @@ export class ProvisioningService {
         data: result,
       };
     } catch (err: any) {
-      const msg = err.message || '';
-      if (msg.startsWith('NOT_FOUND:')) throw new NotFoundException(msg.replace('NOT_FOUND: ', ''));
-      if (msg.startsWith('CONFLICT:')) throw new ConflictException(msg.replace('CONFLICT: ', ''));
-      if (msg.startsWith('BAD_REQUEST:')) throw new BadRequestException(msg.replace('BAD_REQUEST: ', ''));
-      this.logger.error('Unexpected error in confirmPairing:', err);
-      throw new InternalServerErrorException('Lỗi hệ thống khi xác nhận ghép nối');
+      this.rethrowProvisioningTxError(err, 'Lỗi hệ thống khi xác nhận ghép nối');
     }
+  }
+
+  private rethrowProvisioningTxError(err: any, fallbackMessage: string): never {
+    if (err instanceof HttpException) {
+      throw err;
+    }
+    const msg = err?.message || '';
+    if (msg.startsWith('NOT_FOUND:')) throw new NotFoundException(msg.replace('NOT_FOUND: ', ''));
+    if (msg.startsWith('CONFLICT:')) throw new ConflictException(msg.replace('CONFLICT: ', ''));
+    if (msg.startsWith('BAD_REQUEST:')) throw new BadRequestException(msg.replace('BAD_REQUEST: ', ''));
+    this.logger.error(`${fallbackMessage}:`, err);
+    throw new InternalServerErrorException(fallbackMessage);
   }
 
   async cancelSession(sessionId: string) {
@@ -295,8 +314,14 @@ export class ProvisioningService {
 
   async unclaim(id: string, user: any) {
     const button = await this.assertDeviceAccess(id, user);
+    const expectedCustomerId =
+      user?.role === 'CUSTOMER' && user?.customerProfileId ? BigInt(user.customerProfileId) : null;
 
-    await this.provRepo.unclaimDeviceAtomicTx(button.buttonId);
+    try {
+      await this.provRepo.unclaimDeviceAtomicTx(button.buttonId, expectedCustomerId);
+    } catch (err: any) {
+      this.rethrowProvisioningTxError(err, 'Lỗi hệ thống khi hủy sở hữu thiết bị');
+    }
 
     return {
       success: true,
@@ -311,7 +336,15 @@ export class ProvisioningService {
     const token = `tok_${crypto.randomBytes(8).toString('hex')}`;
     const tokenHash = DevicesService.hashToken(token);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    await this.provRepo.savePairingToken(button.deviceId, tokenHash, expiresAt);
+    const expectedCustomerId =
+      user?.role === 'CUSTOMER' && user?.customerProfileId ? BigInt(user.customerProfileId) : null;
+
+    try {
+      await this.provRepo.initiateTransferAtomicTx(button.buttonId, tokenHash, expiresAt, expectedCustomerId);
+    } catch (err: any) {
+      this.rethrowProvisioningTxError(err, 'Lỗi hệ thống khi tạo mã chuyển giao thiết bị');
+    }
+
     DevicesService.setPairingTokenMemory(button.deviceId, token, tokenHash, expiresAt.getTime());
 
     return {
@@ -320,6 +353,7 @@ export class ProvisioningService {
       data: {
         deviceId: button.deviceId,
         token,
+        status: 'TRANSFER_PENDING',
         qrPayload: `SOBPAIR://device/${button.deviceId}/token/${token}`,
       },
     };
@@ -328,7 +362,11 @@ export class ProvisioningService {
   async factoryReset(id: string, user: any) {
     const button = await this.assertDeviceAccess(id, user);
 
-    await this.provRepo.factoryResetAtomicTx(button.buttonId);
+    try {
+      await this.provRepo.factoryResetAtomicTx(button.buttonId);
+    } catch (err: any) {
+      this.rethrowProvisioningTxError(err, 'Lỗi hệ thống khi khôi phục cài đặt gốc thiết bị');
+    }
 
     return {
       success: true,
@@ -341,18 +379,16 @@ export class ProvisioningService {
   }
 
   async changeWifi(id: string, user: any, body?: any) {
-    const button = await this.assertDeviceAccess(id, user);
-
-    const ssid = body?.ssid || 'Smart-Order-WiFi';
-    return {
-      success: true,
-      message: 'Đã cập nhật thông tin mạng Wi-Fi cho thiết bị',
+    throw new NotImplementedException({
+      message:
+        'Cấu hình Wi-Fi qua cloud đã ngừng hỗ trợ. Vui lòng kết nối trực tiếp thiết bị qua Bluetooth (BLE) hoặc USB để cấu hình Wi-Fi.',
+      errorCode: 'WIFI_CLOUD_PROVISIONING_UNSUPPORTED',
       data: {
-        deviceId: button.deviceId,
-        ssid,
-        provisioningStatus: 'PROVISIONING',
+        deviceId: id,
+        provisioningMethod: 'BLE_OR_USB',
+        supportedChannels: ['BLE', 'USB'],
       },
-    };
+    });
   }
 
   getSecurityIncidents() {

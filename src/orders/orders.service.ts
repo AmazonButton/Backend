@@ -5,6 +5,7 @@ export { MIN_ORDER_TOTAL_VND } from './orders.constants';
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   Inject,
@@ -786,7 +787,20 @@ export class OrdersService {
       throw new BadRequestException('Đơn hàng đã được xử lý giao hàng hoặc hoàn tất, không thể hủy');
     }
 
-    const updated = await this.ordersRepo.cancelOrderAtomicTx(targetOrderId, reason, user?.userId || user?.id);
+    const updated = await this.ordersRepo.cancelOrderAtomicTx(
+      targetOrderId,
+      reason,
+      user?.userId || user?.id,
+      'CANCELLED',
+      { mode: 'MANUAL' },
+    );
+    if ((updated as any)?.skipped) {
+      throw new ConflictException({
+        success: false,
+        errorCode: (updated as any).skippedReason || 'ORDER_CANCELLATION_SKIPPED',
+        message: 'Không thể hủy đơn hàng do trạng thái hoặc phương thức thanh toán đã thay đổi',
+      });
+    }
     const formattedOrder = toOrderResponseDto(updated);
     const cancelPayload = { order: formattedOrder, reason, storeId: order.storeId.toString(), customerId: order.customerId ? order.customerId.toString() : null };
     this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_CANCELLED', cancelPayload);
@@ -958,7 +972,15 @@ export class OrdersService {
         newStatus === 'REJECTED' ? 'Cửa hàng từ chối tiếp nhận đơn' : 'Cập nhật hủy đơn',
         user?.userId || user?.id,
         newStatus as 'CANCELLED' | 'REJECTED',
+        { mode: 'MANUAL' },
       );
+      if ((updated as any)?.skipped) {
+        throw new ConflictException({
+          success: false,
+          errorCode: (updated as any).skippedReason || 'ORDER_CANCELLATION_SKIPPED',
+          message: 'Không thể cập nhật hủy đơn hàng do trạng thái đơn đã thay đổi',
+        });
+      }
     } else {
       updated = await this.ordersRepo.transitionOrderStatusAtomicTx(
         targetOrderId,
@@ -1081,9 +1103,17 @@ export class OrdersService {
     const formatted = toOrderResponseDto(updated);
 
     const payload = { order: formatted, storeId: updated.storeId.toString(), driverId: user.userId || user.id };
-    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
-    this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_DELIVERED', payload);
-    this.eventsGateway.emitToCustomer(updated.customerId.toString(), 'ORDER_STATUS_CHANGED', payload);
+    try {
+      this.eventsGateway?.emitToStore?.(updated.storeId.toString(), 'ORDER_STATUS_CHANGED', payload);
+      this.eventsGateway?.emitToStore?.(updated.storeId.toString(), 'ORDER_DELIVERED', payload);
+      if (updated.customerId) {
+        this.eventsGateway?.emitToCustomer?.(updated.customerId.toString(), 'ORDER_STATUS_CHANGED', payload);
+      }
+    } catch (emitErr: any) {
+      this.logger.warn(
+        `Failed post-commit websocket emit in completeDelivery for order ${orderId}: ${emitErr?.message || emitErr}`,
+      );
+    }
 
     await this.invalidateDashboardCaches(updated.storeId, updated.customerId ? updated.customer?.userId : undefined);
 

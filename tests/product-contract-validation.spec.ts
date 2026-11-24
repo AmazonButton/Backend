@@ -25,6 +25,7 @@ async function runProductContractValidationSuite() {
   let testStoreB: any = null;
   let testCategoryA: any = null;
   let testCategoryB: any = null;
+  let createdPlanId: bigint | null = null;
   const createdProductIds: bigint[] = [];
 
   try {
@@ -64,18 +65,28 @@ async function runProductContractValidationSuite() {
     });
 
     // Create active store subscription for testStoreA to list products
-    const plan = await prisma.subscriptionPlan.findFirst({ where: { isActive: true } });
-    if (plan) {
-      await prisma.storeSubscription.create({
+    let plan = await prisma.subscriptionPlan.findFirst({ where: { isActive: true } });
+    if (!plan) {
+      plan = await prisma.subscriptionPlan.create({
         data: {
-          storeId: testStoreA.storeId,
-          planId: plan.planId,
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 30 * 24 * 3600 * 1000),
-          status: 'ACTIVE',
+          planCode: `CONTRACT_TEST_${Date.now()}`,
+          planName: 'Contract Test Active Plan',
+          price: 100000,
+          durationDays: 30,
+          isActive: true,
         },
       });
+      createdPlanId = plan.planId;
     }
+    await prisma.storeSubscription.create({
+      data: {
+        storeId: testStoreA.storeId,
+        planId: plan.planId,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+        status: 'ACTIVE',
+      },
+    });
 
     // Create Category in Store A
     testCategoryA = await prisma.category.create({
@@ -188,6 +199,9 @@ async function runProductContractValidationSuite() {
     if (testStoreA) {
       await prisma.storeSubscription.deleteMany({ where: { storeId: testStoreA.storeId } });
       await prisma.store.deleteMany({ where: { storeId: testStoreA.storeId } });
+    }
+    if (createdPlanId) {
+      await prisma.subscriptionPlan.deleteMany({ where: { planId: createdPlanId } });
     }
     if (testStoreB) await prisma.store.deleteMany({ where: { storeId: testStoreB.storeId } });
     if (ownerUser) await prisma.user.deleteMany({ where: { userId: ownerUser.userId } });
