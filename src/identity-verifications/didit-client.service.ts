@@ -5,6 +5,16 @@ import {
   GatewayTimeoutException,
 } from '@nestjs/common';
 
+export interface DiditExpectedDetails {
+  first_name?: string;
+  last_name?: string;
+  date_of_birth?: string;
+  identification_number?: string;
+  nationality?: string;
+  id_country?: string;
+  expected_document_types?: string[];
+}
+
 export interface DiditCreateSessionResponse {
   session_id: string;
   url: string;
@@ -149,6 +159,10 @@ export class DiditClientService {
     }
   }
 
+  isConfigured(): boolean {
+    return Boolean(this.apiKey && this.apiKey.trim().length > 0);
+  }
+
   /**
    * Create a new verification session via Didit API v3
    * POST https://verification.didit.me/v3/session/
@@ -156,13 +170,28 @@ export class DiditClientService {
   async createSession(
     vendorData: string,
     callbackUrl: string,
+    options?: { expectedDetails?: DiditExpectedDetails | null },
   ): Promise<DiditCreateSessionResponse> {
     const url = `${this.baseUrl.replace(/\/+$/, '')}/session/`;
-    const payload = {
+    const payload: Record<string, any> = {
       workflow_id: this.workflowId,
       vendor_data: vendorData,
       callback: callbackUrl,
     };
+
+    if (options?.expectedDetails) {
+      const sanitizedExpected = Object.fromEntries(
+        Object.entries(options.expectedDetails).filter(([, val]) => {
+          if (val === undefined || val === null) return false;
+          if (typeof val === 'string') return val.trim().length > 0;
+          if (Array.isArray(val)) return val.length > 0;
+          return true;
+        }),
+      );
+      if (Object.keys(sanitizedExpected).length > 0) {
+        payload.expected_details = sanitizedExpected;
+      }
+    }
 
     return this.executeRequest<DiditCreateSessionResponse>(
       url,

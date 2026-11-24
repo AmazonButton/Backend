@@ -20,7 +20,7 @@ const SAFE_USER_SELECT = {
 
 @Injectable()
 export class AdminRepository {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) { }
 
   async findPendingStores(pagination?: { page?: number; pageSize?: number }) {
     const rawPage = Number(pagination?.page);
@@ -1107,7 +1107,7 @@ export class AdminRepository {
       this.prisma.$queryRaw<Array<{ pending_bank_verification: number; pending_kyc: number }>>(Prisma.sql`
         SELECT
           (SELECT COUNT(*)::int FROM store_bank_accounts sba WHERE sba.verification_status = 'PENDING') AS pending_bank_verification,
-          (SELECT COUNT(*)::int FROM identity_verification_sessions iv WHERE iv.status = 'PENDING') AS pending_kyc
+          (SELECT COUNT(*)::int FROM identity_verification_sessions iv WHERE iv.status IN ('PENDING', 'IN_REVIEW') AND iv.deleted_at IS NULL) AS pending_kyc
       `),
       this.prisma.$queryRaw<Array<{ unresolved_count: number }>>(Prisma.sql`
         SELECT COUNT(*)::int AS unresolved_count

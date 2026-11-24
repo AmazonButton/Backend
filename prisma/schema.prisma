@@ -57,6 +57,14 @@ model User {
   avatarUrl                  String?   @map("avatar_url") @db.VarChar(512)
   avatarPublicId             String?   @map("avatar_public_id") @db.VarChar(255)
   kycStatus                  String    @default("UNVERIFIED") @map("kyc_status") @db.VarChar(32)
+  verifiedLegalName          String?   @map("verified_legal_name") @db.VarChar(255)
+  verifiedDocumentHash       String?   @unique(map: "uq_users_verified_document_hash") @map("verified_document_hash") @db.VarChar(64)
+  verifiedDocumentEncrypted  String?   @map("verified_document_encrypted") @db.Text
+  verifiedDocumentMasked     String?   @map("verified_document_masked") @db.VarChar(32)
+  verifiedDateOfBirth        String?   @map("verified_date_of_birth") @db.VarChar(32)
+  verifiedNationality        String?   @map("verified_nationality") @db.VarChar(16)
+  kycVerifiedAt              DateTime? @map("kyc_verified_at") @db.Timestamptz(6)
+  kycRevokedAt               DateTime? @map("kyc_revoked_at") @db.Timestamptz(6)
   status                     String    @default("ACTIVE")
   passwordResetToken         String?   @map("password_reset_token")
   passwordResetExpiresAt     DateTime? @map("password_reset_expires_at")
@@ -83,7 +91,8 @@ model User {
   driverShifts                 DriverShift[]                 @relation("DriverShifts")
   confirmedShifts              DriverShift[]                 @relation("ConfirmedShifts")
   fcmTokens                    UserFcmToken[]
-  identityVerificationSessions IdentityVerificationSession[]
+  identityVerificationSessions IdentityVerificationSession[] @relation("UserIdentitySessions")
+  reviewedIdentitySessions     IdentityVerificationSession[] @relation("KycSessionReviewer")
   notifications                Notification[]
   apiIdempotencyKeys           ApiIdempotencyKey[]
   authIdentities               UserAuthIdentity[]
@@ -881,25 +890,32 @@ model DriverShift {
 }
 
 model IdentityVerificationSession {
-  id              BigInt    @id @default(autoincrement()) @map("id")
-  userId          BigInt    @map("user_id")
-  diditSessionId  String    @unique @map("didit_session_id") @db.VarChar(128)
-  workflowId      String    @map("workflow_id") @db.VarChar(128)
-  vendorData      String    @map("vendor_data") @db.VarChar(128)
-  status          String    @default("PENDING") @map("status") @db.VarChar(32) // PENDING, IN_REVIEW, APPROVED, DECLINED, EXPIRED, ABANDONED, DELETED
-  verificationUrl String    @map("verification_url") @db.VarChar(1024)
-  metadata        Json?     @map("metadata")
-  expiresAt       DateTime? @map("expires_at") @db.Timestamptz(6)
-  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
-  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                   BigInt    @id @default(autoincrement()) @map("id")
+  userId               BigInt    @map("user_id")
+  diditSessionId       String    @unique @map("didit_session_id") @db.VarChar(128)
+  workflowId           String    @map("workflow_id") @db.VarChar(128)
+  vendorData           String    @map("vendor_data") @db.VarChar(128)
+  status               String    @default("PENDING") @map("status") @db.VarChar(32) // PENDING, IN_REVIEW, APPROVED, DECLINED, EXPIRED, ABANDONED, DELETED, REVOKED
+  verificationUrl      String    @map("verification_url") @db.VarChar(1024)
+  metadata             Json?     @map("metadata")
+  verifiedDocumentHash String?   @map("verified_document_hash") @db.VarChar(64)
+  reviewReason         String?   @map("review_reason") @db.VarChar(64)
+  reviewedByUserId     BigInt?   @map("reviewed_by_user_id")
+  reviewedAt           DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  reviewNote           String?   @map("review_note") @db.Text
+  expiresAt            DateTime? @map("expires_at") @db.Timestamptz(6)
+  completedAt          DateTime? @map("completed_at") @db.Timestamptz(6)
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user          User                @relation(fields: [userId], references: [userId], onDelete: Cascade)
-  webhookEvents DiditWebhookEvent[]
+  user           User                @relation("UserIdentitySessions", fields: [userId], references: [userId], onDelete: Cascade)
+  reviewedByUser User?               @relation("KycSessionReviewer", fields: [reviewedByUserId], references: [userId], onDelete: SetNull)
+  webhookEvents  DiditWebhookEvent[]
 
   @@index([userId])
   @@index([status])
+  @@index([verifiedDocumentHash], map: "idx_identity_verification_sessions_doc_hash")
   @@map("identity_verification_sessions")
 }
 

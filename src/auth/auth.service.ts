@@ -646,6 +646,7 @@ export class AuthService {
       username: user.username,
       fullName: user.fullName,
       avatarUrl: user.avatarUrl || null,
+      kycStatus: user.kycStatus || 'UNVERIFIED',
       role,
       storeId,
       platformRole,
@@ -752,6 +753,7 @@ export class AuthService {
       username: user.username,
       fullName: user.fullName,
       avatarUrl: user.avatarUrl || null,
+      kycStatus: user.kycStatus || 'UNVERIFIED',
       role,
       storeId,
       platformRole,
@@ -1229,6 +1231,10 @@ export class AuthService {
         fullName: user.fullName,
         phone: user.phone,
         avatarUrl: user.avatarUrl || null,
+        kycStatus: user.kycStatus || 'UNVERIFIED',
+        verifiedLegalName: user.verifiedLegalName || null,
+        verifiedDocumentMasked: user.verifiedDocumentMasked || null,
+        kycVerifiedAt: user.kycVerifiedAt ? user.kycVerifiedAt.toISOString() : null,
         role,
         status: user.status,
         storeId,
@@ -1283,6 +1289,7 @@ export class AuthService {
       }
     }
 
+    // Note: fullName is treated strictly as editable display name; verifiedLegalName and verifiedDocument* remain immutable here.
     const profileUpdate: any = {
       fullName: dto.fullName !== undefined ? dto.fullName.trim() : undefined,
       avatarUrl: nextAvatarUrl,
@@ -1312,6 +1319,10 @@ export class AuthService {
         fullName: updated.fullName,
         phone: updated.phone,
         avatarUrl: updated.avatarUrl || null,
+        kycStatus: updated.kycStatus || 'UNVERIFIED',
+        verifiedLegalName: updated.verifiedLegalName || null,
+        verifiedDocumentMasked: updated.verifiedDocumentMasked || null,
+        kycVerifiedAt: updated.kycVerifiedAt ? updated.kycVerifiedAt.toISOString() : null,
         role,
         status: updated.status,
         storeId,
@@ -1608,6 +1619,7 @@ export class AuthService {
       username: user.username,
       fullName: user.fullName,
       avatarUrl: user.avatarUrl || null,
+      kycStatus: user.kycStatus || 'UNVERIFIED',
       role,
       storeId,
       platformRole,
