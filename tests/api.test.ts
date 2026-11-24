@@ -324,7 +324,7 @@ async function runTests() {
       }
     }
 
-    // 9. Change Wi-Fi: Preserve Ownership & Product
+    // 9. Change Wi-Fi: Retired Cloud Endpoint -> 501 Not Implemented (BLE/USB required)
     try {
       const res = await fetch(`${API_URL}/devices/${deviceId}/change-wifi`, {
         method: 'POST',
@@ -332,16 +332,18 @@ async function runTests() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${customerToken}`,
         },
+        body: JSON.stringify({ ssid: 'Home-WiFi' }),
       });
       const data = await res.json();
-      if ((res.status === 200 || res.status === 201) && data.success && data.data?.provisioningStatus === 'PROVISIONING') {
-        logTest('Zero-Touch: Change Wi-Fi preserves customer ownership & product link', true);
+      const errCode = data.errorCode || data.code;
+      if (res.status === 501 && data.success === false && errCode === 'WIFI_CLOUD_PROVISIONING_UNSUPPORTED') {
+        logTest('Zero-Touch: Cloud change-wifi retired with 501 WIFI_CLOUD_PROVISIONING_UNSUPPORTED (BLE/USB)', true);
         passed++;
       } else {
-        throw new Error(data.message || JSON.stringify(data));
+        throw new Error(`Expected 501 WIFI_CLOUD_PROVISIONING_UNSUPPORTED, got ${res.status}: ${JSON.stringify(data)}`);
       }
     } catch (e: any) {
-      logTest('Zero-Touch: Change Wi-Fi preserves customer ownership & product link', false, e.message);
+      logTest('Zero-Touch: Cloud change-wifi retired with 501 WIFI_CLOUD_PROVISIONING_UNSUPPORTED (BLE/USB)', false, e.message);
       failed++;
     }
 

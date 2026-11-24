@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { IdentityVerificationSession, DiditWebhookEvent } from '@prisma/client';
 
@@ -140,10 +140,109 @@ export class IdentityVerificationsRepository {
     return !!approved;
   }
 
+  async findUserKycStatus(userId: bigint): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { userId },
+      select: { kycStatus: true },
+    });
+    return user?.kycStatus ?? null;
+  }
+
   async updateUserKycStatus(userId: bigint, kycStatus: string): Promise<void> {
+    if (kycStatus !== 'APPROVED') {
+      await this.prisma.user.updateMany({
+        where: {
+          userId,
+          kycStatus: { not: 'APPROVED' },
+        },
+        data: { kycStatus },
+      });
+      return;
+    }
+
     await this.prisma.user.update({
       where: { userId },
       data: { kycStatus },
+    });
+  }
+
+  /**
+   * Atomically reconcile provider decision polling with session and user row locks (FOR UPDATE)
+   * and anti-downgrade guarantees matching webhook processing.
+   */
+  async reconcileDecisionAtomicTx(params: {
+    sessionId: bigint;
+    newStatus: string | null;
+  }): Promise<{ status: string }> {
+    return this.prisma.$transaction(async (tx) => {
+      const sessionRows = await tx.$queryRaw<any[]>`
+        SELECT "id", "user_id", "status", "deleted_at"
+        FROM "identity_verification_sessions"
+        WHERE "id" = ${params.sessionId}
+        FOR UPDATE;
+      `;
+
+      if (!sessionRows || sessionRows.length === 0 || sessionRows[0].deleted_at !== null) {
+        throw new NotFoundException('Không tìm thấy phiên xác minh danh tính');
+      }
+
+      const lockedSession = sessionRows[0];
+      const userId = BigInt(lockedSession.user_id);
+
+      await tx.$queryRaw`
+        SELECT "user_id", "kyc_status"
+        FROM "users"
+        WHERE "user_id" = ${userId}
+        FOR UPDATE;
+      `;
+
+      if (!params.newStatus || lockedSession.status === 'APPROVED') {
+        if (lockedSession.status === 'APPROVED') {
+          await tx.user.updateMany({
+            where: {
+              userId,
+              kycStatus: { not: 'APPROVED' },
+            },
+            data: { kycStatus: 'APPROVED' },
+          });
+        }
+        return { status: lockedSession.status };
+      }
+
+      await tx.identityVerificationSession.update({
+        where: { id: lockedSession.id },
+        data: {
+          status: params.newStatus,
+          completedAt: new Date(),
+        },
+      });
+
+      if (params.newStatus === 'APPROVED') {
+        await tx.user.update({
+          where: { userId },
+          data: { kycStatus: 'APPROVED' },
+        });
+      } else if (params.newStatus === 'DECLINED') {
+        const otherApproved = await tx.$queryRaw<any[]>`
+          SELECT "id" FROM "identity_verification_sessions"
+          WHERE "user_id" = ${userId}
+            AND "id" != ${lockedSession.id}
+            AND "status" = 'APPROVED'
+            AND "deleted_at" IS NULL
+          LIMIT 1;
+        `;
+        if (!otherApproved || otherApproved.length === 0) {
+          await tx.user.updateMany({
+            where: {
+              userId,
+              kycStatus: { not: 'APPROVED' },
+            },
+            data: { kycStatus: 'DECLINED' },
+          });
+        }
+      }
+
+      return { status: params.newStatus };
     });
   }
 

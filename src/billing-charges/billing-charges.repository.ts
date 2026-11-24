@@ -1,6 +1,9 @@
 import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { recordRentalPayosReceiptInTx } from '../store-cash/store-cash-settlement.transaction';
+import {
+  recordRentalPayosReceiptInTx,
+  recordSubscriptionPayosReceiptInTx,
+} from '../store-cash/store-cash-settlement.transaction';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 
 export interface CreateChargeInput {
@@ -159,6 +162,149 @@ export class BillingChargesRepository {
         };
       }
 
+      if (rawCharge.purpose === 'STORE_SUBSCRIPTION') {
+        const result = await recordSubscriptionPayosReceiptInTx(
+          tx,
+          rawCharge,
+          receipt,
+          async () => {
+            const changed = await tx.billingCharge.updateMany({
+              where: { chargeId, status: 'PENDING' },
+              data: {
+                status: 'PAID',
+                paidAt: receipt.paidAt || new Date(),
+                providerTransactionCode: receipt.providerTransactionCode.trim(),
+              },
+            });
+            if (changed.count !== 1) {
+              throw new ConflictException('Khoản thu đã được xử lý đồng thời bởi một yêu cầu khác');
+            }
+
+            const storeId = BigInt(rawCharge.target_id);
+            await tx.$queryRawUnsafe('SELECT * FROM store WHERE store_id = $1 FOR UPDATE', storeId);
+
+            let targetPlanId: bigint | null = null;
+            let durationDays = 30;
+            let snapshot = rawCharge.plan_snapshot;
+            if (typeof snapshot === 'string') {
+              try {
+                snapshot = JSON.parse(snapshot);
+              } catch {
+                snapshot = null;
+              }
+            }
+
+            if (snapshot && snapshot.planId) {
+              targetPlanId = BigInt(snapshot.planId);
+              if (typeof snapshot.durationDays === 'number' && snapshot.durationDays > 0) {
+                durationDays = snapshot.durationDays;
+              }
+            } else if (rawCharge.plan_id) {
+              targetPlanId = BigInt(rawCharge.plan_id);
+              const p = await tx.subscriptionPlan.findUnique({ where: { planId: targetPlanId } });
+              if (p && p.durationDays) {
+                durationDays = p.durationDays;
+              }
+            } else {
+              const fallbackPlan = (await tx.subscriptionPlan.findFirst({
+                where: { price: 60000, isActive: true },
+              })) || (await tx.subscriptionPlan.findFirst({
+                where: { isActive: true },
+                orderBy: { planId: 'asc' },
+              }));
+              if (!fallbackPlan) {
+                throw new NotFoundException('Không tìm thấy gói duy trì kệ phù hợp để cấp quyền');
+              }
+              targetPlanId = fallbackPlan.planId;
+              durationDays = fallbackPlan.durationDays || 30;
+            }
+
+            const now = new Date();
+            const currentSubRows = await tx.$queryRawUnsafe<Array<{ subscription_id: bigint; start_date: Date; end_date: Date }>>(
+              `SELECT subscription_id, start_date, end_date
+               FROM store_subscriptions
+               WHERE store_id = $1 AND status = 'ACTIVE' AND end_date > CURRENT_TIMESTAMP
+               ORDER BY end_date DESC
+               LIMIT 1
+               FOR UPDATE`,
+              storeId,
+            );
+            const currentSub = currentSubRows && currentSubRows.length > 0 ? currentSubRows[0] : null;
+            const startDate = currentSub && new Date(currentSub.end_date) > now ? new Date(currentSub.end_date) : now;
+            const endDate = new Date(startDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+            const createdSub = await tx.storeSubscription.create({
+              data: {
+                storeId,
+                planId: targetPlanId,
+                startDate,
+                endDate,
+                status: 'ACTIVE',
+                paymentMethod: rawCharge.payment_method || 'PAYOS',
+              },
+            });
+
+            await tx.outboxEvent.create({
+              data: {
+                eventType: 'BILLING_CHARGE_SETTLED',
+                payload: {
+                  chargeId: rawCharge.charge_id.toString(),
+                  chargeCode: rawCharge.charge_code,
+                  purpose: rawCharge.purpose,
+                  targetId: rawCharge.target_id.toString(),
+                  totalAmount: Number(rawCharge.total_amount),
+                  providerTransactionCode: receipt.providerTransactionCode.trim(),
+                },
+                status: 'PENDING',
+              },
+            });
+
+            if ((tx as any).rentalAuditLog) {
+              await (tx as any).rentalAuditLog.create({
+                data: {
+                  actorType: actor?.role ? (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(actor.role) ? 'ADMIN' : 'USER') : 'SYSTEM',
+                  actorUserId: actor?.userId ? BigInt(actor.userId) : null,
+                  action: 'SETTLE_CHARGE',
+                  targetType: rawCharge.target_type,
+                  targetId: BigInt(rawCharge.target_id),
+                  beforeState: rawCharge.status,
+                  afterState: 'PAID',
+                  amount: rawCharge.total_amount,
+                  correlationId: rawCharge.charge_code,
+                  idempotencyKey: receipt.providerTransactionCode.trim(),
+                  metadata: {
+                    chargeId: rawCharge.charge_id.toString(),
+                    chargeCode: rawCharge.charge_code,
+                    provider: receipt.provider,
+                    providerTransactionCode: receipt.providerTransactionCode.trim(),
+                    currency: receipt.currency,
+                    paidAt: receipt.paidAt || new Date(),
+                  },
+                },
+              });
+            }
+
+            return createdSub;
+          },
+          actor,
+        );
+
+        const charge = await tx.billingCharge.findUnique({ where: { chargeId }, include: { lines: true } });
+        return {
+          alreadySettled: result.alreadySettled,
+          overpayment: result.overpayment,
+          overpaymentRecorded: result.overpaymentRecorded,
+          status: result.overpayment ? 'PENDING_RECONCILIATION' : charge!.status,
+          charge,
+          receipt: result.receipt,
+          overpaymentObligation: result.overpaymentObligation ?? null,
+          settledDeposit: null,
+          subscriptionUpdated: result.subscriptionUpdated ?? null,
+          rentalUpdated: null,
+          storeWalletCredited: false,
+        };
+      }
+
       if (rawCharge.status === 'PAID') {
         const fullCharge = await tx.billingCharge.findUnique({
           where: { chargeId },
@@ -210,78 +356,7 @@ export class BillingChargesRepository {
       let subscriptionUpdated: any = null;
       let rentalUpdated: any = null;
 
-      // Rental charges are handled above by the shared receipt/settlement path.
-      if (rawCharge.purpose === 'STORE_SUBSCRIPTION') {
-        const storeId = BigInt(rawCharge.target_id);
-        // Khóa bi quan gian hàng
-        await tx.$queryRawUnsafe('SELECT * FROM store WHERE store_id = $1 FOR UPDATE', storeId);
-
-        let targetPlanId: bigint | null = null;
-        let durationDays = 30;
-
-        let snapshot = rawCharge.plan_snapshot;
-        if (typeof snapshot === 'string') {
-          try {
-            snapshot = JSON.parse(snapshot);
-          } catch {
-            snapshot = null;
-          }
-        }
-
-        if (snapshot && snapshot.planId) {
-          targetPlanId = BigInt(snapshot.planId);
-          if (typeof snapshot.durationDays === 'number' && snapshot.durationDays > 0) {
-            durationDays = snapshot.durationDays;
-          }
-        } else if (rawCharge.plan_id) {
-          targetPlanId = BigInt(rawCharge.plan_id);
-          const p = await tx.subscriptionPlan.findUnique({ where: { planId: targetPlanId } });
-          if (p && p.durationDays) {
-            durationDays = p.durationDays;
-          }
-        } else {
-          // Fallback cho historical/legacy charges trước khi có dynamic plan snapshot
-          const fallbackPlan = await tx.subscriptionPlan.findFirst({
-            where: { price: 60000, isActive: true },
-          }) || await tx.subscriptionPlan.findFirst({
-            where: { isActive: true },
-            orderBy: { planId: 'asc' },
-          });
-
-          if (!fallbackPlan) {
-            throw new NotFoundException('Không tìm thấy gói duy trì kệ phù hợp để cấp quyền');
-          }
-          targetPlanId = fallbackPlan.planId;
-          durationDays = fallbackPlan.durationDays || 30;
-        }
-
-        const now = new Date();
-        // Khóa bi quan gói đang hoạt động của store (đồng bộ cùng thứ tự khóa store -> store_subscriptions với luồng ví)
-        const currentSubRows = await tx.$queryRawUnsafe<Array<{ subscription_id: bigint; start_date: Date; end_date: Date }>>(
-          `SELECT subscription_id, start_date, end_date
-           FROM store_subscriptions
-           WHERE store_id = $1 AND status = 'ACTIVE' AND end_date > CURRENT_TIMESTAMP
-           ORDER BY end_date DESC
-           LIMIT 1
-           FOR UPDATE`,
-          storeId,
-        );
-        const currentSub = currentSubRows && currentSubRows.length > 0 ? currentSubRows[0] : null;
-
-        const startDate = currentSub && new Date(currentSub.end_date) > now ? new Date(currentSub.end_date) : now;
-        const endDate = new Date(startDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
-
-        subscriptionUpdated = await tx.storeSubscription.create({
-          data: {
-            storeId,
-            planId: targetPlanId,
-            startDate,
-            endDate,
-            status: 'ACTIVE',
-            paymentMethod: rawCharge.payment_method || 'PAYOS',
-          },
-        });
-      }
+      // Rental and Store Subscription charges are handled above by shared receipt ledger helpers.
 
       // Outbox event recording
       await tx.outboxEvent.create({

@@ -87,8 +87,14 @@ export class IdentityVerificationsService {
       expiresAt,
     });
 
-    // 5. Update user KYC status to PENDING
-    await this.repo.updateUserKycStatus(userId, 'PENDING');
+    // 5. Update user KYC status to PENDING without downgrading already APPROVED users
+    const currentKycStatus =
+      typeof (this.repo as any).findUserKycStatus === 'function'
+        ? await (this.repo as any).findUserKycStatus(userId)
+        : null;
+    if (currentKycStatus !== 'APPROVED') {
+      await this.repo.updateUserKycStatus(userId, 'PENDING');
+    }
 
     this.logger.log(`[Didit KYC] Created session #${session.id} for user #${userId} with Didit ID ${session.diditSessionId}`);
     return this.mapToDto(session);
@@ -133,25 +139,24 @@ export class IdentityVerificationsService {
 
     const decisionResponse = await this.diditClient.getDecision(session.diditSessionId);
 
-    // Sync state if decision returned updated terminal status
+    // Sync state atomically under lock if decision returned updated status
+    let newStatus: string | null = null;
     if (decisionResponse?.status) {
       const rawStatus = decisionResponse.status.toLowerCase();
-      let newStatus: string | null = null;
       if (rawStatus.includes('approved')) newStatus = 'APPROVED';
-      else if (rawStatus.includes('declined')) newStatus = 'DECLINED';
+      else if (rawStatus.includes('declined') || rawStatus.includes('rejected')) newStatus = 'DECLINED';
       else if (rawStatus.includes('review')) newStatus = 'IN_REVIEW';
       else if (rawStatus.includes('expired')) newStatus = 'EXPIRED';
-
-      if (newStatus && session.status !== 'APPROVED') {
-        await this.repo.updateSessionStatus(session.id, newStatus, new Date());
-        if (newStatus === 'APPROVED') {
-          await this.repo.updateUserKycStatus(session.userId, 'APPROVED');
-        }
-      }
+      else if (rawStatus.includes('abandoned')) newStatus = 'ABANDONED';
     }
 
+    const reconciled = await this.repo.reconcileDecisionAtomicTx({
+      sessionId: session.id,
+      newStatus,
+    });
+
     return {
-      status: session.status,
+      status: reconciled.status,
       decision: decisionResponse,
     };
   }

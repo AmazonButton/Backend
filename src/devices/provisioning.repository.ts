@@ -1,10 +1,15 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  POSTGRES_BIGINT_MAX,
+  parsePositivePostgresBigInt,
+} from '../common/utils/validation.util';
+import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 
 @Injectable()
 export class ProvisioningRepository {
-  constructor(@Inject(PrismaService) public readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) public readonly prisma: PrismaService) { }
 
   async findButtonByIdentifier(identifier: string) {
     const trimmed = identifier.trim().toUpperCase();
@@ -240,7 +245,8 @@ export class ProvisioningRepository {
       addressId?: string | number | bigint;
     },
   ): Promise<any> {
-    return this.prisma.$transaction(async (tx: any) => {
+    return runWithTransactionRetry(
+      () => this.prisma.$transaction(async (tx: any) => {
       // 1. Lock session row
       const sessionRows: any[] = await tx.$queryRawUnsafe(
         `SELECT * FROM provisioning_sessions
@@ -285,10 +291,21 @@ export class ProvisioningRepository {
         throw new Error('BAD_REQUEST: Mã thiết bị không khớp với phiên ghép nối');
       }
 
+      // #1 Enforcement: Check locked/return/warranty/ownership/rental/deposit under lock before rebinding
+      await this.assertDeviceEligibleForCustodyMutationInTx(tx, device, {
+        mode: 'PAIR_CONFIRM',
+        targetCustomerId: customerId,
+      });
+
       const targetStoreId = device.store_id;
 
       // 3. Verify product belongs to device store
-      const rawProductId = BigInt(dto.productId);
+      const rawProductId = parsePositivePostgresBigInt(dto.productId);
+      if (rawProductId === null) {
+        throw new Error(
+          `BAD_REQUEST: Mã sản phẩm (productId) không hợp lệ (chỉ chấp nhận 1..${POSTGRES_BIGINT_MAX.toString()})`,
+        );
+      }
       const productRows: any[] = await tx.$queryRawUnsafe(
         `SELECT * FROM product
          WHERE product_id = $1 AND store_id = $2;`,
@@ -385,11 +402,233 @@ export class ProvisioningRepository {
         storeId: targetStoreId.toString(),
         productId: rawProductId.toString(),
       };
-    });
+    }),
+      { operationName: 'ConfirmPairingAtomicTx' },
+    );
   }
 
-  async unclaimDeviceAtomicTx(buttonId: bigint): Promise<any> {
-    return this.prisma.$transaction(async (tx) => {
+  private static readonly TERMINAL_RENTAL_STATUSES = ['COMPLETED', 'TERMINATED', 'CANCELLED'];
+  private static readonly BLOCKED_DEVICE_STATUSES = ['LOCKED', 'DISABLED', 'MAINTENANCE', 'RETIRED', 'LOST', 'DAMAGED', 'SUSPENDED'];
+  private static readonly BLOCKED_INVENTORY_STATES = ['LOCKED', 'RETURN_IN_TRANSIT', 'DEFECTIVE_RETURN', 'WRITTEN_OFF', 'MAINTENANCE'];
+  private static readonly ALLOWED_PAIRING_INVENTORY_STATES = ['IN_PLATFORM_WAREHOUSE', 'ALLOCATED_TO_STORE', 'IN_CUSTOMER_CUSTODY'];
+
+  private async hasOpenRentalOrUnsettledDepositInTx(tx: any, rentalId: bigint | null | undefined) {
+    if (rentalId == null) return { hasObligation: false, rental: null as any };
+
+    const rentals: any[] = await tx.$queryRawUnsafe(
+      `SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE;`,
+      BigInt(rentalId),
+    );
+    const rental = rentals?.[0] ?? null;
+    if (!rental) return { hasObligation: false, rental: null as any };
+
+    const deposits: any[] = await tx.$queryRawUnsafe(
+      `SELECT held_amount, refund_reserved_amount FROM rental_deposits WHERE rental_id = $1 FOR UPDATE;`,
+      BigInt(rentalId),
+    );
+    const deposit = deposits?.[0] ?? null;
+    const heldAmount = deposit ? Number(deposit.held_amount || 0) : 0;
+    const refundReservedAmount = deposit ? Number(deposit.refund_reserved_amount || 0) : 0;
+
+    const pendingRefundRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT COUNT(*)::int AS cnt FROM deposit_refunds WHERE rental_id = $1 AND status IN ('PENDING_APPROVAL', 'PENDING_PAYOUT', 'PROCESSING');`,
+      BigInt(rentalId),
+    );
+    const pendingRefunds = Number(pendingRefundRows?.[0]?.cnt || 0);
+
+    const isNonTerminalRental = !ProvisioningRepository.TERMINAL_RENTAL_STATUSES.includes(String(rental.status || '').toUpperCase());
+    const hasUnsettledDeposit = heldAmount > 0 || refundReservedAmount > 0 || pendingRefunds > 0;
+
+    return {
+      hasObligation: isNonTerminalRental || hasUnsettledDeposit,
+      isNonTerminalRental,
+      hasUnsettledDeposit,
+      rental,
+    };
+  }
+
+  private async assertDeviceEligibleForCustodyMutationInTx(
+    tx: any,
+    device: any,
+    options: { mode: 'PAIR_CONFIRM' | 'TRANSFER' | 'UNCLAIM' | 'FACTORY_RESET'; targetCustomerId?: bigint },
+  ) {
+    const deviceStatus = String(device.status || '').toUpperCase();
+    const inventoryState = String(device.inventory_state || '').toUpperCase();
+
+    if (deviceStatus === 'LOCKED' || inventoryState === 'LOCKED' || deviceStatus === 'DISABLED') {
+      throw new ConflictException('Thiết bị đang bị khóa hoặc vô hiệu hóa, không thể thực hiện thao tác ghép nối hoặc chuyển chủ');
+    }
+    if (inventoryState === 'RETURN_IN_TRANSIT') {
+      throw new ConflictException('Thiết bị đang trong quá trình hoàn trả (RETURN_IN_TRANSIT), không thể ghép nối hoặc chuyển chủ');
+    }
+    if (inventoryState === 'DEFECTIVE_RETURN') {
+      throw new ConflictException('Thiết bị đang thuộc diện thu hồi lỗi/bảo hành (DEFECTIVE_RETURN), không thể ghép nối hoặc chuyển chủ');
+    }
+    if (ProvisioningRepository.BLOCKED_DEVICE_STATUSES.includes(deviceStatus) ||
+      ProvisioningRepository.BLOCKED_INVENTORY_STATES.includes(inventoryState)) {
+      throw new ConflictException(`Trạng thái thiết bị (${deviceStatus}/${inventoryState}) hiện không cho phép thay đổi quyền sở hữu`);
+    }
+    if (options.mode === 'PAIR_CONFIRM' && inventoryState && !ProvisioningRepository.ALLOWED_PAIRING_INVENTORY_STATES.includes(inventoryState)) {
+      throw new ConflictException(`Trạng thái kho thiết bị (${inventoryState}) không hợp lệ để ghép nối`);
+    }
+
+    // Check active return obligations only:
+    // - PENDING_RECEIPT always blocks regardless of rental_id.
+    // - Historical RECEIVED returns (kept after confirmReturnReceiptTX resets button to warehouse & clears rental_id)
+    //   must NOT block clean re-allocated devices unless still bound to device.rental_id.
+    const pendingReturnRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT return_id, status FROM rental_returns
+       WHERE button_id = $1 AND status = 'PENDING_RECEIPT'
+       ORDER BY return_id ASC
+       LIMIT 1 FOR UPDATE;`,
+      device.button_id,
+    );
+    if (pendingReturnRows && pendingReturnRows.length > 0) {
+      throw new ConflictException(`Thiết bị đang có yêu cầu hoàn trả (${pendingReturnRows[0].status}) chưa hoàn tất, không thể ghép nối hoặc chuyển chủ`);
+    }
+    if (device.rental_id != null) {
+      const boundReturnRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT return_id, status FROM rental_returns
+         WHERE button_id = $1 AND rental_id = $2 AND status = 'RECEIVED'
+         ORDER BY return_id ASC
+         LIMIT 1 FOR UPDATE;`,
+        device.button_id,
+        BigInt(device.rental_id),
+      );
+      if (boundReturnRows && boundReturnRows.length > 0) {
+        throw new ConflictException(`Thiết bị đang gắn với giao dịch hoàn trả (${boundReturnRows[0].status}) của hợp đồng thuê hiện tại`);
+      }
+    }
+
+    // Lock order unified with WarrantyRepository: iot_button -> warranty_tickets (ORDER BY ticket_id ASC)
+    const openWarrantyRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT ticket_id, ticket_code, status FROM warranty_tickets
+       WHERE button_id = $1 AND status IN ('PENDING', 'PENDING_APPROVAL', 'IN_PROGRESS', 'APPROVED_SWAP')
+       ORDER BY ticket_id ASC
+       LIMIT 1 FOR UPDATE;`,
+      device.button_id,
+    );
+    if (openWarrantyRows && openWarrantyRows.length > 0) {
+      throw new ConflictException(`Thiết bị đang trong quá trình xử lý bảo hành (${openWarrantyRows[0].ticket_code || openWarrantyRows[0].status}), không thể ghép nối hoặc chuyển chủ`);
+    }
+
+    const rentalState = await this.hasOpenRentalOrUnsettledDepositInTx(tx, device.rental_id);
+    const existingCustomerId = device.customer_id != null ? device.customer_id.toString() : null;
+
+    if (options.mode === 'TRANSFER' || options.mode === 'UNCLAIM' || options.mode === 'FACTORY_RESET') {
+      if (rentalState.hasObligation) {
+        throw new ConflictException('Thiết bị đang gắn với hợp đồng thuê hoặc nghĩa vụ tiền cọc chưa tất toán, không thể giải phóng hay chuyển chủ');
+      }
+      return;
+    }
+
+    // PAIR_CONFIRM branch: distinguish first-time pairing vs same-customer re-pair vs transfer
+    const incomingCustomerId = options.targetCustomerId?.toString();
+    if (!existingCustomerId && device.rental_id == null) {
+      // Clean first-time pairing
+      return;
+    }
+
+    const isSameCustomer = Boolean(existingCustomerId && incomingCustomerId && existingCustomerId === incomingCustomerId);
+    if (isSameCustomer) {
+      if (device.rental_id != null && rentalState.rental) {
+        const rentalCustomerId = rentalState.rental.customer_id != null ? rentalState.rental.customer_id.toString() : null;
+        if (rentalCustomerId !== incomingCustomerId) {
+          throw new ConflictException('Hợp đồng thuê của thiết bị không thuộc về tài khoản đang ghép nối');
+        }
+        const expiryRaw = rentalState.rental.effective_expires_at || rentalState.rental.paid_through || rentalState.rental.end_date;
+        const isExpired = expiryRaw ? new Date(expiryRaw) <= new Date() : false;
+        if (String(rentalState.rental.status || '').toUpperCase() !== 'ACTIVE' || isExpired) {
+          throw new ConflictException('Hợp đồng thuê thiết bị phải ở trạng thái ACTIVE và còn hiệu lực để ghép nối lại');
+        }
+      }
+      return;
+    }
+
+    // Ownership change / overwrite attempted (existingCustomerId != incomingCustomerId or unbound device still attached to a rental)
+    if (rentalState.hasObligation) {
+      throw new ConflictException('Không thể ghi đè hoặc chuyển chủ thiết bị khi hợp đồng thuê hoặc nghĩa vụ cọc chưa tất toán');
+    }
+
+    if (existingCustomerId && deviceStatus !== 'TRANSFER_PENDING') {
+      throw new ConflictException('Thiết bị đang thuộc quyền sở hữu của khách hàng khác và chưa được chủ sở hữu mở chuyển giao');
+    }
+  }
+
+  async initiateTransferAtomicTx(
+    buttonId: bigint,
+    tokenHash: string,
+    expiresAt: Date,
+    expectedCustomerId?: bigint | null,
+  ): Promise<{ deviceId: string; buttonId: string; status: string }> {
+    return runWithTransactionRetry(
+      () => this.prisma.$transaction(async (tx: any) => {
+      const deviceRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT * FROM iot_button WHERE button_id = $1 FOR UPDATE;`,
+        buttonId,
+      );
+      if (!deviceRows || deviceRows.length === 0) {
+        throw new NotFoundException('Không tìm thấy thiết bị');
+      }
+      const device = deviceRows[0];
+
+      if (expectedCustomerId != null && device.customer_id?.toString() !== expectedCustomerId.toString()) {
+        throw new ConflictException('Chỉ chủ sở hữu hiện tại của thiết bị mới được tạo yêu cầu chuyển giao');
+      }
+
+      await this.assertDeviceEligibleForCustodyMutationInTx(tx, device, { mode: 'TRANSFER' });
+
+      await tx.$executeRawUnsafe(
+        `UPDATE iot_button
+         SET status = 'TRANSFER_PENDING',
+             updated_at = NOW()
+         WHERE button_id = $1;`,
+        buttonId,
+      );
+
+      await tx.$executeRawUnsafe(
+        `UPDATE public.pairing_tokens
+         SET status = 'USED'
+         WHERE device_id = $1 AND status = 'ACTIVE';`,
+        device.device_id.toUpperCase(),
+      );
+
+      await tx.$executeRawUnsafe(
+        `INSERT INTO public.pairing_tokens (device_id, token_hash, expires_at, status)
+         VALUES ($1, $2, $3, 'ACTIVE');`,
+        device.device_id.toUpperCase(),
+        tokenHash,
+        expiresAt,
+      );
+
+      return {
+        deviceId: device.device_id,
+        buttonId: device.button_id.toString(),
+        status: 'TRANSFER_PENDING',
+      };
+    }),
+      { operationName: 'InitiateTransferAtomicTx' },
+    );
+  }
+
+  async unclaimDeviceAtomicTx(buttonId: bigint, expectedCustomerId?: bigint | null): Promise<any> {
+    return runWithTransactionRetry(
+      () => this.prisma.$transaction(async (tx: any) => {
+      const deviceRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT * FROM iot_button WHERE button_id = $1 FOR UPDATE;`,
+        buttonId,
+      );
+      if (!deviceRows || deviceRows.length === 0) {
+        throw new NotFoundException('Không tìm thấy thiết bị');
+      }
+      const device = deviceRows[0];
+
+      if (expectedCustomerId != null && device.customer_id?.toString() !== expectedCustomerId.toString()) {
+        throw new ConflictException('Quyền sở hữu thiết bị đã thay đổi hoặc không còn thuộc tài khoản đang yêu cầu hủy liên kết');
+      }
+
+      await this.assertDeviceEligibleForCustodyMutationInTx(tx, device, { mode: 'UNCLAIM' });
+
       await tx.ioTButton.update({
         where: { buttonId },
         data: {
@@ -403,11 +642,25 @@ export class ProvisioningRepository {
       await tx.buttonProduct.deleteMany({
         where: { buttonId },
       });
-    });
+    }),
+      { operationName: 'UnclaimDeviceAtomicTx' },
+    );
   }
 
   async factoryResetAtomicTx(buttonId: bigint): Promise<any> {
-    return this.prisma.$transaction(async (tx) => {
+    return runWithTransactionRetry(
+      () => this.prisma.$transaction(async (tx: any) => {
+      const deviceRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT * FROM iot_button WHERE button_id = $1 FOR UPDATE;`,
+        buttonId,
+      );
+      if (!deviceRows || deviceRows.length === 0) {
+        throw new NotFoundException('Không tìm thấy thiết bị');
+      }
+      const device = deviceRows[0];
+
+      await this.assertDeviceEligibleForCustodyMutationInTx(tx, device, { mode: 'FACTORY_RESET' });
+
       await tx.ioTButton.update({
         where: { buttonId },
         data: {
@@ -421,6 +674,8 @@ export class ProvisioningRepository {
       await tx.buttonProduct.deleteMany({
         where: { buttonId },
       });
-    });
+    }),
+      { operationName: 'FactoryResetAtomicTx' },
+    );
   }
 }

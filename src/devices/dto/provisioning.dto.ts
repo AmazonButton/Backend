@@ -1,4 +1,30 @@
-import { IsString, IsOptional, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+} from 'class-validator';
+import {
+  POSTGRES_BIGINT_MAX,
+  parsePositivePostgresBigInt,
+} from '../../common/utils/validation.util';
+
+@ValidatorConstraint({ name: 'isPositiveBigIntId', async: false })
+export class IsPositiveBigIntIdConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      return false;
+    }
+    return parsePositivePostgresBigInt(value) !== null;
+  }
+
+  defaultMessage(): string {
+    return `productId phải là mã số nguyên dương BIGINT hợp lệ (1..${POSTGRES_BIGINT_MAX.toString()})`;
+  }
+}
 
 export class CreateSessionDto {
   @IsOptional()
@@ -118,8 +144,9 @@ export class ConfirmPairingDto {
   @IsString()
   customName?: string;
 
-  @IsOptional()
-  productId?: string | number;
+  @IsNotEmpty({ message: 'productId là bắt buộc' })
+  @Validate(IsPositiveBigIntIdConstraint)
+  productId: string | number;
 
   @IsOptional()
   quantity?: number;

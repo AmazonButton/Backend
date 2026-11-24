@@ -87,23 +87,53 @@ export interface InitialPayosReceipt {
   paidAt?: Date;
 }
 
-/** Called only after server-side signature/provider verification, never with an HTTP body. */
-export async function recordRentalPayosReceiptInTx(tx: Tx, charge: any, receipt: InitialPayosReceipt, actor?: SettlementActor) {
-  if (receipt.verified !== true || receipt.provider !== 'PAYOS' || receipt.currency !== 'VND' || charge.currency !== 'VND' ||
-      !Number.isSafeInteger(receipt.amount) || receipt.amount <= 0 ||
-      typeof receipt.providerTransactionCode !== 'string' ||
-      !/^[^\s]{1,128}$/.test(receipt.providerTransactionCode) ||
-      !charge.payment_link_id || receipt.paymentLinkId !== charge.payment_link_id ||
-      (receipt.paidAt && (!(receipt.paidAt instanceof Date) || !Number.isFinite(receipt.paidAt.getTime())))) {
+async function validatePayosReceiptBase(
+  charge: any,
+  receipt: InitialPayosReceipt,
+  requirePaymentLink: boolean,
+): Promise<{ providerTransactionRef: string; currency: string; receivedAt: Date }> {
+  const provider = typeof receipt?.provider === 'string' ? receipt.provider.trim().toUpperCase() : '';
+  const currency = typeof receipt?.currency === 'string' ? receipt.currency.trim().toUpperCase() : '';
+  const chargeCurrency = typeof charge?.currency === 'string' ? charge.currency.trim().toUpperCase() : '';
+  const ref = typeof receipt?.providerTransactionCode === 'string' ? receipt.providerTransactionCode.trim() : '';
+
+  const linkInvalid = requirePaymentLink
+    ? !charge.payment_link_id || receipt.paymentLinkId !== charge.payment_link_id
+    : charge.payment_link_id
+    ? receipt.paymentLinkId !== charge.payment_link_id
+    : Boolean(receipt.paymentLinkId);
+
+  if (
+    receipt?.verified !== true ||
+    provider !== 'PAYOS' ||
+    currency !== 'VND' ||
+    chargeCurrency !== 'VND' ||
+    !Number.isSafeInteger(receipt.amount) ||
+    receipt.amount <= 0 ||
+    !/^[^\s]{1,128}$/.test(ref) ||
+    linkInvalid ||
+    (receipt.paidAt && (!(receipt.paidAt instanceof Date) || !Number.isFinite(receipt.paidAt.getTime())))
+  ) {
     throw new BadRequestException('Invalid verified payment identity, amount or link binding');
   }
+
+  return {
+    providerTransactionRef: ref,
+    currency,
+    receivedAt: receipt.paidAt ?? new Date(),
+  };
+}
+
+/** Called only after server-side signature/provider verification, never with an HTTP body. */
+export async function recordRentalPayosReceiptInTx(tx: Tx, charge: any, receipt: InitialPayosReceipt, actor?: SettlementActor) {
+  const { providerTransactionRef, currency, receivedAt } = await validatePayosReceiptBase(charge, receipt, true);
   if (!['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose) || charge.target_type !== 'RENTAL') {
     throw new BadRequestException('Receipt integration only supports rental charges');
   }
-  const key = { provider: 'PAYOS', channel: BILLING_PAYOS_CHANNEL, providerTransactionRef: receipt.providerTransactionCode };
+  const key = { provider: 'PAYOS', channel: BILLING_PAYOS_CHANNEL, providerTransactionRef };
   const existing = await tx.billingPaymentReceipt.findUnique({ where: { provider_channel_providerTransactionRef: key } });
   if (existing) {
-    if (existing.chargeId !== charge.charge_id || !new Prisma.Decimal(existing.amount).eq(receipt.amount) || existing.currency !== receipt.currency) {
+    if (existing.chargeId !== charge.charge_id || !new Prisma.Decimal(existing.amount).eq(receipt.amount) || existing.currency !== currency) {
       cashConflict('PROVIDER_RECEIPT_CONFLICT', 'Provider transaction identity conflicts with recorded receipt');
     }
     return { alreadySettled: true, overpayment: existing.classification === 'OVERPAYMENT_RECEIPT', storeWalletCredited: false };
@@ -113,19 +143,19 @@ export async function recordRentalPayosReceiptInTx(tx: Tx, charge: any, receipt:
     if (!new Prisma.Decimal(charge.total_amount).eq(receipt.amount)) {
       classification = 'OVERPAYMENT_RECEIPT';
     } else if (charge.purpose === 'RENTAL_EXTENSION') {
-      const applied = await settleRentalRenewalInTx(tx, charge, receipt.providerTransactionCode);
+      const applied = await settleRentalRenewalInTx(tx, charge, providerTransactionRef);
       if (!applied) classification = 'OVERPAYMENT_RECEIPT';
     } else {
       const rentals = await tx.$queryRawUnsafe<any[]>('SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE', charge.target_id);
       if (rentals[0]?.status !== 'PENDING_PAYMENT') classification = 'OVERPAYMENT_RECEIPT';
-      else await settleInitialRentalInTx(tx, charge, 'PAYOS', actor, receipt.providerTransactionCode);
+      else await settleInitialRentalInTx(tx, charge, 'PAYOS', actor, providerTransactionRef);
     }
   } else if (charge.status !== 'PAID') {
     // Verified real money is durable even when the quote was cancelled/expired.
     classification = 'OVERPAYMENT_RECEIPT';
   } else if (charge.payment_method === 'STORE_CASH_OFFSET') {
     classification = 'OVERPAYMENT_RECEIPT';
-  } else if (charge.provider_transaction_code === receipt.providerTransactionCode) {
+  } else if (charge.provider_transaction_code === providerTransactionRef) {
     // Legacy exact-reference replay: adopt the receipt WITHOUT settling again.
     if (!new Prisma.Decimal(charge.total_amount).eq(receipt.amount)) {
       cashConflict('LEGACY_RECEIPT_MISMATCH', 'Legacy payment amount requires reconciliation');
@@ -136,7 +166,7 @@ export async function recordRentalPayosReceiptInTx(tx: Tx, charge: any, receipt:
     classification = 'OVERPAYMENT_RECEIPT';
   }
   const saved = await tx.billingPaymentReceipt.create({ data: { ...key, chargeId: charge.charge_id,
-    amount: receipt.amount, currency: receipt.currency, classification, receivedAt: receipt.paidAt ?? new Date(),
+    amount: receipt.amount, currency, classification, receivedAt,
   } });
   if (classification === 'OVERPAYMENT_RECEIPT') {
     await tx.billingOverpaymentObligation.create({ data: {
@@ -144,6 +174,136 @@ export async function recordRentalPayosReceiptInTx(tx: Tx, charge: any, receipt:
     } });
   }
   return { alreadySettled: charge.status === 'PAID', overpayment: classification === 'OVERPAYMENT_RECEIPT', storeWalletCredited: false };
+}
+
+/** Records subscription PayOS receipt into billing_payment_receipts; extra/distinct receipts on settled or non-pending charges create reconciliation obligations without duplicate entitlement extension or auto-refund. */
+export async function recordSubscriptionPayosReceiptInTx(
+  tx: Tx,
+  charge: any,
+  receipt: InitialPayosReceipt,
+  settlePendingSubscriptionInTx: () => Promise<any>,
+  actor?: SettlementActor,
+) {
+  if (charge.purpose !== 'STORE_SUBSCRIPTION' || charge.target_type !== 'STORE') {
+    throw new BadRequestException('Receipt integration only supports store subscription charges');
+  }
+  const { providerTransactionRef, currency, receivedAt } = await validatePayosReceiptBase(charge, receipt, false);
+  const key = { provider: 'PAYOS', channel: BILLING_PAYOS_CHANNEL, providerTransactionRef };
+
+  const existing = await tx.billingPaymentReceipt.findUnique({
+    where: { provider_channel_providerTransactionRef: key },
+  });
+  if (existing) {
+    if (
+      existing.chargeId !== charge.charge_id ||
+      !new Prisma.Decimal(existing.amount).eq(receipt.amount) ||
+      existing.currency !== currency
+    ) {
+      cashConflict('PROVIDER_RECEIPT_CONFLICT', 'Provider transaction identity conflicts with recorded receipt');
+    }
+    return {
+      alreadySettled: true,
+      overpayment: existing.classification === 'OVERPAYMENT_RECEIPT',
+      overpaymentRecorded: existing.classification === 'OVERPAYMENT_RECEIPT',
+      receipt: existing,
+      overpaymentObligation: null as any,
+      subscriptionUpdated: null as any,
+      storeWalletCredited: false,
+    };
+  }
+
+  const collidingCharges = await tx.$queryRawUnsafe<any[]>(
+    `SELECT charge_id, charge_code FROM billing_charges WHERE provider_transaction_code = $1 AND charge_id <> $2 AND status = 'PAID'`,
+    providerTransactionRef,
+    charge.charge_id,
+  );
+  if (collidingCharges && collidingCharges.length > 0) {
+    throw new BadRequestException(
+      `Mã giao dịch ${providerTransactionRef} đã được sử dụng để thanh toán cho khoản thu #${collidingCharges[0].charge_code}`,
+    );
+  }
+
+  let classification: 'SETTLEMENT_RECEIPT' | 'OVERPAYMENT_RECEIPT' = 'SETTLEMENT_RECEIPT';
+  let subscriptionUpdated: any = null;
+  const wasPaid = charge.status === 'PAID';
+
+  if (charge.status === 'PENDING') {
+    if (!new Prisma.Decimal(charge.total_amount).eq(receipt.amount)) {
+      classification = 'OVERPAYMENT_RECEIPT';
+    } else {
+      subscriptionUpdated = await settlePendingSubscriptionInTx();
+    }
+  } else if (charge.status !== 'PAID') {
+    classification = 'OVERPAYMENT_RECEIPT';
+  } else if (
+    charge.payment_method !== 'WALLET' &&
+    charge.payment_method !== 'STORE_CASH_OFFSET' &&
+    charge.provider_transaction_code === providerTransactionRef
+  ) {
+    if (!new Prisma.Decimal(charge.total_amount).eq(receipt.amount)) {
+      cashConflict('LEGACY_RECEIPT_MISMATCH', 'Legacy payment amount requires reconciliation');
+    }
+  } else {
+    classification = 'OVERPAYMENT_RECEIPT';
+  }
+
+  const savedReceipt = await tx.billingPaymentReceipt.create({
+    data: {
+      ...key,
+      chargeId: charge.charge_id,
+      amount: receipt.amount,
+      currency,
+      classification,
+      receivedAt,
+    },
+  });
+
+  let overpaymentObligation: any = null;
+  if (classification === 'OVERPAYMENT_RECEIPT') {
+    overpaymentObligation = await tx.billingOverpaymentObligation.create({
+      data: {
+        receiptId: savedReceipt.id,
+        amount: receipt.amount,
+        receiptClassification: 'OVERPAYMENT_RECEIPT',
+        status: 'PENDING_RECONCILIATION',
+      },
+    });
+
+    if ((tx as any).rentalAuditLog) {
+      await (tx as any).rentalAuditLog.create({
+        data: {
+          actorType: actor?.role ? (['SUPER_ADMIN', 'SYSTEM_ADMIN', 'ADMIN'].includes(actor.role) ? 'ADMIN' : 'USER') : 'SYSTEM',
+          actorUserId: actor?.userId ? BigInt(actor.userId) : null,
+          action: 'RECORD_OVERPAYMENT_RECEIPT',
+          targetType: charge.target_type,
+          targetId: BigInt(charge.target_id),
+          beforeState: charge.status,
+          afterState: charge.status,
+          amount: receipt.amount,
+          correlationId: charge.charge_code,
+          idempotencyKey: providerTransactionRef,
+          metadata: {
+            chargeId: String(charge.charge_id),
+            chargeCode: charge.charge_code,
+            receiptId: String(savedReceipt.id),
+            obligationId: String(overpaymentObligation.id),
+            classification,
+            channel: BILLING_PAYOS_CHANNEL,
+          },
+        },
+      });
+    }
+  }
+
+  return {
+    alreadySettled: wasPaid,
+    overpayment: classification === 'OVERPAYMENT_RECEIPT',
+    overpaymentRecorded: classification === 'OVERPAYMENT_RECEIPT',
+    receipt: savedReceipt,
+    overpaymentObligation,
+    subscriptionUpdated,
+    storeWalletCredited: false,
+  };
 }
 
 // Compatibility export for callers/tests of the initial-only helper. One implementation.

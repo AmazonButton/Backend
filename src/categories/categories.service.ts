@@ -158,15 +158,17 @@ export class CategoriesService {
         } catch {
           throw new BadRequestException('Mã danh mục cha không hợp lệ');
         }
-
-        await this.assertNoCycle(existing.storeId, categoryId, parentId);
       }
     }
 
-    const updated = await this.repo.update(categoryId, {
-      categoryName: dto.categoryName,
-      parentCategoryId: parentId,
-      status: dto.status,
+    const updated = await this.repo.updateWithCycleCheckAtomicTx({
+      storeId: existing.storeId,
+      categoryId,
+      data: {
+        categoryName: dto.categoryName,
+        parentCategoryId: parentId,
+        status: dto.status,
+      },
     });
 
     return CategoryResponseDto.fromEntity(updated);

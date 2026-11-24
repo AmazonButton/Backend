@@ -25,7 +25,7 @@ export class IotService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(OrdersService) private readonly ordersService: OrdersService,
-  ) {}
+  ) { }
 
   async handleEvent(device: any, body: any) {
     const rawEvent = body.eventType || body.action || 'SINGLE_PRESS';
@@ -41,17 +41,18 @@ export class IotService {
       throw new BadRequestException('Thiết bị không xác định hợp lệ (Thiếu buttonId/deviceId)');
     }
     const deviceId = BigInt(rawDeviceId);
-    const reqKey = `${rawDeviceId}:${requestId}`;
+    const reqKey = `${deviceId.toString()}:${requestId}`;
 
     // 0. Early Idempotency Check (Network Re-transmission & In-Flight Concurrency)
-    if (processedRequests.has(reqKey) || processedRequests.has(requestId)) {
-      const cached = processedRequests.get(reqKey) || processedRequests.get(requestId);
+    if (processedRequests.has(reqKey)) {
+      const cached = processedRequests.get(reqKey);
+      const cachedOrderId = cached?.order?.orderId || cached?.orderId;
       return {
         success: true,
         isDuplicate: true,
         message: 'Yêu cầu trùng lặp đã được ngăn chặn (Idempotency Key)',
         data: {
-          orderId: cached?.orderId ? cached.orderId.toString() : undefined,
+          orderId: cachedOrderId ? cachedOrderId.toString() : undefined,
           isDuplicate: true,
         },
       };
@@ -243,7 +244,6 @@ export class IotService {
         this.logger.warn(`[IoT Idempotency] Worker lease expired or fenced out before COMPLETED (requestId: ${requestId}, leaseToken: ${leaseToken})`);
       }
 
-      processedRequests.set(requestId, orderResult);
       processedRequests.set(reqKey, orderResult);
 
       return {
@@ -336,7 +336,7 @@ export class IotService {
         await this.prisma.ioTButton.update({
           where: { buttonId: BigInt(device.buttonId) },
           data: { batteryLevel: numBattery },
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       const isLowBattery = numBattery > 0 && numBattery < 20;
@@ -396,7 +396,7 @@ export class IotService {
               data: alertData,
               idempotencyKey: `alert:${device.deviceId || device.buttonId}:${faultType}:${Math.floor(Date.now() / 300000)}`,
             },
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
     } catch (err: any) {

@@ -47,13 +47,25 @@ export class ProductsController {
 
   @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    'CUSTOMER',
+    'STORE_OWNER',
+    'STORE_MANAGER',
+    'STAFF_INVENTORY',
+    'STAFF_ORDERS',
+    'STAFF_ORDER',
+    'STAFF_DELIVERY',
+    'STORE_STAFF',
+    'ADMIN',
+    'SYSTEM_ADMIN',
+    'SUPER_ADMIN',
+  )
   @Get()
   @ApiOperation({ summary: 'Xem danh sách sản phẩm và tồn kho' })
   async list(
     @Request() req: any,
     @Query(new ValidationPipe({ transform: true, whitelist: true })) query: ProductQueryDto,
   ) {
-    const targetStoreId = req.user.storeId || query.storeId;
     const effectivePageSize = query.pageSize || query.limit;
     const options = {
       page: query.page,
@@ -61,7 +73,7 @@ export class ProductsController {
       search: query.search,
       category: query.category,
     };
-    const res = await this.productsService.list(targetStoreId, options);
+    const res = await this.productsService.list(query.storeId, options, req.user);
     return {
       success: true,
       data: res.data,

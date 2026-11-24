@@ -373,7 +373,7 @@ export class PaymentsService {
               this.logger.warn(`[PayOS Webhook] Rejected inconsistent envelope code "${envelopeChargeCode}" for signed charge data.code="00" (orderCode=${orderCodeStr})`);
               return { success: false, message: 'Inconsistent webhook envelope code' };
             }
-            const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION'].includes(charge.purpose);
+            const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION', 'STORE_SUBSCRIPTION'].includes(charge.purpose);
             if (!data?.amount || isNaN(Number(data.amount))) {
               this.logger.warn('[PayOS Webhook] Missing or invalid mandatory field amount for charge');
               return { success: false, message: 'Missing amount' };

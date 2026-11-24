@@ -195,6 +195,22 @@ export class OrdersRepository {
         }
       }
 
+      // 0.2 Store status invariant check under lock (matches sp_create_order_from_button P0004)
+      const lockedStores = await tx.$queryRawUnsafe<any[]>(
+        'SELECT store_id, status, commission_rate FROM store WHERE store_id = $1 FOR SHARE',
+        button.storeId,
+      );
+      const storeRecord =
+        lockedStores && lockedStores.length > 0
+          ? lockedStores[0]
+          : await tx.store.findUnique({
+              where: { storeId: button.storeId },
+              select: { storeId: true, status: true, commissionRate: true },
+            });
+      if (!storeRecord || storeRecord.status !== 'ACTIVE') {
+        throw new BadRequestException('Cửa hàng hiện không hoạt động');
+      }
+
       // 1. Pre-calculate subtotal & discounts from current database products
       let subtotal = 0;
       let totalDiscount = 0;
@@ -226,9 +242,10 @@ export class OrdersRepository {
           if (discount.discountPercent != null) {
             unitDiscount = Math.round((basePrice * Number(discount.discountPercent) / 100) * 100) / 100;
           } else if (discount.discountAmount != null) {
-            unitDiscount = Math.min(basePrice, Number(discount.discountAmount));
+            unitDiscount = Number(discount.discountAmount);
           }
         }
+        unitDiscount = Math.min(basePrice, Math.max(0, unitDiscount));
 
         subtotal += basePrice * bp.quantity;
         totalDiscount += unitDiscount * bp.quantity;
@@ -320,11 +337,8 @@ export class OrdersRepository {
           ? deliverySnapshot.deliveryAddressId
           : address?.addressId || button.addressId || null;
 
-      const store = await tx.store.findUnique({
-        where: { storeId: button.storeId },
-        select: { commissionRate: true },
-      });
-      const commissionRate = store?.commissionRate ? Number(store.commissionRate) : 8.0;
+      const rawCommissionRate = storeRecord.commission_rate ?? storeRecord.commissionRate;
+      const commissionRate = rawCommissionRate != null ? Number(rawCommissionRate) : 8.0;
       const commissionAmount = Math.round((total * commissionRate / 100) * 100) / 100;
       const netAmount = Math.max(0, total - commissionAmount);
 
@@ -385,9 +399,10 @@ export class OrdersRepository {
             discountPercent = Number(discount.discountPercent);
             unitDiscount = Math.round((basePrice * discountPercent / 100) * 100) / 100;
           } else if (discount.discountAmount != null) {
-            unitDiscount = Math.min(basePrice, Number(discount.discountAmount));
+            unitDiscount = Number(discount.discountAmount);
           }
         }
+        unitDiscount = Math.min(basePrice, Math.max(0, unitDiscount));
 
         const finalUnitPrice = basePrice - unitDiscount;
         const lineSubtotal = finalUnitPrice * bp.quantity;
@@ -831,6 +846,10 @@ export class OrdersRepository {
     reason: string = 'Khách hàng hủy đơn',
     userId?: any,
     targetStatus: 'CANCELLED' | 'REJECTED' = 'CANCELLED',
+    options?: {
+      mode?: 'MANUAL' | 'PAYMENT_TIMEOUT';
+      excludePaymentMethods?: string[];
+    },
   ): Promise<any> {
     return runWithTransactionRetry(
       () =>
@@ -849,20 +868,32 @@ export class OrdersRepository {
         return this.findOrderByIdTx(tx, orderId);
       }
 
-      // NV-06: Check timeout / expiry policy under row lock.
-      // If cancellation reason indicates timeout (e.g. from lifecycle worker or payment timeout),
-      // verify that the order is actually still eligible for timeout cancellation (PENDING, UNPAID, no button_id).
-      // If it was already PAID or transitioned past PENDING, skip cancellation idempotently.
-      const isTimeoutReason = Boolean(
-        reason && (
-          reason.includes('Hết hạn') ||
-          reason.toUpperCase().includes('TIMEOUT') ||
-          reason.toUpperCase().includes('EXPIRED')
-        )
-      );
-      if (isTimeoutReason) {
+      // Enforce non-COD / unpaid-only guards strictly when explicit business mode is PAYMENT_TIMEOUT
+      // (or when caller explicitly provides excludePaymentMethods). NEVER infer timeout from reason string.
+      const cancelMode = options?.mode ?? 'MANUAL';
+      const excludedMethods = (
+        options?.excludePaymentMethods ??
+        (cancelMode === 'PAYMENT_TIMEOUT' ? ['COD', 'CASH_ON_DELIVERY'] : [])
+      ).map((m) => String(m).trim().toUpperCase());
+
+      if (
+        excludedMethods.length > 0 &&
+        excludedMethods.includes(String(order.payment_method || '').trim().toUpperCase())
+      ) {
+        return {
+          ...(await this.findOrderByIdTx(tx, orderId)),
+          skipped: true,
+          skippedReason: 'EXCLUDED_PAYMENT_METHOD',
+        };
+      }
+
+      if (cancelMode === 'PAYMENT_TIMEOUT') {
         if (order.payment_status === 'PAID' || order.order_status !== 'PENDING' || order.button_id != null) {
-          return this.findOrderByIdTx(tx, orderId);
+          return {
+            ...(await this.findOrderByIdTx(tx, orderId)),
+            skipped: true,
+            skippedReason: 'NOT_TIMEOUT_ELIGIBLE',
+          };
         }
       }
 
@@ -1778,7 +1809,8 @@ export class OrdersRepository {
             discountAmt = Number(discount.discountAmount);
           }
         }
-        const finalUnitPrice = Math.max(0, unitPrice - discountAmt);
+        discountAmt = Math.min(unitPrice, Math.max(0, discountAmt));
+        const finalUnitPrice = unitPrice - discountAmt;
         const itemSubtotal = finalUnitPrice * qty;
 
         subtotalAmount += unitPrice * qty;
@@ -1797,7 +1829,11 @@ export class OrdersRepository {
       }
 
       const shippingFee = 0;
+      const itemsSubtotalSum = orderItemsData.reduce((sum, item) => sum + item.itemSubtotal, 0);
       const totalAmount = Math.max(0, subtotalAmount - discountAmount + shippingFee);
+      if (Math.abs(itemsSubtotalSum + shippingFee - totalAmount) > 0.01) {
+        throw new BadRequestException('Lỗi tính toán tổng tiền đơn hàng không nhất quán');
+      }
 
       // Enforce platform minimum order value (2,000 VND)
       if (totalAmount < MIN_ORDER_TOTAL_VND) {

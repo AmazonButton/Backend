@@ -1,6 +1,20 @@
-import { IsNotEmpty, IsString, IsNumber, IsOptional, Min, IsArray, IsUrl, ArrayMaxSize, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import {
+  IsNotEmpty,
+  IsString,
+  IsNumber,
+  IsOptional,
+  Min,
+  Max,
+  IsInt,
+  IsArray,
+  IsUrl,
+  ArrayMaxSize,
+  ValidateIf,
+  ValidateNested,
+} from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { ProductImageDto, IsImageArray } from './product-image.dto';
+import { POSTGRES_INT_MAX } from '../../common/utils/validation.util';
 
 export class CreateProductDto {
   @IsOptional()
@@ -51,16 +65,34 @@ export class CreateProductDto {
   @Min(0, { message: 'Giá không được âm' })
   basePrice?: number;
 
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({}, { message: 'Số lượng tồn kho phải là số' })
-  @Min(0)
+  @ValidateIf((_, value) => value !== undefined)
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (/^(0|[1-9]\d{0,9})$/.test(trimmed)) {
+        return Number(trimmed);
+      }
+    }
+    return value;
+  })
+  @IsInt({ message: 'Số lượng tồn kho phải là số nguyên không âm' })
+  @Min(0, { message: 'Số lượng tồn kho không được âm' })
+  @Max(POSTGRES_INT_MAX, { message: 'Số lượng tồn kho vượt quá giới hạn tối đa cho phép' })
   stock?: number;
 
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({}, { message: 'Số lượng tồn kho ban đầu phải là số' })
-  @Min(0)
+  @ValidateIf((_, value) => value !== undefined)
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (/^(0|[1-9]\d{0,9})$/.test(trimmed)) {
+        return Number(trimmed);
+      }
+    }
+    return value;
+  })
+  @IsInt({ message: 'Số lượng tồn kho ban đầu phải là số nguyên không âm' })
+  @Min(0, { message: 'Số lượng tồn kho ban đầu không được âm' })
+  @Max(POSTGRES_INT_MAX, { message: 'Số lượng tồn kho ban đầu vượt quá giới hạn tối đa cho phép' })
   initialStock?: number;
 
   @IsOptional()

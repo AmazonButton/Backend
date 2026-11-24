@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -73,6 +73,75 @@ export class CategoriesRepository {
     return this.prisma.category.update({
       where: { categoryId },
       data: payload,
+    });
+  }
+
+  /**
+   * Atomically verify category hierarchy invariants under store-scoped row locks (FOR UPDATE)
+   * and update the category in a single transaction to prevent concurrent cycle creation.
+   */
+  async updateWithCycleCheckAtomicTx(params: {
+    storeId: bigint;
+    categoryId: bigint;
+    data: {
+      categoryName?: string;
+      parentCategoryId?: bigint | null;
+      status?: string;
+    };
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const storeCategories = await tx.$queryRaw<
+        Array<{ category_id: bigint; parent_category_id: bigint | null }>
+      >`
+        SELECT category_id, parent_category_id
+        FROM category
+        WHERE store_id = ${params.storeId}
+        ORDER BY category_id ASC
+        FOR UPDATE;
+      `;
+
+      const parentById = new Map<string, bigint | null>();
+      for (const row of storeCategories) {
+        parentById.set(
+          BigInt(row.category_id).toString(),
+          row.parent_category_id != null ? BigInt(row.parent_category_id) : null,
+        );
+      }
+
+      if (!parentById.has(params.categoryId.toString())) {
+        throw new NotFoundException('Không tìm thấy danh mục');
+      }
+
+      if (params.data.parentCategoryId !== undefined && params.data.parentCategoryId !== null) {
+        if (params.categoryId === params.data.parentCategoryId) {
+          throw new BadRequestException('Một danh mục không thể làm cha của chính nó');
+        }
+
+        let currentParentId: bigint | null = params.data.parentCategoryId;
+        const visited = new Set<string>([params.categoryId.toString()]);
+
+        while (currentParentId) {
+          const parentStr = currentParentId.toString();
+          if (visited.has(parentStr)) {
+            throw new BadRequestException('Phát hiện vòng lặp phân cấp danh mục (cycle detected)');
+          }
+          if (!parentById.has(parentStr)) {
+            throw new BadRequestException('Danh mục cha không tồn tại trong cửa hàng này');
+          }
+          visited.add(parentStr);
+          currentParentId = parentById.get(parentStr) ?? null;
+        }
+      }
+
+      const payload: any = {};
+      if (params.data.categoryName !== undefined) payload.categoryName = params.data.categoryName;
+      if (params.data.parentCategoryId !== undefined) payload.parentCategoryId = params.data.parentCategoryId;
+      if (params.data.status !== undefined) payload.status = params.data.status;
+
+      return tx.category.update({
+        where: { categoryId: params.categoryId },
+        data: payload,
+      });
     });
   }
 
