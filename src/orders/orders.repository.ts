@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
 import { ensureAndLockStoreWalletByStoreId } from '../store-wallet/store-wallet.lock';
 import { PaymentRefundsRepository } from '../payments/payment-refunds.repository';
+import { hasStoreActiveSubscription } from '../common/utils/store-subscription-policy.util';
 
 @Injectable()
 export class OrdersRepository {
@@ -96,6 +97,135 @@ export class OrdersRepository {
         idempotencyKey,
       },
     });
+  }
+
+  async assertCustomerNotBlockedByStore(
+    storeId: bigint,
+    customerId: bigint,
+    prismaOrTx: any = this.prisma,
+  ): Promise<void> {
+    const relation = await prismaOrTx.storeCustomer?.findFirst?.({
+      where: { storeId, customerId },
+      select: { status: true },
+    });
+    if (relation && relation.status === 'BLOCKED') {
+      throw new ForbiddenException({
+        success: false,
+        errorCode: 'STORE_CUSTOMER_BLOCKED',
+        code: 'STORE_CUSTOMER_BLOCKED',
+        message: 'Tài khoản của bạn đã bị cửa hàng tạm chặn đặt hàng',
+      });
+    }
+  }
+
+  async checkStoreEligibleForOrders(
+    storeId: bigint,
+    prismaOrTx: any = this.prisma,
+  ): Promise<{
+    eligible: boolean;
+    reasonCode?: 'STORE_NOT_FOUND' | 'STORE_INACTIVE' | 'STORE_SUBSCRIPTION_EXPIRED';
+    storeName?: string;
+    ownerUserId?: bigint | null;
+  }> {
+    const store = await prismaOrTx.store.findUnique({
+      where: { storeId },
+      select: { storeId: true, name: true, status: true, ownerUserId: true },
+    });
+    if (!store) {
+      return { eligible: false, reasonCode: 'STORE_NOT_FOUND' };
+    }
+    if (store.status !== 'ACTIVE') {
+      return {
+        eligible: false,
+        reasonCode: 'STORE_INACTIVE',
+        storeName: store.name,
+        ownerUserId: store.ownerUserId,
+      };
+    }
+    const hasValidSub = await hasStoreActiveSubscription(prismaOrTx, storeId);
+    if (!hasValidSub) {
+      return {
+        eligible: false,
+        reasonCode: 'STORE_SUBSCRIPTION_EXPIRED',
+        storeName: store.name,
+        ownerUserId: store.ownerUserId,
+      };
+    }
+    return {
+      eligible: true,
+      storeName: store.name,
+      ownerUserId: store.ownerUserId,
+    };
+  }
+
+  async createStoreSubscriptionRejectedNotifications(params: {
+    customerUserId?: bigint | null;
+    ownerUserId?: bigint | null;
+    storeId: bigint;
+    storeName?: string;
+    buttonCode?: string;
+    buttonName?: string;
+    reasonCode: string;
+    requestId?: string;
+  }) {
+    const reqSuffix = params.requestId || String(Date.now());
+    const storeLabel = params.storeName || `Cửa hàng #${params.storeId.toString()}`;
+    const btnLabel = params.buttonName || params.buttonCode || 'Smart Order Button';
+    const tasks: Promise<any>[] = [];
+
+    if (params.customerUserId) {
+      const custKey = `iot-store-reject:cust:${params.customerUserId.toString()}:${params.storeId.toString()}:${reqSuffix}`;
+      tasks.push(
+        this.prisma.notification.upsert({
+          where: { idempotencyKey: custKey },
+          update: {},
+          create: {
+            userId: params.customerUserId,
+            type: 'ORDER_REJECTED_STORE_INACTIVE',
+            title: 'Cửa hàng đang tạm ngưng nhận đơn',
+            body:
+              params.reasonCode === 'STORE_SUBSCRIPTION_EXPIRED'
+                ? `Không thể đặt đơn từ nút "${btnLabel}": ${storeLabel} hiện đang tạm ngưng nhận đơn do gói dịch vụ đã hết hạn. Hệ thống chưa tạo đơn và chưa trừ tiền.`
+                : `Không thể đặt đơn từ nút "${btnLabel}": ${storeLabel} hiện đang tạm ngưng hoạt động. Hệ thống chưa tạo đơn và chưa trừ tiền.`,
+            data: {
+              storeId: params.storeId.toString(),
+              buttonCode: params.buttonCode || null,
+              errorCode: params.reasonCode,
+            },
+            idempotencyKey: custKey,
+          },
+        }),
+      );
+    }
+
+    if (params.ownerUserId) {
+      const ownerKey = `iot-store-reject:owner:${params.ownerUserId.toString()}:${params.storeId.toString()}:${reqSuffix}`;
+      tasks.push(
+        this.prisma.notification.upsert({
+          where: { idempotencyKey: ownerKey },
+          update: {},
+          create: {
+            userId: params.ownerUserId,
+            type: 'STORE_MISSED_IOT_ORDER',
+            title: 'Bỏ lỡ đơn đặt hàng từ nút bấm IoT',
+            body:
+              params.reasonCode === 'STORE_SUBSCRIPTION_EXPIRED'
+                ? `Khách hàng vừa bấm nút đặt hàng (${btnLabel}) tại ${storeLabel} nhưng đơn bị chặn tự động do gói dịch vụ gian hàng đã hết hạn. Vui lòng gia hạn ngay để tiếp tục nhận đơn.`
+                : `Khách hàng vừa bấm nút đặt hàng (${btnLabel}) tại ${storeLabel} nhưng đơn bị chặn do cửa hàng đang ở trạng thái tạm ngưng.`,
+            data: {
+              storeId: params.storeId.toString(),
+              buttonCode: params.buttonCode || null,
+              errorCode: params.reasonCode,
+            },
+            idempotencyKey: ownerKey,
+          },
+        }),
+      );
+    }
+
+    if (tasks.length > 0) {
+      await Promise.all(tasks);
+    }
   }
 
   async executeSpCreateOrder(
@@ -209,6 +339,16 @@ export class OrdersRepository {
             });
       if (!storeRecord || storeRecord.status !== 'ACTIVE') {
         throw new BadRequestException('Cửa hàng hiện không hoạt động');
+      }
+      if (!(await hasStoreActiveSubscription(tx, BigInt(button.storeId)))) {
+        throw new BadRequestException({
+          errorCode: 'STORE_SUBSCRIPTION_EXPIRED',
+          code: 'STORE_SUBSCRIPTION_EXPIRED',
+          message: 'Cửa hàng hiện đang tạm ngưng nhận đơn do gói dịch vụ đã hết hạn',
+        });
+      }
+      if (button.customerId) {
+        await this.assertCustomerNotBlockedByStore(BigInt(button.storeId), BigInt(button.customerId), tx);
       }
 
       // 1. Pre-calculate subtotal & discounts from current database products
@@ -955,6 +1095,25 @@ export class OrdersRepository {
         data: orderUpdateData,
       });
 
+      // Ý 7: Cancel any active PENDING payment transactions atomically inside the TX and
+      // return their paymentLinkIds non-enumerably so post-commit code cancels remote PayOS links.
+      let cancelledPayosLinkIds: string[] = [];
+      if (tx.paymentTransaction?.findMany) {
+        const pendingPayosTxs = await tx.paymentTransaction.findMany({
+          where: { orderId, status: 'PENDING' },
+          select: { paymentTransactionId: true, paymentLinkId: true },
+        });
+        if (pendingPayosTxs && pendingPayosTxs.length > 0) {
+          await tx.paymentTransaction.updateMany({
+            where: { orderId, status: 'PENDING' },
+            data: { status: 'CANCELLED' },
+          });
+          cancelledPayosLinkIds = pendingPayosTxs
+            .map((p: any) => p.paymentLinkId)
+            .filter((id: any): id is string => Boolean(id && String(id).trim()));
+        }
+      }
+
       if (
         (orderUpdateData.paymentStatus === 'REFUND_PENDING' || order.payment_status === 'REFUND_PENDING') &&
         typeof (tx as any)?.paymentOrderReceipt?.findMany === 'function'
@@ -964,7 +1123,14 @@ export class OrdersRepository {
 
       // Lịch sử trạng thái được tự động ghi nhận bởi DB trigger trg_sync_inventory_on_order_status_change
 
-      return this.findOrderByIdTx(tx, orderId);
+      const cancelledOrder = await this.findOrderByIdTx(tx, orderId);
+      if (cancelledOrder && cancelledPayosLinkIds.length > 0) {
+        Object.defineProperty(cancelledOrder, '__cancelledPayosLinkIds', {
+          value: cancelledPayosLinkIds,
+          enumerable: false,
+        });
+      }
+      return cancelledOrder;
         }),
       { operationName: 'CancelOrderAtomicTx' },
     );
@@ -1292,6 +1458,25 @@ export class OrdersRepository {
       const deliveredAtDate = dto.deliveredAt ? new Date(dto.deliveredAt) : new Date();
       const effectivePaymentMethod = isPaidGateway ? order.payment_method : dto.paymentMethod;
 
+      // Ý 1: If an UNPAID PayOS/QR order is settled at doorstep via COD, mark any lingering PENDING
+      // PayOS payment transactions as CANCELLED so the remote QR link can be invalidated after commit.
+      let doorstepCancelledLinkIds: string[] = [];
+      if (!isPaidGateway && effectivePaymentMethod === 'COD' && tx.paymentTransaction?.findMany) {
+        const pendingPayosTxs = await tx.paymentTransaction.findMany({
+          where: { orderId, status: 'PENDING' },
+          select: { paymentTransactionId: true, paymentLinkId: true },
+        });
+        if (pendingPayosTxs && pendingPayosTxs.length > 0) {
+          await tx.paymentTransaction.updateMany({
+            where: { orderId, status: 'PENDING' },
+            data: { status: 'CANCELLED' },
+          });
+          doorstepCancelledLinkIds = pendingPayosTxs
+            .map((p: any) => p.paymentLinkId)
+            .filter((id: any): id is string => Boolean(id && String(id).trim()));
+        }
+      }
+
       // Deduct physical inventory (quantity_on_hand & reserved_quantity) immediately on DELIVERED
       const alreadySettledInv = await tx.orderStatusHistory.findFirst({
         where: {
@@ -1425,7 +1610,14 @@ export class OrdersRepository {
         );
       }
 
-      return this.findOrderByIdTx(tx, orderId);
+      const deliveredOrder = await this.findOrderByIdTx(tx, orderId);
+      if (deliveredOrder && doorstepCancelledLinkIds.length > 0) {
+        Object.defineProperty(deliveredOrder, '__cancelledPayosLinkIds', {
+          value: doorstepCancelledLinkIds,
+          enumerable: false,
+        });
+      }
+      return deliveredOrder;
         }),
       { operationName: 'CompleteDeliveryAtomicTx' },
     );
@@ -1697,6 +1889,23 @@ export class OrdersRepository {
           const storeRow = storeRows?.[0];
           if (!storeRow || storeRow.status !== 'ACTIVE') {
             throw new BadRequestException('Cửa hàng không tồn tại hoặc tạm ngưng hoạt động');
+          }
+          if (!(await hasStoreActiveSubscription(tx, storeId))) {
+            throw new BadRequestException({
+              success: false,
+              errorCode: 'STORE_SUBSCRIPTION_EXPIRED',
+              code: 'STORE_SUBSCRIPTION_EXPIRED',
+              message: 'Cửa hàng hiện đang tạm ngưng nhận đơn do gói dịch vụ đã hết hạn',
+            });
+          }
+          if (customerUserId) {
+            const earlyProfile = await tx.customerProfile.findUnique({
+              where: { userId: customerUserId },
+              select: { customerId: true },
+            });
+            if (earlyProfile) {
+              await this.assertCustomerNotBlockedByStore(storeId, earlyProfile.customerId, tx);
+            }
           }
           const store = {
             storeId: storeRow.store_id,

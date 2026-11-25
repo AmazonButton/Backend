@@ -5,6 +5,7 @@ import { OrdersRepository } from './orders.repository';
 import { OrdersService } from './orders.service';
 import { EventsGateway } from '../websocket/events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PaymentsService } from '../payments/payments.service';
 import { toOrderResponseDto } from './dto/order-response.dto';
 
 @Injectable()
@@ -18,6 +19,7 @@ export class OrdersLifecycleWorker implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => OrdersService)) private readonly ordersService: OrdersService,
     @Optional() @Inject(EventsGateway) private readonly eventsGateway?: EventsGateway,
     @Optional() @Inject(NotificationsService) private readonly notificationsService?: NotificationsService,
+    @Optional() @Inject(forwardRef(() => PaymentsService)) private readonly paymentsService?: PaymentsService,
   ) {}
 
   onModuleInit() {
@@ -113,10 +115,67 @@ export class OrdersLifecycleWorker implements OnModuleInit, OnModuleDestroy {
               },
             );
             if (!cancelResult?.skipped) {
+              const cancelledLinkIds = cancelResult?.__cancelledPayosLinkIds;
+              if (Array.isArray(cancelledLinkIds) && cancelledLinkIds.length > 0) {
+                await this.paymentsService?.cancelRemotePayosLinksBestEffort?.(
+                  cancelledLinkIds,
+                  'Hết hạn thời gian thanh toán đơn hàng (15 phút)',
+                );
+              }
               this.logger.log(`[OrdersLifecycleWorker] Cancelled stale unpaid order #${stale.order_code} to release reserved inventory.`);
             }
           } catch (e: any) {
             this.logger.warn(`Failed to cancel stale unpaid order #${stale.order_code}: ${e.message}`);
+          }
+        }
+
+        // Ý 2 (Hướng B 24h Safety Net): Auto-cancel DELIVERY_FAILED orders already PAID that have stayed
+        // unresolved for > 24 hours so REFUND_PENDING + ORDER_REFUND obligation are created automatically.
+        const stuckFailedPaidOrders = await this.prisma.$queryRawUnsafe<any[]>(
+          `SELECT o.order_id, o.order_code, o.store_id, o.customer_id
+           FROM orders o
+           WHERE o.order_status = 'DELIVERY_FAILED'
+             AND o.payment_status = 'PAID'
+             AND o.updated_at <= (NOW() - INTERVAL '24 hours')
+           ORDER BY o.updated_at ASC
+           LIMIT 50`,
+        );
+
+        for (const failedOrder of (stuckFailedPaidOrders || [])) {
+          try {
+            const reason = 'Tự động hủy đơn giao thất bại quá 24 giờ để hoàn tiền cho khách hàng';
+            const cancelResult: any = await this.ordersRepo.cancelOrderAtomicTx(
+              BigInt(failedOrder.order_id),
+              reason,
+              null,
+              'CANCELLED',
+              { mode: 'MANUAL' },
+            );
+            if (!cancelResult?.skipped) {
+              const cancelledLinkIds = cancelResult?.__cancelledPayosLinkIds;
+              if (Array.isArray(cancelledLinkIds) && cancelledLinkIds.length > 0) {
+                await this.paymentsService?.cancelRemotePayosLinksBestEffort?.(
+                  cancelledLinkIds,
+                  reason,
+                );
+              }
+              const formattedCancelled = toOrderResponseDto(cancelResult);
+              const cancelPayload = {
+                order: formattedCancelled,
+                reason,
+                storeId: failedOrder.store_id?.toString(),
+                customerId: failedOrder.customer_id ? failedOrder.customer_id.toString() : null,
+              };
+              if (this.eventsGateway && failedOrder.store_id) {
+                this.eventsGateway.emitToStore(failedOrder.store_id.toString(), 'ORDER_CANCELLED', cancelPayload);
+                if (failedOrder.customer_id) {
+                  this.eventsGateway.emitToCustomer(failedOrder.customer_id.toString(), 'ORDER_CANCELLED', cancelPayload);
+                }
+              }
+              this.logger.log(`[OrdersLifecycleWorker] Auto-cancelled 24h-stuck DELIVERY_FAILED paid order #${failedOrder.order_code} to trigger refund.`);
+            }
+          } catch (e: any) {
+            this.logger.warn(`Failed to auto-cancel 24h-stuck DELIVERY_FAILED order #${failedOrder.order_code}: ${e.message}`);
           }
         }
 

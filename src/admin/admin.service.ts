@@ -513,13 +513,10 @@ export class AdminService {
     const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
     if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
 
-    if (!this.payosPayoutService) {
+    if (!this.payosPayoutService && process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER !== 'true') {
       await this.adminRepo.refundFailedWithdrawalTransaction(rawWithdrawalId, 'PayOSPayoutService chưa sẵn sàng');
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }
-
-    // Provider reference must be stable and idempotent (NO Date.now() suffix!)
-    const providerReferenceId = withdrawal.providerReferenceId || withdrawal.withdrawalCode;
 
     if (!withdrawal.bankAccountEncrypted || !withdrawal.bankAccountHash || !withdrawal.bankBinSnapshot) {
       throw new BadRequestException('Thiếu snapshot tài khoản ngân hàng đã mã hóa hoặc mã BIN (Fail-Closed)');
@@ -549,6 +546,101 @@ export class AdminService {
       throw new BadRequestException('Số tiền chi hộ thực chuyển (netAmount) không hợp lệ');
     }
 
+    // Ý 3: If running on dynamic-IP instance (Render Node-1/Node-2), enqueue durable OutboxEvent
+    // so only static-IP Node-3 dispatches PayOS Payout (safe even if Node-3 is temporarily offline).
+    if (process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true') {
+      const prisma = (this.adminRepo as any)?.prisma;
+      if (!prisma?.outboxEvent?.create) {
+        throw new BadRequestException('Không thể đưa yêu cầu chi hộ vào hàng đợi static-IP worker');
+      }
+      const adminUserIdStr = adminUser?.userId ? String(adminUser.userId) : null;
+      const outboxEvent = await prisma.outboxEvent.create({
+        data: {
+          eventType: 'STORE_WITHDRAWAL_PAYOUT',
+          payload: {
+            withdrawalId: rawWithdrawalId.toString(),
+            adminUserId: adminUserIdStr,
+          },
+          status: 'PENDING',
+        },
+      });
+
+      const waitBudgetMs = Math.max(
+        1000,
+        Number(process.env.PAYOS_PAYOUT_DELEGATE_WAIT_MS) || 12000,
+      );
+      const deadline = Date.now() + waitBudgetMs;
+      while (Date.now() < deadline) {
+        const latestOutbox = await prisma.outboxEvent.findUnique({
+          where: { id: outboxEvent.id },
+        });
+        const latestWithdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+
+        if (latestOutbox?.status === 'COMPLETED' && latestWithdrawal) {
+          await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+          return latestWithdrawal;
+        }
+        if (latestWithdrawal?.status === 'PENDING_RECONCILIATION') {
+          await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+          throw new BadRequestException(
+            `Xuất lệnh chi hộ PayOS chưa rõ kết quả: ${latestWithdrawal.failureReason || 'Lỗi cổng PayOS'}. Yêu cầu được giữ ở trạng thái PENDING_RECONCILIATION để đối soát, số dư ví không tự ý hoàn lại để chống chi kép.`,
+          );
+        }
+        if (latestOutbox?.status === 'FAILED') {
+          await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+          throw new BadRequestException(
+            `Xuất lệnh chi hộ PayOS chưa rõ kết quả: ${latestOutbox.error || 'Lỗi cổng PayOS'}.`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+
+      const currentWithdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+      await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+      return currentWithdrawal || withdrawal;
+    }
+
+    return this.dispatchClaimedWithdrawalPayout(
+      rawWithdrawalId,
+      adminUser?.userId ? BigInt(adminUser.userId) : null,
+    );
+  }
+
+  async dispatchClaimedWithdrawalPayout(
+    rawWithdrawalId: bigint,
+    adminUserId: bigint | null = null,
+    options?: { isRetry?: boolean },
+  ) {
+    const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    if (withdrawal.providerPayoutId || !['PROCESSING', 'PENDING'].includes(withdrawal.status)) {
+      return withdrawal;
+    }
+    if (!this.payosPayoutService) {
+      throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
+    }
+
+    const providerReferenceId = withdrawal.providerReferenceId || withdrawal.withdrawalCode;
+    if (!withdrawal.bankAccountEncrypted || !withdrawal.bankAccountHash || !withdrawal.bankBinSnapshot) {
+      throw new BadRequestException('Thiếu snapshot tài khoản ngân hàng đã mã hóa hoặc mã BIN (Fail-Closed)');
+    }
+
+    const toAccountNumber = CryptoVaultUtil.decryptAccountNumber(withdrawal.bankAccountEncrypted).trim();
+    if (!toAccountNumber) {
+      throw new BadRequestException('Số tài khoản nhận tiền sau giải mã rỗng (Fail-Closed)');
+    }
+    const computedHash = CryptoVaultUtil.hashAccountNumber(toAccountNumber);
+    if (computedHash !== withdrawal.bankAccountHash) {
+      throw new BadRequestException('Tính toàn vẹn của tài khoản nhận tiền bị vi phạm (Hash Mismatch)');
+    }
+
+    const payoutAmount = withdrawal.netAmount
+      ? Number(withdrawal.netAmount)
+      : Number(withdrawal.amount) - Number(withdrawal.fee || 0);
+    if (!Number.isInteger(payoutAmount) || payoutAmount <= 0) {
+      throw new BadRequestException('Số tiền chi hộ thực chuyển (netAmount) không hợp lệ');
+    }
+
     const payoutPayload = {
       referenceId: providerReferenceId,
       amount: payoutAmount,
@@ -558,30 +650,44 @@ export class AdminService {
     };
 
     try {
-      const payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
-      const providerPayoutId = payoutResult?.data?.id ? String(payoutResult.data.id).trim() : null;
+      let existingPayoutId: string | null = null;
+      if (options?.isRetry && typeof this.payosPayoutService.getPayouts === 'function') {
+        const listRes = await this.payosPayoutService.getPayouts({ referenceId: providerReferenceId });
+        const rawList = Array.isArray(listRes?.data?.payouts)
+          ? listRes.data.payouts
+          : Array.isArray(listRes?.data)
+            ? listRes.data
+            : [];
+        const matched = rawList.filter((p: any) => p?.referenceId === providerReferenceId);
+        if (matched.length === 1 && matched[0]?.id) {
+          existingPayoutId = String(matched[0].id).trim();
+        }
+      }
+
+      let providerPayoutId: string | null = existingPayoutId;
+      if (!providerPayoutId) {
+        const payoutResult = await this.payosPayoutService.createPayout(payoutPayload);
+        providerPayoutId = payoutResult?.data?.id ? String(payoutResult.data.id).trim() : null;
+      }
 
       await this.adminRepo.supplementPayoutIdIfAllowed(
         rawWithdrawalId,
         providerReferenceId,
         providerPayoutId,
-        adminUser?.userId ? BigInt(adminUser.userId) : null,
+        adminUserId,
       );
       const updated = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
       await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
       return updated;
     } catch (err: any) {
       // Invariant PAY-01: Never auto-refund wallet on timeout or uncertain provider error!
-      // Auto-refunding while the remote provider might have accepted or queued the payout
-      // exposes the business to double payout vulnerability.
-      // Funds must remain frozen under status PENDING_RECONCILIATION until explicitly reconciled.
       await this.adminRepo.markWithdrawalPendingReconciliation(
         rawWithdrawalId,
-        err.message || 'Lỗi kết nối hoặc xử lý từ PayOS'
+        err.message || 'Lỗi kết nối hoặc xử lý từ PayOS',
       );
       await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
       throw new BadRequestException(
-        `Xuất lệnh chi hộ PayOS chưa rõ kết quả: ${err.message || 'Lỗi cổng PayOS'}. Yêu cầu được giữ ở trạng thái PENDING_RECONCILIATION để đối soát, số dư ví không tự ý hoàn lại để chống chi kép.`
+        `Xuất lệnh chi hộ PayOS chưa rõ kết quả: ${err.message || 'Lỗi cổng PayOS'}. Yêu cầu được giữ ở trạng thái PENDING_RECONCILIATION để đối soát, số dư ví không tự ý hoàn lại để chống chi kép.`,
       );
     }
   }

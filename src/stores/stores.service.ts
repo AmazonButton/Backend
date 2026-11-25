@@ -5,6 +5,7 @@ import { UpdateStoreMeDto } from './dto/update-store-me.dto';
 import { StoreMeResponseDto } from './dto/store-me-response.dto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { MediaService } from '../media/media.service';
+import { buildActiveStoreSubscriptionPrismaFilter } from '../common/utils/store-subscription-policy.util';
 
 @Injectable()
 export class StoresService {
@@ -178,15 +179,21 @@ export class StoresService {
 
     const where: any = {
       status: 'ACTIVE',
+      AND: [
+        buildActiveStoreSubscriptionPrismaFilter(),
+        ...(query.search
+          ? [
+              {
+                OR: [
+                  { name: { contains: query.search, mode: 'insensitive' } },
+                  { code: { contains: query.search, mode: 'insensitive' } },
+                  { address: { contains: query.search, mode: 'insensitive' } },
+                ],
+              },
+            ]
+          : []),
+      ],
     };
-
-    if (query.search) {
-      where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { code: { contains: query.search, mode: 'insensitive' } },
-        { address: { contains: query.search, mode: 'insensitive' } },
-      ];
-    }
 
     const [total, stores] = await Promise.all([
       this.prisma.store.count({ where }),
@@ -245,6 +252,7 @@ export class StoresService {
       where: {
         storeId: rawId,
         status: 'ACTIVE',
+        ...buildActiveStoreSubscriptionPrismaFilter(),
       },
       include: {
         categories: {

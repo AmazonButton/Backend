@@ -140,6 +140,44 @@ async function main() {
     },
   });
 
+  // Seed default active subscription plan & 365-day store subscriptions for Store 1 & Store 2
+  const defaultPlan = await prisma.subscriptionPlan.upsert({
+    where: { planCode: 'BASIC_MONTHLY' },
+    update: { isActive: true },
+    create: {
+      planCode: 'BASIC_MONTHLY',
+      planName: 'Gói Duy Trì Gian Hàng Tiêu Chuẩn',
+      description: 'Gói duy trì gian hàng mặc định (30 ngày / 365 ngày seed)',
+      price: 199000,
+      durationDays: 30,
+      maxProducts: 500,
+      isActive: true,
+    },
+  });
+
+  const subNow = new Date();
+  const subEnd = new Date(subNow.getTime() + 365 * 24 * 60 * 60 * 1000);
+  for (const targetStore of [store1, store2]) {
+    const existingActiveSub = await prisma.storeSubscription.findFirst({
+      where: {
+        storeId: targetStore.storeId,
+        status: 'ACTIVE',
+        endDate: { gte: subNow },
+      },
+    });
+    if (!existingActiveSub) {
+      await prisma.storeSubscription.create({
+        data: {
+          storeId: targetStore.storeId,
+          planId: defaultPlan.planId,
+          startDate: subNow,
+          endDate: subEnd,
+          status: 'ACTIVE',
+        },
+      });
+    }
+  }
+
   console.log('📦 Creating Customer Profile & Addresses (Global Customer)...');
   const customerProfile = await prisma.customerProfile.upsert({
     where: { userId: customerUser.userId },
