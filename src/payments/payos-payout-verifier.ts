@@ -500,10 +500,24 @@ export function verifyPayosPayoutRejectionEvidence(
     }
   }
 
+  const txnErrorCode = matchedTxn.errorCode ? String(matchedTxn.errorCode).trim() : '';
+  const txnErrorMessage = (
+    matchedTxn.errorMessage ||
+    matchedTxn.failureReason ||
+    payoutData?.errorMessage ||
+    ''
+  )
+    .toString()
+    .trim();
+  const providerFailureReason =
+    [txnErrorCode, txnErrorMessage].filter(Boolean).join(': ') ||
+    `PayOS xác nhận giao dịch chi trả thất bại (trạng thái: ${txnState})`;
+
   return {
     isVerified: true,
     providerPayoutId: payoutId,
     reportedAmount,
     matchedTxId: matchedTxn.id ? String(matchedTxn.id) : undefined,
+    reason: providerFailureReason,
   };
 }

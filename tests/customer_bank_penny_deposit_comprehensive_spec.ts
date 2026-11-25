@@ -347,6 +347,15 @@ async function runComprehensivePennyVerificationTestSuite() {
       obl.refundStatus = 'PROCESSING_REFUND';
       return { obligation: obl, attempt };
     },
+    updateAttemptReconcileBackoff: async (attemptId: bigint, backoffMs: number, reason?: string) => {
+      const att = attemptsTable.find((a) => a.id === attemptId);
+      if (att) {
+        att.nextReconcileAt = new Date(Date.now() + backoffMs);
+        att.reconcileAttempts = (att.reconcileAttempts || 0) + 1;
+        if (reason) att.failureReason = reason.slice(0, 255);
+      }
+      return att;
+    },
     finalizePayoutAttemptTx: async (params: any) => {
       const obl = obligationsTable.find((o) => o.id === params.obligationId);
       const att = attemptsTable.find((a) => a.id === params.attemptId);
@@ -965,16 +974,55 @@ async function runComprehensivePennyVerificationTestSuite() {
   );
   testAssert(!rejContradictory.isVerified && rejContradictory.reason?.includes('Mâu thuẫn'), 'Mâu thuẫn: Tổng COMPLETED nhưng transaction FAILED -> Chờ đối soát');
 
-  // 6f. Đủ bằng chứng thất bại đúng giao dịch và người nhận -> Mới finalize FAILED
+  // 6f. Đủ bằng chứng thất bại đúng giao dịch và người nhận -> Mới finalize FAILED và trích xuất đúng errorCode: errorMessage
   const rejValid = verifyPayosPayoutRejectionEvidence(
     {
       id: 'payout_fail_100',
       approvalState: 'FAILED',
-      transactions: [{ referenceId: testPayoutRef, amount: 2000, toBin: testBankBin, toAccountNumber: rawAccNumber, state: 'FAILED' }],
+      transactions: [
+        {
+          referenceId: testPayoutRef,
+          amount: 2000,
+          toBin: testBankBin,
+          toAccountNumber: rawAccNumber,
+          state: 'FAILED',
+          errorCode: 'PAYOUT_FAILED',
+          errorMessage: 'Chi tiền thất bại',
+        },
+      ],
     },
     { ...validSnapshot, expectedPayoutId: 'payout_fail_100' },
   );
-  testAssert(rejValid.isVerified && rejValid.providerPayoutId === 'payout_fail_100', 'Đủ bằng chứng thất bại đúng giao dịch và người nhận -> Mới finalize FAILED');
+  testAssert(
+    rejValid.isVerified &&
+      rejValid.providerPayoutId === 'payout_fail_100' &&
+      rejValid.reason === 'PAYOUT_FAILED: Chi tiền thất bại',
+    'Đủ bằng chứng thất bại đúng giao dịch và người nhận -> Mới finalize FAILED kèm mã lỗi PayOS thật',
+  );
+
+  const rejInsufficient = verifyPayosPayoutRejectionEvidence(
+    {
+      id: 'payout_fail_101',
+      approvalState: 'FAILED',
+      transactions: [
+        {
+          referenceId: testPayoutRef,
+          amount: 2000,
+          toBin: testBankBin,
+          toAccountNumber: rawAccNumber,
+          state: 'FAILED',
+          errorCode: 'PAYOUT_INSUFFICIENT_FUNDS',
+          errorMessage: 'Số dư tài khoản không đủ để thực hiện giao dịch',
+        },
+      ],
+    },
+    { ...validSnapshot, expectedPayoutId: 'payout_fail_101' },
+  );
+  testAssert(
+    rejInsufficient.isVerified &&
+      rejInsufficient.reason === 'PAYOUT_INSUFFICIENT_FUNDS: Số dư tài khoản không đủ để thực hiện giao dịch',
+    'PAYOUT_INSUFFICIENT_FUNDS được trích xuất nguyên văn errorCode: errorMessage',
+  );
 
   // 6c. Reconciler gặp lỗi timeout / 403 / 500 -> giữ PENDING_RECONCILIATION
   const testObligationReconcile = {

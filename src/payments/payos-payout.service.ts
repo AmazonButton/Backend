@@ -110,7 +110,14 @@ export class PayOSPayoutService implements OnModuleInit {
   private readonly baseUrl = 'https://api-merchant.payos.vn';
 
   onModuleInit(): void {
-    if (process.env.NODE_ENV === 'test' || process.env.PAYOS_MOCK_PAYOUT === 'true') return;
+    if (
+      process.env.NODE_ENV === 'test' ||
+      process.env.PAYOS_MOCK_PAYOUT === 'true' ||
+      process.env.PAYOS_PAYOUT_WORKER_ENABLED === 'false' ||
+      process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true'
+    ) {
+      return;
+    }
     // Không chặn khởi động và không throw: chỉ cảnh báo sớm khi tài khoản chi chưa sẵn sàng.
     void this.checkPayoutAccountHealth();
   }

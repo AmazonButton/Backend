@@ -162,6 +162,14 @@ export class PaymentRefundsService {
     return this.repo.findObligationsForOrder(orderId);
   }
 
+  private isDelegatedToStaticIpWorker(): boolean {
+    return process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true';
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   /**
    * SUPER_ADMIN financial payout initiation:
    * Phase 1 (TX): checks permissions, verified recipient ownership & source proof, conservation budget,
@@ -193,8 +201,12 @@ export class PaymentRefundsService {
       return toPaymentRefundObligationDto(claimed.obligation);
     }
 
+    const delegated =
+      options?.dispatchNow === undefined && this.isDelegatedToStaticIpWorker();
     const shouldDispatchNow =
-      options?.dispatchNow !== undefined ? options.dispatchNow : Boolean(this.payosPayoutService);
+      options?.dispatchNow !== undefined
+        ? options.dispatchNow
+        : !delegated && Boolean(this.payosPayoutService);
 
     if (shouldDispatchNow && claimed.attempt) {
       let dispatchRes: any;
@@ -247,6 +259,47 @@ export class PaymentRefundsService {
       }
       const latest = await this.repo.findObligationById(obligationId);
       return toPaymentRefundObligationDto(latest);
+    }
+
+    if (delegated && claimed.attempt) {
+      const waitMs = Number(process.env.PAYOS_PAYOUT_DELEGATE_WAIT_MS) || 12000;
+      const deadlineMs = Date.now() + waitMs;
+      while (Date.now() < deadlineMs) {
+        await this.sleep(600);
+        // Read outboxRow BEFORE latestObl: worker marks outbox COMPLETED strictly after committing
+        // obligation/attempt updates, so this ordering prevents returning a stale PROCESSING_PAYOUT snapshot.
+        const outboxRow = claimed.outboxEvent?.id
+          ? await this.repo['prisma'].outboxEvent
+              .findUnique({
+                where: { id: claimed.outboxEvent.id },
+                select: { status: true },
+              })
+              .catch(() => null)
+          : null;
+        const latestObl = await this.repo.findObligationById(obligationId);
+        const targetAtt = latestObl?.payoutAttempts?.find(
+          (a: any) => BigInt(a.attemptId) === BigInt(claimed.attempt.attemptId),
+        );
+        if (
+          !latestObl ||
+          latestObl.status === 'REFUNDED' ||
+          latestObl.status === 'READY_FOR_PAYOUT' ||
+          (targetAtt &&
+            ['FAILED', 'SUCCEEDED', 'PENDING_RECONCILIATION'].includes(targetAtt.status)) ||
+          outboxRow?.status === 'COMPLETED' ||
+          outboxRow?.status === 'FAILED'
+        ) {
+          if (latestObl?.status === 'READY_FOR_PAYOUT' && targetAtt?.status === 'FAILED') {
+            throw new BadRequestException(
+              latestObl.failureReason ||
+                'PayOS từ chối yêu cầu chi hoàn tiền hoặc nguồn thu có xung đột trước khi chuyển tiền.',
+            );
+          }
+          return toPaymentRefundObligationDto(latestObl || claimed.obligation);
+        }
+      }
+      const latestAfterPoll = await this.repo.findObligationById(obligationId);
+      return toPaymentRefundObligationDto(latestAfterPoll || claimed.obligation);
     }
 
     return toPaymentRefundObligationDto(claimed.obligation);
@@ -467,6 +520,57 @@ export class PaymentRefundsService {
     if (!obl.activePayoutAttemptId) {
       throw new BadRequestException('Nghĩa vụ hoàn tiền chưa có lượt chi trả đang xử lý để đồng bộ.');
     }
+
+    if (this.isDelegatedToStaticIpWorker()) {
+      const now = new Date();
+      await this.repo['prisma']?.paymentRefundPayoutAttempt
+        ?.updateMany?.({
+          where: {
+            attemptId: BigInt(obl.activePayoutAttemptId),
+            status: { in: ['PENDING_RECONCILIATION', 'PREPARING'] },
+          },
+          data: { nextReconcileAt: now },
+        })
+        ?.catch?.(() => {});
+
+      await this.repo['prisma']?.outboxEvent
+        ?.updateMany?.({
+          where: {
+            eventType: 'PAYMENT_REFUND_PAYOUT',
+            status: 'PENDING',
+            nextAttemptAt: { gt: now },
+          },
+          data: { nextAttemptAt: now },
+        })
+        ?.catch?.(() => {});
+
+      let latestObl = obl;
+      const deadlineMs = Date.now() + (Number(process.env.PAYOS_PAYOUT_DELEGATE_SYNC_WAIT_MS) || 10000);
+      while (Date.now() < deadlineMs) {
+        await this.sleep(500);
+        const refreshed = await this.repo.findObligationById(obligationId);
+        if (!refreshed) break;
+        latestObl = refreshed;
+        const targetAtt = refreshed.payoutAttempts?.find(
+          (a: any) => BigInt(a.attemptId) === BigInt(obl.activePayoutAttemptId),
+        );
+        if (refreshed.status === 'REFUNDED') {
+          return { settled: true, obligation: toPaymentRefundObligationDto(refreshed) };
+        }
+        if (
+          refreshed.status === 'READY_FOR_PAYOUT' ||
+          targetAtt?.status === 'FAILED' ||
+          targetAtt?.status === 'SUCCEEDED'
+        ) {
+          return { settled: false, obligation: toPaymentRefundObligationDto(refreshed) };
+        }
+      }
+      return {
+        settled: latestObl?.status === 'REFUNDED',
+        obligation: toPaymentRefundObligationDto(latestObl),
+      };
+    }
+
     return this.reconcileAttempt(
       obligationId,
       BigInt(obl.activePayoutAttemptId),
@@ -662,7 +766,7 @@ export class PaymentRefundsService {
         obligationId: BigInt(obl.obligationId),
         attemptId: BigInt(att.attemptId),
         providerPayoutId: rejectionVerif.providerPayoutId,
-        failureReason: desc || rejectionVerif.reason || 'PayOS Payout thất bại xác thực',
+        failureReason: rejectionVerif.reason || desc || 'PayOS xác nhận giao dịch chi trả thất bại',
         allowFromReconcile: true,
       });
       const latest = await this.repo.findObligationById(BigInt(obl.obligationId));

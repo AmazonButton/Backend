@@ -20,9 +20,13 @@ export class PaymentRefundWorkerService implements OnModuleInit, OnModuleDestroy
     if (process.env.NODE_ENV === 'test' || process.env.PAYOS_PAYOUT_WORKER_ENABLED === 'false') {
       return;
     }
+    const intervalMs = Math.max(
+      1000,
+      Number(process.env.PAYOS_PAYOUT_WORKER_INTERVAL_MS) || 2500,
+    );
     this.timer = setInterval(async () => {
       await this.runTick();
-    }, 5000);
+    }, intervalMs);
     if (this.timer.unref) {
       this.timer.unref();
     }
