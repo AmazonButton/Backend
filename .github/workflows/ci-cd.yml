@@ -155,8 +155,10 @@ jobs:
           npx prisma migrate deploy
           DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy
 
-      - name: Backfill and Verify Encrypted Snapshots (CI DB)
-        run: node scripts/backfill_and_verify_withdrawal_snapshots.js
+      - name: Backfill and Verify Encrypted Snapshots & Legacy KYC (CI DB)
+        run: |
+          node scripts/backfill_and_verify_withdrawal_snapshots.js
+          node scripts/backfill_didit_kyc_identities.js
 
       - name: Seed Database (Fresh Baseline Data)
         run: npm run prisma:seed

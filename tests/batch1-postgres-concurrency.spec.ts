@@ -92,7 +92,17 @@ async function runPostgresConcurrencyTests() {
 
       const repo = new IdentityVerificationsRepository(prisma);
       const service = new IdentityVerificationsService(repo, {
-        getDecision: async () => ({ status: 'Approved', source: 'mock_didit_poll' }),
+        getDecision: async (diditId: string) => ({
+          status: 'Approved',
+          source: 'mock_didit_poll',
+          id_verifications: [
+            {
+              status: 'Approved',
+              full_name: diditId === diditId1 ? 'PG KYC Lock Test 1' : 'PG KYC Race Test 2',
+              document_number: diditId === diditId1 ? `079091${String(ts).slice(-6)}` : `079092${String(ts).slice(-6)}`,
+            },
+          ],
+        }),
       } as any);
 
       // Hold a genuine PostgreSQL row-level FOR UPDATE lock for 300ms while updating session
@@ -209,24 +219,21 @@ async function runPostgresConcurrencyTests() {
       });
       createdSessionIds.push(sessRb.id);
 
-      let stagedSessionStatusInsideTx: string | undefined;
+      let stagedUserKycStatusInsideTx: string | undefined;
       const origTx = prisma.$transaction.bind(prisma);
       const proxyPrisma = {
         $transaction: (fn: (tx: any) => Promise<any>) =>
           origTx(async (realTx: any) => {
             const wrappedTx = new Proxy(realTx, {
               get(target, prop, receiver) {
-                if (prop === 'user') {
+                if (prop === 'identityVerificationSession') {
                   return {
                     update: async () => {
-                      const midRow = await realTx.identityVerificationSession.findUnique({
-                        where: { id: sessRb.id },
+                      const midUser = await realTx.user.findUnique({
+                        where: { userId: userRb.userId },
                       });
-                      stagedSessionStatusInsideTx = midRow?.status;
-                      throw new Error('SIMULATED_MID_TX_USER_UPDATE_FAILURE');
-                    },
-                    updateMany: async () => {
-                      throw new Error('SIMULATED_MID_TX_USER_UPDATE_FAILURE');
+                      stagedUserKycStatusInsideTx = midUser?.kycStatus;
+                      throw new Error('SIMULATED_MID_TX_SESSION_UPDATE_FAILURE');
                     },
                   };
                 }
@@ -239,16 +246,33 @@ async function runPostgresConcurrencyTests() {
       };
 
       const rbRepo = new IdentityVerificationsRepository(proxyPrisma as unknown as PrismaService);
+      const rbDoc = `079093${String(ts).slice(-6)}`;
+      const rbHash = require('crypto').createHash('sha256').update(rbDoc).digest('hex');
 
       await assert.rejects(
-        () => rbRepo.reconcileDecisionAtomicTx({ sessionId: sessRb.id, newStatus: 'APPROVED' }),
-        /SIMULATED_MID_TX_USER_UPDATE_FAILURE/,
+        () =>
+          rbRepo.reconcileDecisionAtomicTx({
+            sessionId: sessRb.id,
+            newStatus: 'APPROVED',
+            extractedOcr: {
+              fullName: 'PG KYC Rollback Test',
+              documentNumberNormalized: rbDoc,
+              documentNumberMasked: `********${rbDoc.slice(-4)}`,
+              documentHash: rbHash,
+              dateOfBirth: null,
+              nationality: 'VNM',
+              expiryDate: null,
+              hasCompleteIdentity: true,
+              warnings: [],
+            },
+          }),
+        /SIMULATED_MID_TX_SESSION_UPDATE_FAILURE/,
       );
 
       assert.strictEqual(
-        stagedSessionStatusInsideTx,
+        stagedUserKycStatusInsideTx,
         'APPROVED',
-        'Session row update must have run inside PostgreSQL transaction before user update failed',
+        'User row update must have run inside PostgreSQL transaction before session update failed',
       );
 
       const committedSession = await prisma.identityVerificationSession.findUnique({ where: { id: sessRb.id } });

@@ -5,21 +5,37 @@ import {
   Delete,
   Param,
   Query,
+  Body,
   Req,
   UseGuards,
   HttpCode,
   HttpStatus,
-  ParseIntPipe,
+  BadRequestException,
+  Inject,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { parsePositivePostgresBigInt } from '../common/utils/validation.util';
 import { IdentityVerificationsService } from './identity-verifications.service';
 import { SessionQueryDto } from './dto/session-query.dto';
+import { ReviewKycSessionDto } from './dto/review-kyc-session.dto';
+import { RevokeUserKycDto } from './dto/revoke-user-kyc.dto';
 
 @Controller('identity-verifications')
 export class IdentityVerificationsController {
-  constructor(private readonly service: IdentityVerificationsService) {}
+  constructor(
+    @Inject(IdentityVerificationsService)
+    private readonly service: IdentityVerificationsService,
+  ) { }
+
+  private parseRequiredId(raw: unknown, fieldLabel: string): bigint {
+    const parsed = parsePositivePostgresBigInt(raw);
+    if (parsed === null) {
+      throw new BadRequestException(`${fieldLabel} không hợp lệ (phải là số nguyên dương BIGINT)`);
+    }
+    return parsed;
+  }
 
   /**
    * POST /api/v1/identity-verifications/sessions
@@ -29,7 +45,7 @@ export class IdentityVerificationsController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   async createSession(@Req() req: any) {
-    const userId = BigInt(req.user.id);
+    const userId = this.parseRequiredId(req.user?.id, 'userId');
     const session = await this.service.createSession(userId);
 
     return {
@@ -46,10 +62,11 @@ export class IdentityVerificationsController {
   @Get('sessions/:sessionId')
   @UseGuards(JwtAuthGuard)
   async getSession(
-    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('sessionId') sessionIdRaw: string,
     @Req() req: any,
   ) {
-    const session = await this.service.getSession(BigInt(sessionId), req.user);
+    const sessionId = this.parseRequiredId(sessionIdRaw, 'sessionId');
+    const session = await this.service.getSession(sessionId, req.user);
 
     return {
       success: true,
@@ -65,10 +82,11 @@ export class IdentityVerificationsController {
   @Get('sessions/:sessionId/decision')
   @UseGuards(JwtAuthGuard)
   async getDecision(
-    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('sessionId') sessionIdRaw: string,
     @Req() req: any,
   ) {
-    const result = await this.service.getDecision(BigInt(sessionId), req.user);
+    const sessionId = this.parseRequiredId(sessionIdRaw, 'sessionId');
+    const result = await this.service.getDecision(sessionId, req.user);
 
     return {
       success: true,
@@ -102,6 +120,52 @@ export class IdentityVerificationsController {
   }
 
   /**
+   * POST /api/v1/identity-verifications/sessions/:sessionId/review
+   * Admin manual review endpoint for IN_REVIEW sessions (NAME_MISMATCH / explicit DECLINE)
+   */
+  @Post('sessions/:sessionId/review')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @HttpCode(HttpStatus.OK)
+  async reviewSession(
+    @Param('sessionId') sessionIdRaw: string,
+    @Body() dto: ReviewKycSessionDto,
+    @Req() req: any,
+  ) {
+    const sessionId = this.parseRequiredId(sessionIdRaw, 'sessionId');
+    const result = await this.service.reviewSession(sessionId, req.user, dto);
+
+    return {
+      success: true,
+      message: 'Cập nhật kết quả xét duyệt phiên KYC thành công',
+      data: result,
+    };
+  }
+
+  /**
+   * POST /api/v1/identity-verifications/users/:userId/revoke
+   * Audited admin revocation for dispute / account transfer resolution (releases unique CCCD hash)
+   */
+  @Post('users/:userId/revoke')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
+  @HttpCode(HttpStatus.OK)
+  async revokeUserIdentity(
+    @Param('userId') userIdRaw: string,
+    @Body() dto: RevokeUserKycDto,
+    @Req() req: any,
+  ) {
+    const targetUserId = this.parseRequiredId(userIdRaw, 'userId');
+    const result = await this.service.revokeUserIdentity(targetUserId, req.user, dto);
+
+    return {
+      success: true,
+      message: 'Thu hồi trạng thái định danh tài khoản thành công',
+      data: result,
+    };
+  }
+
+  /**
    * DELETE /api/v1/identity-verifications/sessions/:sessionId
    * Safe delete session: calls Didit delete first, then soft-deletes locally (Admin only)
    */
@@ -109,10 +173,11 @@ export class IdentityVerificationsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN')
   async deleteSession(
-    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('sessionId') sessionIdRaw: string,
     @Req() req: any,
   ) {
-    const result = await this.service.deleteSession(BigInt(sessionId), req.user);
+    const sessionId = this.parseRequiredId(sessionIdRaw, 'sessionId');
+    const result = await this.service.deleteSession(sessionId, req.user);
 
     return {
       success: true,

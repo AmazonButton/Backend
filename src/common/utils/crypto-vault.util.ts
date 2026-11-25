@@ -75,6 +75,35 @@ export class CryptoVaultUtil {
   }
 
   /**
+   * Normalize identity document number (CCCD / CMND / Passport) by removing spaces/hyphens and uppercasing
+   */
+  static normalizeIdentityDocument(documentNumber: string): string {
+    return documentNumber.trim().replace(/[\s-]+/g, '').toUpperCase();
+  }
+
+  /**
+   * Domain-separated HMAC-SHA256 blind index for 1-CCCD-1-account uniqueness without plaintext storage
+   */
+  static hashIdentityDocument(documentNumber: string): string {
+    const normalized = this.normalizeIdentityDocument(documentNumber);
+    const salt = this.getSalt();
+    return crypto.createHmac('sha256', salt).update(`DIDIT_ID_DOC:${normalized}`).digest('hex');
+  }
+
+  /**
+   * Mask identity document number preserving last 4 characters when long enough for UI display
+   */
+  static maskIdentityDocument(documentNumber: string): string {
+    const normalized = this.normalizeIdentityDocument(documentNumber);
+    if (!normalized) return '********';
+    if (normalized.length <= 4) {
+      return `******${normalized.slice(-2)}`;
+    }
+    const visibleLength = normalized.length >= 6 ? 4 : 2;
+    return `********${normalized.slice(-visibleLength)}`;
+  }
+
+  /**
    * Deterministic standard SHA-256 hash for deposit refund snapshots and payout evidence verification
    */
   static computeDeterministicAccountHash(accountNumber: string): string {

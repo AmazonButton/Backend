@@ -5,13 +5,17 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Inject,
 } from '@nestjs/common';
 import { DiditWebhookGuard } from './guards/didit-webhook.guard';
 import { IdentityVerificationsService } from './identity-verifications.service';
 
 @Controller('webhooks')
 export class DiditWebhookController {
-  constructor(private readonly service: IdentityVerificationsService) {}
+  constructor(
+    @Inject(IdentityVerificationsService)
+    private readonly service: IdentityVerificationsService,
+  ) {}
 
   /**
    * POST /api/v1/webhooks/didit

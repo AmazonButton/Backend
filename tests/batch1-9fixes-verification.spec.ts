@@ -321,7 +321,7 @@ async function runTests() {
       store: { findUnique: async () => ({ ownerUserId: BigInt(1), name: 'Store' }) },
     };
     const mockOrdersService: any = {
-      eventsGateway: { emitToCustomer: () => {}, emitToStore: () => {}, emitToAdmin: () => {} },
+      eventsGateway: { emitToCustomer: () => { }, emitToStore: () => { }, emitToAdmin: () => { } },
       handleButtonEvent: async (dev: any) => {
         orderHandlerCalls++;
         return {
@@ -377,7 +377,7 @@ async function runTests() {
           };
         },
       } as any,
-      { validateStoreCanListProducts: async () => {} } as any,
+      { validateStoreCanListProducts: async () => { } } as any,
       {} as any,
     );
 
@@ -446,21 +446,72 @@ async function runTests() {
   // #11 & #12: IdentityVerification anti-downgrade & getDecision status mapping (isolated mock)
   // ---------------------------------------------------------------------------
   await check('#11 & #12 [Unit Mock] IdentityVerificationsService preserves APPROVED on createSession and returns reconciled status from callback', async () => {
-    const users = new Map<string, { userId: bigint; kycStatus: string }>([
-      ['55', { userId: BigInt(55), kycStatus: 'APPROVED' }],
-      ['56', { userId: BigInt(56), kycStatus: 'UNVERIFIED' }],
+    const users = new Map<string, any>([
+      [
+        '55',
+        {
+          userId: BigInt(55),
+          fullName: 'Mock User 55',
+          kycStatus: 'APPROVED',
+          verifiedLegalName: 'MOCK USER 55',
+          verifiedDocumentHash: 'bound_hash_55',
+          verifiedDocumentEncrypted: null,
+          verifiedDocumentMasked: '********5555',
+          verifiedDateOfBirth: null,
+          verifiedNationality: 'VNM',
+          kycVerifiedAt: new Date(),
+          kycRevokedAt: null,
+        },
+      ],
+      [
+        '56',
+        {
+          userId: BigInt(56),
+          fullName: 'Mock User 56',
+          kycStatus: 'UNVERIFIED',
+          verifiedLegalName: null,
+          verifiedDocumentHash: null,
+          verifiedDocumentEncrypted: null,
+          verifiedDocumentMasked: null,
+          verifiedDateOfBirth: null,
+          verifiedNationality: null,
+          kycVerifiedAt: null,
+          kycRevokedAt: null,
+        },
+      ],
     ]);
     const sessions = new Map<string, any>();
     let seqId = BigInt(100);
 
     const makeTxClient = () => ({
+      $executeRaw: async () => 1,
+      $executeRawUnsafe: async () => 0,
       $queryRaw: async (strings: TemplateStringsArray, ...values: any[]) => {
         const sql = strings.join(' ? ');
         if (sql.includes('FROM "identity_verification_sessions"') && sql.includes('FOR UPDATE')) {
           const s = sessions.get(BigInt(values[0]).toString());
-          return s ? [{ id: s.id, user_id: s.userId, status: s.status, deleted_at: s.deletedAt }] : [];
+          return s
+            ? [
+              {
+                id: s.id,
+                user_id: s.userId,
+                status: s.status,
+                metadata: s.metadata,
+                verified_document_hash: s.verifiedDocumentHash ?? null,
+                review_reason: s.reviewReason ?? null,
+                reviewed_by_user_id: s.reviewedByUserId ?? null,
+                completed_at: s.completedAt ?? null,
+                created_at: s.createdAt ?? new Date(),
+                deleted_at: s.deletedAt,
+              },
+            ]
+            : [];
         }
         if (sql.includes('FROM "identity_verification_sessions"') && sql.includes('LIMIT 1')) {
+          if (values.length === 1) {
+            const s = sessions.get(BigInt(values[0]).toString());
+            return s ? [{ id: s.id, user_id: s.userId, deleted_at: s.deletedAt }] : [];
+          }
           const uid = BigInt(values[0]);
           const excludeId = BigInt(values[1]);
           for (const s of sessions.values()) {
@@ -470,9 +521,34 @@ async function runTests() {
           }
           return [];
         }
-        if (sql.includes('FROM "users"')) {
-          const u = users.get(BigInt(values[0]).toString());
-          return u ? [{ user_id: u.userId, kyc_status: u.kycStatus }] : [];
+        if (sql.includes('FROM "users"') && sql.includes('verified_document_hash')) {
+          if (sql.includes('FOR UPDATE')) {
+            const u = users.get(BigInt(values[0]).toString());
+            return u
+              ? [
+                {
+                  user_id: u.userId,
+                  full_name: u.fullName,
+                  kyc_status: u.kycStatus,
+                  verified_legal_name: u.verifiedLegalName,
+                  verified_document_hash: u.verifiedDocumentHash,
+                  verified_document_encrypted: u.verifiedDocumentEncrypted,
+                  verified_document_masked: u.verifiedDocumentMasked,
+                  verified_date_of_birth: u.verifiedDateOfBirth,
+                  verified_nationality: u.verifiedNationality,
+                  kyc_verified_at: u.kycVerifiedAt,
+                  kyc_revoked_at: u.kycRevokedAt,
+                },
+              ]
+              : [];
+          }
+          const targetHash = String(values[0]);
+          for (const u of users.values()) {
+            if (u.verifiedDocumentHash === targetHash) {
+              return [{ user_id: u.userId }];
+            }
+          }
+          return [];
         }
         return [];
       },
@@ -538,7 +614,20 @@ async function runTests() {
         url: 'https://verify.didit.me/test',
         expires_at: new Date(Date.now() + 3600000).toISOString(),
       }),
-      getDecision: async () => ({ status: mockDiditDecision }),
+      getDecision: async () => ({
+        status: mockDiditDecision,
+        ...(mockDiditDecision === 'Approved'
+          ? {
+            id_verifications: [
+              {
+                status: 'Approved',
+                full_name: 'MOCK USER 56',
+                document_number: '079095005656',
+              },
+            ],
+          }
+          : {}),
+      }),
     };
 
     const repo = new IdentityVerificationsRepository(mockPrisma);
@@ -719,7 +808,7 @@ async function runTests() {
     const provService = new ProvisioningService(
       provRepo,
       { decrypt: () => '' } as any,
-      { emitToStore: () => {} } as any,
+      { emitToStore: () => { } } as any,
     );
     for (const badSvcId of [undefined, '9223372036854775808', 0, 1.5]) {
       await assert.rejects(
