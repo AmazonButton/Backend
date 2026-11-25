@@ -490,6 +490,10 @@ export class PaymentsRepository {
             });
           }
 
+          // Capture pre-update payment status so we distinguish an ACTIVE pre-delivery/doorstep QR link
+          // from an obsolete CANCELLED link paid late after switching to COD.
+          const wasActivePendingTx = payment.status === 'PENDING';
+
           // Update payment transaction to PAID
           await tx.paymentTransaction.update({
             where: { paymentTransactionId },
@@ -499,8 +503,10 @@ export class PaymentsRepository {
             },
           });
 
-          // F1 Matrix: Separate payment verification from fulfillment progression.
-          // Active PayOS orders in fulfillment keep their current orderStatus and still record paymentStatus = PAID.
+          // F1 Matrix + Flexible Timing (Ý 1):
+          // Active PayOS orders OR unpaid COD orders in PENDING..SHIPPING whose ACTIVE (PENDING)
+          // PayOS QR link receives verified payment settle to PAYOS + PAID atomically.
+          // Cancelled old links on COD/terminal orders still enter REFUND_PENDING reconciliation.
           const PAYABLE_PAYOS_ORDER_STATUSES = new Set([
             'PENDING',
             'CONFIRMED',
@@ -510,9 +516,21 @@ export class PaymentsRepository {
             'DELIVERED',
             'COMPLETED',
           ]);
+          const PRE_DELIVERY_QR_ALLOWED_STATUSES = new Set([
+            'PENDING',
+            'CONFIRMED',
+            'PREPARING',
+            'READY_FOR_DELIVERY',
+            'SHIPPING',
+          ]);
+          const isPreDeliveryQrConversion =
+            wasActivePendingTx &&
+            order.payment_method !== 'PAYOS' &&
+            order.payment_status !== 'PAID' &&
+            PRE_DELIVERY_QR_ALLOWED_STATUSES.has(order.order_status);
           const isPayablePayosOrder =
-            order.payment_method === 'PAYOS' &&
-            PAYABLE_PAYOS_ORDER_STATUSES.has(order.order_status);
+            PAYABLE_PAYOS_ORDER_STATUSES.has(order.order_status) &&
+            (order.payment_method === 'PAYOS' || isPreDeliveryQrConversion);
 
           if (isPayablePayosOrder) {
             if (order.order_status === 'PENDING') {
@@ -521,6 +539,7 @@ export class PaymentsRepository {
                 data: {
                   paymentStatus: 'PAID',
                   orderStatus: 'CONFIRMED',
+                  ...(isPreDeliveryQrConversion ? { paymentMethod: 'PAYOS' } : {}),
                 },
               });
 
@@ -529,7 +548,9 @@ export class PaymentsRepository {
                   orderId: payment.order_id,
                   oldStatus: order.order_status,
                   newStatus: 'CONFIRMED',
-                  reason: 'PayOS webhook xác nhận thanh toán thành công (Ký quỹ escrow)',
+                  reason: isPreDeliveryQrConversion
+                    ? 'PayOS webhook xác nhận thanh toán QR (chuyển COD -> PAYOS, PAID)'
+                    : 'PayOS webhook xác nhận thanh toán thành công (Ký quỹ escrow)',
                 },
               });
             } else {
@@ -537,6 +558,7 @@ export class PaymentsRepository {
                 where: { orderId: payment.order_id },
                 data: {
                   paymentStatus: 'PAID',
+                  ...(isPreDeliveryQrConversion ? { paymentMethod: 'PAYOS' } : {}),
                 },
               });
 
@@ -545,7 +567,9 @@ export class PaymentsRepository {
                   orderId: payment.order_id,
                   oldStatus: order.order_status,
                   newStatus: order.order_status,
-                  reason: `PayOS webhook xác nhận thanh toán thành công (PAID) cho đơn đang ở trạng thái ${order.order_status}`,
+                  reason: isPreDeliveryQrConversion
+                    ? `PayOS webhook xác nhận thanh toán QR ở trạng thái ${order.order_status} (chuyển COD -> PAYOS, PAID)`
+                    : `PayOS webhook xác nhận thanh toán thành công (PAID) cho đơn đang ở trạng thái ${order.order_status}`,
                 },
               });
             }
@@ -683,7 +707,7 @@ export class PaymentsRepository {
         }
       }
 
-      if (['CANCELLED', 'REJECTED', 'COMPLETED'].includes(order.order_status)) {
+      if (['CANCELLED', 'REJECTED', 'COMPLETED', 'DELIVERED', 'DELIVERY_FAILED'].includes(order.order_status)) {
         throw new BadRequestException({
           success: false,
           code: 'ORDER_NOT_PAYABLE',
@@ -779,8 +803,14 @@ export class PaymentsRepository {
         throw new BadRequestException('Không thể đổi phương thức thanh toán cho đơn hàng đã thanh toán');
       }
 
-      const terminalStatuses = ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED'];
-      if (terminalStatuses.includes(order.order_status) || order.order_status !== 'PENDING') {
+      const ALLOWED_PAYMENT_SWITCH_STATUSES = [
+        'PENDING',
+        'CONFIRMED',
+        'PREPARING',
+        'READY_FOR_DELIVERY',
+        'SHIPPING',
+      ];
+      if (!ALLOWED_PAYMENT_SWITCH_STATUSES.includes(order.order_status)) {
         throw new BadRequestException(`Không thể đổi phương thức thanh toán khi đơn hàng đang ở trạng thái ${order.order_status}`);
       }
 

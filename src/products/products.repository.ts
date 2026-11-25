@@ -2,6 +2,10 @@ import { Injectable, Inject, NotFoundException, BadRequestException, ForbiddenEx
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { runWithTransactionRetry } from '../common/utils/transaction-retry.util';
+import {
+  buildActiveStoreSubscriptionPrismaFilter,
+  hasStoreActiveSubscription,
+} from '../common/utils/store-subscription-policy.util';
 
 export interface ProductImageInput {
   imageUrl: string;
@@ -24,7 +28,10 @@ export class ProductsRepository {
     }
     if (options?.onlyActivePublic) {
       whereClause.status = 'ACTIVE';
-      whereClause.store = { status: 'ACTIVE' };
+      whereClause.store = {
+        status: 'ACTIVE',
+        ...buildActiveStoreSubscriptionPrismaFilter(),
+      };
     }
     if (options?.category?.trim()) {
       whereClause.category = {
@@ -96,6 +103,17 @@ export class ProductsRepository {
       where: { productId },
       select: { storeId: true, basePrice: true, status: true },
     });
+  }
+
+  async findStorePublicEligibility(storeId: bigint): Promise<boolean> {
+    const store = await this.prisma.store.findUnique({
+      where: { storeId },
+      select: { storeId: true, status: true },
+    });
+    if (!store || store.status !== 'ACTIVE') {
+      return false;
+    }
+    return hasStoreActiveSubscription(this.prisma, storeId);
   }
 
   async findCategoryById(categoryId: bigint, storeId: bigint) {
@@ -399,6 +417,7 @@ export class ProductsRepository {
       status: 'ACTIVE',
       store: {
         status: 'ACTIVE',
+        ...buildActiveStoreSubscriptionPrismaFilter(),
       },
     };
 

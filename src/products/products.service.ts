@@ -287,6 +287,17 @@ export class ProductsService {
       if (product.status !== 'ACTIVE') {
         throw new NotFoundException('San pham khong ton tai');
       }
+      if (
+        product.storeId &&
+        typeof this.productsRepo.findStorePublicEligibility === 'function'
+      ) {
+        const storeEligible = await this.productsRepo.findStorePublicEligibility(
+          BigInt(product.storeId),
+        );
+        if (!storeEligible) {
+          throw new NotFoundException('San pham khong ton tai');
+        }
+      }
     }
 
     return this.formatProduct(product);

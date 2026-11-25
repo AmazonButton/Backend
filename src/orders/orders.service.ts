@@ -33,6 +33,7 @@ import { DeliveryEligibilityService, VerifiedDeliverySnapshot } from './delivery
 import { DeliveryQuoteDto } from './dto/delivery-quote.dto';
 import { QuickReorderDto } from './dto/quick-reorder.dto';
 import { PaymentRefundsService } from '../payments/payment-refunds.service';
+import { PaymentsService } from '../payments/payments.service';
 
 @Injectable()
 export class OrdersService {
@@ -48,6 +49,7 @@ export class OrdersService {
     @Optional() @Inject(ObjectStorageService) private readonly objectStorageService?: ObjectStorageService,
     @Optional() @Inject(DeliveryEligibilityService) private readonly deliveryEligibilityService?: DeliveryEligibilityService,
     @Optional() @Inject(forwardRef(() => PaymentRefundsService)) private readonly paymentRefundsService?: PaymentRefundsService,
+    @Optional() @Inject(forwardRef(() => PaymentsService)) private readonly paymentsService?: PaymentsService,
   ) { }
 
   private async invalidateDashboardCaches(storeId?: string | number | bigint, customerUserId?: string | number | bigint) {
@@ -73,6 +75,53 @@ export class OrdersService {
       await Promise.all(promises);
     } catch (err: any) {
       this.logger.warn(`Failed to invalidate dashboard cache on order change: ${err.message}`);
+    }
+  }
+
+  private async assertButtonStoreAndCustomerEligible(button: any, requestId?: string): Promise<void> {
+    if (!button?.storeId) return;
+    const storeId = BigInt(button.storeId);
+
+    if (
+      button.customerId &&
+      typeof this.ordersRepo.assertCustomerNotBlockedByStore === 'function'
+    ) {
+      await this.ordersRepo.assertCustomerNotBlockedByStore(storeId, BigInt(button.customerId));
+    }
+
+    if (typeof this.ordersRepo.checkStoreEligibleForOrders === 'function') {
+      const eligibility = await this.ordersRepo.checkStoreEligibleForOrders(storeId);
+      if (!eligibility.eligible) {
+        const customerUserId = button.customer?.userId || (button.customer as any)?.user?.userId || null;
+        if (typeof this.ordersRepo.createStoreSubscriptionRejectedNotifications === 'function') {
+          await this.ordersRepo
+            .createStoreSubscriptionRejectedNotifications({
+              customerUserId: customerUserId ? BigInt(customerUserId) : null,
+              ownerUserId: eligibility.ownerUserId ? BigInt(eligibility.ownerUserId) : null,
+              storeId,
+              storeName: eligibility.storeName || button.store?.name,
+              buttonCode: button.buttonCode || button.deviceId,
+              buttonName: button.buttonName,
+              reasonCode: eligibility.reasonCode || 'STORE_SUBSCRIPTION_EXPIRED',
+              requestId,
+            })
+            .catch((notifErr) => {
+              this.logger.warn(
+                `Failed to dispatch store subscription rejection notification: ${notifErr?.message || notifErr}`,
+              );
+            });
+        }
+
+        const isExpired = eligibility.reasonCode === 'STORE_SUBSCRIPTION_EXPIRED';
+        throw new BadRequestException({
+          success: false,
+          errorCode: eligibility.reasonCode || 'STORE_SUBSCRIPTION_EXPIRED',
+          code: eligibility.reasonCode || 'STORE_SUBSCRIPTION_EXPIRED',
+          message: isExpired
+            ? 'Cửa hàng hiện đang tạm ngưng nhận đơn do gói dịch vụ đã hết hạn'
+            : 'Cửa hàng hiện không hoạt động',
+        });
+      }
     }
   }
 
@@ -150,6 +199,9 @@ export class OrdersService {
         };
       }
     }
+
+    // 0.5 Verify store subscription & blocked customer guard BEFORE Goong call or order creation (Ý 4)
+    await this.assertButtonStoreAndCustomerEligible(button, requestId);
 
     // 1. Kiểm tra sớm tổng tiền ước tính nếu có giá sản phẩm (Fast-Fail)
     if (button.buttonProducts && button.buttonProducts.length > 0) {
@@ -405,7 +457,7 @@ export class OrdersService {
       if (rental.status === 'EXPIRED') {
         throw new BadRequestException('Nút bấm thông minh đã hết hạn thuê. Vui lòng gia hạn gói 30.000đ/tháng để tiếp tục đặt hàng.');
       }
-      const allowedRentalStatuses = ['ACTIVE', 'PAID'];
+      const allowedRentalStatuses = ['ACTIVE'];
       if (!allowedRentalStatuses.includes(rental.status)) {
         throw new BadRequestException('Hợp đồng thuê nút bấm không ở trạng thái hoạt động để đặt hàng');
       }
@@ -544,6 +596,8 @@ export class OrdersService {
     const requestId = cleanIdemp
       ? `quick_${createHash('sha256').update(cleanIdemp).digest('hex')}`
       : `app_req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+    await this.assertButtonStoreAndCustomerEligible(button, requestId);
 
     const verifiedDeliverySnapshot =
       await this.deliveryEligibilityService.verifyAndResolveForMobileOrder({
@@ -758,24 +812,20 @@ export class OrdersService {
 
     // If caller is CUSTOMER or unprivileged
     if (!isPrivilegedStaff) {
-      const isUnpaid =
-        order.paymentStatus === 'UNPAID' ||
-        (order.paymentStatus !== 'PAID' && order.paymentMethod !== 'COD' && order.paymentMethod !== 'CASH_ON_DELIVERY');
-
       if (isButtonOrder) {
-        if (order.orderStatus !== 'PENDING') {
+        if (!['PENDING', 'DELIVERY_FAILED'].includes(order.orderStatus)) {
           throw new BadRequestException(
-            `Khách hàng chỉ có thể hủy đơn hàng khi đơn ở trạng thái PENDING. Trạng thái hiện tại: ${order.orderStatus}`,
+            `Khách hàng chỉ có thể hủy đơn hàng khi đơn ở trạng thái PENDING hoặc DELIVERY_FAILED. Trạng thái hiện tại: ${order.orderStatus}`,
           );
         }
-        if (elapsedSeconds > cancelWindowSeconds) {
+        if (order.orderStatus === 'PENDING' && elapsedSeconds > cancelWindowSeconds) {
           throw new BadRequestException(
             `Đã hết thời gian cho phép hủy đơn hàng từ nút bấm (${cancelWindowSeconds} giây kể từ khi đặt đơn). Cửa sổ hủy đã kết thúc.`,
           );
         }
       } else {
-        // Storefront orders or unpaid orders can be cancelled while PENDING or CONFIRMED (before being prepared/shipped)
-        if (!['PENDING', 'CONFIRMED'].includes(order.orderStatus)) {
+        // Storefront orders can be cancelled while PENDING, CONFIRMED, or after DELIVERY_FAILED (Hướng B)
+        if (!['PENDING', 'CONFIRMED', 'DELIVERY_FAILED'].includes(order.orderStatus)) {
           throw new BadRequestException(
             `Đơn hàng đã được xử lý (${order.orderStatus}), không thể tự hủy. Vui lòng liên hệ cửa hàng để được hỗ trợ.`,
           );
@@ -783,7 +833,7 @@ export class OrdersService {
       }
     }
 
-    if (!['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING'].includes(order.orderStatus)) {
+    if (!['PENDING', 'CONFIRMED', 'PREPARING', 'PROCESSING', 'DELIVERY_FAILED'].includes(order.orderStatus)) {
       throw new BadRequestException('Đơn hàng đã được xử lý giao hàng hoặc hoàn tất, không thể hủy');
     }
 
@@ -800,6 +850,15 @@ export class OrdersService {
         errorCode: (updated as any).skippedReason || 'ORDER_CANCELLATION_SKIPPED',
         message: 'Không thể hủy đơn hàng do trạng thái hoặc phương thức thanh toán đã thay đổi',
       });
+    }
+
+    // Ý 7: Cancel any active remote PayOS links best-effort after DB commit
+    const cancelledLinkIds = (updated as any)?.__cancelledPayosLinkIds;
+    if (Array.isArray(cancelledLinkIds) && cancelledLinkIds.length > 0) {
+      await this.paymentsService?.cancelRemotePayosLinksBestEffort?.(
+        cancelledLinkIds,
+        reason || 'Đơn hàng đã bị hủy',
+      );
     }
     const formattedOrder = toOrderResponseDto(updated);
     const cancelPayload = { order: formattedOrder, reason, storeId: order.storeId.toString(), customerId: order.customerId ? order.customerId.toString() : null };
@@ -981,6 +1040,13 @@ export class OrdersService {
           message: 'Không thể cập nhật hủy đơn hàng do trạng thái đơn đã thay đổi',
         });
       }
+      const cancelledLinkIds = (updated as any)?.__cancelledPayosLinkIds;
+      if (Array.isArray(cancelledLinkIds) && cancelledLinkIds.length > 0) {
+        await this.paymentsService?.cancelRemotePayosLinksBestEffort?.(
+          cancelledLinkIds,
+          newStatus === 'REJECTED' ? 'Cửa hàng từ chối tiếp nhận đơn' : 'Cập nhật hủy đơn',
+        );
+      }
     } else {
       updated = await this.ordersRepo.transitionOrderStatusAtomicTx(
         targetOrderId,
@@ -1100,6 +1166,16 @@ export class OrdersService {
 
     const targetOrderId = BigInt(orderId);
     const updated = await this.ordersRepo.completeDeliveryAtomicTx(targetOrderId, user, dto);
+
+    // Ý 1: Cancel lingering remote PayOS QR link if an unpaid PAYOS order was settled with COD at doorstep
+    const cancelledLinkIds = (updated as any)?.__cancelledPayosLinkIds;
+    if (Array.isArray(cancelledLinkIds) && cancelledLinkIds.length > 0) {
+      await this.paymentsService?.cancelRemotePayosLinksBestEffort?.(
+        cancelledLinkIds,
+        'Đơn hàng đã thanh toán tiền mặt (COD) khi giao hàng',
+      );
+    }
+
     const formatted = toOrderResponseDto(updated);
 
     const payload = { order: formatted, storeId: updated.storeId.toString(), driverId: user.userId || user.id };

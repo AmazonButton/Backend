@@ -56,19 +56,26 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     };
 
     const claimToken = crypto.randomUUID();
+    const isPayoutWorkerDisabled =
+      process.env.PAYOS_PAYOUT_WORKER_ENABLED === 'false' ||
+      process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true';
+    const excludedEventTypes = isPayoutWorkerDisabled
+      ? ['PAYMENT_REFUND_PAYOUT', 'STORE_WITHDRAWAL_PAYOUT', 'DEPOSIT_REFUND_APPROVED']
+      : ['PAYMENT_REFUND_PAYOUT', 'STORE_WITHDRAWAL_PAYOUT'];
 
     // 1. Claim pending events hoặc lease đã hết hạn bằng SELECT FOR UPDATE SKIP LOCKED
     const events = await this.prisma.$transaction(async (tx) => {
       const pending = await tx.$queryRawUnsafe<any[]>(
         `SELECT id, event_type, payload, attempts, status, error 
          FROM outbox_events 
-         WHERE event_type <> 'PAYMENT_REFUND_PAYOUT'
+         WHERE NOT (event_type = ANY($2::text[]))
            AND (status = 'PENDING' OR (status = 'PROCESSING' AND locked_until < NOW()))
            AND next_attempt_at <= NOW() 
          ORDER BY id ASC 
          LIMIT $1 
          FOR UPDATE SKIP LOCKED`,
         clampedBatchSize,
+        excludedEventTypes,
       );
 
       if (pending && pending.length > 0) {

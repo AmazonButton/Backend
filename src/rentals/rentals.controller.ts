@@ -109,6 +109,23 @@ export class RentalsController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post(':id/cancel')
+  async cancelRentalBeforeHandover(
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+    @Request() req: any,
+  ) {
+    const data = await this.rentalsService.cancelRentalBeforeHandover(id, req.user, body?.reason);
+    return {
+      success: true,
+      message: data.depositRefund
+        ? 'Hủy hợp đồng thuê trước khi bàn giao thành công. Yêu cầu hoàn 100% tiền cọc đã được tạo.'
+        : 'Hủy hợp đồng thuê thành công.',
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post(':id/return-requests')
   async requestReturn(
     @Param('id') id: string,

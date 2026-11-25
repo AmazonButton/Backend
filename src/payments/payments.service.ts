@@ -763,9 +763,35 @@ export class PaymentsService {
   }
 
   /**
+   * Best-effort cancellation of stale remote PayOS links after DB commit.
+   * Never throws back into the caller's post-commit business flow.
+   */
+  async cancelRemotePayosLinksBestEffort(
+    paymentLinkIds: Array<string | null | undefined>,
+    reason: string = 'Hủy liên kết thanh toán không còn hiệu lực',
+  ): Promise<void> {
+    const uniqueLinkIds = Array.from(
+      new Set(
+        (paymentLinkIds || [])
+          .map((id) => (id ? String(id).trim() : ''))
+          .filter((id) => id.length > 0),
+      ),
+    );
+    for (const paymentLinkId of uniqueLinkIds) {
+      try {
+        await this.cancelPaymentLink(paymentLinkId, reason);
+      } catch (err: any) {
+        this.logger.warn(
+          `Best-effort remote PayOS link cancellation failed for ${paymentLinkId}: ${err?.message || err}`,
+        );
+      }
+    }
+  }
+
+  /**
    * Đổi phương thức thanh toán cho đơn hàng
    * - BOLA: Kiểm tra order thuộc quyền sở hữu của user
-   * - Chỉ cho đổi khi order còn PENDING và paymentStatus UNPAID
+   * - Cho phép đổi khi đơn chưa PAID và đang ở PENDING..SHIPPING
    * - Hủy các transaction PENDING cũ và hủy link PayOS tương ứng nếu có
    */
   async changeOrderPaymentMethod(orderIdParam: string, dto: ChangePaymentMethodDto, user: any) {
@@ -785,11 +811,26 @@ export class PaymentsService {
     );
 
     // Phase 2 (External PayOS I/O AFTER DB commit): Cancel stale remote links best-effort
-    for (const paymentLinkId of cancelledLinkIds) {
-      try {
-        await this.cancelPaymentLink(paymentLinkId, 'Người dùng thay đổi phương thức thanh toán');
-      } catch (err: any) {
-        this.logger.warn(`Failed to cancel remote PayOS link ${paymentLinkId}: ${err.message}`);
+    await this.cancelRemotePayosLinksBestEffort(
+      cancelledLinkIds,
+      'Người dùng thay đổi phương thức thanh toán',
+    );
+
+    if (this.eventsGateway && updated) {
+      const switchPayload = {
+        orderId: updated.orderId.toString(),
+        orderCode: updated.orderCode,
+        paymentMethod: updated.paymentMethod,
+        paymentStatus: updated.paymentStatus,
+        orderStatus: updated.orderStatus,
+        storeId: updated.storeId ? updated.storeId.toString() : null,
+        customerId: updated.customerId ? updated.customerId.toString() : null,
+      };
+      if (updated.storeId) {
+        this.eventsGateway.emitToStore(updated.storeId.toString(), 'ORDER_PAYMENT_METHOD_CHANGED', switchPayload);
+      }
+      if (updated.customerId) {
+        this.eventsGateway.emitToCustomer(updated.customerId.toString(), 'ORDER_PAYMENT_METHOD_CHANGED', switchPayload);
       }
     }
 

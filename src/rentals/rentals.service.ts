@@ -15,6 +15,7 @@ import { RentalResponseDto } from './dto/rental-response.dto';
 import { RentalExtensionDto } from './dto/rental-extension.dto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { PayOSPayoutService } from '../payments/payos-payout.service';
+import { PaymentsService } from '../payments/payments.service';
 import { BillingChargesService } from '../billing-charges/billing-charges.service';
 import { verifyDepositRefundPayoutEvidence } from './deposit-payout-verifier';
 import { calculateRentalPricing } from './rental-pricing';
@@ -31,6 +32,7 @@ export class RentalsService {
     @Optional() private readonly cacheService?: DashboardCacheService,
     @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
     @Optional() @Inject(forwardRef(() => BillingChargesService)) private readonly billingChargesService?: any,
+    @Optional() @Inject(PaymentsService) private readonly paymentsService?: PaymentsService,
   ) {
     if (repoOrPrisma && ('listAvailablePackages' in repoOrPrisma || 'findRentalById' in repoOrPrisma || 'findDepositRefundById' in repoOrPrisma)) {
       this.rentalsRepo = repoOrPrisma as RentalsRepository;
@@ -357,11 +359,62 @@ export class RentalsService {
 
   async requestRentalReturn(rentalIdStr: string | bigint, user: any): Promise<RentalResponseDto> {
     const rentalId = BigInt(rentalIdStr);
-    const rentalForReturn = await this.verifyRentalOwnership(rentalId, user);
-
-    const updated = await this.rentalsRepo.updateRentalStatus(rentalId, 'RETURN_REQUESTED');
-    await this.invalidateRentalCaches(rentalForReturn.customer?.userId);
+    const rental = await this.verifyRentalOwnership(rentalId, user);
+    if (!['ACTIVE', 'EXPIRED', 'TERMINATED'].includes(rental.status) || !rental.buttons?.length) {
+      throw new BadRequestException('Chỉ có thể gửi yêu cầu trả nút sau khi đã nhận bàn giao thiết bị');
+    }
+    const eligibleButton = rental.buttons.find((b: any) => b.inventoryState === 'IN_CUSTOMER_CUSTODY');
+    if (!eligibleButton) {
+      throw new BadRequestException('Thiết bị chưa ở trạng thái khách hàng đang giữ để hoàn trả');
+    }
+    await this.rentalsRepo.createReturnRequestTx(rentalId, eligibleButton.buttonId);
+    const updated = await this.rentalsRepo.findRentalById(rentalId);
+    await this.invalidateRentalCaches(rental.customer?.userId, rental.fulfillmentStoreId);
     return RentalResponseDto.fromEntity(updated);
+  }
+
+  async cancelRentalBeforeHandover(
+    rentalIdStr: string | bigint,
+    user: any,
+    reason?: string,
+  ) {
+    if (!rentalIdStr || !/^\d+$/.test(String(rentalIdStr))) {
+      throw new BadRequestException('Mã hợp đồng thuê không hợp lệ');
+    }
+    const rentalId = BigInt(rentalIdStr);
+    const role = user?.role || user?.roleCode;
+    const isAdmin = ['ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(role);
+    const rawUserId = user?.userId || user?.id || user?.sub;
+    const customerProfileId = user?.customerProfileId ? BigInt(user.customerProfileId) : null;
+
+    if (!isAdmin && !customerProfileId && !rawUserId) {
+      throw new ForbiddenException('Bạn không có quyền hủy hợp đồng thuê này');
+    }
+
+    const res = await this.rentalsRepo.cancelRentalBeforeHandoverTx(
+      rentalId,
+      {
+        userId: rawUserId ? BigInt(rawUserId) : null,
+        customerProfileId,
+        isAdmin,
+      },
+      reason,
+    );
+
+    if (res.cancelledLinkIds && res.cancelledLinkIds.length > 0) {
+      await this.paymentsService?.cancelRemotePayosLinksBestEffort?.(
+        res.cancelledLinkIds,
+        reason || 'Hủy hợp đồng thuê trước khi bàn giao thiết bị',
+      );
+    }
+
+    await this.invalidateRentalCaches(res.rental?.customer?.userId, res.rental?.fulfillmentStoreId);
+
+    return {
+      rental: RentalResponseDto.fromEntity(res.rental),
+      depositRefund: res.depositRefund ? toRentalRefundDto(res.depositRefund) : null,
+      alreadyCancelled: res.alreadyCancelled,
+    };
   }
 
   async assignFulfillmentAndDevicesAdmin(
@@ -436,15 +489,25 @@ export class RentalsService {
       throw new NotFoundException('Không tìm thấy hợp đồng thuê');
     }
 
+    if (status === 'CANCELLED' && ['PENDING_PAYMENT', 'PENDING_HANDOVER'].includes(rental.status)) {
+      const res = await this.cancelRentalBeforeHandover(
+        rentalIdStr,
+        { role: 'ADMIN' },
+        'Admin hủy hợp đồng thuê trước khi bàn giao thiết bị',
+      );
+      return res.rental;
+    }
+
     const ALLOWED_ADMIN_STATUS_TRANSITIONS: Record<string, string[]> = {
       PENDING_PAYMENT: ['CANCELLED'],
+      PENDING_HANDOVER: ['CANCELLED'],
       ACTIVE: ['TERMINATED'],
       EXPIRED: ['TERMINATED'],
     };
     const allowed = ALLOWED_ADMIN_STATUS_TRANSITIONS[rental.status] || [];
     if (!allowed.includes(status)) {
       throw new BadRequestException(
-        `Chuyển đổi trạng thái từ ${rental.status} sang ${status} không được phép. Trạng thái PENDING_HANDOVER yêu cầu đối soát thanh toán; trạng thái ACTIVE yêu cầu quy trình bàn giao thiết bị.`
+        `Chuyển đổi trạng thái từ ${rental.status} sang ${status} không được phép.`
       );
     }
 

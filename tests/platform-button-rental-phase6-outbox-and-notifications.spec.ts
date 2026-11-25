@@ -233,7 +233,13 @@ async function runPhase6OutboxAndNotificationsSuite() {
             rental_id: BigInt(10),
             store_id: BigInt(99), // Sales store ID
             custody_store_id: null,
-            inventory_state: 'ASSIGNED_TO_RENTAL',
+            inventory_state: 'IN_CUSTOMER_CUSTODY',
+          }];
+        }
+        if (sql.includes('FROM button_rentals')) {
+          return [{
+            rental_id: BigInt(10),
+            status: 'ACTIVE',
           }];
         }
         return [];

@@ -518,6 +518,27 @@ export class RentalsRepository {
         throw new BadRequestException('Nút bấm đang trong quá trình yêu cầu trả hàng');
       }
 
+      // 1b. Canonical Lock Order (iot_button -> button_rentals): khóa hợp đồng và kiểm tra điều kiện sau bàn giao (Ý 6)
+      const lockedRentals = await tx.$queryRawUnsafe<any[]>(
+        'SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE',
+        rentalId,
+      );
+      if (!lockedRentals || lockedRentals.length === 0) {
+        throw new NotFoundException(`Hợp đồng thuê #${rentalId} không tồn tại`);
+      }
+      const rental = lockedRentals[0];
+
+      if (!['ACTIVE', 'EXPIRED', 'TERMINATED'].includes(rental.status)) {
+        throw new BadRequestException(
+          `Chỉ có thể gửi yêu cầu trả nút sau khi đã nhận bàn giao thiết bị (trạng thái hợp đồng hiện tại: ${rental.status})`,
+        );
+      }
+      if (button.inventory_state !== 'IN_CUSTOMER_CUSTODY') {
+        throw new BadRequestException(
+          `Thiết bị chưa được bàn giao cho khách hàng (trạng thái kho hiện tại: ${button.inventory_state}), không thể gửi yêu cầu trả nút`,
+        );
+      }
+
       // 2. Chặn duplicate return request đang PENDING_RECEIPT dưới khóa
       const existingPending = await tx.rentalReturn.findFirst({
         where: {
@@ -1512,6 +1533,221 @@ export class RentalsRepository {
             },
           },
         });
+      });
+    });
+  }
+
+  async cancelRentalBeforeHandoverTx(
+    rentalId: bigint,
+    actor: { userId?: bigint | null; customerProfileId?: bigint | null; isAdmin: boolean },
+    reason?: string,
+  ) {
+    return runWithTransactionRetry(async () => {
+      return this.prisma.$transaction(async (tx) => {
+        // Canonical lock order: iot_button (ASC) -> button_rentals -> rental_deposits
+        const lockedButtons = await tx.$queryRawUnsafe<any[]>(
+          `SELECT * FROM iot_button WHERE rental_id = $1 ORDER BY button_id ASC FOR UPDATE`,
+          rentalId,
+        );
+        const lockedRentals = await tx.$queryRawUnsafe<any[]>(
+          `SELECT * FROM button_rentals WHERE rental_id = $1 FOR UPDATE`,
+          rentalId,
+        );
+        if (!lockedRentals || lockedRentals.length === 0) {
+          throw new NotFoundException('Hợp đồng thuê không tồn tại');
+        }
+        const rental = lockedRentals[0];
+
+        if (!actor.isAdmin) {
+          const profile = await tx.customerProfile.findUnique({
+            where: { customerId: BigInt(rental.customer_id) },
+            select: { customerId: true, userId: true },
+          });
+          const matchByProfile =
+            actor.customerProfileId != null &&
+            BigInt(rental.customer_id) === BigInt(actor.customerProfileId);
+          const matchByUser =
+            actor.userId != null &&
+            profile?.userId != null &&
+            BigInt(profile.userId) === BigInt(actor.userId);
+          if (!matchByProfile && !matchByUser) {
+            throw new ForbiddenException('Bạn không có quyền hủy hợp đồng thuê này');
+          }
+        }
+
+        const lockedDeposits = await tx.$queryRawUnsafe<any[]>(
+          `SELECT * FROM rental_deposits WHERE rental_id = $1 FOR UPDATE`,
+          rentalId,
+        );
+        const depositLedger = lockedDeposits?.[0] || null;
+
+        if (rental.status === 'CANCELLED') {
+          const existingRental = await tx.buttonRental.findUnique({
+            where: { rentalId },
+            include: {
+              package: true,
+              buttons: true,
+              customer: { include: { user: true } },
+              payments: { orderBy: { createdAt: 'desc' } },
+              deposit: true,
+              returns: { orderBy: { createdAt: 'desc' } },
+              refunds: { include: { bankAccount: true }, orderBy: { createdAt: 'desc' } },
+            },
+          });
+          return {
+            alreadyCancelled: true,
+            rental: existingRental,
+            depositRefund: existingRental?.refunds?.[0] || null,
+            cancelledLinkIds: [] as string[],
+          };
+        }
+
+        if (!['PENDING_PAYMENT', 'PENDING_HANDOVER'].includes(rental.status)) {
+          throw new BadRequestException(
+            `Chỉ có thể hủy hợp đồng khi đang chờ thanh toán hoặc chờ bàn giao thiết bị (trạng thái hiện tại: ${rental.status}). Nếu đã nhận nút, vui lòng dùng quy trình trả nút.`,
+          );
+        }
+
+        const handedOverBtn = (lockedButtons || []).find((b: any) =>
+          ['IN_CUSTOMER_CUSTODY', 'RETURN_IN_TRANSIT'].includes(b.inventory_state),
+        );
+        if (handedOverBtn) {
+          throw new BadRequestException(
+            'Thiết bị của hợp đồng đã được bàn giao cho khách hàng, không thể hủy theo luồng trước bàn giao',
+          );
+        }
+
+        // Release any assigned devices back to store custody
+        const actorUserId = actor.userId ? BigInt(actor.userId) : null;
+        for (const btn of lockedButtons || []) {
+          const targetStoreId = btn.custody_store_id || rental.fulfillment_store_id || btn.store_id || null;
+          await tx.ioTButton.update({
+            where: { buttonId: BigInt(btn.button_id) },
+            data: {
+              customerId: null,
+              rentalId: null,
+              addressId: null,
+              ...(targetStoreId ? { custodyStoreId: BigInt(targetStoreId) } : {}),
+              inventoryState: 'ALLOCATED_TO_STORE',
+              status: 'INACTIVE',
+              canOrder: false,
+            },
+          });
+
+          await tx.deviceMovement.create({
+            data: {
+              buttonId: BigInt(btn.button_id),
+              sourceType: 'RENTAL',
+              sourceStoreId: rental.fulfillment_store_id ? BigInt(rental.fulfillment_store_id) : null,
+              destType: targetStoreId ? 'STORE' : 'PLATFORM',
+              destStoreId: targetStoreId ? BigInt(targetStoreId) : null,
+              rentalId,
+              actorUserId,
+              reason: reason?.trim() || 'Hủy hợp đồng thuê trước khi bàn giao thiết bị',
+            },
+          });
+        }
+
+        // Cancel pending billing charges & payment transactions, collecting PayOS link IDs
+        const cancelledLinkIds: string[] = [];
+        if ((tx as any).billingCharge?.findMany) {
+          const pendingCharges = await (tx as any).billingCharge.findMany({
+            where: { targetType: 'RENTAL', targetId: rentalId, status: 'PENDING' },
+            select: { chargeId: true, paymentLinkId: true },
+          });
+          if (pendingCharges?.length) {
+            await (tx as any).billingCharge.updateMany({
+              where: { targetType: 'RENTAL', targetId: rentalId, status: 'PENDING' },
+              data: { status: 'CANCELLED' },
+            });
+            for (const c of pendingCharges) {
+              if (c.paymentLinkId) cancelledLinkIds.push(String(c.paymentLinkId));
+            }
+          }
+        }
+        const pendingRentalPayments = await tx.paymentTransaction.findMany({
+          where: { rentalId, status: 'PENDING' },
+          select: { paymentTransactionId: true, paymentLinkId: true },
+        });
+        if (pendingRentalPayments?.length) {
+          await tx.paymentTransaction.updateMany({
+            where: { rentalId, status: 'PENDING' },
+            data: { status: 'CANCELLED' },
+          });
+          for (const p of pendingRentalPayments) {
+            if (p.paymentLinkId) cancelledLinkIds.push(String(p.paymentLinkId));
+          }
+        }
+
+        await tx.buttonRental.update({
+          where: { rentalId },
+          data: { status: 'CANCELLED' },
+        });
+
+        let depositRefund: any = null;
+        const heldAmount = Number(depositLedger?.held_amount || 0);
+        if (heldAmount > 0) {
+          const existingRefund = await tx.depositRefund.findFirst({
+            where: {
+              rentalId,
+              status: { in: ['PENDING_APPROVAL', 'PENDING_PAYOUT', 'REFUNDED'] },
+            },
+          });
+          depositRefund =
+            existingRefund ||
+            (await tx.depositRefund.create({
+              data: {
+                refundCode: `DRF-CANCEL-${rentalId.toString()}-${Date.now()}`,
+                rentalId,
+                customerId: BigInt(rental.customer_id),
+                amount: heldAmount,
+                deductionAmount: 0,
+                status: 'PENDING_APPROVAL',
+              },
+            }));
+        }
+
+        if ((tx as any).rentalAuditLog) {
+          await (tx as any).rentalAuditLog.create({
+            data: {
+              actorType: actor.isAdmin ? 'ADMIN' : 'CUSTOMER',
+              actorUserId,
+              action: 'CANCEL_RENTAL_BEFORE_HANDOVER',
+              targetType: 'RENTAL',
+              targetId: rentalId,
+              beforeState: rental.status,
+              afterState: 'CANCELLED',
+              amount: heldAmount > 0 ? new Decimal(heldAmount) : new Decimal(0),
+              correlationId: rental.rental_code,
+              reason: reason?.trim() || 'Hủy hợp đồng thuê trước khi bàn giao thiết bị',
+              metadata: {
+                releasedButtonsCount: (lockedButtons || []).length,
+                depositRefundId: depositRefund?.refundId ? depositRefund.refundId.toString() : null,
+                heldAmount,
+              },
+            },
+          });
+        }
+
+        const updatedRental = await tx.buttonRental.findUnique({
+          where: { rentalId },
+          include: {
+            package: true,
+            buttons: true,
+            customer: { include: { user: true } },
+            payments: { orderBy: { createdAt: 'desc' } },
+            deposit: true,
+            returns: { orderBy: { createdAt: 'desc' } },
+            refunds: { include: { bankAccount: true }, orderBy: { createdAt: 'desc' } },
+          },
+        });
+
+        return {
+          alreadyCancelled: false,
+          rental: updatedRental,
+          depositRefund,
+          cancelledLinkIds,
+        };
       });
     });
   }

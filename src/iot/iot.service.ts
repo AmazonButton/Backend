@@ -254,17 +254,20 @@ export class IotService {
     } catch (orderErr: any) {
       const errRes = typeof orderErr?.getResponse === 'function' ? orderErr.getResponse() : null;
       const errCode = errRes?.errorCode || errRes?.code || orderErr?.errorCode;
-      const isDeliveryEligibilityRejection = [
+      const isNoResidueRejection = [
         'ADDRESS_OUTSIDE_DELIVERY_AREA',
         'DELIVERY_ROUTE_NOT_FOUND',
         'STORE_COORDINATES_MISSING',
         'ADDRESS_COORDINATES_MISSING',
         'DELIVERY_ADDRESS_REQUIRED',
         'DELIVERY_DISTANCE_UNAVAILABLE',
+        'STORE_SUBSCRIPTION_EXPIRED',
+        'STORE_INACTIVE',
+        'STORE_CUSTOMER_BLOCKED',
       ].includes(errCode);
 
-      if (isDeliveryEligibilityRejection) {
-        // Spec requirement: When rejected by delivery eligibility, leave NO idempotency residue
+      if (isNoResidueRejection) {
+        // Spec requirement: When rejected by delivery eligibility or inactive/expired store, leave NO idempotency residue
         this.deviceCooldowns.delete(device.deviceId || rawDeviceId.toString());
         try {
           await this.prisma.$executeRawUnsafe(
