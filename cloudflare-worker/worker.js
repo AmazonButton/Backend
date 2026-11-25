@@ -18,7 +18,15 @@ const NODE1_RENDER = 'https://backend-fae8.onrender.com';
 const NODE2_RENDER = 'https://backend-node2-ukib.onrender.com';
 const NODE3_AWS_DEFAULT = 'http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaws.com';
 
-// Dedicated paths for third-party integrations (PayOS, Didit eKYC, Bank Verification)
+// Dedicated routes requiring static whitelisted IP on AWS Node-3 (PayOS Payout / Refunds / Withdrawals)
+const PAYOUT_STATIC_IP_ROUTES = [
+  '/api/v1/admin/payment-refunds',
+  '/api/v1/admin/refunds',
+  '/api/v1/admin/withdrawals',
+  '/api/v1/admin/payos',
+];
+
+// Dedicated paths for third-party integrations (PayOS Payment Links, Didit eKYC, Bank Verification)
 const THIRD_PARTY_ROUTES = [
   '/api/v1/webhooks',
   '/api/v1/payments',
@@ -26,8 +34,6 @@ const THIRD_PARTY_ROUTES = [
   '/api/v1/stores/bank-accounts',
   '/api/v1/identity-verifications',
   '/api/v1/store/wallet',
-  '/api/v1/admin/withdrawals',
-  '/api/v1/admin/payos',
 ];
 
 // Public read-only endpoints suitable for Cloudflare Edge Caching (60s TTL)
@@ -81,10 +87,19 @@ export default {
 
     // 3. Intelligent Path-Based & Weighted Origin Selection
     const node3Origin = env?.NODE3_AWS || NODE3_AWS_DEFAULT;
+    const isPayoutStaticIp = PAYOUT_STATIC_IP_ROUTES.some((p) => url.pathname.startsWith(p));
     const isThirdParty = THIRD_PARTY_ROUTES.some((p) => url.pathname.startsWith(p));
     let candidateOrigins;
 
-    if (isThirdParty) {
+    if (isPayoutStaticIp) {
+      // 100% PayOS Payout / Refund / Withdrawal admin traffic to Static-IP AWS Node-3 first,
+      // falling back to Render nodes (which delegate via outbox if needed)
+      candidateOrigins = [
+        { url: node3Origin,   node: 'node-3', role: 'payout-static-ip-primary (100%)' },
+        { url: NODE1_RENDER, node: 'node-1', role: 'payout-delegation-fallback' },
+        { url: NODE2_RENDER, node: 'node-2', role: 'payout-delegation-standby' },
+      ];
+    } else if (isThirdParty) {
       // 100% Third-party traffic (PayOS, Didit, Banks) to Node 1
       candidateOrigins = [
         { url: NODE1_RENDER, node: 'node-1', role: 'third-party-primary (100%)' },
@@ -174,11 +189,16 @@ export default {
         });
 
         const cfMitigated = (response.headers.get('cf-mitigated') || '').toLowerCase();
+        const renderRouting = (response.headers.get('x-render-routing') || '').toLowerCase();
         const isEdgeChallenge = response.status === 429 && cfMitigated.includes('challenge');
+        const isRenderHibernate429 = response.status === 429 && renderRouting.includes('hibernate');
         const isUpstreamGatewayFailure = response.status >= 502 && response.status <= 599;
 
-        // Fail over on upstream gateway errors (502-599) or Render-edge Cloudflare WAF bot challenges (never mask API JSON 429s)
-        if ((isUpstreamGatewayFailure || isEdgeChallenge) && attempt < candidateOrigins.length - 1) {
+        // Fail over on upstream gateway errors (502-599), Render hibernate 429s, or Render-edge Cloudflare WAF bot challenges (never mask API JSON 429s)
+        if (
+          (isUpstreamGatewayFailure || isEdgeChallenge || isRenderHibernate429) &&
+          attempt < candidateOrigins.length - 1
+        ) {
           console.warn(`[Director LB] ${currentOrigin} returned ${response.status}${isEdgeChallenge ? ' (cf-mitigated challenge)' : ''}. Retrying fallback...`);
           lastError = new Error(`HTTP ${response.status} from ${currentOrigin}`);
           continue;
