@@ -133,8 +133,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
         results.failed++;
 
         const currentAttempts = Number(event.attempts) + 1;
-        const maxAttemptsBeforeDlq = event.event_type === 'DEPOSIT_REFUND_APPROVED' ? 5 : 3;
-        if (currentAttempts >= maxAttemptsBeforeDlq) {
+        if (currentAttempts >= 3) {
           // Move to DeadLetterJob (DLQ)
           await this.prisma.$transaction(async (tx) => {
             const updateRes = await tx.outboxEvent.updateMany({

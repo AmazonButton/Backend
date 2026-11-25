@@ -12,7 +12,7 @@
     - Allowed `cancelOrder()` for `DELIVERY_FAILED` orders (reusing `alreadyReleased = order.order_status === 'DELIVERY_FAILED'` in `cancelOrderAtomicTx()` to avoid double stock release while creating `REFUND_PENDING` + `ORDER_REFUND` `PaymentRefundObligation`).
     - Added 24-hour sweep in `OrdersLifecycleWorker.processPendingOrdersLifecycle()` auto-cancelling paid `DELIVERY_FAILED` orders stuck `>= 24 hours` into `CANCELLED` + `REFUND_PENDING` + `ORDER_REFUND`.
   - **Ý 3 — Static-IP `Node-3` Exclusivity & Safe Offline Queueing ([`src/rentals/outbox-consumer.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/rentals/outbox-consumer.service.ts), [`src/admin/admin.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/admin/admin.service.ts), [`src/admin/store-withdrawal-payout.worker.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/admin/store-withdrawal-payout.worker.ts), [`src/admin/admin.module.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/admin/admin.module.ts))**:
-    - Excluded `DEPOSIT_REFUND_APPROVED` and `STORE_WITHDRAWAL_PAYOUT` from `OutboxConsumerService.processPendingEvents()` when `PAYOS_PAYOUT_WORKER_ENABLED === 'false' || PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true'`, keeping payouts queued in `outbox_events` if `Node-3` is offline and raising `DEPOSIT_REFUND_APPROVED` retry threshold to `5`.
+    - Excluded `DEPOSIT_REFUND_APPROVED` and `STORE_WITHDRAWAL_PAYOUT` from `OutboxConsumerService.processPendingEvents()` when `PAYOS_PAYOUT_WORKER_ENABLED === 'false' || PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true'`, keeping payouts queued in `outbox_events` if `Node-3` is offline while keeping the standard 3-attempt DLQ threshold intact.
     - Added `STORE_WITHDRAWAL_PAYOUT` outbox delegation + happens-before wait poll in `AdminService.executePayOSPayout()` and `StoreWithdrawalPayoutWorkerService` on `Node-3`.
   - **Ý 4 — Store Subscription Visibility, Ordering & Blocked-Customer Guards, IoT Missed-Order Alerts ([`src/common/utils/store-subscription-policy.util.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/common/utils/store-subscription-policy.util.ts), [`src/stores/stores.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/stores/stores.service.ts), [`src/products/products.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/products/products.repository.ts), [`src/products/products.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/products/products.service.ts), [`src/orders/orders.repository.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/orders/orders.repository.ts), [`src/orders/orders.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/orders/orders.service.ts), [`src/iot/iot.service.ts`](file:///f:/Learning/SEM9-FPTu/backend/src/iot/iot.service.ts), [`prisma/seed.ts`](file:///f:/Learning/SEM9-FPTu/backend/prisma/seed.ts))**:
     - Enforced active unexpired `store_subscriptions` across store/catalog discovery, storefront checkout, `quickReorder`, `handleButtonEvent`, and `createOrderFallbackTx` (strict mode in `production` / `ENFORCE_STORE_SUBSCRIPTION_STRICT=true`; expired-blocking while keeping zero-sub legacy test fixtures compatible; seeded active subscriptions in `prisma/seed.ts`), plus `store_customer.status === 'BLOCKED'` checks.
@@ -23,11 +23,11 @@
 - **Verification (Run After Final Edit)**:
   - `npx tsc --noEmit --incremental false` — **PASS** (exit `0`).
   - `npm run build` — **PASS** (exit `0`).
+  - `npx tsx tests/analytics-dashboard-e2e.spec.ts` — **PASS (`87/87` assertions)**.
+  - `npx tsx tests/platform-button-rental-phase5-return-and-deposit-payout.spec.ts` — **PASS (`30 passed, 0 failed`)**.
+  - `npx tsx tests/platform-button-rental-phase6-outbox-and-notifications.spec.ts` — **PASS (`8 passed, 0 failed`)**.
   - `npx tsx tests/business-rules-7fixes-verification.spec.ts` — **PASS (`6 PASSED, 0 FAILED`)**.
-  - `npx tsx tests/payment-refund-obligations-hardening.spec.ts` — **PASS (`13 PASSED, 0 FAILED`)**.
-  - `npx tsx tests/payos-payout-reason-and-delegation.spec.ts` — **PASS (`5 PASSED, 0 FAILED`)**.
-  - `npx tsx tests/products-http.spec.ts` — **PASS (`23 PASSED, 0 FAILED`)**.
-  - `npx tsx tests/batch2-3-postgres-concurrency.spec.ts` — **PASS (`7/7`, zero leftover residue)**.
+  - `tests/platform-button-rental-deep-fixes-verification.spec.ts`: `Outbox Consumer` 3-attempt DLQ test passed (`47 passed, 3 failed` locally on Neon `R08` trigger check because local `.env` points to Neon without the separate `R08` trigger setup; full 86-suite verification runs in PR #11 CI).
 
 ## 2026-11-25: PayOS Payout Exact Rejection Reason & Static-IP Worker Delegation (`fix/payos-payout-reason-and-static-ip-worker`)
 - **Status**: VERIFIED LOCALLY / READY FOR PR #10 & 3-NODE ROLLOUT (`BRD/ERD_Level_3_Editable.drawio` preserved uncommitted locally; `..\Frontend` untouched cleanly on `main`)

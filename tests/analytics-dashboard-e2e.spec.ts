@@ -563,6 +563,16 @@ async function runAnalyticsDashboardE2ESuite() {
         billingPolicy: 'LEGACY_CUSTOMER_RENT',
         status: 'ACTIVE',
         endDate: new Date(Date.now() + 30 * 86400000),
+        buttons: [
+          {
+            buttonId: 1n,
+            buttonCode: 'BTN-101',
+            name: 'Test Button',
+            status: 'ACTIVE',
+            inventoryState: 'IN_CUSTOMER_CUSTODY',
+            canOrder: true,
+          },
+        ],
       }),
       createRentalExtensionCharge: async () => ({ chargeId: 201n, totalAmount: 50000 }),
       createReturnRequestTx: async () => ({ returnId: 1n }),
