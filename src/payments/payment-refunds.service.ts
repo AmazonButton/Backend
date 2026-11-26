@@ -491,6 +491,7 @@ export class PaymentRefundsService {
       await this.repo.markAttemptPendingReconciliationTx({
         obligationId,
         attemptId,
+        providerPayoutId: lookup.discoveredPayoutId || att.providerPayoutId || null,
         reason: lookup.reason || 'Chưa có phản hồi terminal từ PayOS để đối soát',
       });
       const updated = await this.repo.findObligationById(obligationId);
@@ -605,21 +606,36 @@ export class PaymentRefundsService {
     }
 
     let detailPayout = signedData;
-    const hasDetails =
-      Array.isArray(detailPayout?.transactions) &&
-      detailPayout.transactions.length > 0 &&
-      detailPayout.transactions.some((t: any) => t?.id && (t?.toBin || t?.bin) && (t?.toAccountNumber || t?.accountNumberHash));
+    const hasDetails = this.hasCompletePayoutTransactions(detailPayout);
 
-    if (!hasDetails && this.payosPayoutService && signedData?.id) {
-      try {
-        const res = await this.payosPayoutService.getPayout(String(signedData.id).trim());
-        if (res?.data) {
-          detailPayout = res.data;
+    if (!hasDetails && signedData?.id) {
+      if (this.isDelegatedToStaticIpWorker()) {
+        await this.repo.markAttemptPendingReconciliationTx({
+          obligationId: BigInt(obl.obligationId),
+          attemptId: BigInt(attempt.attemptId),
+          providerPayoutId: String(signedData.id).trim(),
+          reason: 'Đã nhận webhook PayOS Payout, ủy quyền Node-3 đối soát chi tiết.',
+          nextReconcileAt: new Date(),
+        });
+        const latest = await this.repo.findObligationById(BigInt(obl.obligationId));
+        return {
+          handled: true,
+          success: true,
+          message: 'Đã ghi nhận webhook và đẩy lịch đối soát ngay cho Worker IP tĩnh',
+          data: { settled: latest?.status === 'REFUNDED', obligation: toPaymentRefundObligationDto(latest) },
+        };
+      }
+      if (this.payosPayoutService) {
+        try {
+          const res = await this.payosPayoutService.getPayout(String(signedData.id).trim());
+          if (res?.data) {
+            detailPayout = res.data;
+          }
+        } catch (err: any) {
+          this.logger.warn(
+            `[PaymentRefundsService] Không thể lấy detail PayOS payout ${signedData.id}: ${err?.message}`,
+          );
         }
-      } catch (err: any) {
-        this.logger.warn(
-          `[PaymentRefundsService] Không thể lấy detail PayOS payout ${signedData.id}: ${err?.message}`,
-        );
       }
     }
 
@@ -639,23 +655,41 @@ export class PaymentRefundsService {
     };
   }
 
+  private hasCompletePayoutTransactions(payoutObj: any): boolean {
+    return (
+      Boolean(payoutObj?.id) &&
+      Array.isArray(payoutObj?.transactions) &&
+      payoutObj.transactions.length > 0 &&
+      payoutObj.transactions.some(
+        (t: any) =>
+          t?.id &&
+          (t?.referenceId || t?.reference) &&
+          typeof t?.amount === 'number' &&
+          (t?.toBin || t?.bin || t?.recipientBin) &&
+          (t?.toAccountNumber || t?.accountNumberHash || t?.recipientAccountNumberHash) &&
+          (t?.state || t?.status),
+      )
+    );
+  }
+
   private async lookupProviderPayoutByReferenceOrId(
     payoutReference: string,
     providerPayoutId?: string | null,
-  ): Promise<{ payoutData: any | null; indeterminate: boolean; reason?: string }> {
+  ): Promise<{ payoutData: any | null; indeterminate: boolean; reason?: string; discoveredPayoutId?: string }> {
     if (!this.payosPayoutService) {
       return { payoutData: null, indeterminate: true, reason: 'PayOSPayoutService unavailable' };
     }
 
     if (providerPayoutId) {
+      const cleanId = String(providerPayoutId).trim();
       try {
-        const res = await this.payosPayoutService.getPayout(String(providerPayoutId).trim());
+        const res = await this.payosPayoutService.getPayout(cleanId);
         if (res?.data?.id) {
-          return { payoutData: res.data, indeterminate: false };
+          return { payoutData: res.data, indeterminate: false, discoveredPayoutId: String(res.data.id).trim() };
         }
-        return { payoutData: null, indeterminate: true, reason: 'getPayout thiếu data.id' };
+        return { payoutData: null, indeterminate: true, reason: 'getPayout thiếu data.id', discoveredPayoutId: cleanId };
       } catch (err: any) {
-        return { payoutData: null, indeterminate: true, reason: err?.message };
+        return { payoutData: null, indeterminate: true, reason: err?.message, discoveredPayoutId: cleanId };
       }
     }
 
@@ -689,15 +723,35 @@ export class PaymentRefundsService {
         };
       }
       if (matched.length === 1) {
-        const matchedId = matched[0]?.id ? String(matched[0].id).trim() : '';
+        const matchedItem = matched[0];
+        const matchedId = matchedItem?.id ? String(matchedItem.id).trim() : '';
         if (!matchedId) {
           return { payoutData: null, indeterminate: true, reason: 'Payout lookup item thiếu data.id' };
         }
-        const detail = await this.payosPayoutService.getPayout(matchedId);
-        if (detail?.data?.id) {
-          return { payoutData: detail.data, indeterminate: false };
+        // PayOS GET /v1/payouts?referenceId=... already returns full transactions array.
+        // Using it directly avoids a 0ms back-to-back GET /v1/payouts/{id} call that triggers PayOS HTTP 429 rate limiting.
+        if (this.hasCompletePayoutTransactions(matchedItem)) {
+          return { payoutData: matchedItem, indeterminate: false, discoveredPayoutId: matchedId };
         }
-        return { payoutData: null, indeterminate: true, reason: 'getPayout detail thiếu data.id' };
+        try {
+          const detail = await this.payosPayoutService.getPayout(matchedId);
+          if (detail?.data?.id) {
+            return { payoutData: detail.data, indeterminate: false, discoveredPayoutId: matchedId };
+          }
+          return {
+            payoutData: null,
+            indeterminate: true,
+            reason: 'getPayout detail thiếu data.id',
+            discoveredPayoutId: matchedId,
+          };
+        } catch (detailErr: any) {
+          return {
+            payoutData: null,
+            indeterminate: true,
+            reason: detailErr?.message,
+            discoveredPayoutId: matchedId,
+          };
+        }
       }
       return { payoutData: null, indeterminate: false };
     } catch (err: any) {
@@ -746,15 +800,30 @@ export class PaymentRefundsService {
         return { settled: false, obligation: toPaymentRefundObligationDto(latest) };
       }
 
-      const settled = await this.repo.settleRefundSuccessAtomicTx({
-        obligationId: BigInt(obl.obligationId),
-        attemptId: BigInt(att.attemptId),
-        providerPayoutId: successVerif.providerPayoutId,
-        providerTransactionId: successVerif.matchedTxId.trim(),
-        payoutReference: att.payoutReference,
-        verifiedAmount: successVerif.reportedAmount,
-        settledByUserId,
-      });
+      let settled: any;
+      try {
+        settled = await this.repo.settleRefundSuccessAtomicTx({
+          obligationId: BigInt(obl.obligationId),
+          attemptId: BigInt(att.attemptId),
+          providerPayoutId: successVerif.providerPayoutId,
+          providerTransactionId: successVerif.matchedTxId.trim(),
+          payoutReference: att.payoutReference,
+          verifiedAmount: successVerif.reportedAmount,
+          settledByUserId,
+        });
+      } catch (settleErr: any) {
+        if (!(settleErr instanceof ConflictException)) {
+          await this.repo
+            .markAttemptPendingReconciliationTx({
+              obligationId: BigInt(obl.obligationId),
+              attemptId: BigInt(att.attemptId),
+              providerPayoutId: successVerif.providerPayoutId,
+              reason: `Lỗi lưu kết quả tất toán DB: ${settleErr?.message || 'Unknown error'}`.slice(0, 500),
+            })
+            .catch(() => {});
+        }
+        throw settleErr;
+      }
 
       await this.emitSettlementSideEffects(obl, settled.obligation);
       return { settled: true, obligation: toPaymentRefundObligationDto(settled.obligation) };
@@ -787,36 +856,48 @@ export class PaymentRefundsService {
     try {
       const order = settledObl?.order || prevObl?.order;
       if (!order) return;
-      if (order.customerId && this.notificationsService) {
-        const custProfile = await this.repo['prisma'].customerProfile.findUnique({
-          where: { customerId: BigInt(order.customerId) },
-          select: { userId: true },
-        });
+      let customerUserId: bigint | null = null;
+      if (order.customerId) {
+        const custProfile = await this.repo['prisma']?.customerProfile
+          ?.findUnique?.({
+            where: { customerId: BigInt(order.customerId) },
+            select: { userId: true },
+          })
+          ?.catch?.(() => null);
         if (custProfile?.userId) {
-          await this.notificationsService
-            .createAndDispatchNotification({
-              userId: custProfile.userId,
-              type: 'ORDER_REFUNDED',
-              title: 'Hoàn tiền đơn hàng thành công',
-              body: `Khoản hoàn ${Number(settledObl.refundAmount).toLocaleString('vi-VN')} VND cho đơn hàng #${order.orderCode} đã được chi trả thành công.`,
-              data: {
-                orderId: order.orderId.toString(),
-                orderCode: order.orderCode,
-                obligationId: settledObl.obligationId.toString(),
-                refundAmount: Number(settledObl.refundAmount),
-              },
-              idempotencyKey: `payment_refund_obl:${settledObl.obligationId.toString()}:refunded`,
-            })
-            .catch(() => {});
+          customerUserId = BigInt(custProfile.userId);
         }
       }
-      if (this.eventsGateway && order.storeId) {
+      if (customerUserId && this.notificationsService) {
+        await this.notificationsService
+          .createAndDispatchNotification({
+            userId: customerUserId,
+            type: 'ORDER_REFUNDED',
+            title: 'Hoàn tiền đơn hàng thành công',
+            body: `Khoản hoàn ${Number(settledObl.refundAmount).toLocaleString('vi-VN')} VND cho đơn hàng #${order.orderCode} đã được chi trả thành công.`,
+            data: {
+              orderId: order.orderId.toString(),
+              orderCode: order.orderCode,
+              obligationId: settledObl.obligationId.toString(),
+              refundAmount: Number(settledObl.refundAmount),
+              orderPaymentStatus: order.paymentStatus || 'REFUNDED',
+            },
+            idempotencyKey: `payment_refund_obl:${settledObl.obligationId.toString()}:refunded`,
+          })
+          .catch(() => {});
+      }
+      if (this.eventsGateway) {
         const eventPayload = {
           orderId: order.orderId.toString(),
+          orderCode: order.orderCode,
           obligationId: settledObl.obligationId.toString(),
-          orderPaymentStatus: order.paymentStatus,
+          refundAmount: Number(settledObl.refundAmount),
+          orderPaymentStatus: order.paymentStatus || 'REFUNDED',
+          paymentStatus: order.paymentStatus || 'REFUNDED',
         };
-        this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_REFUNDED', eventPayload);
+        if (order.storeId) {
+          this.eventsGateway.emitToStore(order.storeId.toString(), 'ORDER_REFUNDED', eventPayload);
+        }
         if (order.customerId) {
           this.eventsGateway.emitToCustomer(
             order.customerId.toString(),
@@ -824,6 +905,14 @@ export class PaymentRefundsService {
             eventPayload,
           );
         }
+        if (customerUserId) {
+          this.eventsGateway.emitToUser?.(
+            customerUserId.toString(),
+            'ORDER_REFUNDED',
+            eventPayload,
+          );
+        }
+        this.eventsGateway.emitToAdmin?.('ORDER_REFUNDED', eventPayload);
       }
     } catch {
       // Side effects never roll back committed refund settlement

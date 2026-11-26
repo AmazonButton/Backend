@@ -20,6 +20,7 @@ const NODE3_AWS_DEFAULT = 'http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaw
 
 // Dedicated routes requiring static whitelisted IP on AWS Node-3 (PayOS Payout / Refunds / Withdrawals)
 const PAYOUT_STATIC_IP_ROUTES = [
+  '/api/v1/webhooks/payos/payout',
   '/api/v1/admin/payment-refunds',
   '/api/v1/admin/refunds',
   '/api/v1/admin/withdrawals',

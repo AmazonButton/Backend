@@ -297,6 +297,20 @@ async function runSuite() {
         'Withdrawal payout route must hit AWS static-IP Node-3 first',
       );
 
+      seenTargets.length = 0;
+      const payoutWhRes = await worker.fetch(
+        new Request('https://api.example/api/v1/webhooks/payos/payout', { method: 'POST' }),
+        env,
+        ctx,
+      );
+      assert.equal(payoutWhRes.status, 200);
+      assert.equal(
+        seenTargets[0],
+        'https://node3.example/api/v1/webhooks/payos/payout',
+        'PayOS payout webhook route must hit AWS static-IP Node-3 first',
+      );
+      assert.equal(payoutWhRes.headers.get('X-Cluster-Node'), 'node-3');
+
       // Simulate Node-1 returning Render hibernate 429 on /payments -> must fail over instead of returning 429
       const hibernateTargets: string[] = [];
       const workerHibernate = loadCloudflareWorkerWithMockFetch(async (targetUrl) => {
@@ -754,6 +768,183 @@ async function runSuite() {
       assert.equal(syncRes.settled, true, 'Delegated syncObligationStatus must return settled=true after worker tick');
       assert.equal(syncRes.obligation.status, 'REFUNDED');
       assert.equal(getPayoutCallCount, getCallsBeforeSync + 1, 'Only static-IP worker should call PayOS getPayout');
+    });
+
+    // -------------------------------------------------------------------------
+    // T6: Production Obligation #4 bug fixes (payment_transaction_status_check REFUNDED,
+    //     inline getPayouts transactions avoiding back-to-back 0ms HTTP 429,
+    //     discoveredPayoutId persistence on 429, and ORDER_REFUNDED WS emission)
+    // -------------------------------------------------------------------------
+    await testCase('T6: payment_transaction_status_check allows REFUNDED, inline getPayouts avoids redundant getPayout 429, and ORDER_REFUNDED is emitted', async () => {
+      // 1. Enforce payment_transaction_status_check with REFUNDED on test DB (matching migration 20261126000000)
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "public"."payment_transaction"
+          DROP CONSTRAINT IF EXISTS "payment_transaction_status_check";
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "public"."payment_transaction"
+          ADD CONSTRAINT "payment_transaction_status_check"
+          CHECK ((status)::text = ANY (ARRAY[
+            'PENDING'::text,
+            'CREATING'::text,
+            'SUCCESS'::text,
+            'PAID'::text,
+            'FAILED'::text,
+            'CANCELLED'::text,
+            'EXPIRED'::text,
+            'REFUND_PENDING'::text,
+            'REFUNDED'::text
+          ]));
+      `);
+
+      // Capture WebSocket emissions from refundsService
+      const emittedCustomerEvents: Array<{ customerId: string; event: string; payload: any }> = [];
+      const emittedStoreEvents: Array<{ storeId: string; event: string; payload: any }> = [];
+      const emittedAdminEvents: Array<{ event: string; payload: any }> = [];
+      (refundsService as any).eventsGateway = {
+        emitToCustomer: (cid: string, ev: string, data: any) =>
+          emittedCustomerEvents.push({ customerId: cid, event: ev, payload: data }),
+        emitToStore: (sid: string, ev: string, data: any) =>
+          emittedStoreEvents.push({ storeId: sid, event: ev, payload: data }),
+        emitToUser: () => {},
+        emitToAdmin: (ev: string, data: any) => emittedAdminEvents.push({ event: ev, payload: data }),
+      };
+
+      // 2. Simulate attempt stuck in PENDING_RECONCILIATION with providerPayoutId = null (exact state of Production Obligation #4 / Attempt #6)
+      const obl4Sim = await createReadyObligation(2000);
+      nextCreateBehavior = async (req) => {
+        const rec = {
+          id: `batch_obl4_${prefix}`,
+          referenceId: req.referenceId,
+          amount: req.amount,
+          approvalState: 'PROCESSING',
+          transactions: [],
+        };
+        createdPayouts.set(rec.id, rec);
+        createdPayoutsByRef.set(req.referenceId, rec);
+        return { code: '00', data: rec };
+      };
+
+      process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER = 'false';
+      await refundsService.initiateObligationPayout(obl4Sim.obligationId, {}, saCtx);
+
+      // Force providerPayoutId = null in DB to simulate rollback residue before reconciliation
+      const attBefore = await prisma.paymentRefundPayoutAttempt.findFirstOrThrow({
+        where: { obligationId: obl4Sim.obligationId },
+        orderBy: { attemptNumber: 'desc' },
+      });
+      await prisma.paymentRefundPayoutAttempt.update({
+        where: { attemptId: attBefore.attemptId },
+        data: { providerPayoutId: null },
+      });
+
+      // Part A: If getPayouts returns an item WITHOUT inline transactions and getPayout throws HTTP 429,
+      // reconcileAttempt MUST still persist discoveredPayoutId (providerPayoutId) on the attempt row
+      const origGetPayout = mockPayosPayoutService.getPayout;
+      mockPayosPayoutService.getPayout = async () => {
+        getPayoutCallCount++;
+        throw new BadRequestException({
+          code: 'PAYOS_PAYOUT_QUERY_FAILED',
+          message: 'PayOS từ chối tra cứu payout (HTTP 429)',
+        });
+      };
+
+      const attNullId = await prisma.paymentRefundPayoutAttempt.findUniqueOrThrow({
+        where: { attemptId: attBefore.attemptId },
+      });
+      assert.equal(attNullId.providerPayoutId, null);
+      const resOn429 = await refundsService.reconcileAttempt(obl4Sim.obligationId, attBefore.attemptId, null);
+      assert.equal(resOn429.settled, false);
+
+      const attAfter429 = await prisma.paymentRefundPayoutAttempt.findUniqueOrThrow({
+        where: { attemptId: attBefore.attemptId },
+      });
+      assert.equal(
+        attAfter429.providerPayoutId,
+        `batch_obl4_${prefix}`,
+        'discoveredPayoutId from getPayouts must be persisted even when getPayout throws HTTP 429',
+      );
+
+      // Part B: Clear providerPayoutId back to null, populate full inline transactions in getPayouts({ referenceId })
+      // (exact PayOS GET /v1/payouts?referenceId=... response structure), and verify reconcileAttempt settles
+      // with ZERO getPayout(id) calls!
+      await prisma.paymentRefundPayoutAttempt.update({
+        where: { attemptId: attBefore.attemptId },
+        data: { providerPayoutId: null },
+      });
+      const completedRec = {
+        id: `batch_obl4_${prefix}`,
+        referenceId: attBefore.payoutReference,
+        amount: 2000,
+        approvalState: 'COMPLETED',
+        transactions: [
+          {
+            id: `batch_txn_obl4_${prefix}`,
+            referenceId: attBefore.payoutReference,
+            amount: 2000,
+            toBin: '970423',
+            toAccountNumber: bankAccRaw,
+            toAccountName: 'LE HO GIA BAO',
+            reference: '105573996',
+            state: 'SUCCEEDED',
+          },
+        ],
+      };
+      createdPayouts.set(completedRec.id, completedRec);
+      createdPayoutsByRef.set(attBefore.payoutReference, completedRec);
+
+      const getPayoutCallsBeforeInline = getPayoutCallCount;
+      // Leave mockPayosPayoutService.getPayout throwing 429 to prove reconcileAttempt does NOT call getPayout at all!
+      const resInline = await refundsService.reconcileAttempt(obl4Sim.obligationId, attBefore.attemptId, null);
+      mockPayosPayoutService.getPayout = origGetPayout;
+
+      assert.equal(resInline.settled, true, 'reconcileAttempt must settle using inline getPayouts transactions');
+      assert.equal(
+        getPayoutCallCount,
+        getPayoutCallsBeforeInline,
+        'reconcileAttempt must NOT call getPayout(id) when getPayouts({ referenceId }) already returns complete inline transactions',
+      );
+
+      // Verify DB state across payment_refund_obligations, payment_refund_payout_attempts, orders, payment_transaction, and voucher
+      const settledOblDb = await prisma.paymentRefundObligation.findUniqueOrThrow({
+        where: { obligationId: obl4Sim.obligationId },
+        include: { verifiedVoucher: true },
+      });
+      assert.equal(settledOblDb.status, 'REFUNDED');
+      assert.equal(settledOblDb.settledAttemptId, attBefore.attemptId);
+      assert.ok(settledOblDb.verifiedVoucher, 'Verified refund voucher must be created');
+      assert.equal(settledOblDb.verifiedVoucher?.providerPayoutId, `batch_obl4_${prefix}`);
+      assert.equal(settledOblDb.verifiedVoucher?.providerTransactionId, `batch_txn_obl4_${prefix}`);
+
+      const settledOrderDb = await prisma.order.findUniqueOrThrow({
+        where: { orderId: obl4Sim.orderId! },
+      });
+      assert.equal(settledOrderDb.paymentStatus, 'REFUNDED', 'Order paymentStatus must transition to REFUNDED');
+
+      const settledPtDb = await prisma.paymentTransaction.findUniqueOrThrow({
+        where: { paymentTransactionId: obl4Sim.sourcePaymentTransactionId! },
+      });
+      assert.equal(settledPtDb.status, 'REFUNDED', 'Source payment_transaction status must transition to REFUNDED');
+
+      // Verify ORDER_REFUNDED WebSocket event emitted to Customer, Store, and Admin
+      assert.ok(
+        emittedCustomerEvents.some(
+          (e) =>
+            e.event === 'ORDER_REFUNDED' &&
+            e.payload?.orderId === obl4Sim.orderId?.toString() &&
+            e.payload?.paymentStatus === 'REFUNDED',
+        ),
+        'Must emit ORDER_REFUNDED to customer room',
+      );
+      assert.ok(
+        emittedStoreEvents.some(
+          (e) =>
+            e.event === 'ORDER_REFUNDED' &&
+            e.payload?.orderId === obl4Sim.orderId?.toString() &&
+            e.payload?.paymentStatus === 'REFUNDED',
+        ),
+        'Must emit ORDER_REFUNDED to store room',
+      );
     });
   } finally {
     if (prevChecksum === undefined) delete process.env.PAYOS_CHECKSUM_KEY;

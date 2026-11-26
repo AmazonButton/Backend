@@ -773,26 +773,52 @@ export class AdminService {
           );
         }
         expectedPayoutId = String(found.id).trim();
-        try {
-          const detailRes = await this.payosPayoutService.getPayout(found.id);
-          targetPayout = detailRes?.data;
-          if (!targetPayout) {
+        await this.adminRepo
+          .supplementPayoutIdIfAllowed(
+            rawWithdrawalId,
+            withdrawal.providerReferenceId,
+            expectedPayoutId,
+            null,
+          )
+          .catch(() => {});
+
+        const hasInlineTransactions =
+          Array.isArray(found?.transactions) &&
+          found.transactions.length > 0 &&
+          found.transactions.some(
+            (t: any) =>
+              t?.id &&
+              (t?.referenceId || t?.reference) &&
+              typeof t?.amount === 'number' &&
+              (t?.toBin || t?.bin || t?.recipientBin) &&
+              (t?.toAccountNumber || t?.accountNumberHash || t?.recipientAccountNumberHash) &&
+              (t?.state || t?.status),
+          );
+
+        if (hasInlineTransactions) {
+          targetPayout = found;
+        } else {
+          try {
+            const detailRes = await this.payosPayoutService.getPayout(found.id);
+            targetPayout = detailRes?.data;
+            if (!targetPayout) {
+              return formatResponse(
+                withdrawal,
+                'PENDING',
+                'PAYOUT_DETAIL_EMPTY',
+                expectedPayoutId,
+                'Phản hồi chi tiết payout từ provider rỗng, không dùng bản tóm tắt thay thế. Giữ trạng thái chờ đối soát.',
+              );
+            }
+          } catch (err: any) {
             return formatResponse(
               withdrawal,
               'PENDING',
-              'PAYOUT_DETAIL_EMPTY',
+              'PAYOUT_DETAIL_ERROR',
               expectedPayoutId,
-              'Phản hồi chi tiết payout từ provider rỗng, không dùng bản tóm tắt thay thế. Giữ trạng thái chờ đối soát.',
+              'Lỗi khi lấy chi tiết payout từ provider. Không dùng bản tóm tắt thay thế, giữ trạng thái chờ đối soát.',
             );
           }
-        } catch (err: any) {
-          return formatResponse(
-            withdrawal,
-            'PENDING',
-            'PAYOUT_DETAIL_ERROR',
-            expectedPayoutId,
-            'Lỗi khi lấy chi tiết payout từ provider. Không dùng bản tóm tắt thay thế, giữ trạng thái chờ đối soát.',
-          );
         }
       } else {
         const isNone = matched.length === 0;

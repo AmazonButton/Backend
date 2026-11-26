@@ -19,6 +19,7 @@ import {
 } from '../auth/authority.policy';
 
 export const WS_AUTH_REVOKE_CHANNEL = 'ws:auth:revoke';
+export const WS_EVENT_BROADCAST_CHANNEL = 'ws:events:broadcast';
 
 export interface WsRevocationPubSubTransport {
   publish(channel: string, payload: string): Promise<void> | void;
@@ -142,13 +143,15 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       this.subClient.on('message', (channel, message) => {
         if (channel === WS_AUTH_REVOKE_CHANNEL) {
           this.handleRemoteRevocationMessage(message);
+        } else if (channel === WS_EVENT_BROADCAST_CHANNEL) {
+          this.handleRemoteEventBroadcastMessage(message);
         }
       });
 
       await Promise.race([
         Promise.all([
           this.pubClient.ping(),
-          this.subClient.subscribe(WS_AUTH_REVOKE_CHANNEL),
+          this.subClient.subscribe(WS_AUTH_REVOKE_CHANNEL, WS_EVENT_BROADCAST_CHANNEL),
         ]),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Redis WS pubsub timeout')), 2000)),
       ]);
@@ -317,9 +320,10 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         client.join(`store:${sId}`);
       }
 
-      if (payload.customerProfileId) {
-        client.join(`customer_${payload.customerProfileId}`);
-        client.join(`customer:${payload.customerProfileId}`);
+      const resolvedCustomerId = client.data.user?.customerId;
+      if (resolvedCustomerId) {
+        client.join(`customer_${resolvedCustomerId}`);
+        client.join(`customer:${resolvedCustomerId}`);
       }
 
       // Schedule disconnect timer when token expires (check before registering active socket)
@@ -529,63 +533,113 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     if (isAuthorized) {
       client.join(`customer_${customerId}`);
-      this.logger.log(`🔌 Socket ${client.id} joined customer_${customerId}`);
+      client.join(`customer:${customerId}`);
+      this.logger.log(`🔌 Socket ${client.id} joined customer_${customerId} and customer:${customerId}`);
     } else {
       this.logger.warn(`⛔ [WS] Socket ${client.id} denied access to customer_${customerId}`);
       client.emit('error', { code: 'FORBIDDEN', message: 'Bạn không có quyền truy cập kênh của khách hàng này' });
     }
   }
 
+  private publishRemoteEventBroadcast(rooms: string[], event: string, payload: any) {
+    if (!this.pubClient) return;
+    try {
+      const msg = JSON.stringify({
+        originInstanceId: this.instanceId,
+        rooms,
+        event,
+        payload,
+      });
+      this.pubClient.publish(WS_EVENT_BROADCAST_CHANNEL, msg).catch(() => {});
+    } catch {
+      // Never break local emit on pubsub error
+    }
+  }
+
+  private handleRemoteEventBroadcastMessage(raw: string) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (
+        !parsed ||
+        parsed.originInstanceId === this.instanceId ||
+        !this.server ||
+        !parsed.event
+      ) {
+        return;
+      }
+      if (Array.isArray(parsed.rooms) && parsed.rooms.length > 0) {
+        for (const room of parsed.rooms) {
+          this.server.to(room).emit(parsed.event, parsed.payload);
+        }
+      } else if (parsed.global) {
+        this.server.emit(parsed.event, parsed.payload);
+      }
+    } catch {
+      // Ignore malformed cross-node broadcast message
+    }
+  }
+
   emitToStore(storeId: string, event: string, payload: any) {
+    const rooms = [`store_${storeId}`, `store:${storeId}`];
     if (this.server) {
-      this.server.to(`store_${storeId}`).emit(event, payload);
-      this.server.to(`store:${storeId}`).emit(event, payload);
+      for (const r of rooms) this.server.to(r).emit(event, payload);
       this.logger.log(`📢 [WS -> Store ${storeId}] ${event}`);
     }
+    this.publishRemoteEventBroadcast(rooms, event, payload);
   }
 
   emitToDriver(driverId: string, event: string, payload: any) {
+    const rooms = [`driver:${driverId}`, `user:${driverId}`];
     if (this.server) {
-      this.server.to(`driver:${driverId}`).emit(event, payload);
-      this.server.to(`user:${driverId}`).emit(event, payload);
+      for (const r of rooms) this.server.to(r).emit(event, payload);
       this.logger.log(`📢 [WS -> Driver ${driverId}] ${event}`);
     }
+    this.publishRemoteEventBroadcast(rooms, event, payload);
   }
 
   emitToUser(userId: string, event: string, payload: any) {
+    const rooms = [`user:${userId}`, `user_${userId}`];
     if (this.server) {
-      this.server.to(`user:${userId}`).emit(event, payload);
-      this.server.to(`user_${userId}`).emit(event, payload);
+      for (const r of rooms) this.server.to(r).emit(event, payload);
       this.logger.log(`📢 [WS -> User ${userId}] ${event}`);
     }
+    this.publishRemoteEventBroadcast(rooms, event, payload);
   }
 
   emitToCustomer(customerId: string, event: string, payload: any) {
+    const rooms = [`customer_${customerId}`, `customer:${customerId}`];
     if (this.server) {
-      this.server.to(`customer_${customerId}`).emit(event, payload);
+      for (const r of rooms) this.server.to(r).emit(event, payload);
       this.logger.log(`📢 [WS -> Customer ${customerId}] ${event}`);
     }
+    this.publishRemoteEventBroadcast(rooms, event, payload);
   }
 
   emitToAdmin(event: string, payload: any) {
+    const rooms = ['admin'];
     if (this.server) {
       this.server.to('admin').emit(event, payload);
       this.logger.log(`📢 [WS -> Admin] ${event}`);
     }
+    this.publishRemoteEventBroadcast(rooms, event, payload);
   }
 
   emitToSystemStaff(event: string, payload: any) {
+    const rooms = ['system_staff'];
     if (this.server) {
       this.server.to('system_staff').emit(event, payload);
       this.logger.log(`📢 [WS -> SystemStaff] ${event}`);
     }
+    this.publishRemoteEventBroadcast(rooms, event, payload);
   }
 
   emitToHardwareOps(event: string, payload: any) {
+    const rooms = ['devices:ops'];
     if (this.server) {
       this.server.to('devices:ops').emit(event, payload);
       this.logger.log(`📢 [WS -> HardwareOps] ${event}`);
     }
+    this.publishRemoteEventBroadcast(rooms, event, payload);
   }
 
   disconnectLocalUserSockets(userId: string, reason = 'Quyền truy cập hoặc phiên đăng nhập đã bị thu hồi') {

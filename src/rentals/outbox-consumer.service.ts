@@ -20,7 +20,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     @Inject(NotificationsService) private readonly notificationsService: NotificationsService,
     @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
     @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
-  ) {}
+  ) { }
 
   onModuleInit() {
     // R06: Tự động chạy worker định kỳ kiểm tra và xử lý sự kiện
@@ -330,7 +330,7 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
         if (!existingPayoutData && refund.refundCode) {
           try {
             const listRes = await this.payosPayoutService.getPayouts({ referenceId: refund.refundCode });
-            
+
             // Fail-closed: Xác thực shape danh sách hợp lệ trước.
             // Response không hợp lệ (data: null, data: {}, code != '00') phải trở thành lỗi lookup,
             // TUYỆT ĐỐI không chuẩn hóa thành danh sách rỗng [] để tránh dispatch nhầm ở lượt đầu.
@@ -357,20 +357,37 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
               throw new Error(`Phát hiện nhiều payout trùng mã tham chiếu ${refund.refundCode} trên PayOS, cần đối soát thủ công`);
             }
             if (matched.length === 1) {
-              const matchedId = matched[0]?.id ? String(matched[0].id).trim() : null;
+              const matchedItem = matched[0];
+              const matchedId = matchedItem?.id ? String(matchedItem.id).trim() : null;
               if (!matchedId) {
                 matchedMissingId = true;
               } else {
-                try {
-                  const detailRes = await this.payosPayoutService.getPayout(matchedId);
-                  if (detailRes?.data?.id) {
-                    existingPayoutData = detailRes.data;
-                  } else {
-                    detailMissingData = true;
+                const hasInlineTransactions =
+                  Array.isArray(matchedItem?.transactions) &&
+                  matchedItem.transactions.length > 0 &&
+                  matchedItem.transactions.some(
+                    (t: any) =>
+                      t?.id &&
+                      (t?.referenceId || t?.reference) &&
+                      typeof t?.amount === 'number' &&
+                      (t?.toBin || t?.bin || t?.recipientBin) &&
+                      (t?.toAccountNumber || t?.accountNumberHash || t?.recipientAccountNumberHash) &&
+                      (t?.state || t?.status),
+                  );
+                if (hasInlineTransactions) {
+                  existingPayoutData = matchedItem;
+                } else {
+                  try {
+                    const detailRes = await this.payosPayoutService.getPayout(matchedId);
+                    if (detailRes?.data?.id) {
+                      existingPayoutData = detailRes.data;
+                    } else {
+                      detailMissingData = true;
+                    }
+                  } catch (detailErr: any) {
+                    lookupFailed = true;
+                    this.logger.warn(`[OutboxConsumer] Tra cứu chi tiết payout theo ID ${matchedId} thất bại: ${detailErr?.message}`);
                   }
-                } catch (detailErr: any) {
-                  lookupFailed = true;
-                  this.logger.warn(`[OutboxConsumer] Tra cứu chi tiết payout theo ID ${matchedId} thất bại: ${detailErr?.message}`);
                 }
               }
             } else {
