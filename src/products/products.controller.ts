@@ -105,7 +105,7 @@ export class ProductsController {
   @Get(':id')
   @ApiOperation({ summary: 'Xem chi tiet san pham va danh sach anh' })
   async getById(
-    @Param('id', new ParseIntPipe({ errorHttpStatusCode: HttpStatus.BAD_REQUEST })) id: number,
+    @Param('id') id: string,
     @Request() req: any,
   ) {
     const data = await this.productsService.getById(id, req.user);

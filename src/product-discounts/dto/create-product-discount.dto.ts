@@ -1,18 +1,19 @@
-import { IsNotEmpty, IsOptional, IsNumber, IsDateString, IsIn, Min, Max } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsInt, IsDateString, IsIn, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateProductDiscountDto {
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({}, { message: 'discountPercent phải là số' })
+  @IsInt({ message: 'discountPercent phải là số nguyên' })
   @Min(0, { message: 'discountPercent tối thiểu là 0' })
   @Max(100, { message: 'discountPercent tối đa là 100' })
   discountPercent?: number;
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({}, { message: 'discountAmount phải là số' })
+  @IsInt({ message: 'discountAmount phải là số nguyên VND' })
   @Min(0, { message: 'discountAmount tối thiểu là 0' })
+  @Max(1000000000, { message: 'discountAmount vượt quá giới hạn tối đa' })
   discountAmount?: number;
 
   @IsNotEmpty({ message: 'startAt không được để trống' })

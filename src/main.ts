@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 import helmet from 'helmet';
 import cors from 'cors';
 import express from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { AppController } from './app.controller';
@@ -40,8 +40,8 @@ async function bootstrap() {
       (app.getHttpAdapter().getInstance() as any).set('trust proxy', parsed);
     }
   } else {
-    // Behind Cloudflare Worker / Render / AWS reverse proxy, trust the first proxy hop by default
-    (app.getHttpAdapter().getInstance() as any).set('trust proxy', 1);
+    // Behind Cloudflare Worker -> Render LB (2 hops) vs AWS direct (1 hop)
+    (app.getHttpAdapter().getInstance() as any).set('trust proxy', process.env.RENDER === 'true' ? 2 : 1);
   }
 
   // Enable shutdown hooks for graceful termination
@@ -71,6 +71,14 @@ async function bootstrap() {
   // Global exception filter for uniform error envelopes & security error masking
   app.useGlobalFilters(new AllExceptionsFilter());
 
+  const extractRateLimitClientIp = (req: any): string => {
+    const cfIp = typeof req.headers?.['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'].trim() : '';
+    const rawIp = cfIp && /^[0-9a-fA-F:.]{3,45}$/.test(cfIp)
+      ? cfIp
+      : (req.ip || req.socket?.remoteAddress || '127.0.0.1');
+    return ipKeyGenerator(rawIp);
+  };
+
   // Global rate limiter (1000 requests per 15 minutes per IP)
   app.use(
     rateLimit({
@@ -78,6 +86,7 @@ async function bootstrap() {
       max: 1000,
       standardHeaders: true,
       legacyHeaders: false,
+      keyGenerator: extractRateLimitClientIp,
       message: {
         success: false,
         message: 'Quá nhiều yêu cầu từ địa chỉ IP của bạn. Vui lòng thử lại sau 15 phút.',
@@ -94,10 +103,11 @@ async function bootstrap() {
     max: isTestEnv ? 1000 : 60, // 60 requests / min / IP across auth mutations (prevents 429 during active background polling)
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: extractRateLimitClientIp,
     skip: (req) => req.method === 'GET' ||
       req.path === '/refresh' ||
       req.path === '/auth/refresh' ||
-      (typeof req.originalUrl === 'string' && req.originalUrl.includes('/auth/refresh')), // Exempt read-only and token refresh endpoints
+      (typeof req.originalUrl === 'string' && req.originalUrl.split('?')[0].endsWith('/auth/refresh')), // Exempt read-only and token refresh endpoints
     message: {
       success: false,
       message: 'Quá nhiều yêu cầu xác thực từ IP của bạn. Vui lòng thử lại sau 1 phút.',
@@ -110,6 +120,7 @@ async function bootstrap() {
     max: isTestEnv ? 1000 : 15, // 15 requests / min / IP
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: extractRateLimitClientIp,
     message: {
       success: false,
       message: 'Quá nhiều yêu cầu mô phỏng bấm nút từ IP của bạn. Vui lòng thử lại sau 1 phút.',

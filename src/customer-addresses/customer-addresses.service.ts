@@ -8,6 +8,7 @@ import { CustomerAddressesRepository } from './customer-addresses.repository';
 import { CreateCustomerAddressDto } from './dto/create-customer-address.dto';
 import { UpdateCustomerAddressDto } from './dto/update-customer-address.dto';
 import { CustomerAddressResponseDto } from './dto/customer-address-response.dto';
+import { requirePositivePostgresBigInt } from '../common/utils/validation.util';
 
 @Injectable()
 export class CustomerAddressesService {
@@ -41,12 +42,7 @@ export class CustomerAddressesService {
 
   async getAddressById(user: any, addressIdStr: string): Promise<CustomerAddressResponseDto> {
     const customerId = await this.resolveCustomerId(user);
-    let addressId: bigint;
-    try {
-      addressId = BigInt(addressIdStr);
-    } catch {
-      throw new BadRequestException('ID địa chỉ không hợp lệ');
-    }
+    const addressId = requirePositivePostgresBigInt(addressIdStr, 'addressId');
 
     const address = await this.addressRepo.findByCustomerAndId(customerId, addressId);
     if (!address) {
@@ -71,12 +67,7 @@ export class CustomerAddressesService {
     dto: UpdateCustomerAddressDto,
   ): Promise<CustomerAddressResponseDto> {
     const customerId = await this.resolveCustomerId(user);
-    let addressId: bigint;
-    try {
-      addressId = BigInt(addressIdStr);
-    } catch {
-      throw new BadRequestException('ID địa chỉ không hợp lệ');
-    }
+    const addressId = requirePositivePostgresBigInt(addressIdStr, 'addressId');
 
     const existing = await this.addressRepo.findByCustomerAndId(customerId, addressId);
     if (!existing) {
@@ -89,12 +80,7 @@ export class CustomerAddressesService {
 
   async deleteAddress(user: any, addressIdStr: string): Promise<void> {
     const customerId = await this.resolveCustomerId(user);
-    let addressId: bigint;
-    try {
-      addressId = BigInt(addressIdStr);
-    } catch {
-      throw new BadRequestException('ID địa chỉ không hợp lệ');
-    }
+    const addressId = requirePositivePostgresBigInt(addressIdStr, 'addressId');
 
     const existing = await this.addressRepo.findByCustomerAndId(customerId, addressId);
     if (!existing) {

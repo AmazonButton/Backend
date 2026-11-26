@@ -89,8 +89,11 @@ export async function settleRentalRenewalInTx(tx: Prisma.TransactionClient, char
     ...(rental.status === 'PENDING_HANDOVER' ? {} : { status: 'ACTIVE', paidThrough, effectiveExpiresAt: effectiveExpiry, endDate: effectiveExpiry! }),
   } });
   for (const button of eligibleButtons) {
-    // Operational ACTIVE is preserved by expiry. Never unlock manual/legacy INACTIVE.
-    await tx.ioTButton.update({ where: { buttonId: button.button_id }, data: { canOrder: button.status === 'ACTIVE' } });
+    // Operational ACTIVE is preserved by expiry. Never unlock manual/legacy INACTIVE or customer child lock.
+    await tx.ioTButton.update({
+      where: { buttonId: button.button_id },
+      data: { canOrder: button.status === 'ACTIVE' && !button.customer_child_lock },
+    });
   }
   await tx.outboxEvent.create({ data: { eventType: 'BILLING_CHARGE_SETTLED', status: 'PENDING', payload: {
     chargeId: String(charge.charge_id), purpose: 'RENTAL_EXTENSION', targetId: String(rental.rental_id), totalAmount: pricing.amount.toNumber(),

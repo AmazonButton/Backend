@@ -38,8 +38,8 @@ export class StoreSubscriptionsController {
   ) {
     const storeId = this.extractStoreId(req, query);
     const result = await this.subscriptionsService.listStoreSubscriptions(storeId, {
-      page: query?.page ? Number(query.page) : 1,
-      pageSize: query?.pageSize ? Number(query.pageSize) : 20,
+      page: Math.max(1, Number(query?.page) || 1),
+      pageSize: Math.min(100, Math.max(1, Number(query?.pageSize) || 20)),
       status: query?.status,
     });
 

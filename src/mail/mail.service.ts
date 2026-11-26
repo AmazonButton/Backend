@@ -179,7 +179,11 @@ export class MailService implements OnModuleDestroy {
     }
 
     const brevoKey = process.env.BREVO_API_KEY!.trim();
-    const senderEmail = this.smtpUser || process.env.SMTP_FROM?.match(/<([^>]+)>/)?.[1] || 'no-reply@smartorder.vn';
+    const rawSmtpFrom = process.env.SMTP_FROM?.trim();
+    const parsedFromEmail = rawSmtpFrom
+      ? (rawSmtpFrom.match(/<([^>]+)>/)?.[1] || rawSmtpFrom)
+      : undefined;
+    const senderEmail = this.smtpUser || parsedFromEmail || 'no-reply@smartorder.vn';
     const res = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {

@@ -1485,7 +1485,19 @@ export class CustomerBankPennyVerificationService {
               payoutErr instanceof InternalServerErrorException ||
               payoutErr instanceof BadRequestException);
 
-          if (isDefinitelyNotSent) {
+          const isTransientPreDispatch =
+            payoutErr instanceof PayOSPayoutPreDispatchException &&
+            /(429|TOO_MANY_REQUESTS|BALANCE_NOT_ENOUGH|PAYOUT_INSUFFICIENT_FUNDS|INSUFFICIENT)/i.test(
+              payoutErr?.message || '',
+            );
+
+          if (isTransientPreDispatch && typeof this.customersRepo.resetTransientPreDispatchAttemptTx === 'function') {
+            await this.customersRepo.resetTransientPreDispatchAttemptTx(
+              obligation.id,
+              attempt.id,
+              payoutErr.message,
+            );
+          } else if (isDefinitelyNotSent) {
             await this.customersRepo.finalizePayoutAttemptTx({
               obligationId: obligation.id,
               attemptId: attempt.id,
@@ -1628,11 +1640,27 @@ export class CustomerBankPennyVerificationService {
 
               if (matchingPayouts.length === 1 && matchingPayouts[0]?.id) {
                 concretePayoutId = String(matchingPayouts[0].id).trim();
-                // Lấy chi tiết detail bằng ID cụ thể
-                const detailRes =
-                  await this.payosPayoutService.getPayout(concretePayoutId);
-                if (detailRes?.code === "00" && detailRes?.data) {
-                  payoutDetailData = detailRes.data;
+                if (!attempt.providerPayoutId && (this.customersRepo as any)?.prisma?.customerBankRefundPayoutAttempt?.updateMany) {
+                  await (this.customersRepo as any).prisma.customerBankRefundPayoutAttempt
+                    .updateMany({
+                      where: { id: attempt.id, providerPayoutId: null },
+                      data: { providerPayoutId: concretePayoutId },
+                    })
+                    .catch(() => {});
+                }
+                const hasInlineTx =
+                  Array.isArray(matchingPayouts[0]?.transactions) &&
+                  matchingPayouts[0].transactions.length > 0 &&
+                  (matchingPayouts[0].approvalState || matchingPayouts[0].state);
+                if (hasInlineTx) {
+                  payoutDetailData = matchingPayouts[0];
+                } else {
+                  // Lấy chi tiết detail bằng ID cụ thể
+                  const detailRes =
+                    await this.payosPayoutService.getPayout(concretePayoutId);
+                  if (detailRes?.code === "00" && detailRes?.data) {
+                    payoutDetailData = detailRes.data;
+                  }
                 }
               } else if (matchingPayouts.length > 1) {
                 this.logger.warn(

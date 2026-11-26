@@ -56,20 +56,40 @@ export class StoreWalletRepository {
         SELECT store_id FROM store WHERE store_id = ${params.storeId} FOR UPDATE
       `;
 
-      // Reset previous defaults
-      await tx.storeBankAccount.updateMany({
-        where: { storeId: params.storeId },
-        data: { isDefault: false },
-      });
-
       const existingAccount = await tx.storeBankAccount.findUnique({
         where: { uq_store_bank_account_store_acc_hash: {
           storeId: params.storeId, accountNumberHash: params.accountNumberHash,
         } },
       });
-      const changedBank = existingAccount && existingAccount.bankBin !== params.bankBin;
+      const changedBankOrHolder =
+        existingAccount &&
+        (existingAccount.bankBin !== params.bankBin ||
+          (existingAccount.accountName || '').trim().toUpperCase() !==
+            params.bankAccountHolder.trim().toUpperCase());
 
-      // Upsert the selected bank; a bank change requires fresh ownership verification.
+      const existingVerifiedDefault = await tx.storeBankAccount.findFirst({
+        where: {
+          storeId: params.storeId,
+          isDefault: true,
+          verificationStatus: 'OWNERSHIP_VERIFIED',
+        },
+      });
+      const willStayVerified =
+        existingAccount?.verificationStatus === 'OWNERSHIP_VERIFIED' && !changedBankOrHolder;
+      const shouldMakeDefault =
+        willStayVerified ||
+        !existingVerifiedDefault ||
+        existingVerifiedDefault.accountNumberHash === params.accountNumberHash;
+
+      // Only demote existing defaults if this submission will become the active default
+      if (shouldMakeDefault) {
+        await tx.storeBankAccount.updateMany({
+          where: { storeId: params.storeId },
+          data: { isDefault: false },
+        });
+      }
+
+      // Upsert the selected bank; a bank or holder change requires fresh ownership verification.
       const savedAccount = await tx.storeBankAccount.upsert({
         where: {
           uq_store_bank_account_store_acc_hash: {
@@ -85,28 +105,30 @@ export class StoreWalletRepository {
           accountNumberHash: params.accountNumberHash,
           accountName: params.bankAccountHolder,
           verificationStatus: 'PENDING',
-          isDefault: true,
+          isDefault: shouldMakeDefault,
         },
         update: {
           bankBin: params.bankBin,
-          ...(changedBank ? { verificationStatus: 'PENDING', verifiedAt: null, lastVerifiedAt: null } : {}),
+          ...(changedBankOrHolder ? { verificationStatus: 'PENDING', verifiedAt: null, lastVerifiedAt: null } : {}),
           bankName: params.bankName,
           accountName: params.bankAccountHolder,
           accountNumberEncrypted: params.accountNumberEncrypted,
-          isDefault: true,
+          ...(shouldMakeDefault ? { isDefault: true } : {}),
         },
       });
 
-      // Update store wallet metadata
-      const wallet = await tx.storeWallet.update({
-        where: { storeId: params.storeId },
-        data: {
-          bankName: params.bankName,
-          bankAccountNumber: params.cleanAcc ? CryptoVaultUtil.maskAccountNumber(params.cleanAcc) : null,
-          bankAccountHolder: params.bankAccountHolder,
-          updatedAt: new Date(),
-        },
-      });
+      // Update store wallet metadata only when this account is the active default
+      const wallet = shouldMakeDefault
+        ? await tx.storeWallet.update({
+            where: { storeId: params.storeId },
+            data: {
+              bankName: params.bankName,
+              bankAccountNumber: params.cleanAcc ? CryptoVaultUtil.maskAccountNumber(params.cleanAcc) : null,
+              bankAccountHolder: params.bankAccountHolder,
+              updatedAt: new Date(),
+            },
+          })
+        : await tx.storeWallet.findUniqueOrThrow({ where: { storeId: params.storeId } });
       return { ...wallet, defaultBankAccount: savedAccount };
     });
     });

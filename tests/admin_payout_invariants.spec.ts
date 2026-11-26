@@ -8,9 +8,14 @@ async function run() {
   let refundCalled = false;
   let markedPendingReconciliation = false;
   let updatedStatus: string | null = null;
+  let currentStatus = 'PENDING';
 
   const mockAdminRepo = {
-    claimPendingWithdrawal: async (_id: bigint) => true,
+    claimPendingWithdrawal: async (_id: bigint) => {
+      if (currentStatus !== 'PENDING') return false;
+      currentStatus = 'PROCESSING';
+      return true;
+    },
     findWithdrawalById: async (_id: bigint) => {
       const plainAcc = '1234567890';
       return {
@@ -20,7 +25,7 @@ async function run() {
         amount: 500000,
         netAmount: 500000,
         walletId: BigInt(10),
-        status: 'PROCESSING',
+        status: currentStatus,
         providerReferenceId: 'WTH123',
         bankAccountEncrypted: CryptoVaultUtil.encryptAccountNumber(plainAcc),
         bankAccountHash: CryptoVaultUtil.hashAccountNumber(plainAcc),
@@ -29,11 +34,13 @@ async function run() {
     },
     updateWithdrawal: async (_id: bigint, data: any) => {
       updatedStatus = data.status;
+      if (data.status) currentStatus = data.status;
       return { withdrawalId: _id, ...data };
     },
     markWithdrawalPendingReconciliation: async (_id: bigint, _reason: string) => {
       markedPendingReconciliation = true;
       updatedStatus = 'PENDING_RECONCILIATION';
+      currentStatus = 'PENDING_RECONCILIATION';
       return { withdrawalId: _id, status: 'PENDING_RECONCILIATION' };
     },
     refundFailedWithdrawalTransaction: async () => {

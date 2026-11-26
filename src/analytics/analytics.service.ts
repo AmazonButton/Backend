@@ -135,16 +135,16 @@ export class AnalyticsService {
     const storeId = this.resolveStoreId(user, query?.storeId);
     const dateRange = buildAnalyticsDateRange(query?.fromDate, query?.toDate, 'day');
     return this.analyticsRepo.getProductAnalytics(storeId, dateRange, {
-      limit: query?.limit ? Number(query.limit) : 10,
-      categoryId: query?.categoryId ? BigInt(query.categoryId) : undefined,
+      limit: Math.min(100, Math.max(1, Number(query?.limit) || 10)),
+      categoryId: query?.categoryId && /^[1-9]\d{0,18}$/.test(String(query.categoryId)) ? BigInt(query.categoryId) : undefined,
     });
   }
 
   async getInventoryAnalytics(user: any, query?: any) {
     const storeId = this.resolveStoreId(user, query?.storeId);
     return this.analyticsRepo.getInventoryAnalytics(storeId, {
-      page: query?.page ? Number(query.page) : 1,
-      pageSize: query?.pageSize ? Number(query.pageSize) : 20,
+      page: Math.max(1, Number(query?.page) || 1),
+      pageSize: Math.min(100, Math.max(1, Number(query?.pageSize) || 20)),
       filter: query?.filter,
     });
   }
@@ -153,8 +153,8 @@ export class AnalyticsService {
     const storeId = this.resolveStoreId(user, query?.storeId);
     const dateRange = buildAnalyticsDateRange(query?.fromDate, query?.toDate, 'day');
     return this.analyticsRepo.getCustomerAnalytics(storeId, dateRange, {
-      page: query?.page ? Number(query.page) : 1,
-      pageSize: query?.pageSize ? Number(query.pageSize) : 20,
+      page: Math.max(1, Number(query?.page) || 1),
+      pageSize: Math.min(100, Math.max(1, Number(query?.pageSize) || 20)),
     });
   }
 
@@ -166,8 +166,8 @@ export class AnalyticsService {
     const storeId = this.resolveStoreId(user, query?.storeId);
     const dateRange = buildAnalyticsDateRange(query?.fromDate, query?.toDate, 'day');
     return this.analyticsRepo.getFinanceAnalytics(storeId, dateRange, {
-      page: query?.page ? Number(query.page) : 1,
-      pageSize: query?.pageSize ? Number(query.pageSize) : 20,
+      page: Math.max(1, Number(query?.page) || 1),
+      pageSize: Math.min(100, Math.max(1, Number(query?.pageSize) || 20)),
     });
   }
 

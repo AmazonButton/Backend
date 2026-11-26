@@ -22,10 +22,30 @@ const NODE3_AWS_DEFAULT = 'http://ec2-3-25-136-6.ap-southeast-2.compute.amazonaw
 const PAYOUT_STATIC_IP_ROUTES = [
   '/api/v1/webhooks/payos/payout',
   '/api/v1/admin/payment-refunds',
+  '/api/v1/admin/rentals',
   '/api/v1/admin/refunds',
   '/api/v1/admin/withdrawals',
   '/api/v1/admin/payos',
+  '/api/v1/store/wallet/withdrawals/',
 ];
+
+function resolveAllowedCorsOrigin(requestOrigin, env) {
+  if (!requestOrigin) return null;
+  const rawAllowed = env?.CORS_ORIGIN || '';
+  const allowlist = rawAllowed
+    ? rawAllowed.split(',').map((o) => o.trim()).filter(Boolean)
+    : [
+        'https://buttontdash.vercel.app',
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:3000',
+      ];
+  if (allowlist.includes('*') || allowlist.includes(requestOrigin)) {
+    return requestOrigin;
+  }
+  return null;
+}
 
 // Dedicated paths for third-party integrations (PayOS Payment Links, Didit eKYC, Bank Verification)
 const THIRD_PARTY_ROUTES = [
@@ -54,16 +74,22 @@ export default {
     const url = new URL(request.url);
 
     // 1. Handle CORS Preflight (OPTIONS) at Edge for ultra-fast response (<10ms)
+    const requestOrigin = request.headers.get('Origin');
+    const allowedOrigin = resolveAllowedCorsOrigin(requestOrigin, env);
     if (request.method === 'OPTIONS') {
+      const preflightHeaders = {
+        'Access-Control-Allow-Methods': 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature, x-idempotency-key, idempotency-key, X-Idempotency-Key, Idempotency-Key, x-request-id',
+        'Access-Control-Max-Age': '86400',
+      };
+      if (allowedOrigin) {
+        preflightHeaders['Access-Control-Allow-Origin'] = allowedOrigin;
+        preflightHeaders['Access-Control-Allow-Credentials'] = 'true';
+        preflightHeaders['Vary'] = 'Origin';
+      }
       return new Response(null, {
         status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': request.headers.get('Origin') || '*',
-          'Access-Control-Allow-Methods': 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, x-device-id, x-timestamp, x-nonce, x-signature, x-idempotency-key, idempotency-key, X-Idempotency-Key, Idempotency-Key, x-request-id',
-          'Access-Control-Allow-Credentials': 'true',
-          'Access-Control-Max-Age': '86400',
-        },
+        headers: preflightHeaders,
       });
     }
 
@@ -210,8 +236,14 @@ export default {
         responseHeaders.set('X-Cluster-Node', candidate.node);
         responseHeaders.set('X-Cluster-Role', candidate.role);
         responseHeaders.set('X-Cluster-Attempt', String(attempt + 1));
-        responseHeaders.set('Access-Control-Allow-Origin', request.headers.get('Origin') || '*');
-        responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+        if (allowedOrigin) {
+          responseHeaders.set('Access-Control-Allow-Origin', allowedOrigin);
+          responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+          responseHeaders.set('Vary', 'Origin');
+        } else {
+          responseHeaders.delete('Access-Control-Allow-Origin');
+          responseHeaders.delete('Access-Control-Allow-Credentials');
+        }
 
         return new Response(response.body, {
           status: response.status,

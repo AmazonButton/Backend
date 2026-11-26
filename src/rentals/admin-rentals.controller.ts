@@ -39,9 +39,11 @@ export class AdminRentalsController {
     if (pricingReviewRequired !== undefined && !['true', 'false'].includes(pricingReviewRequired)) {
       throw new BadRequestException('pricingReviewRequired must be true or false');
     }
+    const parsedPage = Math.max(1, Number(page) || 1);
+    const parsedPageSize = Math.min(100, Math.max(1, Number(pageSize) || 20));
     const result = await this.rentalsService.listAllRentalsAdmin({
-      page: page ? Number(page) : 1,
-      pageSize: pageSize ? Number(pageSize) : 20,
+      page: parsedPage,
+      pageSize: parsedPageSize,
       status,
       pricingReviewRequired: pricingReviewRequired === undefined ? undefined : pricingReviewRequired === 'true',
     });
@@ -137,9 +139,8 @@ export class AdminRentalsController {
   async processOutbox(
     @Query('batchSize') batchSize?: string,
   ) {
-    const data = await this.outboxConsumerService.processPendingEvents(
-      batchSize ? Number(batchSize) : 10,
-    );
+    const clampedBatch = Math.min(100, Math.max(1, Number(batchSize) || 10));
+    const data = await this.outboxConsumerService.processPendingEvents(clampedBatch);
     return {
       success: true,
       message: 'Xử lý hàng đợi outbox hoàn tất',

@@ -8,6 +8,7 @@ import { CategoriesRepository } from './categories.repository';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CategoryResponseDto } from './dto/category-response.dto';
+import { requirePositivePostgresBigInt } from '../common/utils/validation.util';
 
 @Injectable()
 export class CategoriesService {
@@ -61,12 +62,7 @@ export class CategoriesService {
     storeIdStr: string,
     mode: 'flat' | 'tree' = 'tree',
   ): Promise<CategoryResponseDto[]> {
-    let storeId: bigint;
-    try {
-      storeId = BigInt(storeIdStr);
-    } catch {
-      throw new BadRequestException('Mã cửa hàng không hợp lệ');
-    }
+    const storeId = requirePositivePostgresBigInt(storeIdStr, 'storeId');
 
     const categories = await this.repo.findByStoreId(storeId);
     if (mode === 'flat') {
@@ -76,12 +72,7 @@ export class CategoriesService {
   }
 
   async getCategoryById(idStr: string): Promise<CategoryResponseDto> {
-    let categoryId: bigint;
-    try {
-      categoryId = BigInt(idStr);
-    } catch {
-      throw new BadRequestException('Mã danh mục không hợp lệ');
-    }
+    const categoryId = requirePositivePostgresBigInt(idStr, 'categoryId');
 
     const category = await this.repo.findById(categoryId);
     if (!category) {
@@ -96,22 +87,13 @@ export class CategoriesService {
     storeIdStr: string,
     dto: CreateCategoryDto,
   ): Promise<CategoryResponseDto> {
-    let storeId: bigint;
-    try {
-      storeId = BigInt(storeIdStr);
-    } catch {
-      throw new BadRequestException('Mã cửa hàng không hợp lệ');
-    }
+    const storeId = requirePositivePostgresBigInt(storeIdStr, 'storeId');
 
     await this.validateStoreAccess(user, storeId);
 
     let parentId: bigint | null = null;
     if (dto.parentCategoryId) {
-      try {
-        parentId = BigInt(dto.parentCategoryId);
-      } catch {
-        throw new BadRequestException('Mã danh mục cha không hợp lệ');
-      }
+      parentId = requirePositivePostgresBigInt(dto.parentCategoryId, 'parentCategoryId');
 
       const parentCategory = await this.repo.findByStoreAndId(storeId, parentId);
       if (!parentCategory) {
@@ -134,12 +116,7 @@ export class CategoriesService {
     categoryIdStr: string,
     dto: UpdateCategoryDto,
   ): Promise<CategoryResponseDto> {
-    let categoryId: bigint;
-    try {
-      categoryId = BigInt(categoryIdStr);
-    } catch {
-      throw new BadRequestException('Mã danh mục không hợp lệ');
-    }
+    const categoryId = requirePositivePostgresBigInt(categoryIdStr, 'categoryId');
 
     const existing = await this.repo.findById(categoryId);
     if (!existing) {
@@ -153,11 +130,7 @@ export class CategoriesService {
       if (dto.parentCategoryId === null || dto.parentCategoryId === '') {
         parentId = null;
       } else {
-        try {
-          parentId = BigInt(dto.parentCategoryId);
-        } catch {
-          throw new BadRequestException('Mã danh mục cha không hợp lệ');
-        }
+        parentId = requirePositivePostgresBigInt(dto.parentCategoryId, 'parentCategoryId');
       }
     }
 
@@ -175,12 +148,7 @@ export class CategoriesService {
   }
 
   async deleteCategory(user: any, categoryIdStr: string): Promise<void> {
-    let categoryId: bigint;
-    try {
-      categoryId = BigInt(categoryIdStr);
-    } catch {
-      throw new BadRequestException('Mã danh mục không hợp lệ');
-    }
+    const categoryId = requirePositivePostgresBigInt(categoryIdStr, 'categoryId');
 
     const existing = await this.repo.findById(categoryId);
     if (!existing) {

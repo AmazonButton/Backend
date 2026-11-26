@@ -168,6 +168,41 @@ export class StoreCashService {
     };
   }
 
+  async resolveOverpayment(obligationIdStr: string, body: any, user: any) {
+    const obligationId = validatePathId(obligationIdStr, 'id');
+    if (!user?.userId) {
+      throw new ForbiddenException('Yêu cầu quyền quản trị hợp lệ');
+    }
+    const actorUserId = validatePathId(String(user.userId), 'userId');
+    const allowedStatuses = ['RESOLVED', 'REFUNDED', 'WRITTEN_OFF'] as const;
+    const status = String(body?.status || 'RESOLVED').trim().toUpperCase();
+    if (!allowedStatuses.includes(status as any)) {
+      throw new ForbiddenException(`Trạng thái giải quyết không hợp lệ: ${status}`);
+    }
+    const note = typeof body?.resolutionNote === 'string' ? body.resolutionNote.trim() : '';
+    if (!note || note.length > 1000) {
+      throw new ForbiddenException('resolutionNote là bắt buộc và không được vượt quá 1000 ký tự');
+    }
+
+    const updated = await this.repository.resolveOverpaymentObligation(obligationId, actorUserId, {
+      status: status as 'RESOLVED' | 'REFUNDED' | 'WRITTEN_OFF',
+      resolutionNote: note,
+    });
+
+    await this.invalidateAffectedCaches('0', null);
+    return {
+      success: true,
+      message: `Đã xử lý nghĩa vụ tiền thừa #${obligationId} thành ${updated.status}`,
+      data: {
+        obligationId: updated.id.toString(),
+        status: updated.status,
+        resolvedAt: updated.resolvedAt,
+        resolvedByUserId: updated.resolvedByUserId?.toString() || null,
+        resolutionNote: updated.resolutionNote,
+      },
+    };
+  }
+
   /** Invalidate all related store, staff, customer, and admin analytics cache prefixes matching actual keys. */
   private async invalidateAffectedCaches(
     storeId: string,

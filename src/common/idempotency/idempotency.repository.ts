@@ -216,11 +216,32 @@ export class IdempotencyRepository {
       }
 
       if (conflict.status === 'COMPLETED') {
-        return {
-          state: 'CACHED',
-          statusCode: conflict.status_code ?? 200,
-          responseBody: conflict.response_body,
-        };
+        if (conflict.expires_at > now) {
+          return {
+            state: 'CACHED',
+            statusCode: conflict.status_code ?? 200,
+            responseBody: conflict.response_body,
+          };
+        }
+      }
+
+      if (
+        conflict.status === 'FAILED' ||
+        conflict.expires_at <= now ||
+        (conflict.status === 'PROCESSING' && conflict.locked_until <= now)
+      ) {
+        await tx.$executeRaw`
+          UPDATE api_idempotency_keys
+          SET lock_token = ${lockToken},
+              status = 'PROCESSING',
+              locked_until = ${lockedUntil},
+              expires_at = ${expiresAt},
+              status_code = NULL,
+              response_body = NULL,
+              updated_at = NOW()
+          WHERE id = ${conflict.id}
+        `;
+        return { state: 'ACQUIRED', recordId: conflict.id, lockToken };
       }
 
       return {

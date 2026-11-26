@@ -402,7 +402,14 @@ export class BankVerificationService implements OnModuleInit {
       throw new BadRequestException('Không thể xóa tài khoản đang có yêu cầu xác minh chưa hoàn tất');
     }
 
-    await this.repository.deleteBankAccount(rawStoreId, BigInt(bankAccountId));
+    try {
+      await this.repository.deleteBankAccount(rawStoreId, BigInt(bankAccountId));
+    } catch (err: any) {
+      if (err?.message === 'ACTIVE_FINANCIAL_OBLIGATION_EXISTS') {
+        throw new BadRequestException('Không thể xóa tài khoản đang có lệnh rút tiền hoặc hoàn tiền chưa hoàn tất');
+      }
+      throw err;
+    }
     return {
       success: true,
       message: 'Xóa tài khoản ngân hàng thành công',
@@ -965,8 +972,35 @@ export class BankVerificationService implements OnModuleInit {
               : [];
             if (matched.length === 1 && matched[0]?.id) {
               concretePayoutId = String(matched[0].id).trim();
-              const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
-              if (detailRes?.data) detailData = detailRes.data;
+              const hasInlineTx =
+                Array.isArray(matched[0]?.transactions) &&
+                matched[0].transactions.length > 0 &&
+                (matched[0].approvalState || matched[0].state);
+              if (hasInlineTx) {
+                detailData = matched[0];
+              } else {
+                const detailRes = await this.payosPayoutService.getPayout(concretePayoutId);
+                if (detailRes?.data) detailData = detailRes.data;
+              }
+            } else if (
+              matched.length === 0 &&
+              !obligation.provider_payout_id &&
+              obligation.updated_at &&
+              Date.now() - new Date(obligation.updated_at).getTime() > 5 * 60 * 1000 &&
+              Number(obligation.attempt_count || 0) < 3
+            ) {
+              await this.prisma.$executeRaw`
+                UPDATE store_bank_refund_obligations
+                SET refund_status = 'PENDING_REFUND',
+                    next_reconcile_at = NULL,
+                    lease_token = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = NOW()
+                WHERE id = ${obligation.id}
+                  AND refund_status = 'PENDING_RECONCILIATION'
+                  AND provider_payout_id IS NULL
+              `.catch(() => {});
+              continue;
             } else {
               await scheduleBackoff(60000);
               continue;

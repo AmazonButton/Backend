@@ -1509,8 +1509,8 @@ export class OrdersRepository {
         }
       }
 
-      // Credit store wallet immediately on DELIVERED if paid via PayOS online gateway
-      if (effectivePaymentMethod === 'PAYOS') {
+      // Credit store wallet immediately on DELIVERED if paid via online gateway (PAYOS / VIETQR)
+      if (['PAYOS', 'VIETQR'].includes(effectivePaymentMethod)) {
         const payosTx = await tx.paymentTransaction.findFirst({
           where: {
             orderId: BigInt(orderId),
@@ -1588,8 +1588,8 @@ export class OrdersRepository {
 
       const driverId = order.assigned_driver_id;
       if (driverId) {
-        const codAmount = dto.paymentMethod === 'COD' ? Number(order.total_amount) : 0;
-        const vietqrAmount = dto.paymentMethod !== 'COD' ? Number(order.total_amount) : 0;
+        const codAmount = effectivePaymentMethod === 'COD' ? Number(order.total_amount) : 0;
+        const vietqrAmount = effectivePaymentMethod === 'VIETQR' ? Number(order.total_amount) : 0;
         await tx.$executeRawUnsafe(
           `UPDATE driver_shifts
            SET total_orders_delivered = total_orders_delivered + 1,

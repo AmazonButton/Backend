@@ -11,7 +11,12 @@ export class CustomerBankRefundWorker {
 
   @Cron('*/2 * * * *') // Runs every 2 minutes
   async handleRefundOutboxCron() {
-    if (process.env.PAYOS_PAYOUT_WORKER_ENABLED === 'false') return;
+    if (
+      process.env.PAYOS_PAYOUT_WORKER_ENABLED === 'false' ||
+      process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true'
+    ) {
+      return;
+    }
     if (this.isProcessing) return;
     this.isProcessing = true;
 

@@ -14,6 +14,7 @@ import { StoreWalletModule } from '../store-wallet/store-wallet.module';
 import { BillingChargesModule } from '../billing-charges/billing-charges.module';
 import { CustomersModule } from '../customers/customers.module';
 import { BankVerificationModule } from '../bank-verification/bank-verification.module';
+import { RentalsModule } from '../rentals/rentals.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { BankVerificationModule } from '../bank-verification/bank-verification.m
     forwardRef(() => BillingChargesModule),
     forwardRef(() => CustomersModule),
     forwardRef(() => BankVerificationModule),
+    forwardRef(() => RentalsModule),
   ],
   controllers: [PaymentsController, PayoutWebhookController],
   providers: [

@@ -15,10 +15,24 @@ export class CryptoService {
   }
 
   safeCompare(sig1: string, sig2: string): boolean {
-    if (!sig1 || !sig2 || sig1.length !== sig2.length) {
+    if (
+      typeof sig1 !== 'string' ||
+      typeof sig2 !== 'string' ||
+      !sig1 ||
+      !sig2 ||
+      sig1.length !== sig2.length ||
+      sig1.length % 2 !== 0 ||
+      !/^[0-9a-fA-F]+$/.test(sig1) ||
+      !/^[0-9a-fA-F]+$/.test(sig2)
+    ) {
       return false;
     }
-    return crypto.timingSafeEqual(Buffer.from(sig1, 'hex'), Buffer.from(sig2, 'hex'));
+    const buf1 = Buffer.from(sig1, 'hex');
+    const buf2 = Buffer.from(sig2, 'hex');
+    if (buf1.length === 0 || buf1.length !== buf2.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(buf1, buf2);
   }
 
   generateNonce(): string {

@@ -146,8 +146,17 @@ export class StoreCashRepository {
         if (!staff.length) throw new ForbiddenException('Cash collection is restricted to this store owner, manager or button staff');
         actorRole = staff[0].role_code;
       }
-      const wallets = await tx.$queryRawUnsafe<any[]>('SELECT * FROM store_wallets WHERE store_id = $1 FOR UPDATE', storeId);
-      if (!wallets.length) throw new NotFoundException('Store wallet not found');
+      let wallets = await tx.$queryRawUnsafe<any[]>('SELECT * FROM store_wallets WHERE store_id = $1 FOR UPDATE', storeId);
+      if (!wallets.length) {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO store_wallets (store_id, balance, frozen_balance, created_at, updated_at)
+           VALUES ($1, 0, 0, NOW(), NOW())
+           ON CONFLICT (store_id) DO NOTHING`,
+          storeId,
+        );
+        wallets = await tx.$queryRawUnsafe<any[]>('SELECT * FROM store_wallets WHERE store_id = $1 FOR UPDATE', storeId);
+      }
+      if (!wallets.length) cashConflict('STORE_WALLET_INSUFFICIENT_BALANCE', 'Số dư khả dụng không đủ để cấn trừ');
       const wallet = wallets[0];
       const charges = await tx.$queryRawUnsafe<any[]>('SELECT * FROM billing_charges WHERE charge_id = $1 FOR UPDATE', chargeId);
       const charge = charges[0];
@@ -213,6 +222,9 @@ export class StoreCashRepository {
           button.rental_id = rentalId;
           button.inventory_state = 'ASSIGNED_TO_RENTAL';
         }
+        await tx.buttonRental.update({ where: { rentalId }, data: { fulfillmentStoreId: storeId } });
+        rental.fulfillment_store_id = storeId;
+      } else if (!rental.fulfillment_store_id) {
         await tx.buttonRental.update({ where: { rentalId }, data: { fulfillmentStoreId: storeId } });
         rental.fulfillment_store_id = storeId;
       }
@@ -355,6 +367,40 @@ export class StoreCashRepository {
       this.prisma.billingOverpaymentObligation.count({ where }),
     ]);
     return { items, total, page, pageSize: take };
+  }
+
+  /** Atomically resolve an open overpayment obligation with audit metadata. */
+  async resolveOverpaymentObligation(
+    obligationId: bigint,
+    actorUserId: bigint,
+    input: { status: 'RESOLVED' | 'REFUNDED' | 'WRITTEN_OFF'; resolutionNote: string },
+  ) {
+    return runWithTransactionRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const rows = await tx.$queryRawUnsafe<any[]>(
+            `SELECT * FROM billing_overpayment_obligations WHERE id = $1 FOR UPDATE`,
+            obligationId,
+          );
+          const current = rows?.[0];
+          if (!current) {
+            throw new NotFoundException(`Nghĩa vụ tiền thừa #${obligationId} không tồn tại`);
+          }
+          if (current.status !== 'OPEN') {
+            cashConflict('OVERPAYMENT_ALREADY_RESOLVED', `Nghĩa vụ tiền thừa #${obligationId} đã ở trạng thái ${current.status}`);
+          }
+          return tx.billingOverpaymentObligation.update({
+            where: { id: obligationId },
+            data: {
+              status: input.status,
+              resolvedAt: new Date(),
+              resolvedByUserId: actorUserId,
+              resolutionNote: input.resolutionNote,
+            },
+          });
+        }),
+      { operationName: 'ResolveOverpaymentObligation' },
+    );
   }
 
   /** Preview rental handover requirements and available buttons in store inventory. */

@@ -32,7 +32,7 @@ export class DriverShiftsController {
     @Query('pageSize') pageSize?: number,
     @Query('limit') limit?: number,
   ) {
-    const safePage = page ? Number(page) : 1;
+    const safePage = Math.max(1, Number(page) || 1);
     const safePageSize = Math.max(1, Math.min(100, pageSize ? Number(pageSize) : limit ? Number(limit) : 20));
     const data = await this.shiftsService.getShiftHistory(req.user, safePage, safePageSize);
     const totalItems = data.pagination?.total || 0;

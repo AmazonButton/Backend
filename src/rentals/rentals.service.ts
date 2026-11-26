@@ -14,10 +14,13 @@ import { CreateRentalOrderDto } from './dto/rentals.dto';
 import { RentalResponseDto } from './dto/rental-response.dto';
 import { RentalExtensionDto } from './dto/rental-extension.dto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
-import { PayOSPayoutService } from '../payments/payos-payout.service';
+import { PayOSPayoutService, PayOSPayoutPreDispatchException } from '../payments/payos-payout.service';
 import { PaymentsService } from '../payments/payments.service';
 import { BillingChargesService } from '../billing-charges/billing-charges.service';
-import { verifyDepositRefundPayoutEvidence } from './deposit-payout-verifier';
+import {
+  verifyDepositRefundPayoutEvidence,
+  verifyDepositRefundPayoutRejectionEvidence,
+} from './deposit-payout-verifier';
 import { calculateRentalPricing } from './rental-pricing';
 import { invalidateRentalMutationCaches } from './rental-cache-invalidation';
 import { toRentalRefundDto, toRentalRefundOperationDto } from './dto/rental-refund-response.dto';
@@ -674,7 +677,24 @@ export class RentalsService {
       throw new BadRequestException('Dịch vụ chi hộ PayOSPayoutService chưa sẵn sàng để đối soát');
     }
 
-    const payoutInfo = await this.payosPayoutService.getPayout(providerRef);
+    let payoutInfo: any;
+    try {
+      payoutInfo = await this.payosPayoutService.getPayout(providerRef);
+    } catch (err: any) {
+      if (
+        process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true' &&
+        err instanceof PayOSPayoutPreDispatchException
+      ) {
+        return {
+          success: false,
+          status: refund.status,
+          message: 'Đang chờ Worker IP tĩnh (Node-3) đối soát giao dịch hoàn cọc với PayOS.',
+          data: toRentalRefundDto(refund),
+        };
+      }
+      throw err;
+    }
+
     if (!payoutInfo || payoutInfo.code !== '00') {
       throw new BadRequestException(`Không tìm thấy hoặc không thể tra cứu giao dịch chi trả trên cổng thanh toán: ${payoutInfo?.desc || 'Lỗi không xác định'}`);
     }
@@ -684,6 +704,24 @@ export class RentalsService {
       providerReferenceId: providerRef,
     });
     if (!verification.isVerified) {
+      const rejection = verifyDepositRefundPayoutRejectionEvidence(payoutInfo.data, {
+        ...refund,
+        providerReferenceId: providerRef,
+      });
+      if (rejection.isVerified) {
+        const rollback = await this.rentalsRepo.failDepositRefundPayoutTx(
+          refundId,
+          rejection.reason || 'PAYOUT_REJECTED',
+          actor,
+        );
+        await this.invalidateRefundCaches(refundId);
+        return {
+          success: false,
+          status: 'FAILED',
+          message: `${rejection.reason}. Đã hoàn tác quỹ dự phòng về số dư cọc giữ (held_amount).`,
+          data: rollback?.refund ? toRentalRefundDto(rollback.refund) : toRentalRefundDto(refund),
+        };
+      }
       if (verification.reason?.includes('chưa hoàn tất')) {
         return {
           success: false,
@@ -698,6 +736,61 @@ export class RentalsService {
     const result = await this.rentalsRepo.confirmDepositRefundPayoutTx(refundId, verification.providerRef, actor);
     await this.invalidateRefundCaches(refundId);
     return toRentalRefundOperationDto(result);
+  }
+
+  async processPayoutWebhook(body: any): Promise<{ handled: boolean; status?: string }> {
+    const payoutData = body?.data || body;
+    const txList = Array.isArray(payoutData?.transactions) ? payoutData.transactions : [];
+    const candidateRefs = Array.from(
+      new Set(
+        [
+          payoutData?.id,
+          payoutData?.referenceId,
+          payoutData?.reference,
+          ...txList.map((t: any) => t?.referenceId || t?.reference || t?.id),
+        ]
+          .filter(Boolean)
+          .map((v) => String(v).trim()),
+      ),
+    );
+    if (candidateRefs.length === 0) {
+      return { handled: false };
+    }
+
+    const prisma = (this.rentalsRepo as any)?.prisma;
+    if (!prisma?.depositRefund?.findFirst) {
+      return { handled: false };
+    }
+    const refund = await prisma.depositRefund.findFirst({
+      where: {
+        OR: [
+          { providerReferenceId: { in: candidateRefs } },
+          { refundCode: { in: candidateRefs } },
+        ],
+      },
+    });
+    if (!refund) {
+      return { handled: false };
+    }
+    if (refund.status === 'REFUNDED' || refund.status === 'FAILED') {
+      return { handled: true, status: refund.status };
+    }
+
+    const verification = verifyDepositRefundPayoutEvidence(payoutData, refund);
+    if (verification.isVerified) {
+      await this.rentalsRepo.confirmDepositRefundPayoutTx(refund.refundId, verification.providerRef);
+      await this.invalidateRefundCaches(refund.refundId);
+      return { handled: true, status: 'REFUNDED' };
+    }
+
+    const rejection = verifyDepositRefundPayoutRejectionEvidence(payoutData, refund);
+    if (rejection.isVerified) {
+      await this.rentalsRepo.failDepositRefundPayoutTx(refund.refundId, rejection.reason || 'PAYOUT_WEBHOOK_FAILED');
+      await this.invalidateRefundCaches(refund.refundId);
+      return { handled: true, status: 'FAILED' };
+    }
+
+    return { handled: true, status: refund.status };
   }
 
   private async invalidateRefundCaches(refundId: bigint) {

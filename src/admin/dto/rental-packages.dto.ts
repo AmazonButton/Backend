@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsInt, IsOptional, Min, Max, IsBoolean } from 'class-validator';
 
 export class CreateRentalPackageDto {
   @IsString()
@@ -13,16 +13,19 @@ export class CreateRentalPackageDto {
   @IsOptional()
   description?: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(1000)
   buttonQuantity: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
+  @Max(1000000000)
   monthlyPrice: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
+  @Max(1000000000)
   @IsOptional()
   depositFee?: number;
 }
@@ -36,18 +39,21 @@ export class UpdateRentalPackageDto {
   @IsOptional()
   description?: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(1000)
   @IsOptional()
   buttonQuantity?: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
+  @Max(1000000000)
   @IsOptional()
   monthlyPrice?: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
+  @Max(1000000000)
   @IsOptional()
   depositFee?: number;
 

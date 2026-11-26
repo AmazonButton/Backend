@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 export const POSTGRES_BIGINT_MAX = BigInt('9223372036854775807');
 export const POSTGRES_INT_MAX = 2147483647;
 
@@ -21,6 +23,48 @@ export function parsePositivePostgresBigInt(value: unknown): bigint | null {
     return parsed >= BigInt(1) && parsed <= POSTGRES_BIGINT_MAX ? parsed : null;
   }
   return null;
+}
+
+/**
+ * Strictly parse a PostgreSQL BIGINT identifier or throw 400 BadRequestException.
+ */
+export function requirePositivePostgresBigInt(value: unknown, label = 'Mã định danh (ID)'): bigint {
+  const parsed = parsePositivePostgresBigInt(value);
+  if (parsed === null) {
+    throw new BadRequestException(`${label} không hợp lệ`);
+  }
+  return parsed;
+}
+
+/**
+ * Validate and cap pagination query parameters to prevent negative, float, NaN, or oversized DB offsets.
+ */
+export function sanitizePagination(
+  pageRaw: unknown,
+  pageSizeRaw: unknown,
+  defaultPageSize = 20,
+  maxPageSize = 100,
+  maxPage = 10000,
+): { page: number; pageSize: number; skip: number } {
+  let page = 1;
+  if (pageRaw !== undefined && pageRaw !== null && pageRaw !== '') {
+    const num = Number(pageRaw);
+    if (!Number.isSafeInteger(num) || num < 1 || num > maxPage) {
+      throw new BadRequestException(`Tham số page phải là số nguyên từ 1 đến ${maxPage}`);
+    }
+    page = num;
+  }
+
+  let pageSize = defaultPageSize;
+  if (pageSizeRaw !== undefined && pageSizeRaw !== null && pageSizeRaw !== '') {
+    const num = Number(pageSizeRaw);
+    if (!Number.isSafeInteger(num) || num < 1) {
+      throw new BadRequestException('Tham số pageSize phải là số nguyên dương');
+    }
+    pageSize = Math.min(num, maxPageSize);
+  }
+
+  return { page, pageSize, skip: (page - 1) * pageSize };
 }
 
 /**

@@ -137,4 +137,16 @@ export class AdminBillingOverpaymentsController {
   ) {
     return this.storeCashService.listOverpayments(query);
   }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Xử lý / đóng nghĩa vụ tiền thừa (SUPER_ADMIN)' })
+  @Roles('SUPER_ADMIN')
+  @Post(':id/resolve')
+  async resolveOverpayment(
+    @Param('id') id: string,
+    @Body() body: { status?: string; resolutionNote?: string },
+    @Request() req: any,
+  ) {
+    return this.storeCashService.resolveOverpayment(id, body, req.user);
+  }
 }

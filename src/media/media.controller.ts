@@ -111,7 +111,11 @@ export class MediaController {
   ) {
     const user = req?.user;
     let targetFolder = folder || 'smart-order';
-    if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+    const isAdmin = user && ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (!isAdmin) {
+      if (!user?.storeId) {
+        throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin storeId');
+      }
       const allowedPrefix = `stores/${user.storeId}/`;
       if (folder) {
         if (!folder.startsWith(allowedPrefix)) {
@@ -152,7 +156,11 @@ export class MediaController {
     }
 
     const user = req?.user;
-    if (user && user.storeId && user.role !== 'SUPER_ADMIN' && user.role !== 'SYSTEM_ADMIN') {
+    const isAdmin = user && ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user.role);
+    if (!isAdmin) {
+      if (!user?.storeId) {
+        throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin storeId');
+      }
       const allowedPrefix = `stores/${user.storeId}/`;
       if (!cleanPublicId.startsWith(allowedPrefix)) {
         throw new ForbiddenException('Bạn chỉ có quyền xóa tài nguyên trong thư mục của cửa hàng mình');
@@ -259,16 +267,21 @@ export class MediaController {
       }
     }
 
+    const contentType = dto.contentType || 'image/webp';
+    if (!['image/webp', 'image/jpeg', 'image/png'].includes(contentType)) {
+      throw new BadRequestException('Định dạng ảnh POD chỉ hỗ trợ image/webp, image/jpeg hoặc image/png');
+    }
+
     const now = new Date();
     const yyyy = now.getUTCFullYear();
     const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
     const randomHex = crypto.randomBytes(6).toString('hex');
-    const ext = dto.contentType === 'image/jpeg' ? 'jpg' : dto.contentType === 'image/png' ? 'png' : 'webp';
+    const ext = contentType === 'image/jpeg' ? 'jpg' : contentType === 'image/png' ? 'png' : 'webp';
     const objectKey = `stores/${order.storeId}/pod/${yyyy}/${mm}/order_${orderId}_${randomHex}.${ext}`;
 
     const presignedData = await this.objectStorageService.generatePresignedUploadUrl(
       objectKey,
-      dto.contentType || 'image/webp',
+      contentType,
       300,
     );
 

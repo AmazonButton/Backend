@@ -8,6 +8,7 @@ import { ProductDiscountsRepository } from './product-discounts.repository';
 import { CreateProductDiscountDto } from './dto/create-product-discount.dto';
 import { UpdateProductDiscountDto } from './dto/update-product-discount.dto';
 import { ProductDiscountResponseDto } from './dto/product-discount-response.dto';
+import { requirePositivePostgresBigInt } from '../common/utils/validation.util';
 
 @Injectable()
 export class ProductDiscountsService {
@@ -37,24 +38,14 @@ export class ProductDiscountsService {
   }
 
   async listProductDiscounts(productIdStr: string): Promise<ProductDiscountResponseDto[]> {
-    let productId: bigint;
-    try {
-      productId = BigInt(productIdStr);
-    } catch {
-      throw new BadRequestException('Mã sản phẩm không hợp lệ');
-    }
+    const productId = requirePositivePostgresBigInt(productIdStr, 'productId');
 
     const discounts = await this.repo.findByProductId(productId);
     return discounts.map((d) => ProductDiscountResponseDto.fromEntity(d));
   }
 
   async getDiscountById(discountIdStr: string): Promise<ProductDiscountResponseDto> {
-    let discountId: bigint;
-    try {
-      discountId = BigInt(discountIdStr);
-    } catch {
-      throw new BadRequestException('Mã chương trình giảm giá không hợp lệ');
-    }
+    const discountId = requirePositivePostgresBigInt(discountIdStr, 'discountId');
 
     const discount = await this.repo.findById(discountId);
     if (!discount) {
@@ -69,12 +60,7 @@ export class ProductDiscountsService {
     productIdStr: string,
     dto: CreateProductDiscountDto,
   ): Promise<ProductDiscountResponseDto> {
-    let productId: bigint;
-    try {
-      productId = BigInt(productIdStr);
-    } catch {
-      throw new BadRequestException('Mã sản phẩm không hợp lệ');
-    }
+    const productId = requirePositivePostgresBigInt(productIdStr, 'productId');
 
     const product = await this.validateProductAndStoreAccess(user, productId);
 
@@ -126,12 +112,7 @@ export class ProductDiscountsService {
     discountIdStr: string,
     dto: UpdateProductDiscountDto,
   ): Promise<ProductDiscountResponseDto> {
-    let discountId: bigint;
-    try {
-      discountId = BigInt(discountIdStr);
-    } catch {
-      throw new BadRequestException('Mã chương trình giảm giá không hợp lệ');
-    }
+    const discountId = requirePositivePostgresBigInt(discountIdStr, 'discountId');
 
     const existing = await this.repo.findById(discountId);
     if (!existing) {
@@ -187,12 +168,7 @@ export class ProductDiscountsService {
   }
 
   async deleteDiscount(user: any, discountIdStr: string): Promise<void> {
-    let discountId: bigint;
-    try {
-      discountId = BigInt(discountIdStr);
-    } catch {
-      throw new BadRequestException('Mã chương trình giảm giá không hợp lệ');
-    }
+    const discountId = requirePositivePostgresBigInt(discountIdStr, 'discountId');
 
     const existing = await this.repo.findById(discountId);
     if (!existing) {

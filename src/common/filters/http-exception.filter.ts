@@ -67,31 +67,62 @@ export class AllExceptionsFilter implements ExceptionFilter {
         status = HttpStatus.PAYLOAD_TOO_LARGE;
         message = 'Kích thước dữ liệu gửi lên vượt quá giới hạn cho phép (Payload Too Large: tối đa 10kb)';
         errorCode = 'PAYLOAD_TOO_LARGE';
+      } else if (
+        exception instanceof SyntaxError &&
+        typeof exception.message === 'string' &&
+        /Cannot convert .* to a BigInt/i.test(exception.message)
+      ) {
+        status = HttpStatus.BAD_REQUEST;
+        errorCode = 'INVALID_ID_FORMAT';
+        message = 'Định dạng mã định danh (ID) không hợp lệ';
       } else {
-        const isPrismaError =
-          errAny.name?.includes('Prisma') ||
-          exception.constructor?.name?.includes('Prisma') ||
-          (typeof exception.message === 'string' &&
-            (exception.message.includes('prisma') ||
-              exception.message.includes('The column') ||
-              exception.message.includes('does not exist in the current database')));
+        const isPrismaKnownError = errAny.name === 'PrismaClientKnownRequestError' || typeof errAny.code === 'string' && /^P\d{4}$/.test(errAny.code);
+        if (isPrismaKnownError) {
+          if (errAny.code === 'P2002') {
+            status = HttpStatus.CONFLICT;
+            errorCode = 'DUPLICATE_RESOURCE';
+            message = 'Dữ liệu bị trùng lặp với bản ghi đã tồn tại';
+          } else if (errAny.code === 'P2003') {
+            status = HttpStatus.CONFLICT;
+            errorCode = 'RESOURCE_IN_USE';
+            message = 'Không thể thao tác do dữ liệu đang được tham chiếu bởi bản ghi khác';
+          } else if (errAny.code === 'P2025') {
+            status = HttpStatus.NOT_FOUND;
+            errorCode = 'NOT_FOUND';
+            message = 'Bản ghi không tồn tại';
+          } else if (errAny.code === 'P2000' || errAny.code === 'P2020') {
+            status = HttpStatus.BAD_REQUEST;
+            errorCode = 'VALUE_OUT_OF_RANGE';
+            message = 'Giá trị đầu vào vượt quá giới hạn độ dài hoặc phạm vi cho phép';
+          }
+        }
 
-        this.logger.error(`Unhandled Exception at ${request.method} ${request.url}: ${exception.message}`, exception.stack);
+        if (status === HttpStatus.INTERNAL_SERVER_ERROR) {
+          const isPrismaError =
+            errAny.name?.includes('Prisma') ||
+            exception.constructor?.name?.includes('Prisma') ||
+            (typeof exception.message === 'string' &&
+              (exception.message.includes('prisma') ||
+                exception.message.includes('The column') ||
+                exception.message.includes('does not exist in the current database')));
 
-        // Security-by-Design Rule 9: Never leak internal database schema, queries, or server filesystem paths
-        if (isPrismaError) {
-          status = HttpStatus.INTERNAL_SERVER_ERROR;
-          errorCode = 'DATABASE_ERROR';
-          message = request.url.includes('bank-accounts')
-            ? 'Chưa thể tải trạng thái xác minh ngân hàng. Vui lòng thử lại sau.'
-            : 'Đã có lỗi xảy ra khi truy vấn dữ liệu. Vui lòng thử lại sau.';
-        } else if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
-          message = 'Đã có lỗi xảy ra. Vui lòng liên hệ quản trị viên hoặc thử lại sau.';
-        } else {
-          // In development, strip any internal file paths like /opt/render/... to prevent PII/system leak
-          message = exception.message
-            ? exception.message.replace(/\/opt\/render\/[^\s:]+/g, '[server-path]')
-            : 'Lỗi hệ thống máy chủ';
+          this.logger.error(`Unhandled Exception at ${request.method} ${request.url}: ${exception.message}`, exception.stack);
+
+          // Security-by-Design Rule 9: Never leak internal database schema, queries, or server filesystem paths
+          if (isPrismaError) {
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+            errorCode = 'DATABASE_ERROR';
+            message = request.url.includes('bank-accounts')
+              ? 'Chưa thể tải trạng thái xác minh ngân hàng. Vui lòng thử lại sau.'
+              : 'Đã có lỗi xảy ra khi truy vấn dữ liệu. Vui lòng thử lại sau.';
+          } else if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
+            message = 'Đã có lỗi xảy ra. Vui lòng liên hệ quản trị viên hoặc thử lại sau.';
+          } else {
+            // In development, strip any internal file paths like /opt/render/... to prevent PII/system leak
+            message = exception.message
+              ? exception.message.replace(/\/opt\/render\/[^\s:]+/g, '[server-path]')
+              : 'Lỗi hệ thống máy chủ';
+          }
         }
       }
     }

@@ -348,6 +348,7 @@ model IoTButton {
   custodyStore        Store?           @relation("StoreCustodyButtons", fields: [custodyStoreId], references: [storeId], onDelete: SetNull)
   inventoryState      String           @default("IN_PLATFORM_WAREHOUSE") @map("inventory_state") @db.VarChar(30)
   canOrder            Boolean          @default(true) @map("can_order")
+  customerChildLock   Boolean          @default(false) @map("customer_child_lock")
 
   buttonProducts              ButtonProduct[]
   orders                      Order[]
@@ -1245,6 +1246,9 @@ model BillingOverpaymentObligation {
   amount                Decimal   @db.Decimal(15, 2)
   receiptClassification String    @default("OVERPAYMENT_RECEIPT") @map("receipt_classification") @db.VarChar(32)
   status                String    @default("PENDING_RECONCILIATION") @db.VarChar(32)
+  resolvedAt            DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolvedByUserId      BigInt?   @map("resolved_by_user_id")
+  resolutionNote        String?   @map("resolution_note") @db.VarChar(500)
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   receipt BillingPaymentReceipt @relation(fields: [receiptId, amount, receiptClassification], references: [id, amount, classification], onDelete: Restrict, onUpdate: Restrict, map: "billing_overpayment_obligations_receipt_binding_fkey")
@@ -1279,6 +1283,7 @@ model RentalDeposit {
   heldAmount            Decimal       @default(0) @map("held_amount") @db.Decimal(15, 2)
   refundReservedAmount  Decimal       @default(0) @map("refund_reserved_amount") @db.Decimal(15, 2)
   refundedAmount        Decimal       @default(0) @map("refunded_amount") @db.Decimal(15, 2)
+  deductedAmount        Decimal       @default(0) @map("deducted_amount") @db.Decimal(15, 2)
   updatedAt             DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("rental_deposits")

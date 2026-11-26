@@ -853,16 +853,18 @@ export class RentalsRepository {
         throw new BadRequestException('Số dư tiền cọc đang giữ không đủ để thực hiện yêu cầu hoàn/khấu trừ cọc');
       }
 
-      // 3. Atomic CAS update duy nhất: trừ tổng cọc tất toán khỏi held_amount và đưa phần hoàn vào refund_reserved_amount
+      // 3. Atomic CAS update duy nhất: trừ tổng cọc tất toán khỏi held_amount và đưa phần hoàn vào refund_reserved_amount + deducted_amount
       const ledgerRowsUpdated = await tx.$executeRawUnsafe(
         `UPDATE rental_deposits
          SET held_amount = held_amount - $1,
              refund_reserved_amount = refund_reserved_amount + $2,
+             deducted_amount = deducted_amount + $4,
              updated_at = NOW()
          WHERE rental_id = $3 AND held_amount >= $1`,
         totalCollateralToSettle,
         refundAmount,
         refund.rental_id,
+        deductionAmount,
       );
       if (ledgerRowsUpdated === 0) {
         throw new BadRequestException('Không thể khóa số dư hoàn cọc do tranh chấp hoặc số dư không đủ');
@@ -1044,6 +1046,68 @@ export class RentalsRepository {
         },
         storeWalletDebited: false, // Invariant: StoreWallet is NEVER debited!
       };
+    });
+  }
+
+  /**
+   * Tìm các yêu cầu hoàn cọc đang PENDING_PAYOUT đã có providerReferenceId để worker static-IP đối soát định kỳ
+   */
+  async findPendingDepositRefundReconciliations(limit = 10) {
+    return this.prisma.depositRefund.findMany({
+      where: {
+        status: 'PENDING_PAYOUT',
+        providerReferenceId: { not: null },
+      },
+      include: {
+        customer: true,
+        rental: true,
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: limit,
+    });
+  }
+
+  /**
+   * Hoàn tác giữ cọc dự phòng khi PayOS payout bị từ chối dứt điểm (FAILED/CANCELLED)
+   */
+  async failDepositRefundPayoutTx(refundId: bigint, reason: string, actor?: any) {
+    return this.prisma.$transaction(async (tx) => {
+      const lockedRefunds = await tx.$queryRawUnsafe<any[]>(
+        'SELECT * FROM deposit_refunds WHERE refund_id = $1 FOR UPDATE',
+        refundId,
+      );
+      if (!lockedRefunds || lockedRefunds.length === 0) {
+        return null;
+      }
+      const refund = lockedRefunds[0];
+      if (refund.status === 'FAILED' || refund.status === 'REFUNDED') {
+        return { alreadyFinalized: true, refund };
+      }
+      if (refund.status !== 'PENDING_PAYOUT') {
+        return { skipped: true, refund };
+      }
+
+      const refundAmount = Number(refund.amount || 0);
+      await tx.$executeRawUnsafe(
+        `UPDATE rental_deposits
+         SET refund_reserved_amount = GREATEST(0, refund_reserved_amount - $1),
+             held_amount = held_amount + $1,
+             updated_at = NOW()
+         WHERE rental_id = $2`,
+        refundAmount,
+        refund.rental_id,
+      );
+
+      const updatedRefund = await tx.depositRefund.update({
+        where: { refundId },
+        data: {
+          status: 'FAILED',
+          payoutError: `[PAYOUT_FAILED] ${reason}`.slice(0, 1000),
+          updatedAt: new Date(),
+        },
+      });
+
+      return { refunded: false, rolledBack: true, refund: updatedRefund };
     });
   }
 

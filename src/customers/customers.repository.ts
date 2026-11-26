@@ -325,32 +325,51 @@ export class CustomersRepository {
     verificationStatus?: string;
   }) {
     return this.prisma.$transaction(async (tx) => {
-      if (data.isDefault) {
-        // Lock customer profile exclusively so concurrent creations for the same customer are strictly serialized, even if no bank accounts exist yet
-        await tx.$queryRaw`
-          SELECT customer_id FROM customer_profile
-          WHERE customer_id = ${data.customerId}
-          FOR UPDATE
-        `;
+      // Lock customer profile exclusively so concurrent creations for the same customer are strictly serialized, even if no bank accounts exist yet
+      await tx.$queryRaw`
+        SELECT customer_id FROM customer_profile
+        WHERE customer_id = ${data.customerId}
+        FOR UPDATE
+      `;
+
+      const existingVerifiedDefault = await tx.customerBankAccount.findFirst({
+        where: {
+          customerId: data.customerId,
+          isDefault: true,
+          verificationStatus: 'VERIFIED',
+        },
+      });
+      const willBeVerified = data.verificationStatus === 'VERIFIED';
+      const shouldBeDefault = Boolean(data.isDefault) && (willBeVerified || !existingVerifiedDefault);
+
+      if (shouldBeDefault) {
         await tx.customerBankAccount.updateMany({
           where: { customerId: data.customerId },
           data: { isDefault: false },
         });
       }
-      return tx.customerBankAccount.create({
-        data: {
-          customerId: data.customerId,
-          bankBin: data.bankBin,
-          bankCode: data.bankCode,
-          bankName: data.bankName,
-          accountNumberEncrypted: data.accountNumberEncrypted,
-          accountNumberHash: data.accountNumberHash,
-          accountNumberMasked: data.accountNumberMasked,
-          accountName: data.accountName,
-          isDefault: data.isDefault ?? true,
-          verificationStatus: data.verificationStatus || 'PENDING',
-        },
-      });
+
+      try {
+        return await tx.customerBankAccount.create({
+          data: {
+            customerId: data.customerId,
+            bankBin: data.bankBin,
+            bankCode: data.bankCode,
+            bankName: data.bankName,
+            accountNumberEncrypted: data.accountNumberEncrypted,
+            accountNumberHash: data.accountNumberHash,
+            accountNumberMasked: data.accountNumberMasked,
+            accountName: data.accountName,
+            isDefault: shouldBeDefault,
+            verificationStatus: data.verificationStatus || 'PENDING',
+          },
+        });
+      } catch (err: any) {
+        if (err?.code === 'P2002') {
+          throw new ConflictException('Tài khoản ngân hàng này đã tồn tại trong hồ sơ của bạn');
+        }
+        throw err;
+      }
     });
   }
 
@@ -404,12 +423,28 @@ export class CustomersRepository {
   async deleteCustomerBankAccount(customerId: bigint, accountId: bigint) {
     return this.prisma.$transaction(async (tx) => {
       // 1. Check pending deposit refunds
-      const pendingRefunds = await tx.depositRefund.count({
-        where: {
-          bankAccountId: accountId,
-          status: { in: ['PENDING_APPROVAL', 'PENDING', 'PROCESSING'] },
-        },
-      });
+      const [pendingDepositRefunds, pendingPaymentRefundObligations] = await Promise.all([
+        tx.depositRefund.count({
+          where: {
+            bankAccountId: accountId,
+            status: { in: ['PENDING_APPROVAL', 'PENDING', 'PROCESSING', 'PENDING_PAYOUT'] },
+          },
+        }),
+        tx.paymentRefundObligation.count({
+          where: {
+            customerBankAccountId: accountId,
+            status: {
+              in: [
+                'PENDING_RECIPIENT_VERIFICATION',
+                'READY_FOR_PAYOUT',
+                'PROCESSING',
+                'PENDING_RECONCILIATION',
+              ],
+            },
+          },
+        }),
+      ]);
+      const pendingRefunds = pendingDepositRefunds + pendingPaymentRefundObligations;
       if (pendingRefunds > 0) {
         throw new BadRequestException('Không thể xóa tài khoản ngân hàng đang có yêu cầu hoàn cọc chưa hoàn tất');
       }
@@ -652,7 +687,7 @@ export class CustomersRepository {
         throw new ConflictException('Xung đột đồng thời: Bằng chứng xác minh đã được tiêu thụ bởi yêu cầu khác hoặc đã hết hạn');
       }
 
-      // 5. Update bank account status to VERIFIED
+      // 5. Update bank account status to VERIFIED & promote default/obligations if applicable
       const affectedAccounts = await tx.$executeRaw`
         UPDATE customer_bank_accounts
         SET verification_status = 'VERIFIED', updated_at = NOW()
@@ -662,8 +697,58 @@ export class CustomersRepository {
         throw new ConflictException('Không thể cập nhật trạng thái tài khoản ngân hàng');
       }
 
+      await this.promoteVerifiedBankSideEffectsInTx(tx, params.customerId, params.accountId);
+
       return { alreadyVerified: false };
     });
+  }
+
+  private async promoteVerifiedBankSideEffectsInTx(tx: any, customerId: bigint, accountId: bigint) {
+    if (!tx?.customerBankAccount?.findUnique || !tx?.paymentRefundObligation?.updateMany) return;
+    const account = await tx.customerBankAccount.findUnique({ where: { id: accountId } });
+    if (!account) return;
+
+    const existingVerifiedDefault = await tx.customerBankAccount.findFirst({
+      where: {
+        customerId,
+        isDefault: true,
+        verificationStatus: 'VERIFIED',
+        id: { not: accountId },
+      },
+    });
+    if (!existingVerifiedDefault && !account.isDefault) {
+      await tx.customerBankAccount.updateMany({
+        where: { customerId },
+        data: { isDefault: false },
+      });
+      await tx.customerBankAccount.update({
+        where: { id: accountId },
+        data: { isDefault: true, updatedAt: new Date() },
+      });
+    }
+
+    if (account.bankBin && account.accountNumberEncrypted && account.accountNumberHash) {
+      await tx.paymentRefundObligation.updateMany({
+        where: {
+          order: { customerId },
+          status: 'PENDING_RECIPIENT_VERIFICATION',
+          recipientVerificationStatus: { in: ['CUSTOMER_NO_VERIFIED_BANK', 'SOURCE_INSUFFICIENT'] },
+        },
+        data: {
+          status: 'READY_FOR_PAYOUT',
+          recipientVerificationStatus: 'VERIFIED_MATCHED_SOURCE',
+          customerBankAccountId: account.id,
+          targetBankBin: account.bankBin,
+          targetAccountEncrypted: account.accountNumberEncrypted,
+          targetAccountHash: account.accountNumberHash,
+          targetAccountMasked: account.accountNumberMasked,
+          targetAccountName: account.accountName,
+          snapshotLockedAt: new Date(),
+          failureReason: null,
+          verificationNote: 'Tài khoản ngân hàng khách hàng vừa hoàn tất xác minh sở hữu',
+        },
+      });
+    }
   }
 
   async findCustomerBankAccounts(customerId: bigint) {
@@ -1687,13 +1772,14 @@ export class CustomersRepository {
             );
           }
 
-          // Atomic activate bank account
+          // Atomic activate bank account & promote pending refund obligations
           await tx.$executeRaw`
             UPDATE customer_bank_accounts
             SET verification_status = 'VERIFIED',
                 updated_at = NOW()
             WHERE id = ${lockedAccount.id} AND customer_id = ${lockedAccount.customer_id}
           `;
+          await this.promoteVerifiedBankSideEffectsInTx(tx, lockedAccount.customer_id, lockedAccount.id);
         } else {
           // Session is NOT activated or consumed. Update verification status if not already VERIFIED
           const sessionUpdateData: any = { updatedAt: new Date() };
@@ -1824,9 +1910,27 @@ export class CustomersRepository {
         throw new ConflictException(`Nghĩa vụ hoàn tiền ở trạng thái ${obligation.refund_status}, không thể chi trả.`);
       }
 
-      // Check if there is an existing in-flight attempt
+      // Check if there is an existing in-flight attempt (reclaim stale PREPARING > 5 minutes)
       if (obligation.active_payout_attempt_id) {
-        throw new ConflictException('Đang có một đợt chi trả payout đang xử lý cho nghĩa vụ này (chờ đối soát)');
+        const activeAttempt = await tx.customerBankRefundPayoutAttempt.findUnique({
+          where: { id: BigInt(obligation.active_payout_attempt_id) },
+        });
+        const isStalePreparing =
+          activeAttempt &&
+          activeAttempt.status === 'PREPARING' &&
+          Date.now() - new Date(activeAttempt.createdAt).getTime() > 5 * 60 * 1000;
+        if (isStalePreparing) {
+          await tx.customerBankRefundPayoutAttempt.update({
+            where: { id: activeAttempt.id },
+            data: { status: 'FAILED', failureReason: 'STALE_PREPARING_RECLAIMED', reconciledAt: new Date() },
+          });
+          await tx.customerBankRefundObligation.update({
+            where: { id: obligationId },
+            data: { activePayoutAttemptId: null, refundStatus: 'PENDING_REFUND', updatedAt: new Date() },
+          });
+        } else {
+          throw new ConflictException('Đang có một đợt chi trả payout đang xử lý cho nghĩa vụ này (chờ đối soát)');
+        }
       }
 
       // 2. Count existing attempts to determine next attempt number
@@ -1884,6 +1988,31 @@ export class CustomersRepository {
       // may be unknown; preserve this attempt for reconciliation, never issue a replacement.
       await tx.customerBankRefundPayoutAttempt.update({ where: { id: attemptId }, data: { status: 'SUBMITTED' } });
       return true;
+    });
+  }
+
+  async resetTransientPreDispatchAttemptTx(obligationId: bigint, attemptId: bigint, reason: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customer_bank_refund_obligations WHERE id = ${obligationId} FOR UPDATE`;
+      const obl = await tx.customerBankRefundObligation.findUnique({ where: { id: obligationId } });
+      if (!obl || obl.refundStatus === 'REFUNDED' || obl.activePayoutAttemptId !== attemptId) {
+        return;
+      }
+      await tx.customerBankRefundObligation.update({
+        where: { id: obligationId },
+        data: {
+          refundStatus: 'PENDING_REFUND',
+          activePayoutAttemptId: null,
+          failureReason: `Tạm hoãn chờ thử lại (${reason})`.slice(0, 500),
+          updatedAt: new Date(),
+        },
+      });
+      await tx.customerBankRefundPayoutAttempt.deleteMany({
+        where: {
+          id: attemptId,
+          status: { in: ['PREPARING', 'SUBMITTED'] },
+        },
+      });
     });
   }
 

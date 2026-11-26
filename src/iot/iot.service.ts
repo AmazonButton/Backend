@@ -69,24 +69,7 @@ export class IotService {
       };
     }
 
-    // 1. Hardware switch debounce / anti-jamming check (for NEW distinct presses)
-    const now = Date.now();
-    const lastPressTime = this.deviceCooldowns.get(device.deviceId || rawDeviceId.toString()) || 0;
-    if (now - lastPressTime < this.debounceCooldownMs) {
-      return {
-        success: false,
-        code: 'BUTTON_DEBOUNCE_ACTIVE',
-        message: 'Nút bấm đang trong thời gian giãn cách chống kẹt phím (Debounce cooldown). Vui lòng thử lại sau giây lát.',
-        data: {
-          deviceId: device.deviceId || rawDeviceId.toString(),
-          retryAfterMs: this.debounceCooldownMs - (now - lastPressTime),
-        },
-      };
-    }
-    this.deviceCooldowns.set(device.deviceId || rawDeviceId.toString(), now);
-    this.inFlightRequests.add(reqKey);
-
-    // 2. Handle Heartbeat (No order creation, no idempotency lock needed)
+    // 1. Handle Heartbeat BEFORE cooldown or inFlightRequests (no order creation, no idempotency lock needed)
     if (eventType === 'HEARTBEAT') {
       const hbPayload = {
         deviceId: device.deviceId,
@@ -108,45 +91,63 @@ export class IotService {
       };
     }
 
-    // 3. Handle CANCEL action requested via double press
-    if (eventType === 'CANCEL') {
-      const pendingOrder = await this.prisma.order.findFirst({
-        where: { buttonId: device.buttonId, orderStatus: 'PENDING' },
-        orderBy: { orderDate: 'desc' },
-      });
+    // 2. Hardware switch debounce / anti-jamming check (for NEW distinct presses)
+    const now = Date.now();
+    const lastPressTime = this.deviceCooldowns.get(device.deviceId || rawDeviceId.toString()) || 0;
+    if (now - lastPressTime < this.debounceCooldownMs) {
+      return {
+        success: false,
+        code: 'BUTTON_DEBOUNCE_ACTIVE',
+        message: 'Nút bấm đang trong thời gian giãn cách chống kẹt phím (Debounce cooldown). Vui lòng thử lại sau giây lát.',
+        data: {
+          deviceId: device.deviceId || rawDeviceId.toString(),
+          retryAfterMs: this.debounceCooldownMs - (now - lastPressTime),
+        },
+      };
+    }
+    this.deviceCooldowns.set(device.deviceId || rawDeviceId.toString(), now);
+    this.inFlightRequests.add(reqKey);
 
-      if (pendingOrder) {
-        const cancelWindowSeconds = Number(device.cancelWindowSeconds || 60);
-        const elapsedSeconds = (Date.now() - new Date(pendingOrder.createdAt).getTime()) / 1000;
-        if (elapsedSeconds > cancelWindowSeconds) {
+    try {
+      // 3. Handle CANCEL action requested via double press
+      if (eventType === 'CANCEL') {
+        const pendingOrder = await this.prisma.order.findFirst({
+          where: { buttonId: device.buttonId, orderStatus: 'PENDING' },
+          orderBy: { orderDate: 'desc' },
+        });
+
+        if (pendingOrder) {
+          const cancelWindowSeconds = Number(device.cancelWindowSeconds || 60);
+          const elapsedSeconds = (Date.now() - new Date(pendingOrder.createdAt).getTime()) / 1000;
+          if (elapsedSeconds > cancelWindowSeconds) {
+            return {
+              success: false,
+              action: 'CANCEL_ORDER',
+              code: 'CANCEL_WINDOW_EXPIRED',
+              message: `Đã hết thời gian cho phép hủy đơn hàng (${cancelWindowSeconds} giây kể từ khi đặt đơn).`,
+            };
+          }
+
+          const cancelled = await this.ordersService.cancelOrder(
+            pendingOrder.orderId,
+            'Khách bấm nút vật lý để hủy đơn',
+          );
           return {
-            success: false,
+            success: true,
             action: 'CANCEL_ORDER',
-            code: 'CANCEL_WINDOW_EXPIRED',
-            message: `Đã hết thời gian cho phép hủy đơn hàng (${cancelWindowSeconds} giây kể từ khi đặt đơn).`,
+            code: 'ORDER_CANCELLED',
+            message: 'Đã hủy đơn hàng đang chờ thành công!',
+            data: cancelled,
           };
         }
 
-        const cancelled = await this.ordersService.cancelOrder(
-          pendingOrder.orderId,
-          'Khách bấm nút vật lý để hủy đơn',
-        );
         return {
           success: true,
           action: 'CANCEL_ORDER',
-          code: 'ORDER_CANCELLED',
-          message: 'Đã hủy đơn hàng đang chờ thành công!',
-          data: cancelled,
+          code: 'NO_ACTIVE_ORDER',
+          message: 'Không có đơn hàng nào đang chờ xử lý cần hủy.',
         };
       }
-
-      return {
-        success: true,
-        action: 'CANCEL_ORDER',
-        code: 'NO_ACTIVE_ORDER',
-        message: 'Không có đơn hàng nào đang chờ xử lý cần hủy.',
-      };
-    }
 
     // 4. Multi-instance atomic idempotency lease acquisition with Fencing Token in PostgreSQL (Fail-Closed)
     const leaseToken = crypto.randomUUID();
@@ -297,6 +298,7 @@ export class IotService {
         }
       }
       throw orderErr;
+    }
     } finally {
       this.inFlightRequests.delete(reqKey);
     }

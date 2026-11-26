@@ -778,7 +778,11 @@ export class OrdersService {
   }
 
   async cancelOrder(orderId: string | number | bigint, reason: string = 'Khách hàng hủy đơn', user?: any) {
-    const targetOrderId = BigInt(orderId);
+    const rawIdStr = String(orderId ?? '').trim();
+    if (!/^[1-9]\d{0,18}$/.test(rawIdStr)) {
+      throw new BadRequestException('Mã đơn hàng orderId không hợp lệ');
+    }
+    const targetOrderId = BigInt(rawIdStr);
     const order = await this.ordersRepo.findOrderById(targetOrderId);
 
     if (!order) {
@@ -988,6 +992,9 @@ export class OrdersService {
   }
 
   async updateOrderStatus(orderId: string | number | bigint, newStatus: string, user?: any) {
+    if (!/^[1-9]\d{0,18}$/.test(String(orderId ?? '').trim())) {
+      throw new BadRequestException('Mã đơn hàng orderId không hợp lệ');
+    }
     const targetOrderId = BigInt(orderId);
     const order = await this.ordersRepo.findOrderById(targetOrderId);
 
@@ -1164,7 +1171,11 @@ export class OrdersService {
       throw new ForbiddenException('Tài khoản chủ cửa hàng thiếu thông tin cửa hàng liên kết (storeId)');
     }
 
-    const targetOrderId = BigInt(orderId);
+    const rawOrderId = String(orderId ?? '').trim();
+    if (!/^[1-9]\d{0,18}$/.test(rawOrderId)) {
+      throw new BadRequestException('Mã đơn hàng orderId không hợp lệ');
+    }
+    const targetOrderId = BigInt(rawOrderId);
     const updated = await this.ordersRepo.completeDeliveryAtomicTx(targetOrderId, user, dto);
 
     // Ý 1: Cancel lingering remote PayOS QR link if an unpaid PAYOS order was settled with COD at doorstep
@@ -1257,8 +1268,14 @@ export class OrdersService {
   ) {
     const { storeId: rawStoreId, items, customerName, customerPhone, deliveryAddress, paymentMethod, orderNote } = body;
 
+    const normalizedPaymentMethod = String(paymentMethod || '').toUpperCase();
+    if (!customerUserId && normalizedPaymentMethod === 'PAYOS') {
+      throw new ForbiddenException('Vui lòng đăng nhập tài khoản khách hàng để thanh toán đơn hàng qua PayOS');
+    }
+
     let storeId: bigint;
     try {
+      if (!/^[1-9]\d{0,18}$/.test(String(rawStoreId))) throw new Error();
       storeId = BigInt(rawStoreId);
     } catch {
       throw new BadRequestException('Mã cửa hàng storeId không hợp lệ');
@@ -1387,8 +1404,13 @@ export class OrdersService {
 
     // BOLA validation
     if (user.role === 'CUSTOMER') {
-      const customerUserId = order.customer?.userId || (order as any).customer_id;
-      if (!customerUserId || customerUserId.toString() !== user.userId?.toString()) {
+      const customerUserId = order.customer?.userId;
+      const matchesUserId = customerUserId && customerUserId.toString() === user.userId?.toString();
+      const matchesProfileId =
+        user.customerProfileId &&
+        order.customerId != null &&
+        order.customerId.toString() === user.customerProfileId.toString();
+      if (!matchesUserId && !matchesProfileId) {
         throw new ForbiddenException('Bạn không có quyền xem thông tin đơn hàng của người khác');
       }
     } else if (user.role === 'STORE_OWNER') {

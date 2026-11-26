@@ -1,7 +1,7 @@
 import { CreatePayosBatchPayoutDto, EstimatePayoutCreditDto, ListPayosPayoutsQueryDto } from './dto/payos-payout.dto';
 import { UpdateAdminStoreDto } from './dto/update-admin-store.dto';
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, Logger } from '@nestjs/common';
-import { PayOSPayoutService } from '../payments/payos-payout.service';
+import { PayOSPayoutService, PayOSPayoutPreDispatchException } from '../payments/payos-payout.service';
 import { AdminRepository } from './admin.repository';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
 import {
@@ -103,10 +103,14 @@ export class AdminService {
   }
 
   async rejectStore(storeId: string | number | bigint, reason: string, _adminUser?: any) {
-    if (!reason) throw new BadRequestException('Bắt buộc phải nhập lý do từ chối');
+    const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+    if (!cleanReason) throw new BadRequestException('Bắt buộc phải nhập lý do từ chối');
     const targetStoreId = BigInt(storeId);
     const store = await this.adminRepo.findStoreById(targetStoreId);
     if (!store) throw new NotFoundException('Không tìm thấy cửa hàng');
+    if (store.status !== 'PENDING') {
+      throw new BadRequestException(`Chỉ có thể từ chối cửa hàng đang ở trạng thái PENDING (hiện tại: ${store.status})`);
+    }
     const res = await this.adminRepo.rejectStore(targetStoreId);
     await this.invalidateAdminAndStoreCaches(targetStoreId);
     return this.sanitizeStoreRecord(res);
@@ -171,7 +175,45 @@ export class AdminService {
     const targetUserId = BigInt(userId);
     const user = await this.adminRepo.findUserById(targetUserId);
     if (!user) throw new NotFoundException('Không tìm thấy người dùng');
-    const nextStatus = status || (user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE');
+
+    const allowedStatuses = ['ACTIVE', 'INACTIVE', 'SUSPENDED'];
+    const requestedStatus = status ? String(status).trim().toUpperCase() : undefined;
+    if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
+      throw new BadRequestException(`Trạng thái tài khoản không hợp lệ: ${status}`);
+    }
+    const nextStatus = requestedStatus || (user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE');
+
+    if (nextStatus !== 'ACTIVE') {
+      const actorUserId = _adminUser?.userId ? BigInt(_adminUser.userId) : null;
+      if (actorUserId && actorUserId === targetUserId) {
+        throw new ForbiddenException('Không thể tự vô hiệu hóa tài khoản quản trị đang đăng nhập');
+      }
+
+      const prisma = (this.adminRepo as any)?.prisma;
+      if (prisma?.platformMembership?.count) {
+        const targetIsSuperAdmin = await prisma.platformMembership.count({
+          where: {
+            userId: targetUserId,
+            status: 'ACTIVE',
+            role: { roleCode: 'SUPER_ADMIN' },
+          },
+        });
+        if (targetIsSuperAdmin > 0) {
+          const remainingActiveSuperAdmins = await prisma.platformMembership.count({
+            where: {
+              userId: { not: targetUserId },
+              status: 'ACTIVE',
+              role: { roleCode: 'SUPER_ADMIN' },
+              user: { status: 'ACTIVE' },
+            },
+          });
+          if (remainingActiveSuperAdmins === 0) {
+            throw new BadRequestException('Không thể vô hiệu hóa SUPER_ADMIN hoạt động cuối cùng của hệ thống');
+          }
+        }
+      }
+    }
+
     const result = await this.adminRepo.updateUserStatus(targetUserId, nextStatus);
     if (nextStatus !== 'ACTIVE') {
       await this.eventsGateway?.disconnectUserSockets(targetUserId.toString(), 'Tài khoản đã bị vô hiệu hóa');
@@ -500,31 +542,26 @@ export class AdminService {
   async executePayOSPayout(withdrawalId: string | number | bigint, adminUser?: any) {
     const rawWithdrawalId = BigInt(withdrawalId);
 
-    // Atomic race-condition prevention via Pure Repository
-    const claimed = await this.adminRepo.claimPendingWithdrawal(rawWithdrawalId);
-    if (!claimed) {
-      const current = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
-      if (!current) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    // Pre-claim validation: fail fast without stranding the withdrawal in PROCESSING
+    const precheck = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+    if (!precheck) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+    if (precheck.status !== 'PENDING') {
       throw new BadRequestException(
-        `Yêu cầu rút tiền đang ở trạng thái ${current.status}, không thể xuất lệnh chi hộ hoặc đang được xử lý đồng thời`
+        `Yêu cầu rút tiền đang ở trạng thái ${precheck.status}, không thể xuất lệnh chi hộ hoặc đang được xử lý đồng thời`,
       );
     }
 
-    const withdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
-    if (!withdrawal) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
-
     if (!this.payosPayoutService && process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER !== 'true') {
-      await this.adminRepo.refundFailedWithdrawalTransaction(rawWithdrawalId, 'PayOSPayoutService chưa sẵn sàng');
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }
 
-    if (!withdrawal.bankAccountEncrypted || !withdrawal.bankAccountHash || !withdrawal.bankBinSnapshot) {
+    if (!precheck.bankAccountEncrypted || !precheck.bankAccountHash || !precheck.bankBinSnapshot) {
       throw new BadRequestException('Thiếu snapshot tài khoản ngân hàng đã mã hóa hoặc mã BIN (Fail-Closed)');
     }
 
     let toAccountNumber = '';
     try {
-      toAccountNumber = CryptoVaultUtil.decryptAccountNumber(withdrawal.bankAccountEncrypted).trim();
+      toAccountNumber = CryptoVaultUtil.decryptAccountNumber(precheck.bankAccountEncrypted).trim();
     } catch (err: any) {
       this.logger.error(`Lỗi giải mã tài khoản cho withdrawal #${rawWithdrawalId}: ${err?.message}`);
       throw new BadRequestException('Lỗi giải mã tài khoản nhận tiền (Fail-Closed)');
@@ -536,33 +573,43 @@ export class AdminService {
 
     // Xác minh hash trước khi gửi tiền
     const computedHash = CryptoVaultUtil.hashAccountNumber(toAccountNumber);
-    if (computedHash !== withdrawal.bankAccountHash) {
+    if (computedHash !== precheck.bankAccountHash) {
       throw new BadRequestException('Tính toàn vẹn của tài khoản nhận tiền bị vi phạm (Hash Mismatch)');
     }
 
     // Số tiền PayOS thực chuyển bắt buộc là netAmount (amount - fee)
-    const payoutAmount = withdrawal.netAmount ? Number(withdrawal.netAmount) : Number(withdrawal.amount) - Number(withdrawal.fee || 0);
+    const payoutAmount = precheck.netAmount ? Number(precheck.netAmount) : Number(precheck.amount) - Number(precheck.fee || 0);
     if (!Number.isInteger(payoutAmount) || payoutAmount <= 0) {
       throw new BadRequestException('Số tiền chi hộ thực chuyển (netAmount) không hợp lệ');
     }
 
-    // Ý 3: If running on dynamic-IP instance (Render Node-1/Node-2), enqueue durable OutboxEvent
+    // Ý 3: If running on dynamic-IP instance (Render Node-1/Node-2), atomically claim & enqueue OutboxEvent
     // so only static-IP Node-3 dispatches PayOS Payout (safe even if Node-3 is temporarily offline).
     if (process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true') {
       const prisma = (this.adminRepo as any)?.prisma;
-      if (!prisma?.outboxEvent?.create) {
+      if (!prisma?.$transaction) {
         throw new BadRequestException('Không thể đưa yêu cầu chi hộ vào hàng đợi static-IP worker');
       }
       const adminUserIdStr = adminUser?.userId ? String(adminUser.userId) : null;
-      const outboxEvent = await prisma.outboxEvent.create({
-        data: {
-          eventType: 'STORE_WITHDRAWAL_PAYOUT',
-          payload: {
-            withdrawalId: rawWithdrawalId.toString(),
-            adminUserId: adminUserIdStr,
+      const outboxEvent = await prisma.$transaction(async (tx: any) => {
+        const count = await tx.$executeRaw`
+          UPDATE store_withdrawals
+          SET status = 'PROCESSING', updated_at = NOW()
+          WHERE withdrawal_id = ${rawWithdrawalId} AND status = 'PENDING'
+        `;
+        if (count === 0) {
+          throw new BadRequestException('Yêu cầu rút tiền đang được xử lý đồng thời hoặc đã thay đổi trạng thái');
+        }
+        return tx.outboxEvent.create({
+          data: {
+            eventType: 'STORE_WITHDRAWAL_PAYOUT',
+            payload: {
+              withdrawalId: rawWithdrawalId.toString(),
+              adminUserId: adminUserIdStr,
+            },
+            status: 'PENDING',
           },
-          status: 'PENDING',
-        },
+        });
       });
 
       const waitBudgetMs = Math.max(
@@ -577,17 +624,17 @@ export class AdminService {
         const latestWithdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
 
         if (latestOutbox?.status === 'COMPLETED' && latestWithdrawal) {
-          await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+          await this.invalidateAdminAndStoreCaches(precheck.storeId);
           return latestWithdrawal;
         }
         if (latestWithdrawal?.status === 'PENDING_RECONCILIATION') {
-          await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+          await this.invalidateAdminAndStoreCaches(precheck.storeId);
           throw new BadRequestException(
             `Xuất lệnh chi hộ PayOS chưa rõ kết quả: ${latestWithdrawal.failureReason || 'Lỗi cổng PayOS'}. Yêu cầu được giữ ở trạng thái PENDING_RECONCILIATION để đối soát, số dư ví không tự ý hoàn lại để chống chi kép.`,
           );
         }
         if (latestOutbox?.status === 'FAILED') {
-          await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+          await this.invalidateAdminAndStoreCaches(precheck.storeId);
           throw new BadRequestException(
             `Xuất lệnh chi hộ PayOS chưa rõ kết quả: ${latestOutbox.error || 'Lỗi cổng PayOS'}.`,
           );
@@ -596,8 +643,18 @@ export class AdminService {
       }
 
       const currentWithdrawal = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
-      await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
-      return currentWithdrawal || withdrawal;
+      await this.invalidateAdminAndStoreCaches(precheck.storeId);
+      return currentWithdrawal || precheck;
+    }
+
+    // Atomic race-condition prevention via Pure Repository
+    const claimed = await this.adminRepo.claimPendingWithdrawal(rawWithdrawalId);
+    if (!claimed) {
+      const current = await this.adminRepo.findWithdrawalById(rawWithdrawalId);
+      if (!current) throw new NotFoundException('Yêu cầu rút tiền không tồn tại');
+      throw new BadRequestException(
+        `Yêu cầu rút tiền đang ở trạng thái ${current.status}, không thể xuất lệnh chi hộ hoặc đang được xử lý đồng thời`
+      );
     }
 
     return this.dispatchClaimedWithdrawalPayout(
@@ -680,6 +737,24 @@ export class AdminService {
       await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
       return updated;
     } catch (err: any) {
+      if (err instanceof PayOSPayoutPreDispatchException && !options?.isRetry) {
+        const prisma = (this.adminRepo as any)?.prisma;
+        if (prisma?.$executeRaw) {
+          await prisma.$executeRaw`
+            UPDATE store_withdrawals
+            SET status = 'PENDING',
+                failure_reason = ${String(err.message || 'Pre-dispatch PayOS error').slice(0, 500)},
+                updated_at = NOW()
+            WHERE withdrawal_id = ${rawWithdrawalId}
+              AND status = 'PROCESSING'
+              AND provider_payout_id IS NULL
+          `.catch(() => {});
+        }
+        await this.invalidateAdminAndStoreCaches(withdrawal.storeId);
+        throw new BadRequestException(
+          `Chưa thể gửi lệnh chi hộ PayOS (lỗi trước khi phát lệnh): ${err.message || 'Lỗi cấu hình/hạn mức PayOS'}. Yêu cầu được giữ ở trạng thái PENDING để thử lại.`,
+        );
+      }
       // Invariant PAY-01: Never auto-refund wallet on timeout or uncertain provider error!
       await this.adminRepo.markWithdrawalPendingReconciliation(
         rawWithdrawalId,
@@ -969,6 +1044,18 @@ export class AdminService {
   }
 
   async createBatchPayout(params: CreatePayosBatchPayoutDto) {
+    if (process.env.NODE_ENV === 'production' && process.env.PAYOS_RAW_BATCH_PAYOUT_ENABLED !== 'true') {
+      throw new BadRequestException({
+        success: false,
+        errorCode: 'RAW_BATCH_PAYOUT_DEPRECATED',
+        message: 'API chi hộ hàng loạt trực tiếp đã bị tắt trên môi trường Production. Vui lòng dùng luồng duyệt withdrawal chuẩn.',
+      });
+    }
+    const ledgerPrefixes = ['WDR-', 'PAYREF_', 'REF-', 'REF_OBL_', 'SBV-', 'DEP-'];
+    const refs = [params?.referenceId, ...(params?.payouts || []).map((p) => p?.referenceId)].filter(Boolean);
+    if (refs.some((r) => ledgerPrefixes.some((pfx) => String(r).toUpperCase().startsWith(pfx)))) {
+      throw new BadRequestException('Không được phép dùng raw batch payout cho mã giao dịch thuộc sổ cái tự động');
+    }
     if (!this.payosPayoutService) {
       throw new BadRequestException('PayOSPayoutService chưa sẵn sàng');
     }

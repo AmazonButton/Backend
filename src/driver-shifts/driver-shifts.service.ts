@@ -285,7 +285,7 @@ export class DriverShiftsService {
       const amt = Number(o.totalAmount || 0);
       if (o.paymentMethod === 'COD') {
         codSum += amt;
-      } else {
+      } else if (o.paymentMethod === 'VIETQR') {
         vietqrSum += amt;
       }
     }

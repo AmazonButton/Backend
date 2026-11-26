@@ -16,6 +16,8 @@ import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('stores/:storeId/categories')
 export class StoreCategoriesController {
@@ -34,7 +36,8 @@ export class StoreCategoriesController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Post()
   async createCategory(
     @Request() req: any,
@@ -64,7 +67,8 @@ export class CategoriesController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Patch(':id')
   async updateCategory(
     @Request() req: any,
@@ -79,7 +83,8 @@ export class CategoriesController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STORE_OWNER', 'SYSTEM_ADMIN', 'SUPER_ADMIN')
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   async deleteCategory(

@@ -41,8 +41,7 @@ export class PaymentsController {
   @Post('payos/create-link')
   @Idempotent({ required: true, ttlSeconds: 86400 })
   createLink(@Body() body: CreatePaymentLinkDto, @Request() req: any) {
-    const userId = req.user?.userId ? BigInt(req.user.userId) : undefined;
-    return this.paymentsService.createPayosPaymentLink(body, userId);
+    return this.paymentsService.createPayosPaymentLink(body, req.user);
   }
 
   @HttpCode(200)

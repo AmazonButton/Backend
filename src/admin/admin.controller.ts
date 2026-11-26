@@ -130,9 +130,11 @@ export class AdminController {
     @Query('status') status?: string,
     @Query('roleCode') roleCode?: string,
   ) {
+    const parsedPage = Math.max(1, Number(page) || 1);
+    const parsedPageSize = Math.min(100, Math.max(1, Number(pageSize) || 20));
     const result = await this.adminService.listPlatformMemberships({
-      page: page ? Number(page) : 1,
-      pageSize: pageSize ? Number(pageSize) : 20,
+      page: parsedPage,
+      pageSize: parsedPageSize,
       status,
       roleCode,
     });

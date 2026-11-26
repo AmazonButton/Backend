@@ -2,9 +2,12 @@ import { Injectable, Logger, Inject, Optional, OnModuleInit, OnModuleDestroy } f
 import { PrismaService } from '../prisma/prisma.service';
 import { RentalsRepository } from './rentals.repository';
 import { NotificationsService } from '../notifications/notifications.service';
-import { PayOSPayoutService } from '../payments/payos-payout.service';
+import { PayOSPayoutService, PayOSPayoutPreDispatchException } from '../payments/payos-payout.service';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
-import { verifyDepositRefundPayoutEvidence } from './deposit-payout-verifier';
+import {
+  verifyDepositRefundPayoutEvidence,
+  verifyDepositRefundPayoutRejectionEvidence,
+} from './deposit-payout-verifier';
 import * as crypto from 'crypto';
 import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 import { invalidateRentalMutationCaches } from './rental-cache-invalidation';
@@ -13,6 +16,7 @@ import { invalidateRentalMutationCaches } from './rental-cache-invalidation';
 export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OutboxConsumerService.name);
   private timer: NodeJS.Timeout | null = null;
+  private reconcileTimer: NodeJS.Timeout | null = null;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -21,6 +25,13 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     @Optional() @Inject(PayOSPayoutService) private readonly payosPayoutService?: PayOSPayoutService,
     @Optional() @Inject(DashboardCacheService) private readonly cacheService?: DashboardCacheService,
   ) { }
+
+  private isPayoutWorkerDisabled(): boolean {
+    return (
+      process.env.PAYOS_PAYOUT_WORKER_ENABLED === 'false' ||
+      process.env.PAYOS_PAYOUT_DELEGATE_TO_WORKER === 'true'
+    );
+  }
 
   onModuleInit() {
     // R06: Tự động chạy worker định kỳ kiểm tra và xử lý sự kiện
@@ -34,6 +45,19 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
     if (this.timer.unref) {
       this.timer.unref();
     }
+
+    // Periodic static-IP reconciler for PENDING_PAYOUT deposit refunds
+    this.reconcileTimer = setInterval(async () => {
+      if (this.isPayoutWorkerDisabled()) return;
+      try {
+        await this.reconcilePendingDepositRefunds(10);
+      } catch (err: any) {
+        this.logger.error(`[OutboxConsumer] Định kỳ đối soát hoàn cọc gặp lỗi: ${err.message}`);
+      }
+    }, 120_000);
+    if (this.reconcileTimer.unref) {
+      this.reconcileTimer.unref();
+    }
   }
 
   onModuleDestroy() {
@@ -41,6 +65,41 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
+  }
+
+  async reconcilePendingDepositRefunds(limit = 10) {
+    if (this.isPayoutWorkerDisabled() || !this.payosPayoutService) {
+      return { checked: 0, settled: 0, failed: 0 };
+    }
+    const pending = await this.rentalsRepo.findPendingDepositRefundReconciliations(limit);
+    let settled = 0;
+    let failed = 0;
+    for (const refund of pending) {
+      const ref = refund.providerReferenceId?.trim();
+      if (!ref) continue;
+      try {
+        const res = await this.payosPayoutService.getPayout(ref);
+        if (!res || res.code !== '00' || !res.data) continue;
+        const ok = verifyDepositRefundPayoutEvidence(res.data, refund);
+        if (ok.isVerified) {
+          await this.rentalsRepo.confirmDepositRefundPayoutTx(refund.refundId, ok.providerRef);
+          settled++;
+          continue;
+        }
+        const rejected = verifyDepositRefundPayoutRejectionEvidence(res.data, refund);
+        if (rejected.isVerified) {
+          await this.rentalsRepo.failDepositRefundPayoutTx(refund.refundId, rejected.reason || 'PAYOUT_REJECTED');
+          failed++;
+        }
+      } catch (err: any) {
+        this.logger.warn(`[OutboxConsumer] Reconcile deposit refund #${refund.refundId} failed: ${err?.message}`);
+      }
+    }
+    return { checked: pending.length, settled, failed };
   }
 
   /**
@@ -132,8 +191,14 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`[OutboxConsumer] Event #${event.id} (${event.event_type}) failed: ${err.message}`);
         results.failed++;
 
-        const currentAttempts = Number(event.attempts) + 1;
-        if (currentAttempts >= 3) {
+        const isTransientPreDispatch =
+          err instanceof PayOSPayoutPreDispatchException &&
+          /(429|TOO_MANY_REQUESTS|BALANCE_NOT_ENOUGH|INSUFFICIENT)/i.test(err.message || '');
+
+        const currentAttempts = isTransientPreDispatch
+          ? Number(event.attempts)
+          : Number(event.attempts) + 1;
+        if (!isTransientPreDispatch && currentAttempts >= 3) {
           // Move to DeadLetterJob (DLQ)
           await this.prisma.$transaction(async (tx) => {
             const updateRes = await tx.outboxEvent.updateMany({
@@ -477,7 +542,16 @@ export class OutboxConsumerService implements OnModuleInit, OnModuleDestroy {
         if (verification.isVerified) {
           await this.rentalsRepo.confirmDepositRefundPayoutTx(refundId, verification.providerRef);
         } else {
-          this.logger.log(`[OutboxConsumer] Payout #${refundId} chưa đủ bằng chứng chi tiết (${verification.reason}). Giữ PENDING_PAYOUT.`);
+          const rejection = verifyDepositRefundPayoutRejectionEvidence(payoutResult?.data, {
+            ...refund,
+            providerReferenceId: String(payoutId),
+          });
+          if (rejection.isVerified) {
+            this.logger.warn(`[OutboxConsumer] Payout #${refundId} bị PayOS từ chối dứt điểm (${rejection.reason}). Hoàn tác refund_reserved_amount.`);
+            await this.rentalsRepo.failDepositRefundPayoutTx(refundId, rejection.reason || 'PAYOUT_REJECTED');
+          } else {
+            this.logger.log(`[OutboxConsumer] Payout #${refundId} chưa đủ bằng chứng chi tiết (${verification.reason}). Giữ PENDING_PAYOUT.`);
+          }
         }
         break;
       }

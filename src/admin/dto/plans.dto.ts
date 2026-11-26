@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsInt, IsOptional, Min, Max, IsBoolean } from 'class-validator';
 
 export class CreateSubscriptionPlanDto {
   @IsString()
@@ -13,16 +13,19 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   description?: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
+  @Max(1000000000)
   price: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(36500)
   durationDays: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(100000)
   @IsOptional()
   maxProducts?: number;
 }
@@ -36,18 +39,21 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   description?: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
+  @Max(1000000000)
   @IsOptional()
   price?: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(36500)
   @IsOptional()
   durationDays?: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(100000)
   @IsOptional()
   maxProducts?: number;
 

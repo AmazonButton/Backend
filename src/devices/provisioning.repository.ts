@@ -1,4 +1,4 @@
-import { Injectable, Inject, ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, ConflictException, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -362,17 +362,31 @@ export class ProvisioningRepository {
         device.button_id,
       );
 
-      // 5. Upsert store_customer
+      // 5. Upsert store_customer (preserve BLOCKED status)
+      const blockedCheck: any[] = await tx.$queryRawUnsafe(
+        `SELECT status FROM store_customer WHERE store_id = $1 AND customer_id = $2 FOR SHARE`,
+        targetStoreId,
+        customerId,
+      );
+      if (blockedCheck?.length && String(blockedCheck[0].status).toUpperCase() === 'BLOCKED') {
+        throw new ForbiddenException('Tài khoản của bạn đã bị cửa hàng từ chối phục vụ');
+      }
       await tx.$executeRawUnsafe(
         `INSERT INTO store_customer (store_id, customer_id, status, joined_at)
          VALUES ($1, $2, 'ACTIVE', NOW())
          ON CONFLICT (store_id, customer_id)
-         DO UPDATE SET status = 'ACTIVE', updated_at = NOW();`,
+         DO UPDATE SET status = 'ACTIVE', updated_at = NOW()
+         WHERE store_customer.status <> 'BLOCKED';`,
         targetStoreId,
         customerId,
       );
 
-      // 6. Upsert button_product
+      // 6. Replace previous product bindings on this button and upsert the newly paired product
+      await tx.$executeRawUnsafe(
+        `DELETE FROM button_product WHERE button_id = $1 AND product_id <> $2;`,
+        device.button_id,
+        rawProductId,
+      );
       await tx.$executeRawUnsafe(
         `INSERT INTO button_product (button_id, product_id, quantity, created_at, updated_at)
          VALUES ($1, $2, 1, NOW(), NOW())

@@ -4,8 +4,8 @@ import {
   ArrayMinSize,
   IsArray,
   IsIn,
+  IsInt,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -19,7 +19,7 @@ export class StorefrontOrderItemDto {
   productId: string | number;
 
   @Type(() => Number)
-  @IsNumber({}, { message: 'quantity phải là số' })
+  @IsInt({ message: 'quantity phải là số nguyên dương' })
   @Min(1, { message: 'Số lượng tối thiểu là 1' })
   @Max(1000, { message: 'Số lượng tối đa cho mỗi sản phẩm là 1000' })
   quantity: number;

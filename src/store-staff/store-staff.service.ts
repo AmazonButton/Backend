@@ -9,6 +9,7 @@ import { StoreStaffRepository } from './store-staff.repository';
 import { CreateStoreStaffDto } from './dto/create-store-staff.dto';
 import { UpdateStoreStaffDto } from './dto/update-store-staff.dto';
 import { StoreStaffResponseDto } from './dto/store-staff-response.dto';
+import { requirePositivePostgresBigInt } from '../common/utils/validation.util';
 
 export const ALLOWED_STORE_STAFF_ROLES = [] as const;
 
@@ -54,7 +55,7 @@ export class StoreStaffService {
     query: { page?: number; pageSize?: number; status?: string; roleCode?: string },
     user: any,
   ) {
-    const storeId = BigInt(storeIdStr);
+    const storeId = requirePositivePostgresBigInt(storeIdStr, 'storeId');
     await this.verifyStoreOwnership(storeId, user);
 
     const page = Math.max(1, Number(query.page) || 1);
@@ -85,7 +86,7 @@ export class StoreStaffService {
   }
 
   async rejectInvitation(staffIdStr: string, user: any): Promise<{ success: boolean; message: string }> {
-    const staffId = BigInt(staffIdStr);
+    const staffId = requirePositivePostgresBigInt(staffIdStr, 'staffId');
     const staff = await this.repo.findStaffById(staffId);
     if (!staff) {
       throw new NotFoundException('Lời mời làm nhân viên không tồn tại');

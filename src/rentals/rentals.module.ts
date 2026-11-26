@@ -12,7 +12,12 @@ import { BillingChargesModule } from '../billing-charges/billing-charges.module'
 import { RentalExpiryCronService } from './rental-expiry-cron.service';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule, PaymentsModule, forwardRef(() => BillingChargesModule)],
+  imports: [
+    PrismaModule,
+    NotificationsModule,
+    forwardRef(() => PaymentsModule),
+    forwardRef(() => BillingChargesModule),
+  ],
   controllers: [RentalsController, AdminRentalsController],
   providers: [RentalsService, RentalsRepository, OutboxConsumerService, RentalExpiryCronService],
   exports: [RentalsService, RentalsRepository, OutboxConsumerService, RentalExpiryCronService],

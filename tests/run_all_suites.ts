@@ -434,6 +434,11 @@ const suites: TestSuite[] = [
     command: 'npx',
     args: ['tsx', path.join(__dirname, 'acid-wallet-order-inventory-hardening.spec.ts')],
   },
+  {
+    name: '87. Audit 44 Business Logic & PostgreSQL Constraints Verification',
+    command: 'npx',
+    args: ['tsx', path.join(__dirname, 'audit-44-fixes-verification.spec.ts')],
+  },
 ];
 
 async function main() {

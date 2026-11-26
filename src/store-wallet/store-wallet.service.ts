@@ -196,6 +196,18 @@ export class StoreWalletService {
       throw new BadRequestException('Số tiền rút tối thiểu là 50,000 VND');
     }
 
+    if (typeof (this.prisma as any)?.store?.findUnique === 'function') {
+      const store = await (this.prisma as any).store.findUnique({
+        where: { storeId: rawStoreId },
+        select: { storeId: true, status: true },
+      });
+      if (store && store.status !== 'ACTIVE') {
+        throw new ForbiddenException(
+          `Cửa hàng đang ở trạng thái ${store.status}, chỉ cửa hàng ACTIVE mới có thể tạo yêu cầu rút tiền`,
+        );
+      }
+    }
+
     // Check if idempotencyKey was already processed for this store
     if (idempotencyKey) {
       const existing = await this.prisma.storeWithdrawal.findFirst({
@@ -725,9 +737,28 @@ export class StoreWalletService {
         );
         if (matched.length === 1 && matched[0].id) {
           expectedPayoutId = String(matched[0].id).trim();
-          const detailRes = await this.payosPayoutService.getPayout(matched[0].id);
-          targetPayout = detailRes?.data;
+          const hasInlineTx =
+            Array.isArray(matched[0]?.transactions) &&
+            matched[0].transactions.length > 0 &&
+            (matched[0].approvalState || matched[0].state);
+          if (hasInlineTx) {
+            targetPayout = matched[0];
+          } else {
+            const detailRes = await this.payosPayoutService.getPayout(matched[0].id);
+            targetPayout = detailRes?.data;
+          }
         } else {
+          if (
+            matched.length === 0 &&
+            withdrawal.status === 'PENDING_RECONCILIATION' &&
+            !withdrawal.providerPayoutId &&
+            Date.now() - new Date(withdrawal.updatedAt).getTime() > 5 * 60 * 1000
+          ) {
+            return this.refundFailedWithdrawal(
+              rawId,
+              'Không tìm thấy giao dịch chi hộ trên PayOS sau hơn 5 phút đối soát (tự động hoàn ví an toàn)',
+            );
+          }
           return withdrawal;
         }
       } catch (err: any) {

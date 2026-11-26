@@ -358,6 +358,7 @@ export class PaymentRefundsRepository {
       inbound?: InboundPaymentSourceMeta | null;
       quarantineReason?: string | null;
       skipObligationCreation?: boolean;
+      obligationTypeOverride?: ObligationType;
     },
   ) {
     const provider = 'PAYOS';
@@ -481,7 +482,8 @@ export class PaymentRefundsRepository {
     }
 
     const obligationType: ObligationType =
-      params.classification === 'EXCESS_DUPLICATE' ? 'EXCESS_DUPLICATE' : 'ORDER_REFUND';
+      params.obligationTypeOverride ||
+      (params.classification === 'EXCESS_DUPLICATE' ? 'EXCESS_DUPLICATE' : 'ORDER_REFUND');
 
     const obligation = await this.createObligationForReceiptInTx(tx, {
       order: { orderId, customerId },
@@ -674,6 +676,19 @@ export class PaymentRefundsRepository {
             throw new ConflictException(
               `Đã tồn tại attempt đang xử lý (#${inFlightAttempts[0].attempt_id}) cho nghĩa vụ #${obligationId}.`,
             );
+          }
+
+          // Double-spend guard: never disburse ORDER_REFUND if store wallet already credited ORDER_REVENUE
+          if (lockedObl.obligation_type === 'ORDER_REFUND') {
+            const revenueRows = await tx.$queryRawUnsafe<any[]>(
+              `SELECT transaction_id FROM wallet_transactions WHERE type = 'ORDER_REVENUE' AND reference_id = $1 LIMIT 1`,
+              `ORDER:${orderId.toString()}`,
+            );
+            if (revenueRows && revenueRows.length > 0) {
+              throw new ConflictException(
+                `Đơn hàng #${orderId} đã cộng doanh thu vào ví cửa hàng; không thể giải ngân hoàn tiền ORDER_REFUND.`,
+              );
+            }
           }
 
           // Re-verify recipient eligibility strictly BEFORE first/new dispatch
@@ -1387,9 +1402,14 @@ export class PaymentRefundsRepository {
           // Conditionally mark Order.paymentStatus = REFUNDED when this obligation is an ORDER_REFUND
           // (or LEGACY_UNCLASSIFIED when order is REFUND_PENDING) and no non-excess order obligations remain open.
           let nextOrderPaymentStatus = order.payment_status;
+          const isCompletedOrDeliveredCod =
+            order.payment_method === 'COD' &&
+            ['DELIVERED', 'COMPLETED'].includes(order.order_status) &&
+            order.payment_status === 'PAID';
           if (
             obl.obligation_type !== 'EXCESS_DUPLICATE' &&
-            order.payment_status === 'REFUND_PENDING'
+            order.payment_status === 'REFUND_PENDING' &&
+            !isCompletedOrDeliveredCod
           ) {
             const remainingOpenMainObls = await tx.paymentRefundObligation.count({
               where: {

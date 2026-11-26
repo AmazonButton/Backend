@@ -304,12 +304,14 @@ export class WarrantyRepository {
           (!expiryBoundary || new Date(expiryBoundary) > new Date()),
       );
       const inheritedCanOrder = oldButton.rentalId
-        ? isRentalActiveAndValid && oldButton.canOrder !== false
+        ? isRentalActiveAndValid && oldButton.canOrder !== false && !(oldButton as any).customerChildLock
         : Boolean(oldButton.canOrder);
 
       const targetStoreId = ticket.storeId || oldButton.storeId;
       const targetCustomerId = ticket.customerId || oldButton.customerId;
-      const targetCustodyStoreId = oldButton.custodyStoreId ?? targetStoreId;
+      const nextInventoryState = targetCustomerId || oldButton.rentalId ? 'IN_CUSTOMER_CUSTODY' : 'IN_STORE';
+      const targetCustodyStoreId =
+        nextInventoryState === 'IN_CUSTOMER_CUSTODY' ? null : (oldButton.custodyStoreId ?? targetStoreId);
 
       // 2. Chuyển nút cũ sang DEFECTIVE_RETURN và gỡ liên kết hợp đồng/khách hàng/cấu hình triển khai
       await tx.ioTButton.update({
@@ -318,6 +320,8 @@ export class WarrantyRepository {
           inventoryState: 'DEFECTIVE_RETURN',
           status: 'INACTIVE',
           canOrder: false,
+          customerChildLock: false,
+          custodyStoreId: targetStoreId,
           customerId: null,
           rentalId: null,
           addressId: null,
@@ -344,8 +348,9 @@ export class WarrantyRepository {
           cancelWindowSeconds: oldButton.cancelWindowSeconds,
           deployedTemplateId: oldButton.deployedTemplateId,
           installedAt: oldButton.installedAt ?? new Date(),
-          inventoryState: targetCustomerId || oldButton.rentalId ? 'IN_CUSTOMER_CUSTODY' : 'IN_STORE',
+          inventoryState: nextInventoryState,
           status: 'ACTIVE',
+          customerChildLock: Boolean((oldButton as any).customerChildLock),
           canOrder: inheritedCanOrder,
         },
       });

@@ -36,6 +36,7 @@ export class StoreWalletController {
   }
 
   @Put('bank-account')
+  @Roles('STORE_OWNER')
   async updateBankAccount(@Request() req: any, @Body() body: UpdateBankAccountDto, @Query() query?: StoreQueryDto) {
     const storeId = this.extractStoreId(req, query);
     const data = await this.walletService.updateBankAccount(storeId, body);

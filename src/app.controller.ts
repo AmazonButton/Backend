@@ -1,6 +1,9 @@
-import { Controller, Get, Inject, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, Inject, Optional, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import { PrismaService } from './prisma/prisma.service';
 import { QueueService } from './common/queues/queue.service';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { RolesGuard } from './common/guards/roles.guard';
+import { Roles } from './common/decorators/roles.decorator';
 
 @Controller()
 export class AppController {
@@ -109,9 +112,11 @@ export class AppController {
   }
 
   /**
-   * Diagnostic endpoint to inspect the server's public outbound egress IP
+   * Diagnostic endpoint to inspect the server's public outbound egress IP (Super Admin only)
    */
   @Get(['outbound-ip', 'api/v1/outbound-ip'])
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'SYSTEM_ADMIN')
   async getOutboundIp() {
     try {
       const controller = new AbortController();

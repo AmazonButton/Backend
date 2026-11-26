@@ -37,7 +37,12 @@ export class StoreMeResponseDto {
 
   static fromEntity(store: any, userRole?: string): StoreMeResponseDto {
     const activeSub = store.subscriptions?.[0] || null;
-    const verifiedBank = store.bankAccounts?.find((b: any) => b.verificationStatus === 'VERIFIED') || store.bankAccounts?.[0] || null;
+    const isVerifiedStatus = (s?: string) => s === 'OWNERSHIP_VERIFIED' || s === 'VERIFIED';
+    const verifiedBank =
+      store.bankAccounts?.find((b: any) => isVerifiedStatus(b.verificationStatus) && b.isDefault) ||
+      store.bankAccounts?.find((b: any) => isVerifiedStatus(b.verificationStatus)) ||
+      store.bankAccounts?.[0] ||
+      null;
     const canViewFinancials = !userRole || ['STORE_OWNER', 'STORE_MANAGER', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(userRole);
 
     return {
@@ -70,7 +75,7 @@ export class StoreMeResponseDto {
         : null,
       bankVerification: {
         status: verifiedBank?.verificationStatus || 'UNVERIFIED',
-        isVerified: verifiedBank?.verificationStatus === 'VERIFIED',
+        isVerified: isVerifiedStatus(verifiedBank?.verificationStatus),
       },
       wallet: canViewFinancials && store.wallet
         ? {

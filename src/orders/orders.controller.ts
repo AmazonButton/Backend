@@ -49,10 +49,12 @@ export class OrdersController {
     @Query('page') page?: number,
     @Query('pageSize') pageSize?: number,
   ) {
+    const safePage = Math.max(1, Number(page) || 1);
+    const safePageSize = Math.min(100, Math.max(1, Number(pageSize) || 20));
     const result = await this.ordersService.getDeliveryQueue(
       req.user,
-      page ? Number(page) : 1,
-      pageSize ? Number(pageSize) : 20,
+      safePage,
+      safePageSize,
     );
     return {
       success: true,

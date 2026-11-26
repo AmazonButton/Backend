@@ -214,7 +214,7 @@ export class PaymentsRepository {
 
           const withOutcome = (
             entity: any,
-            outcome: { wasAlreadySettled?: boolean; amountMismatch?: boolean },
+            outcome: { wasAlreadySettled?: boolean; amountMismatch?: boolean; wasLateOrExcessRefund?: boolean },
           ) => {
             if (entity && typeof entity === 'object') {
               Object.defineProperty(entity, '__webhookOutcome', {
@@ -494,19 +494,6 @@ export class PaymentsRepository {
           // from an obsolete CANCELLED link paid late after switching to COD.
           const wasActivePendingTx = payment.status === 'PENDING';
 
-          // Update payment transaction to PAID
-          await tx.paymentTransaction.update({
-            where: { paymentTransactionId },
-            data: {
-              status: 'PAID',
-              paidAt: new Date(),
-            },
-          });
-
-          // F1 Matrix + Flexible Timing (Ý 1):
-          // Active PayOS orders OR unpaid COD orders in PENDING..SHIPPING whose ACTIVE (PENDING)
-          // PayOS QR link receives verified payment settle to PAYOS + PAID atomically.
-          // Cancelled old links on COD/terminal orders still enter REFUND_PENDING reconciliation.
           const PAYABLE_PAYOS_ORDER_STATUSES = new Set([
             'PENDING',
             'CONFIRMED',
@@ -530,7 +517,23 @@ export class PaymentsRepository {
             PRE_DELIVERY_QR_ALLOWED_STATUSES.has(order.order_status);
           const isPayablePayosOrder =
             PAYABLE_PAYOS_ORDER_STATUSES.has(order.order_status) &&
-            (order.payment_method === 'PAYOS' || isPreDeliveryQrConversion);
+            (order.payment_method === 'PAYOS' || isPreDeliveryQrConversion) &&
+            !(order.payment_status === 'PAID' && order.payment_method !== 'PAYOS');
+
+          // CRITICAL: Never mark a late/cancelled PayOS tx on a non-payable/COD-paid order as 'PAID'
+          // (otherwise completeDeliveryAtomicTx mistakes it for a paid PAYOS order and double-credits StoreWallet!).
+          await tx.paymentTransaction.update({
+            where: { paymentTransactionId },
+            data: {
+              status: isPayablePayosOrder ? 'PAID' : 'REFUND_PENDING',
+              paidAt: new Date(),
+            },
+          });
+
+          const isAlreadyPaidNonPayosOrder =
+            !isPayablePayosOrder &&
+            (order.payment_status === 'PAID' ||
+              (order.payment_method === 'COD' && !['CANCELLED', 'REJECTED', 'DELIVERY_FAILED'].includes(order.order_status)));
 
           if (isPayablePayosOrder) {
             if (order.order_status === 'PENDING') {
@@ -574,20 +577,25 @@ export class PaymentsRepository {
               });
             }
           } else {
-            // Cancelled / rejected / delivery-failed orders or orders switched to COD require refund reconciliation
-            await tx.order.update({
-              where: { orderId: payment.order_id },
-              data: {
-                paymentStatus: 'REFUND_PENDING',
-              },
-            });
+            // Cancelled / rejected / delivery-failed orders require refund reconciliation.
+            // If order is already settled via COD ('PAID') or actively continuing as COD, NEVER overwrite orders.payment_status to REFUND_PENDING!
+            if (!isAlreadyPaidNonPayosOrder) {
+              await tx.order.update({
+                where: { orderId: payment.order_id },
+                data: {
+                  paymentStatus: 'REFUND_PENDING',
+                },
+              });
+            }
 
             await tx.orderStatusHistory.create({
               data: {
                 orderId: payment.order_id,
                 oldStatus: order.order_status,
                 newStatus: order.order_status,
-                reason: `PayOS webhook nhận tiền sau khi đơn hàng đã ${order.order_status} (hoặc đổi phương thức thanh toán sang ${order.payment_method}). Đánh dấu paymentStatus: REFUND_PENDING để đối soát hoàn tiền.`,
+                reason: isAlreadyPaidNonPayosOrder
+                  ? `PayOS webhook nhận khoản chuyển trễ sau khi đơn #${order.order_code} đang/đã thanh toán ${order.payment_method} (${order.payment_status}). Giữ nguyên trạng thái đơn và ghi nhận nghĩa vụ hoàn khoản trùng/trễ.`
+                  : `PayOS webhook nhận tiền sau khi đơn hàng đã ${order.order_status} (hoặc đổi phương thức thanh toán sang ${order.payment_method}). Đánh dấu paymentStatus: REFUND_PENDING để đối soát hoàn tiền.`,
               },
             });
           }
@@ -597,38 +605,44 @@ export class PaymentsRepository {
               order,
               payment,
               classification: isPayablePayosOrder ? 'ORDER_PAYMENT' : 'LATE_CANCELLED_OR_COD',
+              obligationTypeOverride: isAlreadyPaidNonPayosOrder ? 'EXCESS_DUPLICATE' : undefined,
               inbound,
             });
           }
 
-          // 3. Atomically create customer notification with unique idempotency key
-          const custRows: any[] = await tx.$queryRawUnsafe(
-            `SELECT user_id FROM customer_profile WHERE customer_id = $1`,
-            order.customer_id,
-          );
-          if (custRows && custRows.length > 0 && custRows[0].user_id) {
-            const customerUserId = custRows[0].user_id;
-            const idempotencyKey = `payment:${paymentTransactionId.toString()}:paid`;
-            const notifData = JSON.stringify({
-              orderId: order.order_id.toString(),
-              orderCode: order.order_code,
-              amount: Number(payment.amount),
-              paymentTransactionId: paymentTransactionId.toString(),
-            });
-            await tx.$executeRawUnsafe(
-              `INSERT INTO notifications (user_id, type, title, body, data, idempotency_key, created_at)
-               VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW())
-               ON CONFLICT (idempotency_key) DO NOTHING;`,
-              customerUserId,
-              'PAYMENT_SUCCESS',
-              'Thanh toán đơn hàng thành công',
-              `Đơn hàng #${order.order_code} đã thanh toán thành công qua PayOS với số tiền ${Number(payment.amount).toLocaleString('vi-VN')} VND.`,
-              notifData,
-              idempotencyKey,
+          // 3. Atomically create customer notification with unique idempotency key (only when order payment succeeded)
+          if (isPayablePayosOrder) {
+            const custRows: any[] = await tx.$queryRawUnsafe(
+              `SELECT user_id FROM customer_profile WHERE customer_id = $1`,
+              order.customer_id,
             );
+            if (custRows && custRows.length > 0 && custRows[0].user_id) {
+              const customerUserId = custRows[0].user_id;
+              const idempotencyKey = `payment:${paymentTransactionId.toString()}:paid`;
+              const notifData = JSON.stringify({
+                orderId: order.order_id.toString(),
+                orderCode: order.order_code,
+                amount: Number(payment.amount),
+                paymentTransactionId: paymentTransactionId.toString(),
+              });
+              await tx.$executeRawUnsafe(
+                `INSERT INTO notifications (user_id, type, title, body, data, idempotency_key, created_at)
+                 VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW())
+                 ON CONFLICT (idempotency_key) DO NOTHING;`,
+                customerUserId,
+                'PAYMENT_SUCCESS',
+                'Thanh toán đơn hàng thành công',
+                `Đơn hàng #${order.order_code} đã thanh toán thành công qua PayOS với số tiền ${Number(payment.amount).toLocaleString('vi-VN')} VND.`,
+                notifData,
+                idempotencyKey,
+              );
+            }
           }
 
-          return this.findTransactionByIdTx(tx, paymentTransactionId);
+          return withOutcome(await this.findTransactionByIdTx(tx, paymentTransactionId), {
+            wasAlreadySettled: false,
+            wasLateOrExcessRefund: !isPayablePayosOrder,
+          });
         }),
       { operationName: 'confirmPaymentAtomicTx' },
     );
@@ -740,8 +754,8 @@ export class PaymentsRepository {
         };
       }
 
-      const orderAmount = Number(order.total_amount);
-      if (!orderAmount || orderAmount < 1000) {
+      const orderAmount = Math.round(Number(order.total_amount));
+      if (!Number.isFinite(orderAmount) || orderAmount < 1000) {
         throw new BadRequestException('Số tiền thanh toán phải từ 1,000 VND trở lên');
       }
 

@@ -219,8 +219,61 @@ export class BankVerificationRepository {
   }
 
   async deleteBankAccount(storeId: bigint, bankAccountId: bigint) {
-    return this.prisma.storeBankAccount.delete({
-      where: { id: bankAccountId, storeId },
+    return runWithTransactionRetry(async () => {
+      return this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT store_id FROM store WHERE store_id = ${storeId} FOR UPDATE
+        `;
+        const target = await tx.storeBankAccount.findFirst({
+          where: { id: bankAccountId, storeId },
+        });
+        if (!target) return null;
+
+        const [activeWithdrawals, activeRefundObs] = await Promise.all([
+          tx.storeWithdrawal.count({
+            where: {
+              storeId,
+              bankAccountHash: target.accountNumberHash,
+              status: { in: ['PENDING', 'PROCESSING', 'PENDING_RECONCILIATION'] },
+            },
+          }),
+          tx.storeBankRefundObligation.count({
+            where: {
+              targetAccountHash: target.accountNumberHash,
+              refundStatus: { in: ['PENDING_REFUND', 'PROCESSING', 'PENDING_RECONCILIATION'] },
+            },
+          }),
+        ]);
+        if (activeWithdrawals + activeRefundObs > 0) {
+          throw new Error('ACTIVE_FINANCIAL_OBLIGATION_EXISTS');
+        }
+
+        const deleted = await tx.storeBankAccount.delete({
+          where: { id: bankAccountId, storeId },
+        });
+
+        if (target.isDefault) {
+          const nextVerified = await tx.storeBankAccount.findFirst({
+            where: { storeId, verificationStatus: 'OWNERSHIP_VERIFIED' },
+            orderBy: { updatedAt: 'desc' },
+          });
+          if (nextVerified) {
+            await tx.storeBankAccount.update({
+              where: { id: nextVerified.id },
+              data: { isDefault: true, updatedAt: new Date() },
+            });
+            await tx.storeWallet.updateMany({
+              where: { storeId },
+              data: {
+                bankName: nextVerified.bankName,
+                bankAccountHolder: nextVerified.accountName,
+                updatedAt: new Date(),
+              },
+            });
+          }
+        }
+        return deleted;
+      });
     });
   }
 
@@ -1151,7 +1204,7 @@ export class BankVerificationRepository {
     return this.prisma.$queryRaw<any[]>`
       SELECT id, receipt_id, refund_amount, refund_status, refund_reference,
              provider_payout_id, target_bank_bin, target_account_encrypted, target_account_hash,
-             attempt_count
+             attempt_count, updated_at
       FROM store_bank_refund_obligations
       WHERE (refund_status = 'PENDING_RECONCILIATION' AND (next_reconcile_at IS NULL OR next_reconcile_at <= NOW()))
          OR (refund_status = 'PROCESSING' AND lease_expires_at < NOW())

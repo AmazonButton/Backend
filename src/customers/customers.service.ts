@@ -5,6 +5,7 @@ import { buildAnalyticsDateRange } from '../analytics/utils/analytics-date-range
 import { CreateCustomerBankAccountDto } from './dto/create-customer-bank-account.dto';
 import { VerifyCustomerBankAccountDto } from './dto/verify-customer-bank-account.dto';
 import { CryptoVaultUtil } from '../common/utils/crypto-vault.util';
+import { requirePositivePostgresBigInt } from '../common/utils/validation.util';
 
 @Injectable()
 export class CustomersService {
@@ -142,7 +143,7 @@ export class CustomersService {
       throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
     }
 
-    const rawAccountId = BigInt(accountId);
+    const rawAccountId = requirePositivePostgresBigInt(accountId, 'accountId');
     const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
     if (!account) {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
@@ -173,7 +174,7 @@ export class CustomersService {
       throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
     }
 
-    const rawAccountId = BigInt(accountId);
+    const rawAccountId = requirePositivePostgresBigInt(accountId, 'accountId');
     const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
     if (!account) {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
@@ -193,7 +194,7 @@ export class CustomersService {
       throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
     }
 
-    const rawAccountId = BigInt(accountId);
+    const rawAccountId = requirePositivePostgresBigInt(accountId, 'accountId');
     const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
     if (!account) {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
@@ -224,7 +225,7 @@ export class CustomersService {
       throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
     }
 
-    const rawAccountId = BigInt(accountId);
+    const rawAccountId = requirePositivePostgresBigInt(accountId, 'accountId');
     const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
     if (!account) {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');
@@ -295,7 +296,7 @@ export class CustomersService {
       throw new NotFoundException('Hồ sơ khách hàng không tồn tại');
     }
 
-    const rawAccountId = BigInt(accountId);
+    const rawAccountId = requirePositivePostgresBigInt(accountId, 'accountId');
     const account = await this.customersRepo.findCustomerBankAccountById(profile.customerId, rawAccountId);
     if (!account) {
       throw new NotFoundException('Tài khoản ngân hàng không tồn tại hoặc không thuộc sở hữu của bạn');

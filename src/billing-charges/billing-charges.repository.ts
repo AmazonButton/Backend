@@ -447,14 +447,31 @@ export class BillingChargesRepository {
       providerTransactionCode: string;
     },
   ) {
-    return this.prisma.billingCharge.update({
-      where: { chargeId },
-      data: {
-        paymentLinkId: details.paymentLinkId,
-        checkoutUrl: details.checkoutUrl,
-        qrCode: details.qrCode,
-        providerTransactionCode: details.providerTransactionCode,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const [locked] = await tx.$queryRaw<Array<{ charge_id: bigint; status: string; payment_link_id: string | null }>>`
+        SELECT charge_id, status, payment_link_id
+        FROM billing_charges
+        WHERE charge_id = ${chargeId}
+        FOR UPDATE
+      `;
+      if (!locked) {
+        return null;
+      }
+      if (locked.status !== 'PENDING') {
+        return tx.billingCharge.findUnique({ where: { chargeId } });
+      }
+      if (locked.payment_link_id && locked.payment_link_id !== details.paymentLinkId) {
+        return tx.billingCharge.findUnique({ where: { chargeId } });
+      }
+      return tx.billingCharge.update({
+        where: { chargeId },
+        data: {
+          paymentLinkId: details.paymentLinkId,
+          checkoutUrl: details.checkoutUrl,
+          qrCode: details.qrCode,
+          providerTransactionCode: details.providerTransactionCode,
+        },
+      });
     });
   }
 

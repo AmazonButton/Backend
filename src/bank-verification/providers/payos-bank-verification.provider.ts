@@ -14,7 +14,7 @@ import {
   BankRefundParams,
   BankRefundResult,
 } from './bank-verification.provider.interface';
-import { PayOSPayoutService } from '../../payments/payos-payout.service';
+import { PayOSPayoutService, PayOSPayoutPreDispatchException } from '../../payments/payos-payout.service';
 import { VIETNAM_BANKS } from '../constants/vietnam-banks.constant';
 import { verifyWebhookSignature } from '../../payments/payos.helper';
 
@@ -236,6 +236,9 @@ export class PayOSBankVerificationProvider implements BankVerificationProvider {
         status: 'FAILED',
       };
     } catch (error: any) {
+      if (error instanceof PayOSPayoutPreDispatchException) {
+        throw error;
+      }
       this.logger.error(
         `[PayOSBankVerificationProvider] createRefund failed for referenceId: ${params.referenceId}: ${error?.message}`,
       );

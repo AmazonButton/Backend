@@ -278,3 +278,51 @@ export function verifyDepositRefundPayoutEvidence(
     reportedAmount,
   };
 }
+
+/**
+ * Xác minh bằng chứng từ chối/thất bại dứt điểm từ PayOS cho khoản hoàn cọc.
+ * Chỉ trả về isVerified: true khi PayOS xác nhận trạng thái FAILED/CANCELLED/REJECTED trên đúng giao dịch.
+ */
+export function verifyDepositRefundPayoutRejectionEvidence(
+  payoutData: any,
+  refund: {
+    refundCode: string;
+    providerReferenceId?: string | null;
+  },
+): PayoutReconciliationResult {
+  if (!payoutData) {
+    return { isVerified: false, providerRef: '', reportedAmount: 0, reason: 'Dữ liệu rỗng' };
+  }
+  const payoutId = payoutData?.id?.toString().trim() || '';
+  if (refund.providerReferenceId && payoutId && payoutId !== refund.providerReferenceId.toString().trim()) {
+    return {
+      isVerified: false,
+      providerRef: payoutId,
+      reportedAmount: 0,
+      reason: 'Payout ID không khớp',
+    };
+  }
+  const approvalState = String(payoutData?.approvalState || payoutData?.state || '').toUpperCase();
+  const transactions = Array.isArray(payoutData?.transactions) ? payoutData.transactions : [];
+  const expectedRefundCode = refund.refundCode ? String(refund.refundCode).trim() : null;
+  const matchedTxn = transactions.find((t: any) => {
+    const tRef = t?.referenceId ? String(t.referenceId).trim() : t?.reference ? String(t.reference).trim() : '';
+    return expectedRefundCode ? tRef === expectedRefundCode : true;
+  });
+  const txnState = String(matchedTxn?.state || matchedTxn?.status || '').toUpperCase();
+  const terminalFailStates = ['FAILED', 'CANCELLED', 'REJECTED', 'ERROR'];
+  if (terminalFailStates.includes(txnState) || terminalFailStates.includes(approvalState)) {
+    return {
+      isVerified: true,
+      providerRef: payoutId,
+      reportedAmount: 0,
+      reason: `PayOS xác nhận chi hoàn cọc thất bại (approvalState=${approvalState || 'N/A'}, txnState=${txnState || 'N/A'})`,
+    };
+  }
+  return {
+    isVerified: false,
+    providerRef: payoutId,
+    reportedAmount: 0,
+    reason: 'Chưa có bằng chứng thất bại dứt điểm',
+  };
+}

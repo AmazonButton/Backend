@@ -179,21 +179,32 @@ export class BillingChargesService {
           throw new BadRequestException(`Giao dịch trên PayOS chưa hoàn tất thanh toán (trạng thái: ${result.data?.status || result.desc})`);
         }
 
-        const receiptLedgerEnabled = ['RENTAL_INITIAL', 'RENTAL_EXTENSION', 'STORE_SUBSCRIPTION'].includes(charge.purpose);
-        const providerTx = receiptLedgerEnabled
-          ? result.data.transactions?.find((item: any) => item.reference === providerTransactionCode.trim())
-          : result.data.transactions?.[0];
-        if (receiptLedgerEnabled && (!providerTx ||
-            (result.data.paymentLinkId || result.data.id) !== charge.paymentLinkId)) {
-          throw new BadRequestException('Verified transaction reference and payment link binding are required');
-        }
-        const reportedTxCode = (providerTx?.reference || result.data.id?.toString() || '').trim();
-        if (providerTransactionCode && reportedTxCode && providerTransactionCode !== reportedTxCode) {
+        const trimmedCode = providerTransactionCode.trim();
+        const txs = Array.isArray(result.data.transactions) ? result.data.transactions : [];
+        const matchedTx = txs.find((item: any) => String(item?.reference || '').trim() === trimmedCode);
+
+        if (receiptLedgerEnabled) {
+          if (!matchedTx || (result.data.paymentLinkId || result.data.id) !== charge.paymentLinkId) {
+            throw new BadRequestException('Verified transaction reference and payment link binding are required');
+          }
+        } else if (txs.length > 0 && !matchedTx) {
           throw new BadRequestException(
-            `Mã giao dịch cung cấp (${providerTransactionCode}) không khớp với mã giao dịch thực tế từ PayOS (${reportedTxCode})`
+            `Mã giao dịch cung cấp (${trimmedCode}) không khớp với danh sách giao dịch thực tế từ PayOS`,
           );
         }
-        actualProviderTxCode = reportedTxCode || providerTransactionCode.trim();
+
+        const providerTx = matchedTx ?? (txs.length === 0 ? undefined : txs[0]);
+        const reportedTxCode = (
+          providerTx?.reference ||
+          (txs.length === 0 ? result.data.id?.toString() || result.data.orderCode?.toString() : '') ||
+          ''
+        ).trim();
+        if (!reportedTxCode || (trimmedCode !== reportedTxCode && String(result.data.orderCode || '') !== trimmedCode)) {
+          throw new BadRequestException(
+            `Mã giao dịch cung cấp (${trimmedCode}) không khớp với mã giao dịch thực tế từ PayOS (${reportedTxCode || 'N/A'})`
+          );
+        }
+        actualProviderTxCode = reportedTxCode;
 
         const reportedAmount = Number(providerTx?.amount ?? result.data.amount);
         if (!Number.isFinite(reportedAmount) || reportedAmount <= 0) {
@@ -326,6 +337,9 @@ export class BillingChargesService {
 
     if (charge.status === 'PAID') {
       throw new BadRequestException('Khoản thu đã được thanh toán hoàn tất');
+    }
+    if (charge.status !== 'PENDING') {
+      throw new BadRequestException(`Không thể tạo liên kết thanh toán cho khoản thu ở trạng thái ${charge.status}`);
     }
 
     // Idempotent return: if charge is already PENDING and has active payment link, return it

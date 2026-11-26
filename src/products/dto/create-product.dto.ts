@@ -57,12 +57,14 @@ export class CreateProductDto {
   @Type(() => Number)
   @IsNumber({}, { message: 'Giá phải là số hợp lệ' })
   @Min(0, { message: 'Giá không được âm' })
+  @Max(1000000000, { message: 'Giá không được vượt quá 1.000.000.000 VND' })
   price?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber({}, { message: 'Giá phải là số hợp lệ' })
   @Min(0, { message: 'Giá không được âm' })
+  @Max(1000000000, { message: 'Giá không được vượt quá 1.000.000.000 VND' })
   basePrice?: number;
 
   @ValidateIf((_, value) => value !== undefined)

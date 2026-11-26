@@ -584,7 +584,7 @@ export class PaymentsService {
 
       this.logger.log(`[PayOS Webhook] Payment confirmed/recorded for Order #${transaction.orderId} (Transaction #${transaction.paymentTransactionId}, Ref=${inboundMeta.providerTransactionRef || 'N/A'})`);
 
-      if (!outcome.wasAlreadySettled && transaction.order) {
+      if (!outcome.wasAlreadySettled && !outcome.wasLateOrExcessRefund && transaction.order) {
         const storeId = transaction.order.storeId ? transaction.order.storeId.toString() : '';
         const orderId = transaction.orderId ? transaction.orderId.toString() : '';
         const eventPayload = {
@@ -1040,6 +1040,7 @@ export class PaymentsService {
     }
 
     if (process.env.PAYOS_MOCK_PAYMENT === 'true' || clientId === 'mock_client_id' || clientId?.startsWith('ci_test_')) {
+      await this.markLocalPaymentLinkCancelled(orderCodeOrId);
       return {
         code: '00',
         desc: 'success',
@@ -1077,10 +1078,40 @@ export class PaymentsService {
           message: resData.desc || 'Hủy link thanh toán thất bại',
         });
       }
+      await this.markLocalPaymentLinkCancelled(orderCodeOrId);
       return resData;
     } catch (err: any) {
+      if (err instanceof BadRequestException) throw err;
       this.logger.error(`PayOS cancelPaymentLink error: ${err.message}`);
       throw new InternalServerErrorException(`Không thể hủy link thanh toán: ${err.message}`);
+    }
+  }
+
+  private async markLocalPaymentLinkCancelled(orderCodeOrId: number | string) {
+    try {
+      const prisma = (this.paymentsRepo as any)?.prisma;
+      if (!prisma) return;
+      const keyStr = String(orderCodeOrId).trim();
+      await prisma.paymentTransaction?.updateMany?.({
+        where: {
+          status: 'PENDING',
+          OR: [{ transactionCode: keyStr }, { paymentLinkId: keyStr }],
+        },
+        data: { status: 'CANCELLED' },
+      })?.catch?.(() => {});
+      await prisma.billingCharge?.updateMany?.({
+        where: {
+          status: 'PENDING',
+          OR: [{ providerTransactionCode: keyStr }, { paymentLinkId: keyStr }],
+        },
+        data: {
+          paymentLinkId: null,
+          checkoutUrl: null,
+          qrCode: null,
+        },
+      })?.catch?.(() => {});
+    } catch {
+      // Best-effort local cleanup after remote cancellation
     }
   }
 }

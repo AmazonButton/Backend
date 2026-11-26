@@ -142,7 +142,7 @@ export class AdminRepository {
   async rejectStore(storeId: bigint) {
     return this.prisma.store.update({
       where: { storeId },
-      data: { status: 'SUSPENDED' },
+      data: { status: 'INACTIVE' },
     });
   }
 
@@ -1045,6 +1045,11 @@ export class AdminRepository {
             SELECT SUM(pt.amount)
             FROM payment_transaction pt
             WHERE pt.status = 'PAID'
+              AND NOT EXISTS (
+                SELECT 1 FROM orders po
+                WHERE po.order_id = pt.order_id
+                  AND po.order_status IN ('CANCELLED', 'REJECTED')
+              )
             ${dateRange.fromDate ? Prisma.sql`AND pt.created_at >= ${dateRange.fromDate}` : Prisma.empty}
             ${dateRange.toDateExclusive ? Prisma.sql`AND pt.created_at < ${dateRange.toDateExclusive}` : Prisma.empty}
           ), 0)::numeric AS paid_revenue
@@ -1098,8 +1103,8 @@ export class AdminRepository {
       }>>(Prisma.sql`
         SELECT
           COUNT(*) FILTER (WHERE sw.status = 'PENDING')::int AS pending,
-          COUNT(*) FILTER (WHERE sw.status = 'PROCESSING')::int AS processing,
-          COUNT(*) FILTER (WHERE sw.status = 'COMPLETED')::int AS completed,
+          COUNT(*) FILTER (WHERE sw.status IN ('PROCESSING', 'PENDING_RECONCILIATION'))::int AS processing,
+          COUNT(*) FILTER (WHERE sw.status IN ('SUCCEEDED', 'COMPLETED'))::int AS completed,
           COUNT(*) FILTER (WHERE sw.status = 'REJECTED')::int AS rejected,
           COUNT(*) FILTER (WHERE sw.status = 'FAILED')::int AS failed
         FROM store_withdrawals sw

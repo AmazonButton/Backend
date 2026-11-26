@@ -542,10 +542,12 @@ export class DevicesService {
     }
 
     const updateData: any = {};
-    if (body.batteryLevel !== undefined) {
+    const privilegedStaff = ['STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'];
+    const isPrivileged = privilegedStaff.includes(user?.role);
+    if (body.batteryLevel !== undefined && isPrivileged) {
       updateData.batteryLevel = Number(body.batteryLevel);
     }
-    if (body.warrantyUntil !== undefined) {
+    if (body.warrantyUntil !== undefined && ['ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'SYSTEM_STAFF'].includes(user?.role)) {
       updateData.warrantyUntil = new Date(body.warrantyUntil);
     }
     if (body.buttonName) {
@@ -556,8 +558,7 @@ export class DevicesService {
       updateData.buttonName = body.name;
     }
     if (body.status) {
-      const allowedRoles = ['STORE_OWNER', 'SYSTEM_STAFF', 'ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'];
-      if (allowedRoles.includes(user?.role)) {
+      if (isPrivileged) {
         updateData.status = body.status;
       }
     }
@@ -582,6 +583,9 @@ export class DevicesService {
         }
       }
       updateData.canOrder = nextCanOrder;
+      if (user?.role === 'CUSTOMER') {
+        updateData.customerChildLock = !nextCanOrder;
+      }
     }
     if (body.cancelWindowSeconds !== undefined) {
       updateData.cancelWindowSeconds = Number(body.cancelWindowSeconds);
@@ -602,7 +606,17 @@ export class DevicesService {
   async remove(id: string | number | bigint, user: any) {
     const button = await this.assertDeviceAccess(id, user);
     const existing = this.formatButton(button);
-    await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'INACTIVE' });
+    const isAdmin = ['SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(user?.role);
+    if (
+      !isAdmin &&
+      (button.rentalId != null ||
+        ['IN_CUSTOMER_CUSTODY', 'ASSIGNED_TO_RENTAL', 'RETURN_IN_TRANSIT'].includes(button.inventoryState))
+    ) {
+      throw new BadRequestException(
+        'Không thể vô hiệu hóa thiết bị đang thuộc hợp đồng thuê hoặc đang trong tay khách hàng',
+      );
+    }
+    await this.devicesRepo.update(BigInt(existing.buttonId), { status: 'INACTIVE', canOrder: false });
     await this.invalidateDeviceCaches(button.storeId, button.customer?.userId);
     return { success: true, message: 'Đã hủy kích hoạt nút bấm thành công' };
   }

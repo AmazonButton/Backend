@@ -36,19 +36,32 @@ export class IdempotencyInterceptor implements NestInterceptor {
       return next.handle();
     }
 
+    const method = (req.method || 'POST').toUpperCase();
+    // Safe read-only HTTP methods must never be persisted into api_idempotency_keys
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      return next.handle();
+    }
+
     const options =
       this.reflector.getAllAndOverride<IdempotencyOptions>(
         IDEMPOTENCY_OPTIONS_KEY,
         [context.getHandler(), context.getClass()],
       ) || {};
 
-    let rawKey =
-      (req.headers?.['x-idempotency-key'] as string) ||
-      (req.headers?.['idempotency-key'] as string) ||
-      (req.body?.idempotencyKey as string) ||
-      undefined;
+    const headerXKey = req.headers?.['x-idempotency-key'];
+    const headerStdKey = req.headers?.['idempotency-key'];
+    if (Array.isArray(headerXKey) || Array.isArray(headerStdKey)) {
+      throw new BadRequestException('Không được phép gửi trùng lặp header Idempotency-Key');
+    }
 
-    if (!rawKey) {
+    const rawKey: unknown =
+      headerXKey !== undefined
+        ? headerXKey
+        : headerStdKey !== undefined
+          ? headerStdKey
+          : req.body?.idempotencyKey;
+
+    if (rawKey === undefined || rawKey === null || rawKey === '') {
       if (options.required) {
         throw new BadRequestException(
           'Header X-Idempotency-Key là bắt buộc đối với thao tác này',
@@ -59,9 +72,15 @@ export class IdempotencyInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const method = (req.method || 'POST').toUpperCase();
+    if (typeof rawKey !== 'string') {
+      throw new BadRequestException('Idempotency-Key phải là chuỗi ký tự hợp lệ');
+    }
+
     const actualPath = (req.originalUrl?.split('?')[0] || req.path || '/').toLowerCase();
-    const routePattern = (req.route?.path || actualPath).toLowerCase();
+    if (actualPath.length > 255) {
+      throw new BadRequestException('Đường dẫn yêu cầu vượt quá độ dài tối đa cho phép');
+    }
+    const routePattern = (req.route?.path || actualPath).toLowerCase().slice(0, 255);
 
     // Determine security actor scope
     let actorScope = 'public';

@@ -14,6 +14,7 @@ import {
 import * as crypto from 'crypto';
 import { StoreWalletService } from '../store-wallet/store-wallet.service';
 import { PaymentRefundsService } from './payment-refunds.service';
+import { RentalsService } from '../rentals/rentals.service';
 import { verifyPayoutSignature } from './payos.helper';
 
 export interface PayosPayoutWebhookDto {
@@ -50,6 +51,7 @@ export class PayoutWebhookController {
     walletServiceOrPrisma: any,
     @Optional() maybeWalletService?: StoreWalletService,
     @Optional() @Inject(forwardRef(() => PaymentRefundsService)) paymentRefundsService?: PaymentRefundsService,
+    @Optional() @Inject(forwardRef(() => RentalsService)) private readonly rentalsService?: RentalsService,
   ) {
     this.walletService = maybeWalletService || walletServiceOrPrisma;
     this.paymentRefundsService = paymentRefundsService;
@@ -94,6 +96,16 @@ export class PayoutWebhookController {
       const refundResult = await this.paymentRefundsService.processSignedPayoutWebhook(body.data, body.desc);
       if (refundResult?.handled) {
         return refundResult;
+      }
+    }
+    if (this.rentalsService) {
+      const rentalResult = await this.rentalsService.processPayoutWebhook(body);
+      if (rentalResult?.handled) {
+        return {
+          success: true,
+          message: 'Đã xử lý webhook chi trả hoàn cọc thành công',
+          ...rentalResult,
+        };
       }
     }
     return this.walletService.processPayoutWebhook(body.data, body.desc);
