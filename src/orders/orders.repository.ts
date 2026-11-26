@@ -1445,6 +1445,9 @@ export class OrdersRepository {
           throw new BadRequestException(`Số tiền thu (${dto.collectedAmount}) không khớp với tổng tiền đơn hàng (${orderTotal})`);
         }
       } else if (['VIETQR', 'PAYOS'].includes(dto.paymentMethod)) {
+        if (['REFUND_PENDING', 'REFUNDED'].includes(order.payment_status)) {
+          throw new BadRequestException('Đơn hàng đang chờ hoàn tiền hoặc đã hoàn tiền, không thể chốt giao hàng qua cổng trực tuyến');
+        }
         if (order.payment_status !== 'PAID') {
           const paidTx = await tx.paymentTransaction.findFirst({
             where: { orderId: BigInt(orderId), status: 'PAID' },

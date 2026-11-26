@@ -1191,10 +1191,10 @@ async function runStep7AndConcurrencySuite() {
     };
 
     const [btnSrc1, btnSrc2, btnSharedRep, btnLockVsSwap] = await Promise.all([
-      mkBtn('SRC1', rentalA.rentalId, store.storeId, store.storeId, customer.customerId, 'IN_CUSTOMER_CUSTODY'),
-      mkBtn('SRC2', rentalB.rentalId, storeB.storeId, storeB.storeId, customer.customerId, 'IN_CUSTOMER_CUSTODY'),
+      mkBtn('SRC1', rentalA.rentalId, store.storeId, null, customer.customerId, 'IN_CUSTOMER_CUSTODY'),
+      mkBtn('SRC2', rentalB.rentalId, storeB.storeId, null, customer.customerId, 'IN_CUSTOMER_CUSTODY'),
       mkBtn('REP', null, store.storeId, null, null, 'IN_PLATFORM_WAREHOUSE'),
-      mkBtn('LOCKSWAP', rentalC.rentalId, store.storeId, store.storeId, customer.customerId, 'IN_CUSTOMER_CUSTODY'),
+      mkBtn('LOCKSWAP', rentalC.rentalId, store.storeId, null, customer.customerId, 'IN_CUSTOMER_CUSTODY'),
     ]);
 
     const tSwap1 = await prisma.warrantyTicket.create({

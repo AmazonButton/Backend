@@ -520,20 +520,20 @@ export class PaymentsRepository {
             (order.payment_method === 'PAYOS' || isPreDeliveryQrConversion) &&
             !(order.payment_status === 'PAID' && order.payment_method !== 'PAYOS');
 
-          // CRITICAL: Never mark a late/cancelled PayOS tx on a non-payable/COD-paid order as 'PAID'
-          // (otherwise completeDeliveryAtomicTx mistakes it for a paid PAYOS order and double-credits StoreWallet!).
+          // Keep verified inbound transfer as PAID on payment_transaction (will move to REFUNDED when refund payout settles),
+          // while preventing late/cancelled/COD PayOS deliveries from crediting StoreWallet in completeDeliveryAtomicTx.
           await tx.paymentTransaction.update({
             where: { paymentTransactionId },
             data: {
-              status: isPayablePayosOrder ? 'PAID' : 'REFUND_PENDING',
+              status: 'PAID',
               paidAt: new Date(),
             },
           });
 
           const isAlreadyPaidNonPayosOrder =
             !isPayablePayosOrder &&
-            (order.payment_status === 'PAID' ||
-              (order.payment_method === 'COD' && !['CANCELLED', 'REJECTED', 'DELIVERY_FAILED'].includes(order.order_status)));
+            order.payment_status === 'PAID' &&
+            order.payment_method !== 'PAYOS';
 
           if (isPayablePayosOrder) {
             if (order.order_status === 'PENDING') {

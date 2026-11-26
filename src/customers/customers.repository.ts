@@ -332,13 +332,16 @@ export class CustomersRepository {
         FOR UPDATE
       `;
 
-      const existingVerifiedDefault = await tx.customerBankAccount.findFirst({
-        where: {
-          customerId: data.customerId,
-          isDefault: true,
-          verificationStatus: 'VERIFIED',
-        },
-      });
+      const existingVerifiedDefault =
+        typeof tx.customerBankAccount?.findFirst === 'function'
+          ? await tx.customerBankAccount.findFirst({
+              where: {
+                customerId: data.customerId,
+                isDefault: true,
+                verificationStatus: 'VERIFIED',
+              },
+            })
+          : null;
       const willBeVerified = data.verificationStatus === 'VERIFIED';
       const shouldBeDefault = Boolean(data.isDefault) && (willBeVerified || !existingVerifiedDefault);
 
@@ -708,14 +711,17 @@ export class CustomersRepository {
     const account = await tx.customerBankAccount.findUnique({ where: { id: accountId } });
     if (!account) return;
 
-    const existingVerifiedDefault = await tx.customerBankAccount.findFirst({
-      where: {
-        customerId,
-        isDefault: true,
-        verificationStatus: 'VERIFIED',
-        id: { not: accountId },
-      },
-    });
+    const existingVerifiedDefault =
+      typeof tx.customerBankAccount?.findFirst === 'function'
+        ? await tx.customerBankAccount.findFirst({
+            where: {
+              customerId,
+              isDefault: true,
+              verificationStatus: 'VERIFIED',
+              id: { not: accountId },
+            },
+          })
+        : null;
     if (!existingVerifiedDefault && !account.isDefault) {
       await tx.customerBankAccount.updateMany({
         where: { customerId },

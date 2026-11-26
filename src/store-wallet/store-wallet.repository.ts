@@ -61,19 +61,23 @@ export class StoreWalletRepository {
           storeId: params.storeId, accountNumberHash: params.accountNumberHash,
         } },
       });
+      const existingHolder = (existingAccount?.accountName || '').trim().toUpperCase();
+      const nextHolder = params.bankAccountHolder.trim().toUpperCase();
       const changedBankOrHolder =
         existingAccount &&
         (existingAccount.bankBin !== params.bankBin ||
-          (existingAccount.accountName || '').trim().toUpperCase() !==
-            params.bankAccountHolder.trim().toUpperCase());
+          (existingHolder.length > 0 && existingHolder !== nextHolder));
 
-      const existingVerifiedDefault = await tx.storeBankAccount.findFirst({
-        where: {
-          storeId: params.storeId,
-          isDefault: true,
-          verificationStatus: 'OWNERSHIP_VERIFIED',
-        },
-      });
+      const existingVerifiedDefault =
+        typeof tx.storeBankAccount?.findFirst === 'function'
+          ? await tx.storeBankAccount.findFirst({
+              where: {
+                storeId: params.storeId,
+                isDefault: true,
+                verificationStatus: 'OWNERSHIP_VERIFIED',
+              },
+            })
+          : null;
       const willStayVerified =
         existingAccount?.verificationStatus === 'OWNERSHIP_VERIFIED' && !changedBankOrHolder;
       const shouldMakeDefault =
