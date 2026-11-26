@@ -773,14 +773,14 @@ export class AdminService {
           );
         }
         expectedPayoutId = String(found.id).trim();
-        await this.adminRepo
-          .supplementPayoutIdIfAllowed(
+        await this.adminRepo.supplementPayoutIdIfAllowed
+          ?.(
             rawWithdrawalId,
             withdrawal.providerReferenceId,
             expectedPayoutId,
             null,
           )
-          .catch(() => {});
+          ?.catch?.(() => {});
 
         const hasInlineTransactions =
           Array.isArray(found?.transactions) &&

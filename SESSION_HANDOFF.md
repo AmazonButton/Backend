@@ -1,7 +1,7 @@
 # Project Handoff & Session Context
 
 ## 2026-11-26: PayOS Payout Reconciliation & Order Refund Status Sync Fix (`payment_transaction_status_check` `REFUNDED`, Inline `getPayouts` 429 Prevention & Cross-Node `ORDER_REFUNDED` WebSocket)
-- **Status**: VERIFIED LOCALLY & DEPLOYING TO 3-NODE PRODUCTION CLUSTER (`BRD/ERD_Level_3_Editable.drawio` preserved uncommitted locally)
+- **Status**: MERGED & LIVE VERIFIED ON 3-NODE PRODUCTION CLUSTER (`BRD/ERD_Level_3_Editable.drawio` preserved uncommitted locally; Production Obligation `#4` / Order `#WEB-1795634559446-232` automatically reconciled and settled to `REFUNDED`)
 - **Root Causes Diagnosed on Production (`Obligation #4`, Order `#WEB-1795634559446-232`, `orderId = 670`, `attemptId = 6`, `PAYREF_O4_A1_92570F`)**:
   1. **PostgreSQL `payment_transaction_status_check` Constraint Violation (`code: "23514"`)**: When `Node-3` dispatched `PAYREF_O4_A1_92570F` (`batch_a0240658bd9546a997c6b1d0a213cf27`, `2.000 VND`) to PayOS and `verifyPayosPayoutEvidence()` returned `isVerified: true`, `settleRefundSuccessAtomicTx()` updated `payment_transaction.status = 'REFUNDED'`, which threw `PostgresError 23514: new row for relation "payment_transaction" violates check constraint "payment_transaction_status_check"` because `20261012000000_init_baseline` omitted `'REFUNDED'` from `payment_transaction_status_check`. That rolled back `settleRefundSuccessAtomicTx()` and left `attemptId = 6` in `PENDING_RECONCILIATION` with `provider_payout_id = NULL`.
   2. **Back-to-Back 0ms `getPayouts` + `getPayout` Rate-Limit Trap (`HTTP 429`)**: Because `provider_payout_id` was `NULL`, every subsequent reconciliation call ran `GET /v1/payouts?referenceId=PAYREF_O4_A1_92570F` (`200 OK`, already containing inline `transactions[]`) followed 0ms later by `GET /v1/payouts/{id}`, triggering PayOS's `HTTP 429` rate limiter (`PayOS từ chối tra cứu payout (HTTP 429)`) and discarding `discoveredPayoutId`.
@@ -13,11 +13,19 @@
   - **Cloudflare Edge Routing ([`cloudflare-worker/worker.js`](file:///f:/Learning/SEM9-FPTu/backend/cloudflare-worker/worker.js))**: Added `'/api/v1/webhooks/payos/payout'` to `PAYOUT_STATIC_IP_ROUTES` (`node-3` primary).
   - **Regression Tests ([`tests/payos-payout-reason-and-delegation.spec.ts`](file:///f:/Learning/SEM9-FPTu/backend/tests/payos-payout-reason-and-delegation.spec.ts))**: Extended `T3` for `/api/v1/webhooks/payos/payout` routing and added `T6` verifying `payment_transaction_status_check` with `'REFUNDED'`, `discoveredPayoutId` persistence on `HTTP 429`, 1-call inline `getPayouts` settlement without `getPayout`, and `ORDER_REFUNDED` WebSocket emission.
 - **Verification (Run After Final Edit)**:
-  - `npm run migrate:deploy` — **PASS** (`66` migrations applied on `smart_order_test`).
+  - `npm run migrate:deploy` — **PASS** (`66` migrations applied on `smart_order_test` and Production Supabase DB).
   - `npx tsc --noEmit --incremental false` — **PASS** (exit `0`).
   - `npm run build` — **PASS** (exit `0`).
   - `npx tsx tests/payos-payout-reason-and-delegation.spec.ts` — **PASS (`6 PASSED, 0 FAILED`)**.
   - `npx tsx tests/payment-refund-obligations-hardening.spec.ts` — **PASS (`13 PASSED, 0 FAILED`)**.
+  - `npx tsx tests/admin_payout_invariants.spec.ts` — **PASS** (`Task 3 Payout invariant tests PASSED!`).
+  - **Live Production Verification (`Obligation #4`, Order `#WEB-1795634559446-232`)**:
+    - `payment_refund_obligations` (`obligationId = 4`): `status = 'REFUNDED'`, `settledAttemptId = '6'`, `refundedAt = '2026-11-26T05:25:47.389Z'`, `failureReason = null`.
+    - `payment_refund_payout_attempts` (`attemptId = 6`): `status = 'SUCCEEDED'`, `providerPayoutId = 'batch_a0240658bd9546a997c6b1d0a213cf27'`, `providerTransactionId = 'batch_txn_8fa12201e9b04b4cae0295bfa815172b'`.
+    - `payment_refund_verified_vouchers` (`voucherId = 6669`): recorded with `verifiedAmount = 2000`.
+    - `orders` (`orderId = 670`, `#WEB-1795634559446-232`): `orderStatus = 'CANCELLED'`, `paymentStatus = 'REFUNDED'`.
+    - `payment_transaction` (`paymentTransactionId = 95`): `status = 'REFUNDED'`.
+    - `outbox_events` (`id = 33`): `status = 'COMPLETED'`, `error = null`.
 
 ## 2026-11-25: 7-Item Business-Rule Hardening (Flexible Payment Timing, `DELIVERY_FAILED` Refund Safety Net, Static-IP Outbox Payouts, Store Subscription Visibility & IoT Alerts, Pre-Handover Rental Cancel, Auto-Cancel PayOS Links) (`feat/business-rules-orders-rentals-payout-hardening`)
 - **Status**: VERIFIED LOCALLY / READY FOR PR #11 & 3-NODE ROLLOUT (`BRD/ERD_Level_3_Editable.drawio` preserved uncommitted locally; `..\Frontend` fast-forwarded cleanly read-only to `4b0d104`)
