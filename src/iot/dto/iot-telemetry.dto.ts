@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, Max, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class IotTelemetryDto {
@@ -8,6 +8,13 @@ export class IotTelemetryDto {
   @Min(0, { message: 'battery tối thiểu 0%' })
   @Max(100, { message: 'battery tối đa 100%' })
   battery?: number;
+
+  @ApiPropertyOptional({ description: 'Điện áp pin thực tế trên mạch (Volt)', example: 4.12 })
+  @IsOptional()
+  @IsNumber({}, { message: 'voltage phải là số' })
+  @Min(0, { message: 'voltage tối thiểu 0V' })
+  @Max(24, { message: 'voltage không hợp lệ' })
+  voltage?: number;
 
   @ApiPropertyOptional({ description: 'Cường độ tín hiệu WiFi RSSI (dBm)', example: -55 })
   @IsOptional()

@@ -34,6 +34,7 @@ import {
   ClaimLegacyDto,
   AssignDeviceDto,
   UpdateConfigDto,
+  BleClaimDeviceDto,
   ExtendWarrantyDto,
   UpdateBehaviorDto,
   UpdateBatteryDto,
@@ -239,6 +240,16 @@ export class DevicesController {
   async toggleStatus(@Param('id') id: string, @Body() body: UpdateDeviceStatusDto, @Request() req: any) {
     const data = await this.devicesService.toggleStatus(id, body.status, req.user);
     return { success: true, message: `Trạng thái đã chuyển sang ${body.status}`, data };
+  }
+
+  /**
+   * Khách hàng (Customer) nhận quyền sở hữu nút vật lý chưa có chủ sau khi đã xác nhận kết nối BLE trực tiếp.
+   */
+  @Roles('CUSTOMER')
+  @Post(':id/ble-claim')
+  async bleClaim(@Param('id') id: string, @Body() body: BleClaimDeviceDto, @Request() req: any) {
+    const data = await this.devicesService.claimViaBle(id, body, req.user);
+    return { success: true, message: 'Liên kết thiết bị qua Bluetooth thành công!', data };
   }
 
   /**

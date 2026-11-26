@@ -359,6 +359,40 @@ async function runSuite() {
       );
       assert.equal(real429Res.status, 429);
       assert.equal(api429Targets.length, 1, 'Genuine JSON 429 must return directly without failover');
+
+      // Plain-text non-JSON 429 from edge node must fail over + X-Edge-Client-IP forwarded from Vercel
+      let sawForwardedClientIp = '';
+      const plain429Targets: string[] = [];
+      const workerPlain429 = loadCloudflareWorkerWithMockFetch(async (targetUrl, init) => {
+        if (!targetUrl.endsWith('/healthz')) {
+          plain429Targets.push(targetUrl);
+          const h = new Headers(init?.headers || {});
+          sawForwardedClientIp = h.get('X-Edge-Client-IP') || '';
+        }
+        if (targetUrl.includes('backend-node2-ukib.onrender.com') || plain429Targets.length === 1) {
+          return {
+            status: 429,
+            headers: { 'content-type': 'text/plain; charset=utf-8' },
+            body: 'Too Many Requests',
+          };
+        }
+        return { status: 200, headers: { 'content-type': 'application/json' }, body: '{"ok":true}' };
+      });
+      const plainFailoverRes = await workerPlain429.fetch(
+        new Request('https://api.example/api/v1/orders', {
+          method: 'GET',
+          headers: {
+            'x-vercel-forwarded-for': '203.113.10.25, 10.0.0.1',
+            'cf-connecting-ip': '76.76.21.21',
+          },
+        }),
+        env,
+        ctx,
+      );
+      assert.equal(plainFailoverRes.status, 200);
+      assert.ok(plain429Targets.length >= 2, 'Plain-text 429 must cascade to healthy node');
+      assert.equal(plainFailoverRes.headers.get('X-Cluster-Attempt'), String(plain429Targets.length));
+      assert.equal(sawForwardedClientIp, '203.113.10.25', 'Worker must preserve originating client IP ahead of Vercel edge IP');
     });
 
     // -------------------------------------------------------------------------

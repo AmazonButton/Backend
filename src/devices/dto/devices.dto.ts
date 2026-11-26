@@ -163,9 +163,25 @@ export class CustomerUpdateConfigDto {
   productId?: string | number;
 
   @IsOptional()
+  addressId?: string | number;
+
+  @IsOptional()
   @IsNumber()
   @Min(1)
   quantity?: number;
+}
+
+export class BleClaimDeviceDto {
+  @IsOptional()
+  @IsBoolean({ message: 'bleConnected phải là boolean' })
+  bleConnected?: boolean;
+
+  @IsOptional()
+  @IsString()
+  buttonName?: string;
+
+  @IsOptional()
+  addressId?: string | number;
 }
 
 export class AllocateStoreDto {

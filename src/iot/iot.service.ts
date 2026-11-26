@@ -305,9 +305,10 @@ export class IotService {
   }
 
   async handleTelemetry(device: any, body: any) {
-    const { battery = 100, rssi = -50 } = body;
+    const { battery = 100, rssi = -50, voltage } = body;
     await this.checkAndDispatchDeviceAlerts(device, {
       battery,
+      voltage,
       eventType: 'TELEMETRY',
       rssi,
     });
@@ -318,6 +319,7 @@ export class IotService {
       data: {
         deviceId: device.deviceId,
         battery,
+        voltage: voltage !== undefined ? Number(voltage) : undefined,
         rssi,
         timestamp: new Date(),
       },
@@ -331,7 +333,7 @@ export class IotService {
    */
   async checkAndDispatchDeviceAlerts(
     device: any,
-    info: { battery?: number; eventType?: string; faultCode?: string; rssi?: number; pressCount?: number },
+    info: { battery?: number; voltage?: number; eventType?: string; faultCode?: string; rssi?: number; pressCount?: number },
   ) {
     try {
       const numBattery = info.battery !== undefined ? Number(info.battery) : 100;

@@ -68,6 +68,41 @@ const EXACT_CACHEABLE_ROUTES = [
 
 let lastNode2PingTimestamp = 0;
 const NODE2_PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const UNHEALTHY_COOLDOWN_MS = 30 * 1000; // 30s isolate cooldown for hibernating/failing nodes
+const unhealthyOriginUntil = new Map();
+
+function extractOriginatingClientIp(request) {
+  const candidates = [
+    request.headers.get('x-vercel-forwarded-for'),
+    request.headers.get('x-forwarded-for'),
+    request.headers.get('CF-Connecting-IP'),
+  ];
+  for (const raw of candidates) {
+    if (!raw || typeof raw !== 'string') continue;
+    for (const part of raw.split(',')) {
+      const token = part.trim().replace(/^::ffff:/i, '');
+      if (/^[0-9a-fA-F:.]{3,45}$/.test(token)) {
+        return token;
+      }
+    }
+  }
+  return '';
+}
+
+function prioritizeHealthyOrigins(origins, now) {
+  const healthy = [];
+  const cooling = [];
+  for (const origin of origins) {
+    const until = unhealthyOriginUntil.get(origin.url) || 0;
+    if (until > now) {
+      cooling.push(origin);
+    } else {
+      if (until) unhealthyOriginUntil.delete(origin.url);
+      healthy.push(origin);
+    }
+  }
+  return [...healthy, ...cooling];
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -162,12 +197,15 @@ export default {
     }
 
     // 4. Clone Request Headers & Forward Client Identity
-    const clientIp = request.headers.get('CF-Connecting-IP') || request.headers.get('x-forwarded-for') || '';
+    const clientIp = extractOriginatingClientIp(request);
     const forwardHeaders = new Headers(request.headers);
     if (clientIp) {
+      forwardHeaders.set('X-Edge-Client-IP', clientIp);
       forwardHeaders.set('X-Forwarded-For', clientIp);
       forwardHeaders.set('X-Real-IP', clientIp);
     }
+
+    const orderedCandidates = prioritizeHealthyOrigins(candidateOrigins, now);
 
     // 5. Request Body Buffer Cloning (safe replay across origins on failover)
     let bodyBuffer = null;
@@ -177,8 +215,8 @@ export default {
 
     // 6. Multi-Origin Dispatch with 3-Way Cascading Failover
     let lastError = null;
-    for (let attempt = 0; attempt < candidateOrigins.length; attempt++) {
-      const candidate = candidateOrigins[attempt];
+    for (let attempt = 0; attempt < orderedCandidates.length; attempt++) {
+      const candidate = orderedCandidates[attempt];
       const currentOrigin = candidate.url;
       const targetUrl = new URL(url.pathname + url.search, currentOrigin);
 
@@ -217,18 +255,27 @@ export default {
 
         const cfMitigated = (response.headers.get('cf-mitigated') || '').toLowerCase();
         const renderRouting = (response.headers.get('x-render-routing') || '').toLowerCase();
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
         const isEdgeChallenge = response.status === 429 && cfMitigated.includes('challenge');
-        const isRenderHibernate429 = response.status === 429 && renderRouting.includes('hibernate');
+        const isRenderHibernate429 =
+          response.status === 429 &&
+          (renderRouting.includes('hibernate') || renderRouting.includes('rate-limited'));
+        const isNonJsonInfra429 = response.status === 429 && !contentType.includes('application/json');
         const isUpstreamGatewayFailure = response.status >= 502 && response.status <= 599;
 
-        // Fail over on upstream gateway errors (502-599), Render hibernate 429s, or Render-edge Cloudflare WAF bot challenges (never mask API JSON 429s)
-        if (
-          (isUpstreamGatewayFailure || isEdgeChallenge || isRenderHibernate429) &&
-          attempt < candidateOrigins.length - 1
-        ) {
-          console.warn(`[Director LB] ${currentOrigin} returned ${response.status}${isEdgeChallenge ? ' (cf-mitigated challenge)' : ''}. Retrying fallback...`);
-          lastError = new Error(`HTTP ${response.status} from ${currentOrigin}`);
-          continue;
+        // Fail over on upstream gateway errors (502-599), Render hibernate/edge-gateway 429s,
+        // or Render-edge Cloudflare WAF bot challenges (never mask genuine API JSON 429s)
+        if (isUpstreamGatewayFailure || isEdgeChallenge || isRenderHibernate429 || isNonJsonInfra429) {
+          unhealthyOriginUntil.set(currentOrigin, Date.now() + UNHEALTHY_COOLDOWN_MS);
+          if (attempt < orderedCandidates.length - 1) {
+            console.warn(
+              `[Director LB] ${currentOrigin} returned ${response.status}${isEdgeChallenge ? ' (cf-mitigated challenge)' : ''}${isRenderHibernate429 ? ' (render hibernate)' : ''}. Retrying fallback...`,
+            );
+            lastError = new Error(`HTTP ${response.status} from ${currentOrigin}`);
+            continue;
+          }
+        } else {
+          unhealthyOriginUntil.delete(currentOrigin);
         }
 
         // Success or standard HTTP response
@@ -239,6 +286,10 @@ export default {
         if (allowedOrigin) {
           responseHeaders.set('Access-Control-Allow-Origin', allowedOrigin);
           responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+          responseHeaders.set(
+            'Access-Control-Expose-Headers',
+            'X-Idempotency-Status, X-Request-Id, X-Cluster-Node, X-Cluster-Role, X-Cluster-Attempt, Retry-After, RateLimit-Reset',
+          );
           responseHeaders.set('Vary', 'Origin');
         } else {
           responseHeaders.delete('Access-Control-Allow-Origin');
@@ -252,6 +303,7 @@ export default {
         });
       } catch (networkErr) {
         console.warn(`[Director LB] Network failure on ${currentOrigin}: ${networkErr.message}.`);
+        unhealthyOriginUntil.set(currentOrigin, Date.now() + UNHEALTHY_COOLDOWN_MS);
         lastError = networkErr;
         // Continue loop to try next fallback origin
       }

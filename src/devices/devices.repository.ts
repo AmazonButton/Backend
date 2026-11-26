@@ -606,6 +606,177 @@ export class DevicesRepository {
     });
   }
 
+  /**
+   * Atomically bind a BLE-connected unassigned store button to a verified customer.
+   * Rejects buttons that are rented, in transit/defective, or already claimed by another user.
+   */
+  async claimViaBleAtomicTx(params: {
+    identifier: string;
+    customerId: bigint;
+    actorUserId?: bigint | null;
+    buttonName?: string;
+    addressId?: bigint | null;
+  }) {
+    const cleanId = params.identifier.trim();
+    const isNum = /^\d+$/.test(cleanId);
+
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM iot_button
+         WHERE UPPER(device_id) = UPPER($1)
+            OR UPPER(button_code) = UPPER($1)
+            ${isNum ? 'OR button_id = $2' : ''}
+         LIMIT 1
+         FOR UPDATE;`,
+        ...(isNum ? [cleanId, BigInt(cleanId)] : [cleanId]),
+      );
+
+      if (!rows || rows.length === 0) {
+        throw new NotFoundException('Không tìm thấy thiết bị');
+      }
+
+      const button = rows[0];
+      const status = String(button.status || '').toUpperCase();
+      const invState = String(button.inventory_state || '').toUpperCase();
+
+      if (['RETIRED', 'DISABLED', 'LOCKED', 'MAINTENANCE', 'LOST', 'DAMAGED', 'SUSPENDED'].includes(status)) {
+        throw new BadRequestException(`Thiết bị đang ở trạng thái ${status}, không thể ghép nối`);
+      }
+      if (['RETURN_IN_TRANSIT', 'DEFECTIVE_RETURN', 'WRITTEN_OFF', 'LOCKED', 'MAINTENANCE'].includes(invState)) {
+        throw new BadRequestException(`Trạng thái kho thiết bị (${invState}) không cho phép nhận sở hữu`);
+      }
+      if (!button.store_id) {
+        throw new BadRequestException('Thiết bị chưa được phân bổ cho cửa hàng hoạt động nào');
+      }
+
+      if (button.customer_id != null && BigInt(button.customer_id) !== params.customerId) {
+        throw new BadRequestException('Thiết bị đã được liên kết với một tài khoản khách hàng khác');
+      }
+
+      const stores = await tx.$queryRawUnsafe<any[]>(
+        `SELECT store_id, status FROM store WHERE store_id = $1 FOR SHARE;`,
+        BigInt(button.store_id),
+      );
+      if (!stores || stores.length === 0 || String(stores[0].status).toUpperCase() !== 'ACTIVE') {
+        throw new BadRequestException('Cửa hàng quản lý thiết bị hiện không hoạt động');
+      }
+
+      const blockedRows = await tx.$queryRawUnsafe<any[]>(
+        `SELECT status FROM store_customer WHERE store_id = $1 AND customer_id = $2 FOR SHARE;`,
+        BigInt(button.store_id),
+        params.customerId,
+      );
+      if (blockedRows?.length && String(blockedRows[0].status).toUpperCase() === 'BLOCKED') {
+        throw new BadRequestException('Tài khoản của bạn đã bị cửa hàng tạm từ chối phục vụ');
+      }
+
+      // Already owned by the same customer: idempotent read-through
+      if (button.customer_id != null && BigInt(button.customer_id) === params.customerId) {
+        return tx.ioTButton.findUnique({
+          where: { buttonId: BigInt(button.button_id) },
+          include: {
+            store: true,
+            custodyStore: true,
+            customer: { include: { user: true } },
+            address: true,
+            buttonProducts: { include: { product: true } },
+            deployedTemplate: true,
+            rental: true,
+          },
+        });
+      }
+
+      if (button.rental_id != null) {
+        throw new BadRequestException('Thiết bị đang thuộc hợp đồng thuê, vui lòng hoàn tất qua quy trình thuê thiết bị');
+      }
+
+      // Resolve valid customer address (prefer explicit addressId, then default address with GPS coordinates)
+      let resolvedAddressId: bigint | null = null;
+      if (params.addressId) {
+        const addrRows = await tx.$queryRawUnsafe<any[]>(
+          `SELECT address_id FROM customer_address WHERE address_id = $1 AND customer_id = $2;`,
+          params.addressId,
+          params.customerId,
+        );
+        if (!addrRows || addrRows.length === 0) {
+          throw new BadRequestException('Địa chỉ giao hàng không thuộc về tài khoản của bạn');
+        }
+        resolvedAddressId = BigInt(addrRows[0].address_id);
+      } else {
+        const defaultAddrRows = await tx.$queryRawUnsafe<any[]>(
+          `SELECT address_id FROM customer_address
+           WHERE customer_id = $1
+           ORDER BY is_default DESC, (latitude IS NOT NULL AND longitude IS NOT NULL) DESC, address_id ASC
+           LIMIT 1;`,
+          params.customerId,
+        );
+        if (defaultAddrRows && defaultAddrRows.length > 0) {
+          resolvedAddressId = BigInt(defaultAddrRows[0].address_id);
+        }
+      }
+
+      const nextName = params.buttonName?.trim() || button.button_name;
+      await tx.$executeRawUnsafe(
+        `UPDATE iot_button
+         SET customer_id = $1,
+             address_id = COALESCE($2, address_id),
+             button_name = $3,
+             status = 'ACTIVE',
+             inventory_state = 'IN_CUSTOMER_CUSTODY',
+             custody_store_id = NULL,
+             can_order = true,
+             installed_at = COALESCE(installed_at, NOW()),
+             updated_at = NOW()
+         WHERE button_id = $4;`,
+        params.customerId,
+        resolvedAddressId,
+        nextName,
+        BigInt(button.button_id),
+      );
+
+      await tx.$executeRawUnsafe(
+        `INSERT INTO store_customer (store_id, customer_id, status, joined_at)
+         VALUES ($1, $2, 'ACTIVE', NOW())
+         ON CONFLICT (store_id, customer_id)
+         DO UPDATE SET status = 'ACTIVE', updated_at = NOW()
+         WHERE store_customer.status <> 'BLOCKED';`,
+        BigInt(button.store_id),
+        params.customerId,
+      );
+
+      const sourceStoreId = button.custody_store_id ? BigInt(button.custody_store_id) : BigInt(button.store_id);
+      await tx.deviceMovement.create({
+        data: {
+          buttonId: BigInt(button.button_id),
+          sourceType: 'STORE',
+          sourceStoreId,
+          destType: 'CUSTOMER',
+          actorUserId: params.actorUserId ?? null,
+          reason: 'Khách hàng ghép nối trực tiếp qua Bluetooth (BLE Claim)',
+        },
+      });
+
+      return tx.ioTButton.findUnique({
+        where: { buttonId: BigInt(button.button_id) },
+        include: {
+          store: true,
+          custodyStore: true,
+          customer: { include: { user: true } },
+          address: true,
+          buttonProducts: { include: { product: true } },
+          deployedTemplate: true,
+          rental: true,
+        },
+      });
+    });
+  }
+
+  async resolveCustomerOwnedAddress(customerId: bigint, addressId: bigint) {
+    return this.prisma.customerAddress.findFirst({
+      where: { customerId, addressId },
+    });
+  }
+
   async getStoreDeviceInventory(storeId: bigint) {
     const [inStockInStore, deployedOnStoreCatalog, rentedByCustomers, totalCustody] = await Promise.all([
       this.prisma.ioTButton.count({

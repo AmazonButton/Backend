@@ -9,6 +9,7 @@ import express from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { extractTrustedClientIp } from './common/utils/client-ip.util';
 import { AppController } from './app.controller';
 
 async function bootstrap() {
@@ -72,11 +73,7 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   const extractRateLimitClientIp = (req: any): string => {
-    const cfIp = typeof req.headers?.['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'].trim() : '';
-    const rawIp = cfIp && /^[0-9a-fA-F:.]{3,45}$/.test(cfIp)
-      ? cfIp
-      : (req.ip || req.socket?.remoteAddress || '127.0.0.1');
-    return ipKeyGenerator(rawIp);
+    return ipKeyGenerator(extractTrustedClientIp(req));
   };
 
   // Global rate limiter (1000 requests per 15 minutes per IP)
@@ -128,9 +125,22 @@ async function bootstrap() {
     },
   });
 
+  const deliveryQuoteLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute window
+    max: isTestEnv ? 1000 : 90, // 90 requests / min / IP so address/cart edits stay responsive
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: extractRateLimitClientIp,
+    message: {
+      success: false,
+      message: 'Quá nhiều yêu cầu tính phí giao hàng từ IP của bạn. Vui lòng thử lại sau 1 phút.',
+      errorCode: 'DELIVERY_QUOTE_RATE_LIMIT_EXCEEDED',
+    },
+  });
+
   app.use('/api/v1/auth', authLimiter);
   app.use('/api/v1/orders/simulate-button-press', orderSimLimiter);
-  app.use('/api/v1/orders/delivery-quote', orderSimLimiter);
+  app.use('/api/v1/orders/delivery-quote', deliveryQuoteLimiter);
 
   // Enable global validation pipeline — activates all class-validator DTOs
   app.useGlobalPipes(

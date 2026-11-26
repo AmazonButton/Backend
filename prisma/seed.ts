@@ -91,7 +91,12 @@ async function main() {
   console.log('🏪 Creating Multi-Store Outlets...');
   const store1 = await prisma.store.upsert({
     where: { code: 'STORE-GD01' },
-    update: { ownerUserId: storeOwner1.userId, status: 'ACTIVE' },
+    update: {
+      ownerUserId: storeOwner1.userId,
+      status: 'ACTIVE',
+      latitude: 10.776889,
+      longitude: 106.700806,
+    },
     create: {
       ownerUserId: storeOwner1.userId,
       name: 'Đại lý Nước & Gas Gia Định',
@@ -99,13 +104,20 @@ async function main() {
       phone: '0908112233',
       email: 'store@smartorder.local',
       address: '142 Nguyễn Thị Minh Khai, P. Bến Nghé, Quận 1, TP. Hồ Chí Minh',
+      latitude: 10.776889,
+      longitude: 106.700806,
       status: 'ACTIVE',
     },
   });
 
   const store2 = await prisma.store.upsert({
     where: { code: 'STORE-MK02' },
-    update: { ownerUserId: storeOwner2.userId, status: 'ACTIVE' },
+    update: {
+      ownerUserId: storeOwner2.userId,
+      status: 'ACTIVE',
+      latitude: 10.801234,
+      longitude: 106.736123,
+    },
     create: {
       ownerUserId: storeOwner2.userId,
       name: 'Minh Khôi Mart Nhu Yếu Phẩm',
@@ -113,6 +125,8 @@ async function main() {
       phone: '0912445566',
       email: 'minhkhoi@smartorder.local',
       address: '88 Song Hành, Phường An Phú, TP. Thủ Đức, TP. Hồ Chí Minh',
+      latitude: 10.801234,
+      longitude: 106.736123,
       status: 'ACTIVE',
     },
   });
@@ -202,8 +216,15 @@ async function main() {
         ward: 'Phường Thảo Điền',
         district: 'Thành phố Thủ Đức',
         province: 'TP. Hồ Chí Minh',
+        latitude: 10.778,
+        longitude: 106.702,
         isDefault: true,
       },
+    });
+  } else if (customerAddress.latitude == null || customerAddress.longitude == null) {
+    customerAddress = await prisma.customerAddress.update({
+      where: { addressId: customerAddress.addressId },
+      data: { latitude: 10.778, longitude: 106.702 },
     });
   }
 

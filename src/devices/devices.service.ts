@@ -18,7 +18,7 @@ import { DashboardCacheService } from '../common/cache/dashboard-cache.service';
 export class DevicesService {
   private readonly logger = new Logger(DevicesService.name);
   private static provRepoInstance: ProvisioningRepository | null = null;
-    private static registeredMacAddresses = new Set<string>();
+  private static registeredMacAddresses = new Set<string>();
   private static deviceMacMap = new Map<string, string>();
   private static deviceSecrets = new Map<string, string>();
   // Registry of tokenHash -> { deviceId, tokenHash, rawToken, expiresAt, status }
@@ -63,7 +63,7 @@ export class DevicesService {
       status: 'ACTIVE',
     });
     if (this.provRepoInstance) {
-      this.provRepoInstance.savePairingToken(deviceId, tokenHash, expiresAt).catch(() => {});
+      this.provRepoInstance.savePairingToken(deviceId, tokenHash, expiresAt).catch(() => { });
     }
     return token;
   }
@@ -139,8 +139,7 @@ export class DevicesService {
       await Promise.all(promises);
     } catch (error) {
       this.logger.warn(
-        `Failed to invalidate device caches: ${
-          error instanceof Error ? error.message : 'unknown error'
+        `Failed to invalidate device caches: ${error instanceof Error ? error.message : 'unknown error'
         }`,
       );
     }
@@ -262,13 +261,13 @@ export class DevicesService {
       } : null,
       products: b.buttonProducts
         ? b.buttonProducts.map((bp: any) => ({
-            buttonProductId: bp.buttonProductId ? bp.buttonProductId.toString() : null,
-            productId: bp.productId ? bp.productId.toString() : null,
-            productName: bp.product?.productName,
-            productCode: bp.product?.productCode,
-            quantity: bp.quantity,
-            price: bp.product?.basePrice,
-          }))
+          buttonProductId: bp.buttonProductId ? bp.buttonProductId.toString() : null,
+          productId: bp.productId ? bp.productId.toString() : null,
+          productName: bp.product?.productName,
+          productCode: bp.product?.productCode,
+          quantity: bp.quantity,
+          price: bp.product?.basePrice,
+        }))
         : [],
     };
   }
@@ -758,6 +757,31 @@ export class DevicesService {
     return this.formatButton(updated);
   }
 
+  async claimViaBle(id: string, body: any, user: any) {
+    if (!user || user.role !== 'CUSTOMER') {
+      throw new ForbiddenException('Chỉ tài khoản khách hàng mới có thể nhận liên kết nút qua Bluetooth');
+    }
+    if (!user.customerProfileId) {
+      throw new ForbiddenException('Tài khoản khách hàng chưa có hồ sơ liên kết');
+    }
+    if (body?.bleConnected === false) {
+      throw new BadRequestException('Cần xác nhận kết nối Bluetooth trực tiếp với thiết bị trước khi ghép nối');
+    }
+
+    const addressId = body?.addressId ? BigInt(body.addressId) : null;
+    const rawActorUserId = user?.userId || user?.id;
+    const claimed = await this.devicesRepo.claimViaBleAtomicTx({
+      identifier: id,
+      customerId: BigInt(user.customerProfileId),
+      actorUserId: rawActorUserId ? BigInt(rawActorUserId) : null,
+      buttonName: body?.buttonName,
+      addressId,
+    });
+
+    await this.invalidateDeviceCaches(claimed?.storeId, claimed?.customer?.userId || user.userId);
+    return this.formatButton(claimed);
+  }
+
   async customerUpdateConfig(id: string, body: any, user: any) {
     const before = await this.assertDeviceAccess(id, user);
     const existing = this.formatButton(before);
@@ -775,9 +799,24 @@ export class DevicesService {
       await this.devicesRepo.remapStore(buttonId, newStoreId, customerId);
     }
 
-    // 2. Update button name if provided
+    // 2. Update button name and/or delivery address if provided
+    const buttonPatch: Record<string, any> = {};
     if (body.buttonName) {
-      await this.devicesRepo.update(buttonId, { buttonName: body.buttonName });
+      buttonPatch.buttonName = body.buttonName;
+    }
+    if (body.addressId !== undefined && body.addressId !== null && existing.customerId) {
+      const targetAddressId = BigInt(body.addressId);
+      const addr = await this.devicesRepo.resolveCustomerOwnedAddress(BigInt(existing.customerId), targetAddressId);
+      if (!addr) {
+        throw new BadRequestException('Địa chỉ giao hàng không thuộc về tài khoản sở hữu nút bấm');
+      }
+      if (addr.latitude == null || addr.longitude == null) {
+        throw new BadRequestException('Địa chỉ giao hàng chưa có tọa độ GPS hợp lệ để đặt hàng qua nút bấm');
+      }
+      buttonPatch.addressId = targetAddressId;
+    }
+    if (Object.keys(buttonPatch).length > 0) {
+      await this.devicesRepo.update(buttonId, buttonPatch);
     }
 
     // 3. Assign product if productId is provided

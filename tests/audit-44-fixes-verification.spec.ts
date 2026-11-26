@@ -15,6 +15,12 @@ import { BillingChargesService } from '../src/billing-charges/billing-charges.se
 import { settleRentalRenewalInTx } from '../src/rentals/rental-renewal.transaction';
 import { PayOSBankVerificationProvider } from '../src/bank-verification/providers/payos-bank-verification.provider';
 import { PayOSPayoutPreDispatchException } from '../src/payments/payos-payout.service';
+import { extractTrustedClientIp } from '../src/common/utils/client-ip.util';
+import { AuthRateLimitGuard } from '../src/auth/guards/auth-rate-limit.guard';
+import { DevicesService } from '../src/devices/devices.service';
+import { IotTelemetryDto } from '../src/iot/dto/iot-telemetry.dto';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 
 let passed = 0;
 let failed = 0;
@@ -429,6 +435,140 @@ async function run() {
       await prisma.$disconnect();
     }
   }
+
+  await test('14. extractTrustedClientIp unwraps Cloudflare Worker IP safely while rejecting direct spoofed XFF', () => {
+    const viaWorker = extractTrustedClientIp({
+      headers: {
+        'cf-connecting-ip': '2a06:98c0:3600::103',
+        'cf-worker': ' PTT ',
+        'x-edge-client-ip': '203.113.10.99',
+        'x-forwarded-for': '10.0.0.1',
+      },
+    });
+    assert.strictEqual(viaWorker, '203.113.10.99');
+
+    const directNoWorker = extractTrustedClientIp({
+      headers: {
+        'cf-connecting-ip': '118.69.12.34',
+        'x-edge-client-ip': '1.2.3.4',
+        'x-forwarded-for': '5.6.7.8',
+      },
+    });
+    assert.strictEqual(directNoWorker, '118.69.12.34');
+  });
+
+  await test('15. AuthRateLimitGuard scopes login limits by (IP + account) and emits Retry-After', () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const guard = new AuthRateLimitGuard();
+      const responseHeaders: Record<string, string> = {};
+      const makeCtx = (email: string) =>
+        ({
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: { 'cf-connecting-ip': '198.51.100.42' },
+              route: { path: '/api/v1/auth/login' },
+              body: { email },
+            }),
+            getResponse: () => ({
+              setHeader: (k: string, v: string) => {
+                responseHeaders[k] = v;
+              },
+            }),
+          }),
+        }) as any;
+
+      const demoAccounts = [
+        'customer@smartorder.local',
+        'store@smartorder.local',
+        'staff@smartorder.local',
+        'admin@smartorder.local',
+      ];
+      // 4 logins on each of 3 accounts (12 > old 10/IP limit) should all pass
+      for (const acct of demoAccounts.slice(0, 3)) {
+        for (let i = 0; i < 4; i++) {
+          assert.strictEqual(guard.canActivate(makeCtx(acct)), true);
+        }
+      }
+      // 10 logins on the 4th account succeed, 11th throws 429 with Retry-After header
+      for (let i = 0; i < 10; i++) {
+        assert.strictEqual(guard.canActivate(makeCtx(demoAccounts[3])), true);
+      }
+      let thrown: any = null;
+      try {
+        guard.canActivate(makeCtx(demoAccounts[3]));
+      } catch (e) {
+        thrown = e;
+      }
+      assert.ok(thrown, '11th login on same account within 60s must throw 429');
+      assert.strictEqual(thrown.getStatus(), 429);
+      assert.ok(Number(responseHeaders['Retry-After']) >= 1, 'Must set Retry-After response header');
+    } finally {
+      process.env.NODE_ENV = prevNodeEnv;
+    }
+  });
+
+  await test('16. DevicesService.assertDeviceAccess stays read-only & claimViaBle delegates atomically without violating lookup BOLA', async () => {
+    let repoUpdated = false;
+    let bleClaimParams: any = null;
+    const devSvc = new DevicesService(
+      {
+        findByIdentifier: async () => ({
+          buttonId: 348n,
+          deviceId: 'SOB-000052',
+          buttonCode: 'SOB-000052',
+          storeId: 1n,
+          customerId: null,
+          status: 'ACTIVE',
+        }),
+        update: async () => {
+          repoUpdated = true;
+          return {};
+        },
+        claimViaBleAtomicTx: async (params: any) => {
+          bleClaimParams = params;
+          return {
+            buttonId: 348n,
+            deviceId: 'SOB-000052',
+            buttonCode: 'SOB-000052',
+            storeId: 1n,
+            custodyStoreId: null,
+            customerId: params.customerId,
+            inventoryState: 'IN_CUSTOMER_CUSTODY',
+            status: 'ACTIVE',
+            canOrder: true,
+          };
+        },
+      } as any,
+      undefined as any,
+    );
+
+    await assert.rejects(
+      () => devSvc.getById('SOB-000052', { role: 'CUSTOMER', customerProfileId: '1' }),
+      (err: any) => err instanceof ForbiddenException,
+    );
+    assert.strictEqual(repoUpdated, false, 'GET /devices/:id must NEVER auto-claim an unclaimed button');
+
+    const lookup = await devSvc.lookupByCode('SOB-000052');
+    assert.strictEqual('storeId' in lookup, false, 'lookupByCode must NOT leak tenant storeId');
+
+    const claimed = await devSvc.claimViaBle(
+      'SOB-000052',
+      { bleConnected: true, buttonName: 'Nút Test' },
+      { role: 'CUSTOMER', customerProfileId: '1', userId: '4' },
+    );
+    assert.strictEqual(bleClaimParams?.customerId, 1n);
+    assert.strictEqual(claimed?.customerId, '1');
+    assert.strictEqual(claimed?.inventoryState, 'IN_CUSTOMER_CUSTODY');
+    assert.strictEqual(claimed?.custodyStoreId, null);
+  });
+
+  await test('17. IotTelemetryDto accepts optional voltage alongside battery and rssi under whitelist validation', async () => {
+    const dto = plainToInstance(IotTelemetryDto, { battery: 92, voltage: 4.14, rssi: -61 });
+    const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+    assert.strictEqual(errors.length, 0, 'Telemetry payload with voltage must pass strict ValidationPipe');
+  });
 
   console.log(`\nSummary: ${passed} passed, ${failed} failed\n`);
   if (failed > 0) process.exit(1);
